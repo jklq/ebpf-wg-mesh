@@ -3,7 +3,9 @@ package registry
 import (
 	"errors"
 	"fmt"
+	"net"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -174,6 +176,9 @@ func normalizeRepository(repository string) (string, error) {
 	if host == "" {
 		return "", errors.New("repository host is required")
 	}
+	if err := validateRegistryHostSyntax(host); err != nil {
+		return "", err
+	}
 	path = strings.Trim(path, "/")
 	if path == "" {
 		return "", errors.New("repository path is required")
@@ -198,6 +203,57 @@ func validateRepositoryComponent(component string) error {
 	}
 	if !repositoryComponentPattern.MatchString(component) {
 		return errors.New("repository path must be lowercase alphanumeric with . _ - separators")
+	}
+	return nil
+}
+
+// registryHostNamePattern is RFC 1123 host syntax: labels of alphanumerics
+// and inner hyphens, dot-separated.
+var registryHostNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$`)
+
+// validateRegistryHostSyntax rejects hosts no registry can be pulled from
+// before a reference is stored. Digest-pinned inputs skip registry I/O at
+// resolution, so without this an unpullable host — an invalid name or
+// port — is stored and only fails on the agent at deploy time.
+func validateRegistryHostSyntax(host string) error {
+	name := host
+	if strings.HasPrefix(host, "[") {
+		end := strings.Index(host, "]")
+		if end < 0 || net.ParseIP(host[1:end]) == nil {
+			return fmt.Errorf("registry host %q is not a valid IP literal", host)
+		}
+		if rest := host[end+1:]; rest != "" {
+			return validateRegistryHostPort(rest)
+		}
+		return nil
+	}
+	if h, port, err := net.SplitHostPort(host); err == nil {
+		if err := validateRegistryHostPort(":" + port); err != nil {
+			return err
+		}
+		name = h
+	}
+	if net.ParseIP(name) != nil {
+		return nil
+	}
+	if len(name) > 253 || !registryHostNamePattern.MatchString(name) {
+		return fmt.Errorf("registry host %q is not a valid host name", host)
+	}
+	return nil
+}
+
+func validateRegistryHostPort(port string) error {
+	value := strings.TrimPrefix(port, ":")
+	if value == "" {
+		return errors.New("registry host has an empty port")
+	}
+	for _, ch := range value {
+		if ch < '0' || ch > '9' {
+			return fmt.Errorf("registry host port %q is not numeric", value)
+		}
+	}
+	if n, err := strconv.Atoi(value); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("registry host port %q is out of range", value)
 	}
 	return nil
 }
