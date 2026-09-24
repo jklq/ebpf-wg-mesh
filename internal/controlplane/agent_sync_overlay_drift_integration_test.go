@@ -111,7 +111,9 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 	drainSyncQuiet(t, messages, time.Second, track)
 
 	// A healthy serving allocation contributes an internal host entry.
-	service, err := server.delivery.CreateService(ctx, testUser("user-1"), envID, "web", directImageServiceSpec("example.test/web:a", &platformv1.ServiceRuntime{
+	// The image is a pinned digest: deploy-by-digest resolves mutable
+	// tags at create, which this repair test does not exercise.
+	service, err := server.delivery.CreateService(ctx, testUser("user-1"), envID, "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8080}), CpuMillis: 100, MemoryMebibytes: 64,
 	}), agentID)
 	if err != nil {
