@@ -56,7 +56,9 @@ func TestBuildTransitionProvesCurrent(t *testing.T) {
 		head       string
 		want       bool
 	}{
-		{name: "no head establishes it", transition: BuildTransition{PreviousCommit: "p"}, revision: "c", head: "", want: true},
+		{name: "push may not establish the first head", transition: BuildTransition{PreviousCommit: "p"}, revision: "c", head: "", want: false},
+		{name: "unchained request establishes the first head", transition: BuildTransition{}, revision: "c", head: "", want: true},
+		{name: "fetch over no head establishes it", transition: BuildTransition{TrackedHead: true}, revision: "c", head: "", want: true},
 		{name: "redelivery of the head", transition: BuildTransition{}, revision: "c", head: "c", want: true},
 		{name: "push advances from the head", transition: BuildTransition{PreviousCommit: "h"}, revision: "c", head: "h", want: true},
 		{name: "push chains to another predecessor", transition: BuildTransition{PreviousCommit: "x"}, revision: "c", head: "h", want: false},
