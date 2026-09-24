@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
 	"log/slog"
 	"strings"
 	"time"
@@ -356,18 +357,28 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 	now := time.Now().UTC()
 	type trimKey struct{ serviceID, allocationID, logType, stream string }
 	trimmedCounts := make(map[trimKey]uint64)
+	trimmedHashes := make(map[trimKey]hash.Hash)
 	for _, entry := range trimmed {
 		if entry == nil || strings.TrimSpace(entry.GetServiceId()) == "" {
 			continue
 		}
-		trimmedCounts[trimKey{
+		key := trimKey{
 			serviceID:    entry.GetServiceId(),
 			allocationID: entry.GetAllocationId(),
 			logType:      string(logTypeFromProto(entry.GetLogType())),
 			stream:       normalizeLogStream(entry.GetStream()),
-		}]++
+		}
+		trimmedCounts[key]++
+		if trimmedHashes[key] == nil {
+			trimmedHashes[key] = sha256.New()
+		}
+		// Line IDs survive retries. Include timestamp, sequence and
+		// content too so batches without IDs still get a stable key.
+		fmt.Fprintf(trimmedHashes[key], "%q|%d|%d|%q\n", entry.GetLineId(),
+			entry.GetObservedAt().AsTime().UnixNano(), entry.GetSequence(), entry.GetLine())
 	}
 	for key, count := range trimmedCounts {
+		summaryID := "trim:" + hex.EncodeToString(trimmedHashes[key].Sum(nil)[:16])
 		gaps = append(gaps, GapInput{
 			ServiceID:    key.serviceID,
 			AllocationID: key.allocationID,
@@ -378,6 +389,7 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 			DroppedCount: count,
 			Reason:       logpipeline.ReasonIngestOverflow,
 			Reporter:     agentID,
+			SummaryID:    summaryID,
 		})
 	}
 	return inputs, gaps
