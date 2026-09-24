@@ -146,12 +146,19 @@ func (d *Delivery) directImageArtifactTx(ctx context.Context, tx *sql.Tx, servic
 	if pre.keepStored || pre.resolved.Ref == "" || pre.input != strings.TrimSpace(input) {
 		return BuildArtifactRecord{}, errDirectImageChanged
 	}
+	// The proto contract keeps source_image_ref for input that was not
+	// digest-pinned: an already-pinned reference is its own original
+	// input and must not round-trip to clients as mutable user input.
+	sourceImageRef := strings.TrimSpace(input)
+	if parsed, err := registry.ParseReference(sourceImageRef); err == nil && parsed.Pinned() {
+		sourceImageRef = ""
+	}
 	return d.store.insertDirectImageArtifactTx(ctx, tx, insertArtifactParams{
 		ServiceID:           serviceID,
 		Kind:                BuildArtifactDirectImage,
 		ImageRepository:     pre.resolved.Repository,
 		ImageManifestDigest: pre.resolved.ManifestDigest,
-		SourceImageRef:      strings.TrimSpace(input),
+		SourceImageRef:      sourceImageRef,
 		BuildActorKind:      actor.Kind,
 		BuildActorID:        actor.ID,
 		CreatedAt:           now,
