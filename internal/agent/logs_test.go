@@ -109,6 +109,33 @@ func TestContainerLogWriterTruncatesOversizedLines(t *testing.T) {
 	}
 }
 
+func TestContainerLogWriterShipsCappedPrefixWithoutNewline(t *testing.T) {
+	t.Parallel()
+	sink := &recordingLogSink{}
+	var seq uint64
+	writer := &containerLogWriter{
+		allocationID: "alloc-1",
+		stream:       "stdout",
+		nextSequence: func() uint64 {
+			seq++
+			return seq
+		},
+		sink: func() LogSink { return sink },
+	}
+	if _, err := writer.Write([]byte(strings.Repeat("x", logpipeline.MaxLogLineBytes))); err != nil {
+		t.Fatalf("Write capped prefix: %v", err)
+	}
+	if len(sink.entries) != 1 || len(sink.entries[0].GetLine()) != logpipeline.MaxLogLineBytes || !sink.entries[0].GetTruncated() {
+		t.Fatalf("capped prefix was not shipped immediately: %+v", sink.entries)
+	}
+	if _, err := writer.Write([]byte("discarded\nnext\n")); err != nil {
+		t.Fatalf("Write following lines: %v", err)
+	}
+	if len(sink.entries) != 2 || sink.entries[1].GetLine() != "next" {
+		t.Fatalf("continued line was emitted twice or hid the next line: %+v", sink.entries)
+	}
+}
+
 func TestContainerLogWriterTruncatedLineStaysValidUTF8(t *testing.T) {
 	t.Parallel()
 

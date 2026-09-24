@@ -661,9 +661,9 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLogShipper: %v", err)
 	}
-	// A long outage across allocation churn can accumulate more drop
-	// summaries than one message may carry; they must split instead
-	// of oversizing every retry and blocking all line delivery.
+	// Allocation churn must not leave one durable summary per
+	// allocation. The extra counts fold into the surviving identities
+	// and still ship.
 	now := time.Now().UTC()
 	for i := 0; i < 30000; i++ {
 		shipper.pending.Add(logpipeline.DropKey{
@@ -681,20 +681,22 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 	sender.mu.Lock()
 	batches := append([]*agentv1.LogBatch(nil), sender.batches...)
 	sender.mu.Unlock()
-	if len(batches) < 2 {
-		t.Fatalf("oversized drop set must split across messages, got %d", len(batches))
-	}
 	var dropped uint64
+	var identities int
 	for _, batch := range batches {
 		if proto.Size(batch) >= 4<<20 {
 			t.Fatalf("drop message %d exceeds the transport limit", proto.Size(batch))
 		}
+		identities += len(batch.GetDrops())
 		for _, drop := range batch.GetDrops() {
 			dropped += drop.GetDroppedCount()
 		}
 	}
+	if identities > maxAgentPendingDrops {
+		t.Fatalf("shipped %d drop identities, cap is %d", identities, maxAgentPendingDrops)
+	}
 	if dropped != 30000 {
-		t.Fatalf("split lost drop accounting: %d of 30000", dropped)
+		t.Fatalf("bounded summaries lost drop accounting: %d of 30000", dropped)
 	}
 
 	// Everything was sent and committed: nothing re-sends.
@@ -725,5 +727,118 @@ func TestShipAdmitRateNeverExceedsDrain(t *testing.T) {
 	}
 	if got := shipAdmitRate(0, 100, time.Second); got != 0 {
 		t.Fatalf("admit %.0f, want 0 (unlimited)", got)
+	}
+}
+
+func TestLogShipperAggregateLimitCapsConcurrentAllocations(t *testing.T) {
+	t.Parallel()
+
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      t.TempDir(),
+		RatePerSec:    100000,
+		Burst:         100,
+		BatchSize:     4,
+		FlushInterval: time.Second,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	defer shipper.Close()
+	for i := uint64(1); i <= 50; i++ {
+		shipper.AppendLog(testEntry("alloc-a", "svc-1", "a", i))
+		shipper.AppendLog(testEntry("alloc-b", "svc-1", "b", i))
+	}
+	// Each allocation's own burst would admit all 50. Together they
+	// stop at one flush batch.
+	if got := shipper.Stats().Accepted; got != 4 {
+		t.Fatalf("accepted %d lines, one flush drains 4", got)
+	}
+}
+
+func TestLogShipperDropsAllocationMetadataAfterReporting(t *testing.T) {
+	t.Parallel()
+
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      t.TempDir(),
+		RatePerSec:    100000,
+		Burst:         100000,
+		BatchSize:     100,
+		FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	defer shipper.Close()
+	for i := 0; i < 40; i++ {
+		shipper.AppendLog(testEntry(fmt.Sprintf("alloc-%d", i), "svc-1", "line", uint64(i+1)))
+	}
+	shipper.flush()
+	shipper.mu.Lock()
+	left := len(shipper.meta)
+	shipper.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("retained metadata for %d allocations with nothing pending", left)
+	}
+}
+
+func TestLogShipperCloseWaitsForInflightDropSend(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      dir,
+		RatePerSec:    100000,
+		Burst:         100,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	now := time.Now().UTC()
+	shipper.pending.Add(logpipeline.DropKey{
+		ServiceID:    "svc-1",
+		AllocationID: "alloc-1",
+		Reason:       logpipeline.ReasonRateLimited,
+	}, 4, now, now)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	shipper.Attach(func(*agentv1.AgentClientMessage) error {
+		once.Do(func() { close(entered) })
+		<-release
+		return errors.New("send failed")
+	})
+	go shipper.flush()
+	<-entered
+
+	closed := make(chan error, 1)
+	go func() {
+		closed <- shipper.Close()
+	}()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close finished while the send still held the summaries: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not finish after the send returned")
+	}
+	drops, err := logpipeline.LoadDrops(dir)
+	if err != nil {
+		t.Fatalf("LoadDrops: %v", err)
+	}
+	var dropped uint64
+	for _, drop := range drops {
+		dropped += drop.GetDroppedCount()
+	}
+	if dropped != 4 {
+		t.Fatalf("in-flight summaries persisted as %d, want 4", dropped)
 	}
 }
