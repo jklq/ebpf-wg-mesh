@@ -724,3 +724,100 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 		t.Fatalf("stale create history rows = %d, want the observation recorded without becoming the head", recorded)
 	}
 }
+
+func TestPushWithUnobservedPredecessorFetchesTrackedHeadInsteadOfPending(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	server := newTestGitHubServer(t, nil)
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
+	ctx := context.Background()
+
+	projectID := bootstrapProjectAndAgent(t, store, ctx)
+	linkTestProjectRepository(t, store, catalog, projectID, "public/hello")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "public/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		processed, err := reconciler.ProcessNext(ctx)
+		if err != nil {
+			t.Fatalf("processNext(%d): %v", i, err)
+		}
+		if !processed {
+			break
+		}
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	// A push names a predecessor this binding has never observed — it is
+	// not zero (a recreated ref), just outside the recorded history. The
+	// successor must not pend until the binding expires: the tracked
+	// head is fetched and the commit builds because it is still current.
+	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-never-observed", "Successor commit", "Octocat"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision: %v", err)
+	}
+	processed, err := reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(push) = %v, %v, want clean completion", processed, err)
+	}
+	processed, err = reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(tracked-head sync) = %v, %v; an unknown predecessor must fetch the tracked head now, not wait for the binding to expire", processed, err)
+	}
+	status, _, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
+	if err != nil {
+		t.Fatalf("ServiceStatus: %v", err)
+	}
+	if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != "commit-public-release" {
+		t.Fatalf("expected build for commit-public-release, got %+v", status.LatestBuild)
+	}
+	head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-public-release" {
+		t.Fatalf("proven head = %q, %v; the tracked head must advance the binding", head, err)
+	}
+
+	// The same shape of push for a commit that is no longer the tracked
+	// head must not build that commit: a newer push already moved the ref
+	// on, and the fetch-verified sync queues only the commit still
+	// current (a fresh attempt at the head, superseding its predecessor).
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-main", "commit-never-observed", "Superseded push", "Octocat"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision(stale): %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		processed, err = reconciler.ProcessNext(ctx)
+		if err != nil || !processed {
+			t.Fatalf("processNext(stale %d) = %v, %v, want clean completion", i, processed, err)
+		}
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM build_runs WHERE service_id = $1 AND commit_sha = 'commit-public-main'`, service.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("builds of the superseded commit = %d, want only its original one", count)
+	}
+	head, err = store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-public-release" {
+		t.Fatalf("proven head = %q, %v; the superseded push must not move it", head, err)
+	}
+}
