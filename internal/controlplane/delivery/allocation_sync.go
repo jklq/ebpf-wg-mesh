@@ -178,6 +178,33 @@ func (s *allocSync) recordCurrent(agentID string, current *agentv1.DesiredNodeSt
 	_, _ = s.recordAndDiff(agentID, current, current.GetReconciliationCursor())
 }
 
+// rebase moves the diff baseline to current after a checkpoint delivered full
+// content to the agent. Checkpoints travel outside the retained diff chain, so
+// without rebasing the next diff would compare against a stale baseline and
+// could silently skip observation overlay fields the checkpoint changed:
+// the covering diff would not carry them and the connected agent would keep
+// stale hosts or restart observations at an advanced cursor. Retained entries
+// are self-contained and stay replayable from older bases; a replay that
+// cannot bridge the rebased baseline falls back to a checkpoint.
+func (s *allocSync) rebase(agentID string, current *agentv1.DesiredNodeState) {
+	if s == nil || current == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.history == nil {
+		s.history = make(map[string]*agentSyncHistory)
+	}
+	h := s.history[agentID]
+	if h == nil {
+		h = &agentSyncHistory{}
+		s.history[agentID] = h
+	}
+	h.lastRevision = current.GetReconciliationCursor()
+	h.lastSnapshot = stripForDiff(current)
+	h.initialized = true
+}
+
 // diffsFrom returns retained diffs from base to the latest recorded revision.
 // It returns ok=false when a checkpoint is required.
 func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, target int64, ok bool) {

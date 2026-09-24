@@ -97,6 +97,7 @@ type agentDelivery interface {
 	ReconcileFleetCapacity(context.Context) error
 	DesiredStateForAgent(context.Context, string) (*agentv1.DesiredNodeState, error)
 	AllocationDiffsFrom(string, int64) ([]*agentv1.AllocationDiff, int64, bool)
+	RebaseAllocationDiffs(string, *agentv1.DesiredNodeState)
 	RegisterAgent(context.Context, *agentv1.AgentHello) (bool, error)
 }
 
@@ -566,6 +567,10 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		}); err != nil {
 			return sent, err
 		}
+		// The checkpoint traveled outside the retained diff chain; move the
+		// chain's baseline to the delivered content so a later diff can never
+		// silently skip fields the checkpoint changed.
+		s.delivery.RebaseAllocationDiffs(agentID, state)
 	} else {
 		for _, diff := range diffs {
 			diff.ClusterId = clusterID

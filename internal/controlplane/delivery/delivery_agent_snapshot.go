@@ -52,6 +52,16 @@ func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*age
 	return diffs, target, true
 }
 
+// RebaseAllocationDiffs moves the retained diff baseline to state after a
+// checkpoint delivered it to the agent, so subsequent diffs compare against
+// the content the agent actually accepted.
+func (d *Delivery) RebaseAllocationDiffs(agentID string, state *agentv1.DesiredNodeState) {
+	if d == nil || d.allocSync == nil {
+		return
+	}
+	d.allocSync.rebase(agentID, state)
+}
+
 func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.DesiredVolume, error) {
 	wanted := make(map[string]bool)
 	for _, a := range live.Assignments {

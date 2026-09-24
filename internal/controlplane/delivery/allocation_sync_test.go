@@ -211,3 +211,48 @@ func TestZeroContentRevisionBumpReturnsNoOpCursorDiff(t *testing.T) {
 		t.Fatalf("no-op diff changed allocations: %+v", d)
 	}
 }
+
+func TestRebaseAfterCheckpointDiffsCarryRestoredOverlay(t *testing.T) {
+	t.Parallel()
+	sync := newAllocSync()
+	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
+	// A same-cursor repair checkpoint delivered hosts the recorded baseline
+	// predates. Without rebasing, the next diff would compare against the
+	// pre-repair snapshot and silently skip the overlay fields.
+	repaired := testService("a", 1, 1)
+	repaired.InternalHosts = []*agentv1.InternalHost{{Hostname: "a.mesh.internal", Ipv4: "10.0.0.1"}}
+	sync.rebase("agent-1", testCheckpoint(1, repaired))
+	// The observation drifts back while a revision bump advances the cursor:
+	// the covering diff must carry the host change instead of skipping it,
+	// leaving the connected agent with stale hosts at an advanced cursor.
+	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
+	diffs, target, ok := sync.diffsFrom("agent-1", 1)
+	if !ok || target != 2 || len(diffs) != 1 {
+		t.Fatalf("restored overlay must be covered by the diff chain: %+v target=%d ok=%v", diffs, target, ok)
+	}
+	d := diffs[0]
+	if len(d.Updates) != 1 || d.Updates[0].GetAllocationId() != "a" {
+		t.Fatalf("restored overlay must surface as an allocation update: %+v", d)
+	}
+	if hosts := d.Updates[0].GetInternalHosts(); len(hosts) != 0 {
+		t.Fatalf("update must carry the restored overlay: %+v", hosts)
+	}
+}
+
+func TestRebaseKeepsNoOpCursorDiffForPeerOnlyBump(t *testing.T) {
+	t.Parallel()
+	sync := newAllocSync()
+	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
+	sync.rebase("agent-1", testCheckpoint(1, testService("a", 1, 1)))
+	// A peer-only bump after a rebased baseline still surfaces as the empty
+	// no-op cursor diff: content is unchanged relative to what the agent
+	// accepted, so the cursor must advance in lockstep without entries.
+	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
+	diffs, target, ok := sync.diffsFrom("agent-1", 1)
+	if !ok || target != 2 || len(diffs) != 1 {
+		t.Fatalf("zero-content bump must return a covering no-op diff: %+v target=%d ok=%v", diffs, target, ok)
+	}
+	if d := diffs[0]; len(d.Starts)+len(d.Updates)+len(d.Stops)+len(d.VolumeStarts)+len(d.VolumeStops) != 0 {
+		t.Fatalf("no-op diff changed allocations: %+v", d)
+	}
+}
