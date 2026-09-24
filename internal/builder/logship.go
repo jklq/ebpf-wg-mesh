@@ -224,7 +224,19 @@ func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 	default:
 	}
 	if !r.limiter.Allow(r.buildID) {
-		// The limiter counts the denial; collectDrops reports it.
+		// Persist the denial before returning. A crash before the next
+		// flush would otherwise lose the only copy of the count.
+		denied := r.limiter.DrainDrops()
+		observedAt := line.ObservedAt.UTC()
+		if observedAt.IsZero() {
+			observedAt = time.Now().UTC()
+		}
+		r.mu.Lock()
+		for _, count := range denied {
+			r.notePendingLocked(line.Stream, count, logpipeline.ReasonRateLimited, observedAt, observedAt)
+		}
+		_ = r.persistPendingLocked()
+		r.mu.Unlock()
 		return
 	}
 	text, truncated := logpipeline.TruncateLine(strings.TrimRight(line.Line, "\r\n"))
@@ -356,26 +368,63 @@ func (r *buildLogReporter) Close() error {
 }
 
 func (r *buildLogReporter) cleanup() {
-	pending := int64(0)
+	unshipped := int64(0)
 	if r.spool != nil {
-		pending = r.spool.Stats().PendingRecords
+		unshipped = r.spool.Stats().PendingRecords
 		_ = r.spool.Close()
+		r.spool = nil
 	}
 	r.mu.Lock()
-	pending += int64(r.pending.Len())
+	summaries := int64(r.pending.Len())
 	r.mu.Unlock()
+	left := unshipped + summaries
 	if r.orphaned.Load() {
 		slog.Warn("build log reporter orphaned by lease loss; attempt output is incomplete",
-			"builder_id", r.builderID, "build_id", r.buildID, "unshipped", pending)
-		_ = os.RemoveAll(r.spoolDir)
+			"builder_id", r.builderID, "build_id", r.buildID, "unshipped", left)
+		r.persistOrphanGap(unshipped)
+		r.removeSpoolSegments()
 		return
 	}
-	if pending != 0 {
+	if left != 0 {
 		slog.Warn("build log spool left behind for garbage collection",
-			"builder_id", r.builderID, "build_id", r.buildID, "unshipped", pending)
+			"builder_id", r.builderID, "build_id", r.buildID, "unshipped", left)
 		return
 	}
 	_ = os.RemoveAll(r.spoolDir)
+}
+
+// persistOrphanGap records lines still in the spool as a gap and
+// keeps that summary on disk. The next lease loads sibling attempt
+// summaries; deleting the directory here would drop the only record
+// of the lost lines.
+func (r *buildLogReporter) persistOrphanGap(unshipped int64) {
+	if r.spool != nil {
+		_ = r.spool.Close()
+		r.spool = nil
+	}
+	if unshipped <= 0 {
+		return
+	}
+	now := time.Now().UTC()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.notePendingLocked("combined", uint64(unshipped), logpipeline.ReasonSpoolOverflow, now, now)
+	_ = r.persistPendingLocked()
+}
+
+// removeSpoolSegments deletes the attempt's log bytes and leaves the
+// pending-drops file for the next lease to inherit.
+func (r *buildLogReporter) removeSpoolSegments() {
+	entries, err := os.ReadDir(r.spoolDir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.Name() == logpipeline.PendingDropsFile {
+			continue
+		}
+		_ = os.RemoveAll(filepath.Join(r.spoolDir, entry.Name()))
+	}
 }
 
 func (r *buildLogReporter) run() {
