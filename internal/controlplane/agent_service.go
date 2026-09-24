@@ -386,24 +386,41 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
+// syncSent is the position delivered on the session's sync stream: the
+// monotonic allocation cursor plus content versions for the independently
+// delivered streams and the observation overlay. The overlay versions the
+// observation-derived fields of accepted services (internal hosts, restart
+// observations); it drifts at a fixed cursor, so it is tracked alongside the
+// streams and drives same-cursor repair checkpoints whenever it moves past
+// the last delivered position.
+type syncSent struct {
+	alloc       int64
+	nodeConfig  string
+	credentials string
+	replicas    string
+	overlay     string
+}
+
 func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
 	// 2.10: initialize from hello so an unchanged reconnect sends nothing.
-	lastAlloc := hello.GetReconciliationCursor()
-	lastNode := hello.GetAcceptedNodeConfigVersion()
-	lastCreds := hello.GetAcceptedCredentialsVersion()
-	lastReplicas := hello.GetAcceptedReplicasVersion()
+	sent := syncSent{
+		alloc:       hello.GetReconciliationCursor(),
+		nodeConfig:  hello.GetAcceptedNodeConfigVersion(),
+		credentials: hello.GetAcceptedCredentialsVersion(),
+		replicas:    hello.GetAcceptedReplicasVersion(),
+		overlay:     hello.GetAcceptedObservationOverlayVersion(),
+	}
 	helloInventory := hello.GetAllocations()
 	helloInit := hello.GetInitializationState()
 	helloEpoch := hello.GetAcceptedAuthorityEpoch()
-	helloOverlay := hello.GetAcceptedObservationOverlayVersion()
 	first := true
 	for {
 		slog.Info("checking desired state", "agent_id", agentID)
-		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, lastAlloc, lastNode, lastCreds, lastReplicas, helloInventory, helloInit, helloEpoch, helloOverlay, first)
+		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, sent, helloInventory, helloInit, helloEpoch, first)
 		if err != nil {
 			return err
 		}
-		lastAlloc, lastNode, lastCreds, lastReplicas = next.Cursor, next.NodeConfig, next.Credentials, next.Replicas
+		sent = next
 		first = false
 		helloInventory = nil
 		select {
@@ -429,8 +446,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 // emits a single fenced batch — node config, credentials, allocations
 // (checkpoint or ordered diffs), then replicas — terminated by a batch-end
 // marker. It returns the new sent position (unchanged when nothing was sent).
-func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, lastAlloc int64, lastNode, lastCreds, lastReplicas string, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, helloOverlay string, first bool) (deliverycore.SyncVersions, error) {
-	sent := deliverycore.SyncVersions{Cursor: lastAlloc, NodeConfig: lastNode, Credentials: lastCreds, Replicas: lastReplicas}
+func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
 		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
@@ -449,7 +465,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		Replicas:    deliverycore.HashReplicas(s.replicaAddresses),
 	}
 	currentOverlay := reconciliation.HashObservationOverlay(state.GetServices())
-	if current.Cursor < lastAlloc {
+	if current.Cursor < sent.alloc {
 		return sent, status.Error(codes.FailedPrecondition, "agent cursor is ahead of control plane; recovery required")
 	}
 	needCheckpoint := false
@@ -465,7 +481,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		// authority even when allocation content is unchanged.
 		slog.Info("authority epoch changed; sending checkpoint", "agent_id", agentID, "hello_epoch", helloEpoch, "epoch", epoch)
 		needCheckpoint = true
-	} else if first && helloOverlay != currentOverlay {
+	} else if first && sent.overlay != currentOverlay {
 		// Observation-derived fields (internal hosts, restart observations)
 		// drift without a desired_revision bump. A ready reconnect echoes the
 		// accepted observation overlay version and gets a repair checkpoint
@@ -474,14 +490,23 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		// changed services.
 		slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID)
 		needCheckpoint = true
-	} else if current.Cursor == lastAlloc {
+	} else if current.Cursor == sent.alloc {
 		if first && !deliverycore.InventoriesMatch(helloInventory, state.GetServices()) {
 			slog.Info("allocation inventory mismatch; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
+			needCheckpoint = true
+		} else if sent.overlay != currentOverlay {
+			// Observation-derived fields drift at a fixed cursor: a live
+			// health change adds or removes internal host entries without a
+			// desired_revision bump, so no diff covers it. The sent position
+			// tracks the overlay delivered on this session, and a connected
+			// agent gets a same-cursor repair checkpoint whenever live
+			// observations move the overlay past it — not only on reconnect.
+			slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
 			needCheckpoint = true
 		}
 	} else {
 		// Cursor advanced; the batch must carry allocation coverage from
-		// lastAlloc to current.Cursor. A revision that changes no allocation
+		// last delivered cursor to current.Cursor. A revision that changes no allocation
 		// content (e.g., a peer-only bump still moves desired_revision) is
 		// retained and sent as an empty no-op diff that advances the agent's
 		// accepted cursor in lockstep. Returning the advanced cursor without
@@ -489,16 +514,16 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		// its old accepted cursor and the next diff would be rejected on its
 		// base revision. Anything the retained chain cannot cover falls back
 		// to a checkpoint.
-		if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, lastAlloc); ok && target == current.Cursor && len(stored) > 0 {
+		if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, sent.alloc); ok && target == current.Cursor && len(stored) > 0 {
 			diffs = stored
 		} else {
-			slog.Info("diff history unavailable; sending checkpoint", "agent_id", agentID, "base", lastAlloc, "target", current.Cursor)
+			slog.Info("diff history unavailable; sending checkpoint", "agent_id", agentID, "base", sent.alloc, "target", current.Cursor)
 			needCheckpoint = true
 		}
 	}
-	needNode := current.NodeConfig != lastNode
-	needCreds := current.Credentials != lastCreds
-	needReplicas := current.Replicas != lastReplicas
+	needNode := current.NodeConfig != sent.nodeConfig
+	needCreds := current.Credentials != sent.credentials
+	needReplicas := current.Replicas != sent.replicas
 	needAlloc := needCheckpoint || len(diffs) > 0
 	if !needAlloc && !needNode && !needCreds && !needReplicas {
 		slog.Info("desired state unchanged", "agent_id", agentID, "cursor", current.Cursor)
@@ -574,7 +599,18 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	}); err != nil {
 		return sent, err
 	}
-	return current, nil
+	// Every stream that differed was delivered, and overlay drift is covered
+	// by the checkpoint same-cursor repair forces or by the sent diffs —
+	// whose entries carry the observed fields of every service changed since
+	// the previous recorded snapshot — so the whole current position is now
+	// accepted by the agent.
+	return syncSent{
+		alloc:       current.Cursor,
+		nodeConfig:  current.NodeConfig,
+		credentials: current.Credentials,
+		replicas:    current.Replicas,
+		overlay:     currentOverlay,
+	}, nil
 }
 
 func (s *AgentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agentv1.EnrollResponse {
