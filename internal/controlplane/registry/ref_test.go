@@ -83,3 +83,36 @@ func TestIsDigestPinned(t *testing.T) {
 		t.Fatalf("SplitPinnedReference whitespace form = %q@%q, want canonical", repo, gotDigest)
 	}
 }
+
+func TestParseReferenceRejectsInvalidRegistryHostSyntax(t *testing.T) {
+	t.Parallel()
+
+	digest := "sha256:" + strings.Repeat("a1", 32)
+	// Digest-pinned inputs skip registry I/O at resolution, so an
+	// unpullable host would only fail on the agent at deploy time unless
+	// the parser rejects it here.
+	for _, input := range []string{
+		"bad host.example/app@" + digest,
+		"example.test:99999/app@" + digest,
+		"example.test:abc/app@" + digest,
+		"example.test:/app@" + digest,
+		"example.test:5000:6000/app@" + digest,
+		"[not-an-ip]:5000/app@" + digest,
+	} {
+		if _, err := ParseReference(input); err == nil {
+			t.Fatalf("ParseReference(%q) accepted an invalid registry host", input)
+		}
+	}
+	for _, input := range []string{
+		"example.test/app@" + digest,
+		"example.test:5000/app@" + digest,
+		"[fd00::1]:5000/app@" + digest,
+		"10.0.0.1:5000/app:tag",
+		"localhost/app:tag",
+		"docker.io/library/app:tag",
+	} {
+		if _, err := ParseReference(input); err != nil {
+			t.Fatalf("ParseReference(%q) rejected a valid registry host: %v", input, err)
+		}
+	}
+}
