@@ -44,10 +44,11 @@ type DropSet struct {
 // dropWindow is one coalesced drop window: a summed count over the
 // covered time range under a stable identity.
 type dropWindow struct {
-	id    string
-	count uint64
-	start time.Time
-	end   time.Time
+	id     string
+	count  uint64
+	start  time.Time
+	end    time.Time
+	pinned bool
 }
 
 // NewSummaryID mints a stable identity for one coalesced drop
@@ -151,13 +152,16 @@ func (s *DropSet) addWindow(key DropKey, id string, count uint64, start, end tim
 	}
 	window, ok := s.drops[key]
 	if !ok {
-		window = &dropWindow{id: id, start: start, end: end}
+		window = &dropWindow{id: id, start: start, end: end, pinned: id != ""}
 		if window.id == "" {
 			window.id = NewSummaryID()
 		}
 		s.drops[key] = window
 	} else if id != "" {
+		// A restored send keeps the identity the server may already
+		// have stored. Bound must not fold that lineage away.
 		window.id = id
+		window.pinned = true
 	}
 	window.count += count
 	if start.Before(window.start) {
@@ -166,6 +170,69 @@ func (s *DropSet) addWindow(key DropKey, id string, count uint64, start, end tim
 	if end.After(window.end) {
 		window.end = end
 	}
+}
+
+// Bound caps the set at max identities. Extra identities in the same
+// service, build, stream, log type, and reason fold into the largest
+// survivor, keeping that survivor's summary ID and the total count.
+// Identities restored from an in-flight send stay put. Distinct
+// groups are not merged across tenants; a set of different groups may
+// remain above max, while allocation churn inside one group cannot.
+func (s *DropSet) Bound(max int) {
+	if s == nil || max < 1 || len(s.drops) <= max {
+		return
+	}
+	type group struct {
+		service string
+		build   string
+		stream  string
+		reason  string
+		logType platformv1.ServiceLogType
+	}
+	groups := make(map[group][]DropKey)
+	for key := range s.drops {
+		g := group{key.ServiceID, key.BuildID, key.Stream, key.Reason, key.LogType}
+		groups[g] = append(groups[g], key)
+	}
+	for _, keys := range groups {
+		if len(s.drops) <= max {
+			return
+		}
+		survivor := keys[0]
+		for _, key := range keys[1:] {
+			if preferDropSurvivor(s.drops[key], key, s.drops[survivor], survivor) {
+				survivor = key
+			}
+		}
+		dst := s.drops[survivor]
+		for _, key := range keys {
+			if key == survivor || len(s.drops) <= max {
+				continue
+			}
+			src := s.drops[key]
+			if src.pinned {
+				continue
+			}
+			dst.count += src.count
+			if src.start.Before(dst.start) {
+				dst.start = src.start
+			}
+			if src.end.After(dst.end) {
+				dst.end = src.end
+			}
+			delete(s.drops, key)
+		}
+	}
+}
+
+func preferDropSurvivor(candidate *dropWindow, candidateKey DropKey, current *dropWindow, currentKey DropKey) bool {
+	if candidate.pinned != current.pinned {
+		return candidate.pinned
+	}
+	if candidate.count != current.count {
+		return candidate.count > current.count
+	}
+	return compareDropKeys(candidateKey, currentKey) < 0
 }
 
 func compareDropKeys(a, b DropKey) int {
