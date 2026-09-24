@@ -122,11 +122,9 @@ func (a *App) Run(ctx context.Context) error {
 	// The pinned identity adopted at enrollment, empty before the first
 	// enrollment. It survives CA rotations; the bundle on disk does not.
 	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
-	if err := a.supervisor.Start(ctx, store.clusterIdentity()); err != nil {
-		_ = store.Close()
-		a.stateStore = nil
-		return fmt.Errorf("start workload supervision: %w", err)
-	}
+	// Install the log sink before supervision restores workloads:
+	// containers started from stored desired state stream output
+	// immediately, and a nil sink would discard their boot logs.
 	shipper, err := newLogShipper(a.cfg.Node.ID, logShipConfigFromAgent(a.cfg))
 	if err != nil {
 		_ = store.Close()
@@ -136,6 +134,11 @@ func (a *App) Run(ctx context.Context) error {
 	a.logShipper = shipper
 	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
 		runtimeWithLogs.SetLogSink(shipper)
+	}
+	if err := a.supervisor.Start(ctx, store.clusterIdentity()); err != nil {
+		_ = store.Close()
+		a.stateStore = nil
+		return fmt.Errorf("start workload supervision: %w", err)
 	}
 	go func() {
 		_ = shipper.Run(ctx)
