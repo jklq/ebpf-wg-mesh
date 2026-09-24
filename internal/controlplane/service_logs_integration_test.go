@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -189,6 +190,56 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	}
 	if events.GetEntries()[0].GetEvent() != "" || len(events.GetEntries()[0].GetAttributes()) != 0 {
 		t.Fatalf("agent-supplied event metadata survived scoping: %+v", events.GetEntries()[0])
+	}
+	spoofDrop := &agentv1.LogBatch{Drops: []*platformv1.LogDropSummary{{
+		AllocationId: allocA, ServiceId: svcB.ID, DroppedCount: 1,
+	}}}
+	if err := store.fleet.scopeAgentLogBatch(ctx, agentID, spoofDrop); err != nil {
+		t.Fatalf("scopeAgentLogBatch: %v", err)
+	}
+	if len(spoofDrop.GetDrops()) != 0 {
+		t.Fatal("scopeAgentLogBatch kept a drop for another service")
+	}
+	ownedDrop := &agentv1.LogBatch{Drops: []*platformv1.LogDropSummary{{
+		AllocationId: allocA, DroppedCount: 1,
+	}}}
+	if err := store.fleet.scopeAgentLogBatch(ctx, agentID, ownedDrop); err != nil {
+		t.Fatalf("scopeAgentLogBatch rejected an owned drop: %v", err)
+	}
+	if got := ownedDrop.Drops[0].GetServiceId(); got != svcA.ID {
+		t.Fatalf("drop service attribution = %q, want %q", got, svcA.ID)
+	}
+
+	base := time.Now().UTC().Add(-time.Minute).Truncate(time.Millisecond)
+	for i := 0; i < 3; i++ {
+		if err := cp.server.logStore.WriteLogLines(ctx, []logs.LogLineInput{{
+			ID: fmt.Sprintf("page-test-%d", i), ObservedAt: base.Add(time.Duration(i) * time.Second),
+			EnvironmentID: svcB.EnvironmentID, ServiceID: svcB.ID, AllocationID: allocB,
+			AgentID: agentID, Stream: "stdout", LogType: logs.LogTypeRuntime,
+			Line: fmt.Sprintf("page-test-%d", i),
+		}}); err != nil {
+			t.Fatalf("write paged log: %v", err)
+		}
+	}
+	first, err := cp.server.logStore.ListServiceLogs(ctx, &platformv1.ListServiceLogsRequest{
+		ServiceId: svcB.ID, Limit: 2, Search: "page-test-",
+	})
+	if err != nil {
+		t.Fatalf("first log page: %v", err)
+	}
+	if len(first.Lines) != 2 || first.Lines[0].Line != "page-test-2" ||
+		first.Lines[1].Line != "page-test-1" || first.NextPageToken == "" ||
+		first.Lines[0].ProjectID != projectsB[0].ID {
+		t.Fatalf("first log page did not start with attributed newest lines: %+v", first)
+	}
+	second, err := cp.server.logStore.ListServiceLogs(ctx, &platformv1.ListServiceLogsRequest{
+		ServiceId: svcB.ID, Limit: 2, Search: "page-test-", PageToken: first.NextPageToken,
+	})
+	if err != nil {
+		t.Fatalf("second log page: %v", err)
+	}
+	if len(second.Lines) != 1 || second.Lines[0].Line != "page-test-0" || second.NextPageToken != "" {
+		t.Fatalf("second log page skipped older lines: %+v", second)
 	}
 
 	for _, userID := range []string{"user-a", "user-b"} {

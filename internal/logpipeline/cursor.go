@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// EncodeCursor builds an opaque forward page token from the last
+// EncodeCursor builds an opaque page token from the last
 // returned record's ordering key: (observed_at, line_id) for lines,
 // (window_start, gap_id) for gaps.
 func EncodeCursor(observedAt time.Time, lineID string) string {

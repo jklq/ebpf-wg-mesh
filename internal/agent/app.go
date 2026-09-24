@@ -579,6 +579,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				continue
 			}
 			if ack := result.message.GetLogBatchAck(); ack != nil {
+				// Log acknowledgements have no state BatchEnd marker.
 				completeAck(ack.GetBatchId())
 				continue
 			}
