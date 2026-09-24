@@ -168,6 +168,11 @@ func (a *App) Run(ctx context.Context) error {
 	} else if reclaimed > 0 {
 		slog.Info("reclaimed stale build workspaces", "count", reclaimed)
 	}
+	if reclaimed, err := gcStaleBuildLogSpools(a.buildLogSpoolBase(), staleBuildLogSpoolMaxAge); err != nil {
+		return fmt.Errorf("collect stale build log spools: %w", err)
+	} else if reclaimed > 0 {
+		slog.Info("collected stale build log spools", "count", reclaimed)
+	}
 	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
 		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
 		if err != nil {
@@ -281,17 +286,55 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	return nil
 }
 
+func (a *App) buildLogSpoolBase() string {
+	return filepath.Join(a.cfg.WorkDir, "log-spool")
+}
+
+func (a *App) buildLogShipConfig(buildID string, leaseEpoch int64) buildLogShipConfig {
+	ship := a.cfg.Logs
+	burst := ship.Burst
+	if burst <= 0 {
+		burst = 1000
+	}
+	maxBytes := ship.SpoolMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultBuildLogSpoolMaxBytes
+	}
+	return buildLogShipConfig{
+		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID, leaseEpoch),
+		SpoolMaxBytes: maxBytes,
+		// A non-positive rate disables producer limiting; zero is a
+		// deliberate operator choice, not an unset default.
+		RatePerSec:    float64(ship.RatePerSec),
+		Burst:         burst,
+		BatchSize:     ship.FlushBatchSize,
+		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,
+	}
+}
+
 func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (string, error) {
 	archivePath, digest, err := a.downloadSourceSnapshot(ctx, job)
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(archivePath)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetLeaseEpoch())
-	defer reporter.Close()
+	reporter, err := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
+	if err != nil {
+		// Without a log pipeline the attempt's transcript would be
+		// lost, so the build must not run and complete without it.
+		return "", err
+	}
+	defer func() { _ = reporter.Close() }()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
 	if err != nil {
+		return "", err
+	}
+	// The transcript is part of the build's durable record: refuse to
+	// complete successfully with the logs undelivered — the abandoned
+	// spool is garbage-collected and the output would be lost. A
+	// failed build is retried and re-emits its output from scratch.
+	if err := reporter.Close(); err != nil {
 		return "", err
 	}
 	return result.ImageDigestRef, nil

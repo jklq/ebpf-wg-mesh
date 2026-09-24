@@ -8,12 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
-	"sync/atomic"
 	"time"
-
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 const (
@@ -21,10 +16,6 @@ const (
 	commandScannerMaxLineBytes  = 256 * 1024
 	commandFailureOutputBytes   = 256 * 1024
 	maxBuildFailureTailBytes    = 8 * 1024
-	buildLogBatchSize           = 100
-	buildLogFlushInterval       = time.Second
-	buildLogReporterBufferSize  = 1024
-	buildLogCloseFlushTimeout   = 2 * time.Second
 )
 
 type commandOutputLine struct {
@@ -196,109 +187,5 @@ func (r *truncatingLineReader) transform(src []byte) {
 		r.currentLen = 0
 		r.dropping = true
 		_ = r.pending.WriteByte('\n')
-	}
-}
-
-type buildLogReporter struct {
-	client     platformv1.BuilderServiceClient
-	builderID  string
-	buildID    string
-	leaseEpoch int64
-	sequence   atomic.Uint64
-	ch         chan commandOutputLine
-	done       chan struct{}
-	closeOnce  sync.Once
-	ctx        context.Context
-}
-
-func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID string, leaseEpoch int64) *buildLogReporter {
-	if client == nil || buildID == "" {
-		return nil
-	}
-	reporter := &buildLogReporter{
-		client:     client,
-		builderID:  builderID,
-		buildID:    buildID,
-		leaseEpoch: leaseEpoch,
-		ch:         make(chan commandOutputLine, buildLogReporterBufferSize),
-		done:       make(chan struct{}),
-		ctx:        ctx,
-	}
-	go reporter.run()
-	return reporter
-}
-
-func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
-	if r == nil {
-		return
-	}
-	select {
-	case r.ch <- line:
-	case <-ctx.Done():
-	default:
-	}
-}
-
-func (r *buildLogReporter) Close() {
-	if r == nil {
-		return
-	}
-	r.closeOnce.Do(func() {
-		close(r.ch)
-		select {
-		case <-r.done:
-		case <-time.After(buildLogCloseFlushTimeout):
-		}
-	})
-}
-
-func (r *buildLogReporter) run() {
-	defer close(r.done)
-
-	ticker := time.NewTicker(buildLogFlushInterval)
-	defer ticker.Stop()
-
-	batch := make([]*platformv1.BuildLogLine, 0, buildLogBatchSize)
-	flush := func(ctx context.Context) {
-		if len(batch) == 0 {
-			return
-		}
-		req := &platformv1.ReportBuildLogsRequest{
-			BuilderId:  r.builderID,
-			BuildId:    r.buildID,
-			Lines:      batch,
-			LeaseEpoch: r.leaseEpoch,
-		}
-		if _, err := r.client.ReportBuildLogs(ctx, req); err != nil {
-			slog.WarnContext(ctx, "report build logs", "builder_id", r.builderID, "build_id", r.buildID, "line_count", len(batch), "error", err)
-		}
-		batch = batch[:0]
-	}
-
-	for {
-		select {
-		case line, ok := <-r.ch:
-			if !ok {
-				flushCtx, cancel := context.WithTimeout(context.Background(), buildLogCloseFlushTimeout)
-				flush(flushCtx)
-				cancel()
-				return
-			}
-			observedAt := line.ObservedAt.UTC()
-			if observedAt.IsZero() {
-				observedAt = time.Now().UTC()
-			}
-			batch = append(batch, &platformv1.BuildLogLine{
-				ObservedAt: timestamppb.New(observedAt),
-				Stream:     line.Stream,
-				Sequence:   r.sequence.Add(1),
-				Line:       line.Line,
-			})
-			if len(batch) >= buildLogBatchSize {
-				flush(r.ctx)
-			}
-		case <-ticker.C:
-			flush(r.ctx)
-		}
 	}
 }
