@@ -25,23 +25,23 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				healthy = true
 			}
 			return deliverycore.ServiceRecord{
-					ID:               serviceID,
-					ProjectID:        "project-1",
-					AllocatedAgentID: "node-1",
-					CreatedAt:        now.Add(-10 * time.Minute),
-					Spec:             directImageServiceSpec("nginx:1.27", nil),
-					LatestBuild: &platformv1.BuildStatus{
-						BuildId: "build-1",
-					},
-				}, []deliverycore.AllocationRecord{{
-					ID:                       "alloc-status",
-					ServiceID:                serviceID,
-					AgentID:                  "node-1",
-					DesiredRolloutGeneration: 2,
-					AppliedRolloutGeneration: applied,
-					Healthy:                  healthy,
-					UpdatedAt:                now,
-				}}, nil
+				ID:               serviceID,
+				ProjectID:        "project-1",
+				AllocatedAgentID: "node-1",
+				CreatedAt:        now.Add(-10 * time.Minute),
+				Spec:             directImageServiceSpec("nginx:1.27", nil),
+				LatestBuild: &platformv1.BuildStatus{
+					BuildId: "build-1",
+				},
+			}, []deliverycore.AllocationRecord{{
+				ID:                       "alloc-status",
+				ServiceID:                serviceID,
+				AgentID:                  "node-1",
+				DesiredRolloutGeneration: 2,
+				AppliedRolloutGeneration: applied,
+				Healthy:                  healthy,
+				UpdatedAt:                now,
+			}}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 
