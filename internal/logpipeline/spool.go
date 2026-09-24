@@ -112,6 +112,7 @@ type Spool struct {
 	bytes          int64
 	evicted        map[string]uint64
 	corruptDrops   map[string]uint64
+	corruptIDs     map[string]string
 	droppedRecords uint64
 	droppedBytes   uint64
 	corrupt        uint64
@@ -161,6 +162,7 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		retention:    cfg.Retention,
 		evicted:      make(map[string]uint64),
 		corruptDrops: make(map[string]uint64),
+		corruptIDs:   make(map[string]string),
 		inflight:     make(map[uint64]struct{}),
 	}
 	// Load before recovery: recovery may record its own corruption
@@ -332,7 +334,11 @@ func (s *Spool) replaceSegment(path string, data []byte) error {
 func (s *Spool) recordCorruptLocked(raw []byte, off int64) {
 	s.corrupt++
 	s.droppedRecords++
-	s.corruptDrops[bestEffortRecordKey(raw, off)]++
+	key := bestEffortRecordKey(raw, off)
+	if s.corruptDrops[key] == 0 {
+		s.corruptIDs[key] = SyntheticLineID()
+	}
+	s.corruptDrops[key]++
 	if err := s.persistDropsLocked(); err != nil {
 		slog.Warn("persist log spool drop counts", "error", err)
 	}
@@ -692,6 +698,7 @@ func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 	if len(s.corruptDrops) > 0 {
 		corrupt = s.corruptDrops
 		s.corruptDrops = make(map[string]uint64)
+		s.corruptIDs = make(map[string]string)
 	}
 	if evicted != nil || corrupt != nil {
 		// The caller now owns these counts (its pending drop
@@ -702,6 +709,61 @@ func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 		}
 	}
 	return evicted, corrupt
+}
+
+// CorruptDrop is a pending loss and its stable gap identity. The ID
+// stays the same through retries and restarts until the loss is
+// acknowledged; later losses under the same key get a new ID.
+type CorruptDrop struct {
+	Count uint64
+	ID    string
+}
+
+// PendingCorruptDrops snapshots corruption losses without clearing
+// their durable copy. A sink acknowledges this snapshot only after
+// writing the corresponding gaps.
+func (s *Spool) PendingCorruptDrops() map[string]CorruptDrop {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make(map[string]CorruptDrop, len(s.corruptDrops))
+	for key, count := range s.corruptDrops {
+		out[key] = CorruptDrop{Count: count, ID: s.corruptIDs[key]}
+	}
+	return out
+}
+
+// AcknowledgeCorruptDrops removes a written snapshot from durable
+// loss accounting. New counts added after the snapshot remain pending.
+func (s *Spool) AcknowledgeCorruptDrops(snapshot map[string]CorruptDrop) error {
+	if len(snapshot) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, drop := range snapshot {
+		if s.corruptIDs[key] != drop.ID || s.corruptDrops[key] < drop.Count {
+			return fmt.Errorf("stale corrupt drop acknowledgement for %q", key)
+		}
+	}
+	for key, drop := range snapshot {
+		s.corruptDrops[key] -= drop.Count
+		if s.corruptDrops[key] == 0 {
+			delete(s.corruptDrops, key)
+			delete(s.corruptIDs, key)
+		} else {
+			// Counts recorded during the sink write start a new gap
+			// lineage; they must not replace the acknowledged row.
+			s.corruptIDs[key] = SyntheticLineID()
+		}
+	}
+	if err := s.persistDropsLocked(); err != nil {
+		for key, drop := range snapshot {
+			s.corruptDrops[key] += drop.Count
+			s.corruptIDs[key] = drop.ID
+		}
+		return err
+	}
+	return nil
 }
 
 // Close flushes and closes the spool.
@@ -765,8 +827,9 @@ func (s *Spool) fullyShippedLocked(seg segmentInfo) bool {
 }
 
 type spoolDropsJSON struct {
-	Evicted map[string]uint64 `json:"evicted"`
-	Corrupt map[string]uint64 `json:"corrupt"`
+	Evicted    map[string]uint64 `json:"evicted"`
+	Corrupt    map[string]uint64 `json:"corrupt"`
+	CorruptIDs map[string]string `json:"corrupt_ids"`
 }
 
 // dropsPath holds the durable copy of eviction and corruption drop
@@ -779,7 +842,7 @@ func (s *Spool) dropsPath() string {
 // persistDropsLocked durably records the drop counts before their
 // records are deleted, so a crash can never erase a counted loss.
 func (s *Spool) persistDropsLocked() error {
-	raw, err := json.Marshal(spoolDropsJSON{Evicted: s.evicted, Corrupt: s.corruptDrops})
+	raw, err := json.Marshal(spoolDropsJSON{Evicted: s.evicted, Corrupt: s.corruptDrops, CorruptIDs: s.corruptIDs})
 	if err != nil {
 		return fmt.Errorf("encode spool drops: %w", err)
 	}
@@ -824,8 +887,19 @@ func (s *Spool) loadDrops() {
 	for key, count := range drops.Evicted {
 		s.evicted[key] += count
 	}
+	assignedID := false
 	for key, count := range drops.Corrupt {
 		s.corruptDrops[key] += count
+		s.corruptIDs[key] = drops.CorruptIDs[key]
+		if s.corruptIDs[key] == "" {
+			s.corruptIDs[key] = SyntheticLineID()
+			assignedID = true
+		}
+	}
+	if assignedID {
+		if err := s.persistDropsLocked(); err != nil {
+			slog.Warn("persist recovered corrupt drop identities", "error", err)
+		}
 	}
 }
 
