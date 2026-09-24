@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -49,6 +50,7 @@ type Server struct {
 	delivery        *deliverycore.Delivery
 	logStore        *logs.LogStore
 	logEmitter      *logs.LogEmitter
+	logIngester     *logs.AsyncIngester
 	notifier        *Notifier
 	authority       *identity.TLSAuthority
 	internalGRPC    *grpc.Server
@@ -161,8 +163,27 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
-	logStore.SetProjectResolver(store.catalog.resolveLogRetention)
-	logEmitter := logs.NewLogEmitter(logStore)
+	if logStore != nil {
+		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
+	}
+	// Each replica journals into its own directory: replicas share the
+	// state volume but never the spool files, so failover can never
+	// race two drainers over one journal. The replica identity is its
+	// advertise address (the field that already separates replicas).
+	replicaID := strings.NewReplacer(":", "_", "/", "_").Replace(cfg.AdvertiseAddr)
+	if replicaID == "" {
+		replicaID = "default"
+	}
+	logIngester, err := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
+		SpoolDir:   filepath.Join(cfg.StateDir, "log-ingest", replicaID),
+		QueueBytes: int64(cfg.Logs.IngestQueueBytes),
+		RatePerSec: float64(cfg.Logs.IngestRatePerSec),
+		Burst:      cfg.Logs.IngestBurst,
+	})
+	if err != nil {
+		return nil, err
+	}
+	logEmitter := logs.NewLogEmitter(logStore, logIngester)
 	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)
 	staticRoutes := make([]xds.StaticRoute, 0, len(cfg.Ingress.StaticRoutes))
@@ -237,6 +258,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		WithAgentRegistry(policy),
 		WithReplicaAddresses(cfg.ReplicaAddresses),
 		WithLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
+		WithLogIngester(logIngester),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, policy, policy, WithBuilderLogEmitter(logEmitter))
@@ -285,6 +307,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		delivery:        delivery,
 		logStore:        logStore,
 		logEmitter:      logEmitter,
+		logIngester:     logIngester,
 		notifier:        notifier,
 		authority:       authority,
 		internalGRPC:    internal,
@@ -402,6 +425,20 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Follow(runCtx) }()
 	}
+	// Per-replica as well: every replica ingests the agent streams it
+	// terminates. Its Run drains accepted batches before returning,
+	// and Run waits for that drain below: Close tears down the log
+	// store as soon as runDone closes.
+	var logIngestDone chan error
+	if s.logIngester != nil {
+		done := make(chan error, 1)
+		logIngestDone = done
+		go func() {
+			err := s.logIngester.Run(runCtx)
+			errCh <- err
+			done <- err
+		}()
+	}
 	leaseDone := make(chan error, 1)
 	go func() {
 		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
@@ -423,6 +460,14 @@ func (s *Server) Run(ctx context.Context) error {
 	leaseErr := <-leaseDone
 	if result == nil {
 		result = leaseErr
+	}
+	// The shutdown drain flushes accepted log batches into the log
+	// store; Close closes that store right after runDone, so Run must
+	// not return until the drain finished.
+	if logIngestDone != nil {
+		if err := <-logIngestDone; result == nil {
+			result = err
+		}
 	}
 	return result
 }
@@ -513,7 +558,9 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 
 func (s *Server) deletionGC(ctx context.Context) error {
 	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
-	gc.SetLogPurgeHook(s.logStore.PurgeProjectLogs)
+	if s.logStore != nil {
+		gc.SetLogPurgeHook(s.logStore.PurgeProjectLogs)
+	}
 	return gc.Run(ctx)
 }
 
@@ -584,6 +631,14 @@ func (s *Server) Close() error {
 	if runCancel != nil {
 		runCancel()
 	}
+	if s.internalGRPC != nil {
+		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP.
+		// Stop the gRPC server before the shutdown waits below for two
+		// reasons: active Sync streams are torn down so the log ingest
+		// drain is not racing new batch admissions, and the later HTTP
+		// Shutdown does not wait the full deadline for streams to go idle.
+		s.internalGRPC.Stop()
+	}
 	if runStarted {
 		<-runDone
 	}
@@ -594,12 +649,6 @@ func (s *Server) Close() error {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errs = append(errs, err)
 		}
-	}
-	if s.internalGRPC != nil {
-		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP.
-		// Stop the gRPC server first so active Sync streams are torn down;
-		// otherwise HTTP Shutdown waits the full deadline for them to go idle.
-		s.internalGRPC.Stop()
 	}
 	if s.internalHTTP != nil {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
