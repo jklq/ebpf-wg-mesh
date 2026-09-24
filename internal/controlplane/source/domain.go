@@ -157,6 +157,12 @@ type Service struct {
 // it must never supersede queued newer work or regress the rollout. Moving
 // backward on purpose is the rollback and exact-redeploy actions' job.
 type BuildTransition struct {
+	// History marks a known-stale observation that is recorded for
+	// history only. It can never prove currency and never establishes or
+	// advances the head — even when no head exists yet — so a late,
+	// out-of-order, or already-superseded event cannot become the head a
+	// later current push must chain against.
+	History        bool
 	PreviousCommit string
 	// TrackedHead marks a tracked-head sync: the caller fetched the ref
 	// head just now. FetchedFromHead is the proven head it observed before
@@ -177,6 +183,9 @@ type BuildTransition struct {
 // arrival order is not push order, and a delayed observation of an unseen
 // older commit must not become the head.
 func (t BuildTransition) ProvesCurrent(revisionCommit, headCommit string) bool {
+	if t.History {
+		return false
+	}
 	if headCommit == "" || headCommit == revisionCommit {
 		return true
 	}

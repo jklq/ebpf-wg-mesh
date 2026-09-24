@@ -313,10 +313,12 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 				transition = BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom}
 			} else {
 				// The ref moved past this delivery before it was applied:
-				// record it as history only and let the push that moved the
-				// head carry the work.
+				// record it as history only — never as a head, even when the
+				// binding has none yet — and let the push that moved the head
+				// carry the work.
 				slog.InfoContext(ctx, "github recreated-ref push superseded by newer tracked head; recording only", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "tracked_head", head)
 				stalePush = true
+				transition = BuildTransition{History: true}
 			}
 		}
 		if time.Now().UTC().After(binding.FreshUntil) {

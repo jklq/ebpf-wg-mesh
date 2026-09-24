@@ -64,6 +64,8 @@ func TestBuildTransitionProvesCurrent(t *testing.T) {
 		{name: "fetch over the current head", transition: BuildTransition{TrackedHead: true, FetchedFromHead: "h"}, revision: "c", head: "h", want: true},
 		{name: "delayed fetch over a head a push replaced", transition: BuildTransition{TrackedHead: true, FetchedFromHead: "x"}, revision: "c", head: "h", want: false},
 		{name: "delayed fetch from before any head", transition: BuildTransition{TrackedHead: true}, revision: "c", head: "h", want: false},
+		{name: "history never proves", transition: BuildTransition{History: true, PreviousCommit: "h"}, revision: "c", head: "h", want: false},
+		{name: "history never establishes an empty head", transition: BuildTransition{History: true}, revision: "c", head: "", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
