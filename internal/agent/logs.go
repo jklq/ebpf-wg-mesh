@@ -31,9 +31,10 @@ type containerLogWriter struct {
 	nextSequence      func() uint64
 	sink              func() LogSink
 
-	mu        sync.Mutex
-	buf       []byte
-	truncated bool
+	mu         sync.Mutex
+	buf        []byte
+	truncated  bool
+	discarding bool
 }
 
 func (w *containerLogWriter) Write(p []byte) (int, error) {
@@ -43,11 +44,23 @@ func (w *containerLogWriter) Write(p []byte) (int, error) {
 	for len(p) > 0 {
 		idx := bytes.IndexByte(p, '\n')
 		if idx < 0 {
-			w.appendLocked(p)
+			if !w.discarding {
+				w.appendLocked(p)
+				if len(w.buf) == logpipeline.MaxLogLineBytes {
+					// A stream may never send a newline. Ship the capped
+					// prefix now and discard the rest of this line.
+					w.truncated = true
+					w.emitLocked()
+					w.discarding = true
+				}
+			}
 			break
 		}
-		w.appendLocked(p[:idx])
-		w.emitLocked()
+		if !w.discarding {
+			w.appendLocked(p[:idx])
+			w.emitLocked()
+		}
+		w.discarding = false
 		p = p[idx+1:]
 	}
 	return written, nil
