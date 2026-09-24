@@ -23,7 +23,7 @@ func stubLookup(t *testing.T, ip string) {
 }
 
 func TestTokenRealmURLConfinesRealmToRegistrySite(t *testing.T) {
-	stubLookup(t, "203.0.113.10")
+	stubLookup(t, "93.184.216.34")
 	ctx := context.Background()
 	for _, tc := range []struct {
 		name         string
@@ -44,6 +44,8 @@ func TestTokenRealmURLConfinesRealmToRegistrySite(t *testing.T) {
 		{name: "metadata ip literal", realm: "https://169.254.169.254/token", registryHost: "ghcr.io", wantErr: true},
 		{name: "loopback ip literal", realm: "https://127.0.0.1/token", registryHost: "ghcr.io", wantErr: true},
 		{name: "private ip literal", realm: "https://10.1.2.3/token", registryHost: "ghcr.io", wantErr: true},
+		{name: "shared CGNAT ip literal", realm: "https://100.64.0.1/token", registryHost: "ghcr.io", wantErr: true},
+		{name: "documentation ip literal", realm: "https://203.0.113.5/token", registryHost: "ghcr.io", wantErr: true},
 		{name: "localhost name", realm: "https://localhost/token", registryHost: "ghcr.io", wantErr: true},
 		{name: "credentialed realm", realm: "https://user:pass@ghcr.io/token", registryHost: "ghcr.io", wantErr: true},
 		{name: "relative realm", realm: "/token", registryHost: "ghcr.io", wantErr: true},
@@ -92,13 +94,54 @@ func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 	if !realm.trustedAuthority {
 		t.Fatal("allowlisted private sibling realm is not marked trusted for dialing")
 	}
-	stubLookup(t, "203.0.113.10")
+	stubLookup(t, "93.184.216.34")
 	untrusted, err := tokenRealmURL(ctx, "https://auth.ghcr.io/token", "ghcr.io", nil)
 	if err != nil {
 		t.Fatalf("tokenRealmURL rejected public sibling realm: %v", err)
 	}
 	if untrusted.trustedAuthority {
 		t.Fatal("realm of an unlisted registry must not be trusted for dialing")
+	}
+}
+
+// TestProhibitedIPRejectsNonPublicSpecialPurposeRanges is the shared-IP
+// regression: Go's IsPrivate misses RFC 6598 shared address space, which
+// routes inside provider networks like private space. Every
+// non-public special-purpose range must be prohibited for unallowlisted
+// registries; genuinely public unicast stays reachable.
+func TestProhibitedIPRejectsNonPublicSpecialPurposeRanges(t *testing.T) {
+	for _, tc := range []struct {
+		ip         string
+		prohibited bool
+	}{
+		{ip: "93.184.216.34", prohibited: false},
+		{ip: "8.8.8.8", prohibited: false},
+		{ip: "2606:2800:220:1:248:1893:25c8:1946", prohibited: false},
+		{ip: "10.1.2.3", prohibited: true},
+		{ip: "::ffff:10.1.2.3", prohibited: true},
+		{ip: "fd00::1", prohibited: true},
+		{ip: "127.0.0.1", prohibited: true},
+		{ip: "169.254.169.254", prohibited: true},
+		{ip: "100.64.0.1", prohibited: true},
+		{ip: "100.127.255.255", prohibited: true},
+		{ip: "::ffff:100.64.0.1", prohibited: true},
+		{ip: "0.1.2.3", prohibited: true},
+		{ip: "192.0.0.9", prohibited: true},
+		{ip: "192.0.2.1", prohibited: true},
+		{ip: "198.51.100.1", prohibited: true},
+		{ip: "203.0.113.1", prohibited: true},
+		{ip: "198.18.0.1", prohibited: true},
+		{ip: "240.0.0.1", prohibited: true},
+		{ip: "255.255.255.255", prohibited: true},
+		{ip: "100::1", prohibited: true},
+		{ip: "2001:2::1", prohibited: true},
+		{ip: "2001:db8::1", prohibited: true},
+	} {
+		t.Run(tc.ip, func(t *testing.T) {
+			if got := prohibitedIP(net.ParseIP(tc.ip)); got != tc.prohibited {
+				t.Fatalf("prohibitedIP(%s) = %v, want %v", tc.ip, got, tc.prohibited)
+			}
+		})
 	}
 }
 

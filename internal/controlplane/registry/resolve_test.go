@@ -187,11 +187,13 @@ func TestHTTPResolverRefusesProhibitedRegistryDestination(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	for name, host := range map[string]string{
-		"loopback literal":  strings.TrimPrefix(server.URL, "http://"),
-		"metadata literal":  "169.254.169.254",
-		"private literal":   "10.1.2.3:5000",
-		"localhost name":    "localhost:5000",
-		"private resolving": "registry.internal.test",
+		"loopback literal":      strings.TrimPrefix(server.URL, "http://"),
+		"metadata literal":      "169.254.169.254",
+		"private literal":       "10.1.2.3:5000",
+		"shared CGNAT literal":  "100.64.0.1:5000",
+		"documentation literal": "203.0.113.5:5000",
+		"localhost name":        "localhost:5000",
+		"private resolving":     "registry.internal.test",
 	} {
 		t.Run(name, func(t *testing.T) {
 			stubLookup(t, "10.9.8.7")
@@ -234,7 +236,7 @@ func TestHTTPResolverRefusesRebindingBetweenCheckAndDial(t *testing.T) {
 	lookupIPAddr = func(context.Context, string) ([]net.IPAddr, error) {
 		lookups++
 		if lookups == 1 {
-			return []net.IPAddr{{IP: net.ParseIP("203.0.113.10")}}, nil
+			return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
 		}
 		return []net.IPAddr{{IP: net.ParseIP("127.0.0.1")}}, nil
 	}
@@ -302,7 +304,7 @@ func TestHTTPResolverNeverProxiesRegistryTraffic(t *testing.T) {
 	// public answer, which the fake dial maps onto the local proxy. If
 	// the transport proxies, the request reaches it and comes back with
 	// the proxied digest; the guard must keep it out entirely.
-	stubLookup(t, "203.0.113.9")
+	stubLookup(t, "93.184.216.34")
 	_, proxyPort, err := net.SplitHostPort(strings.TrimPrefix(proxy.URL, "http://"))
 	if err != nil {
 		t.Fatal(err)
@@ -310,8 +312,8 @@ func TestHTTPResolverNeverProxiesRegistryTraffic(t *testing.T) {
 	client := &http.Client{Transport: &http.Transport{
 		Proxy: http.ProxyURL(&url.URL{Scheme: "http", Host: "proxy.example.test:" + proxyPort}),
 		DialContext: fakeHostDial(map[string]string{
-			registryHost:               strings.TrimPrefix(registry.URL, "http://"),
-			"203.0.113.9:" + proxyPort: strings.TrimPrefix(proxy.URL, "http://"),
+			registryHost:                 strings.TrimPrefix(registry.URL, "http://"),
+			"93.184.216.34:" + proxyPort: strings.TrimPrefix(proxy.URL, "http://"),
 		}),
 	}}
 	resolver := NewHTTPResolver(client, []string{registryHost})
