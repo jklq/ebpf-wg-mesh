@@ -114,6 +114,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			changed = true
 			completed.State = targetState
 			completed.FailureReason = reason
+			completed.FinishedAt = sql.NullTime{Time: now, Valid: true}
 			return nil
 		}
 		now := time.Now().UTC()
@@ -153,6 +154,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		completed.State = stateValue
 		completed.ImageDigest = imageDigest
 		completed.FailureReason = failureReason
+		completed.FinishedAt = sql.NullTime{Time: now, Valid: true}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE builder_workers
 			    SET current_build_id = '',
