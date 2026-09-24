@@ -16,13 +16,31 @@ import (
 )
 
 const (
-	defaultShipBatchSize     = 100
+	defaultShipBatchSize     = 256
 	defaultShipFlushInterval = time.Second
 	defaultShipReplayWindow  = 5 * time.Minute
 	// pendingDropsFile durably holds unreported drop summaries next
 	// to the spool so drop accounting survives a restart.
 	pendingDropsFile = "pending-drops.json"
 )
+
+// shipAdmitRate caps the producer's admission rate at the shipper's
+// drain rate (batch per flush interval). Sustained input above what
+// the spool can ship would evict lines even with a healthy backend,
+// so the allowed input rate may never exceed what one tick drains.
+// Non-positive rates disable limiting and return 0.
+func shipAdmitRate(ratePerSec float64, batch int, interval time.Duration) float64 {
+	if ratePerSec <= 0 {
+		return 0
+	}
+	drain := float64(batch) / interval.Seconds()
+	if ratePerSec > drain {
+		slog.Warn("lowering producer log rate to the shipper drain rate",
+			"requested_per_sec", ratePerSec, "drain_per_sec", drain)
+		return drain
+	}
+	return ratePerSec
+}
 
 // logShipConfig bounds one agent log shipper. Zero values select
 // defaults, except RatePerSec: a non-positive rate disables
@@ -127,7 +145,7 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 		agentID:       agentID,
 		spoolDir:      cfg.SpoolDir,
 		spool:         spool,
-		limiter:       logpipeline.NewLimiter(cfg.RatePerSec, cfg.Burst),
+		limiter:       logpipeline.NewLimiter(shipAdmitRate(cfg.RatePerSec, cfg.BatchSize, cfg.FlushInterval), cfg.Burst),
 		batchSize:     cfg.BatchSize,
 		flushInterval: cfg.FlushInterval,
 		replayWindow:  cfg.ReplayWindow,

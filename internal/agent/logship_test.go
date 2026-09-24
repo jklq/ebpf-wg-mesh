@@ -705,3 +705,25 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 		t.Fatalf("sent summaries re-sent: %d batches after reflush", len(sender.batches))
 	}
 }
+
+func TestShipAdmitRateNeverExceedsDrain(t *testing.T) {
+	t.Parallel()
+	// The default shipper must drain at least its allowed input
+	// rate, or sustained permitted traffic evicts lines even with a
+	// healthy backend.
+	drain := float64(defaultShipBatchSize) / defaultShipFlushInterval.Seconds()
+	if drain < 200 {
+		t.Fatalf("default drain %.0f/s is below the 200/s default admit rate", drain)
+	}
+	// A configured rate past what one tick drains clamps down to
+	// the drain rate; non-positive stays unlimited (0).
+	if got := shipAdmitRate(5000, 100, time.Second); got != 100 {
+		t.Fatalf("admit %.0f, want the 100/s drain rate", got)
+	}
+	if got := shipAdmitRate(50, 100, time.Second); got != 50 {
+		t.Fatalf("admit %.0f, want 50", got)
+	}
+	if got := shipAdmitRate(0, 100, time.Second); got != 0 {
+		t.Fatalf("admit %.0f, want 0 (unlimited)", got)
+	}
+}
