@@ -76,9 +76,15 @@ type buildLogReporter struct {
 	orphaned  atomic.Bool
 	abandoned atomic.Bool
 
-	mu       sync.Mutex
-	pending  *logpipeline.DropSet
-	overflow map[string]uint64
+	mu sync.Mutex
+	// lineQueue feeds the spool writer goroutine: build output
+	// readers never block on disk syncs.
+	lineQueue   chan queuedBuildLine
+	linesStop   chan struct{}
+	writerDone  chan struct{}
+	linesClosed bool
+	pending     *logpipeline.DropSet
+	overflow    map[string]uint64
 }
 
 func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID, serviceID string, leaseEpoch int64, cfg buildLogShipConfig) (*buildLogReporter, error) {
@@ -126,7 +132,11 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		done:          make(chan struct{}),
 		pending:       logpipeline.NewDropSet(),
 		overflow:      make(map[string]uint64),
+		lineQueue:     make(chan queuedBuildLine, buildLineQueueCap),
+		linesStop:     make(chan struct{}),
+		writerDone:    make(chan struct{}),
 	}
+	go reporter.writeLoop()
 	// Drop summaries of dead attempts of this build are taken over
 	// first and snapshotted before their files go away: a retried
 	// attempt re-emits its output from scratch but can never
@@ -236,10 +246,66 @@ func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 		r.countOverflow(line.Stream, 1)
 		return
 	}
-	if err := r.spool.Append(line.Stream, "", observedAt, payload); err != nil {
+	if err := r.enqueueLine(line.Stream, observedAt, payload); err != nil {
 		slog.Warn("spool build log line", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
 		r.countOverflow(line.Stream, 1)
 		return
+	}
+}
+
+// buildLineQueueCap bounds the lines waiting for the spool writer.
+const buildLineQueueCap = 1024
+
+type queuedBuildLine struct {
+	stream     string
+	observedAt time.Time
+	payload    []byte
+}
+
+// enqueueLine hands one marshaled line to the spool writer without
+// touching the disk on the caller's goroutine: Report runs on the
+// build's output reader, and a blocking per-line sync there would
+// fill the child process's pipe and stall execution. A full queue
+// drops the line into the overflow accounting instead of blocking.
+func (r *buildLogReporter) enqueueLine(stream string, observedAt time.Time, payload []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.linesClosed {
+		return fmt.Errorf("reporter closed")
+	}
+	select {
+	case r.lineQueue <- queuedBuildLine{stream: stream, observedAt: observedAt, payload: payload}:
+		return nil
+	default:
+		return fmt.Errorf("build line queue full")
+	}
+}
+
+// writeLoop spools queued lines on its own goroutine, so the syncs
+// per append cost the build's output readers nothing.
+func (r *buildLogReporter) writeLoop() {
+	defer close(r.writerDone)
+	for {
+		select {
+		case queued := <-r.lineQueue:
+			r.appendQueued(queued)
+		case <-r.linesStop:
+			for {
+				select {
+				case queued := <-r.lineQueue:
+					r.appendQueued(queued)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (r *buildLogReporter) appendQueued(queued queuedBuildLine) {
+	if err := r.spool.Append(queued.stream, "", queued.observedAt, queued.payload); err != nil {
+		slog.Warn("spool build log line", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+		r.countOverflow(queued.stream, 1)
 	}
 }
 
@@ -267,6 +333,13 @@ func (r *buildLogReporter) Close() error {
 		return nil
 	}
 	r.closeOnce.Do(func() {
+		// Land every queued line in the spool before the ship loop
+		// stops, so the final flush carries the whole transcript.
+		r.mu.Lock()
+		r.linesClosed = true
+		r.mu.Unlock()
+		close(r.linesStop)
+		<-r.writerDone
 		close(r.stop)
 		select {
 		case <-r.done:

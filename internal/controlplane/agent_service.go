@@ -424,7 +424,6 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
-
 // sendLocked serializes stream writes with the log-batch
 // acknowledgements sent from the message handler.
 func sendLocked(mu *sync.Mutex, stream agentv1.AgentControl_SyncServer, msg *agentv1.AgentServerMessage) error {
