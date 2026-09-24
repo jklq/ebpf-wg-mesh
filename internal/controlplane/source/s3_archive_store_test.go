@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +13,21 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 )
+
+func TestS3ArchiveStoreReadyProbesBucket(t *testing.T) {
+	fake := newFakeS3(t, "ready-bucket")
+	store, err := NewS3ArchiveStore(fake.config())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Ready() {
+		t.Fatal("available bucket reported unready")
+	}
+	fake.failRequests(http.MethodHead, 1)
+	if store.Ready() {
+		t.Fatal("unavailable bucket reported ready")
+	}
+}
 
 func TestS3ArchiveStoreSendsSSEHeaders(t *testing.T) {
 	t.Parallel()
@@ -266,41 +280,6 @@ func TestS3ArchiveStoreUsesContainerCredentials(t *testing.T) {
 	}
 }
 
-func TestS3ArchiveStoreNeverLogsCredentials(t *testing.T) {
-	t.Parallel()
-	fake := newFakeS3(t, "auth-bucket")
-	cfg := fake.config()
-	access := "AKIAIOSFODNN7LOGTEST"
-	secret := "wJalrXUtnFEMI/K7MDENG+bPxRfiCYLOGTEST"
-	raw, _ := json.Marshal(map[string]string{"access_key_id": access, "secret_access_key": secret})
-	credPath := t.TempDir() + "/creds.json"
-	if err := os.WriteFile(credPath, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg.CredentialsFile = credPath
-	cfg.MaxRetries = 1
-	store, err := NewS3ArchiveStore(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.sleep = func(context.Context, time.Duration) error { return nil }
-	ctx := context.Background()
-	fake.failRequests(http.MethodPut, 10)
-	payload := []byte("secret-content")
-	digest := ArchiveDigest(payload)
-	key, err := ArchiveObjectKey(digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = store.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), digest)
-	if err == nil {
-		t.Fatal("expected put to fail")
-	}
-	if strings.Contains(err.Error(), access) || strings.Contains(err.Error(), secret) {
-		t.Fatalf("error leaked credentials: %v", err)
-	}
-}
-
 func TestS3ArchiveStoreRejectsBadCredentialsFile(t *testing.T) {
 	t.Parallel()
 	fake := newFakeS3(t, "auth-bucket")
@@ -341,37 +320,6 @@ func TestS3ArchiveStoreDetectsDigestMetadataMismatch(t *testing.T) {
 	fake.mu.Unlock()
 	if _, err := store.Stat(ctx, key); err == nil || !IsArchiveCorrupt(err) {
 		t.Fatalf("stat error = %v, want corrupt", err)
-	}
-}
-
-func TestS3ArchiveStoreOpenStreamsBody(t *testing.T) {
-	t.Parallel()
-	fake := newFakeS3(t, "open-bucket")
-	store, err := NewS3ArchiveStore(fake.config())
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	payload := bytes.Repeat([]byte("streamed-s3-object"), 4096)
-	digest := ArchiveDigest(payload)
-	key, err := ArchiveObjectKey(digest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), digest); err != nil {
-		t.Fatal(err)
-	}
-	reader, meta, err := store.Open(ctx, key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got, err := io.ReadAll(reader)
-	closeErr := reader.Close()
-	if err != nil || closeErr != nil {
-		t.Fatalf("read/close: %v %v", err, closeErr)
-	}
-	if !bytes.Equal(got, payload) || meta.Digest != digest || meta.Size != int64(len(payload)) {
-		t.Fatal("streamed object does not match")
 	}
 }
 

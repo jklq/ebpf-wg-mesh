@@ -230,7 +230,16 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	cancelledByControlPlane := make(chan struct{}, 1)
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(time.Duration(a.cfg.HeartbeatIntervalSeconds) * time.Second)
+		interval := time.Duration(a.cfg.HeartbeatIntervalSeconds) * time.Second
+		if expiry := job.GetLeaseExpiresAt(); expiry != nil {
+			untilExpiry := time.Until(expiry.AsTime())
+			if untilExpiry <= 0 {
+				interval = min(interval, time.Second)
+			} else if untilExpiry < interval*3 {
+				interval = max(untilExpiry/3, 100*time.Millisecond)
+			}
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -364,14 +373,9 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 
 func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob, archivePath, digest string, reporter *buildLogReporter) ExecutionSpec {
 	return ExecutionSpec{
-		BuildID:       job.GetBuildId(),
-		ServiceID:     job.GetServiceId(),
-		ProjectID:     job.GetProjectId(),
-		EnvironmentID: job.GetEnvironmentId(),
-		CommitSHA:     job.GetCommitSha(),
+		BuildID: job.GetBuildId(),
 
 		SnapshotArchivePath: archivePath,
-		SnapshotID:          job.GetSource().GetSourceSnapshotId(),
 		SnapshotDigest:      digest,
 
 		Recipe: job.GetSource().GetBuildRecipe(),

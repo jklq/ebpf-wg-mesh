@@ -11,6 +11,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -330,7 +331,10 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 			return err
 		}
 		hasBindings = bindings
-		now := time.Now().UTC()
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		tombstoned, err := s.tombstoneServiceTx(ctx, tx, scope.ID(), scope.UserID(), now)
 		if err != nil {
 			return err
@@ -405,7 +409,7 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 			    SET deleted_at = NULL,
 			        deleted_by_user_id = '',
 			        delete_expires_at = NULL
-			  WHERE id = $1 AND deleted_at IS NOT NULL`,
+			  WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at > statement_timestamp()`,
 			scope.ID(),
 		)
 		if err != nil {
@@ -416,8 +420,7 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 			return err
 		}
 		if affected == 0 {
-			rec, err = s.serviceByIDQuerier(ctx, tx, scope)
-			return err
+			return ErrDeletionExpired
 		}
 		// Normally a no-op: delete dropped the assignments. Re-assert the
 		// empty set so a restore never resurrects stale placements.

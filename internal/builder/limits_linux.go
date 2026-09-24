@@ -19,7 +19,6 @@ import (
 // limit must be sized for the machine's total usage, not one build;
 // per-execution PID containment is 2.4b work.
 func applyProcessLimits(pid int, limits ProcessLimits) error {
-	const unlimited = ^uint64(0)
 	targets := []struct {
 		name     string
 		resource int
@@ -35,9 +34,6 @@ func applyProcessLimits(pid int, limits ProcessLimits) error {
 			continue
 		}
 		value := uint64(target.value)
-		if value > unlimited {
-			value = unlimited
-		}
 		if err := unix.Prlimit(pid, target.resource, &unix.Rlimit{Cur: value, Max: value}, nil); err != nil {
 			return fmt.Errorf("apply %s limit to build process %d: %w", target.name, pid, err)
 		}

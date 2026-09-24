@@ -107,6 +107,19 @@ func (f *fakeS3) corruptObject(key string) {
 }
 
 func (f *fakeS3) serve(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodHead && path.Clean(r.URL.Path) == "/"+f.bucket {
+		f.mu.Lock()
+		if f.failNext[r.Method] > 0 {
+			f.failNext[r.Method]--
+			status := f.failStatus
+			f.mu.Unlock()
+			w.WriteHeader(status)
+			return
+		}
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	key, ok := strings.CutPrefix(path.Clean("/"+strings.TrimPrefix(r.URL.Path, "/")), "/"+f.bucket+"/")
 	if !ok || key == "" {
 		w.WriteHeader(http.StatusNotFound)

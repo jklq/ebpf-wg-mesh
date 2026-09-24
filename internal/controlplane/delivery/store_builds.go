@@ -42,7 +42,7 @@ const (
 // claimed has no attempt rows; its build_runs row carries the terminal reason.
 
 const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, COALESCE(builder_id, ''), owner_epoch, lease_expires_at,
-		attempt_count, attempt_limit, cancel_requested_at, COALESCE(cancel_requested_by, ''), deadline_at, last_heartbeat_at,
+		attempt_count, attempt_limit, cancel_requested_at, deadline_at, last_heartbeat_at,
 		image_digest, failure_reason,
 	        COALESCE(source_revision_id, ''), COALESCE(source_snapshot_id, ''), source_snapshot_digest, target_rollout_generation, build_recipe_json,
 	        queued_at, started_at, finished_at`

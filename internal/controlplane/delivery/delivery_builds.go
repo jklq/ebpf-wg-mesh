@@ -5,8 +5,9 @@ import (
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
-	"github.com/google/uuid"
 	"time"
+
+	"github.com/google/uuid"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
@@ -129,6 +130,27 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		default:
 			return errors.New("invalid terminal build state")
 		}
+		if stateValue == BuildStateSuperseded {
+			imageDigest = ""
+		}
+		if stateValue == BuildStateSucceeded {
+			if build.SourceRevisionID == "" || build.SourceSnapshotID == "" || build.SourceSnapshotDigest == "" {
+				return errSourceStateNotReady
+			}
+			var newerCount int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT count(*) FROM build_runs
+				  WHERE service_id = $1 AND queued_at > $2 AND state IN ($3, $4, $5)`,
+				build.ServiceID, build.QueuedAt, BuildStateQueued, BuildStateRunning, BuildStateSucceeded,
+			).Scan(&newerCount); err != nil {
+				return err
+			}
+			if newerCount > 0 {
+				stateValue = BuildStateSuperseded
+				imageDigest = ""
+				failureReason = "superseded by newer build"
+			}
+		}
 		result, err := tx.ExecContext(ctx,
 			`UPDATE build_runs
 			    SET state = $1,
@@ -199,35 +221,6 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			}
 			return nil
 		}
-		if build.SourceRevisionID == "" || build.SourceSnapshotID == "" || build.SourceSnapshotDigest == "" {
-			return errSourceStateNotReady
-		}
-		var newerCount int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*)
-			   FROM build_runs
-			  WHERE service_id = $1
-			    AND queued_at > $2
-			    AND state IN ($3, $4, $5)`,
-			build.ServiceID, build.QueuedAt, BuildStateQueued, BuildStateRunning, BuildStateSucceeded,
-		).Scan(&newerCount); err != nil {
-			return err
-		}
-		if newerCount > 0 {
-			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-				ToState:          DeploymentStateSuperseded,
-				Actor:            deploymentActor{Kind: DeploymentCauseBuilder, ID: builderID},
-				ReasonCode:       reasonBuildSuperseded,
-				Detail:           "A newer build superseded this image",
-				ImageDigest:      imageDigest,
-				HasImageDigest:   true,
-				IgnoreIfTerminal: true,
-			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			return nil
-		}
-
 		currentDep, currentOK, err := s.currentDeploymentTx(ctx, tx, build.ServiceID)
 		if err != nil {
 			return err
@@ -363,7 +356,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 		&rec.AttemptCount,
 		&rec.AttemptLimit,
 		&rec.CancelRequestedAt,
-		&rec.CancelRequestedBy,
 		&rec.DeadlineAt,
 		&rec.LastHeartbeatAt,
 		&rec.ImageDigest,
@@ -390,8 +382,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptRecord, error) {
 	var rec BuildAttemptRecord
 	err := scanner.Scan(
-		&rec.ID,
-		&rec.BuildID,
 		&rec.AttemptNumber,
 		&rec.BuilderID,
 		&rec.OwnerEpoch,
@@ -636,22 +626,6 @@ func (d *Delivery) tryClaimBuildTx(ctx context.Context, tx *sql.Tx, buildID, bui
 	if build.State != BuildStateQueued {
 		return BuildRunRecord{}, false, nil
 	}
-	if build.AttemptCount >= build.AttemptLimit {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3 WHERE id = $4 AND state = $5`,
-			BuildStateFailed, "attempt limit exhausted before claim", now, buildID, BuildStateQueued,
-		); err != nil {
-			return BuildRunRecord{}, false, err
-		}
-		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-			ToState: DeploymentStateFailed, Actor: deploymentActor{Kind: DeploymentCauseSystem},
-			ReasonCode: reasonBuildFailed, Detail: "Build retry budget exhausted",
-			IgnoreIfTerminal: true,
-		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return BuildRunRecord{}, false, err
-		}
-		return BuildRunRecord{}, false, nil
-	}
 	if deletion, err := s.serviceDeletionQuerier(ctx, tx, build.ServiceID); err != nil {
 		return BuildRunRecord{}, false, err
 	} else if deletion != nil {
@@ -837,7 +811,7 @@ func (d *Delivery) expireQueuedBuildsTx(ctx context.Context, tx *sql.Tx, now tim
 func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now time.Time) error {
 	s := d.store
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, service_id, attempt_count FROM build_runs
+		`SELECT id, service_id, attempt_count, cancel_requested_at IS NOT NULL FROM build_runs
 		  WHERE state = $1 AND deadline_at IS NOT NULL AND deadline_at <= $2
 		  ORDER BY deadline_at ASC, id ASC LIMIT 100`,
 		BuildStateRunning, now,
@@ -850,11 +824,12 @@ func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now t
 		ID           string
 		ServiceID    string
 		AttemptCount int64
+		Cancelled    bool
 	}
 	var expired []timedOut
 	for rows.Next() {
 		var rec timedOut
-		if err := rows.Scan(&rec.ID, &rec.ServiceID, &rec.AttemptCount); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.ServiceID, &rec.AttemptCount, &rec.Cancelled); err != nil {
 			return err
 		}
 		expired = append(expired, rec)
@@ -863,23 +838,29 @@ func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now t
 		return err
 	}
 	for _, rec := range expired {
+		state, reason, outcome := BuildStateFailed, "build timeout exceeded", BuildAttemptTimedOut
+		toState, reasonCode, detail := DeploymentStateFailed, reasonBuildFailed, "Build timeout exceeded"
+		if rec.Cancelled {
+			state, reason, outcome = BuildStateCancelled, "cancelled by user", BuildAttemptCancelled
+			toState, reasonCode, detail = DeploymentStateCancelled, reasonUserCancel, "Build cancelled by user"
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3, lease_expires_at = NULL
 			  WHERE id = $4 AND state = $5`,
-			BuildStateFailed, "build timeout exceeded", now, rec.ID, BuildStateRunning,
+			state, reason, now, rec.ID, BuildStateRunning,
 		); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE build_attempts SET finished_at = $1, outcome = $2, detail = $3
 			  WHERE build_id = $4 AND attempt_number = $5`,
-			now, BuildAttemptTimedOut, "build timeout exceeded", rec.ID, rec.AttemptCount,
+			now, outcome, reason, rec.ID, rec.AttemptCount,
 		); err != nil {
 			return err
 		}
 		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, deploymentTransitionInput{
-			ToState: DeploymentStateFailed, Actor: deploymentActor{Kind: DeploymentCauseSystem},
-			ReasonCode: reasonBuildFailed, Detail: "Build timeout exceeded",
+			ToState: toState, Actor: deploymentActor{Kind: DeploymentCauseSystem},
+			ReasonCode: reasonCode, Detail: detail,
 			IgnoreIfTerminal: true,
 		}); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errDeploymentTerminal) && !errors.Is(err, errIllegalDeploymentTransition) {
 			return err

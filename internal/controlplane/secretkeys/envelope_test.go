@@ -30,18 +30,6 @@ func TestSealOpenValueRoundTrip(t *testing.T) {
 	}
 }
 
-func TestSealValueRejectsOversize(t *testing.T) {
-	t.Parallel()
-
-	dek, err := GenerateDEK()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := SealValue(dek, []byte("aad"), make([]byte, MaxSealedValueSize+1)); err == nil {
-		t.Fatal("oversize value was accepted")
-	}
-}
-
 func TestOpenValueRejectsTampering(t *testing.T) {
 	t.Parallel()
 

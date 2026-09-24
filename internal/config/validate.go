@@ -161,6 +161,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
 		return errors.New("controlplane.builder.heartbeatTimeoutSeconds must be greater than 0")
 	}
+	if cfg.Builder.LeaseTTLSeconds <= 0 {
+		return errors.New("controlplane.builder.leaseTTLSeconds must be greater than 0")
+	}
 	if cfg.Builder.MaxAttempts <= 0 {
 		return errors.New("controlplane.builder.maxAttempts must be greater than 0")
 	}

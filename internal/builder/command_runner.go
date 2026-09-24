@@ -71,7 +71,22 @@ func (osCommandRunner) Run(ctx context.Context, req commandRequest, onLine func(
 		scanCommandStream(ctx, stderr, "stderr", &combined, onLine)
 	}()
 
-	wg.Wait()
+	streamsDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(streamsDone)
+	}()
+	select {
+	case <-streamsDone:
+	case <-ctx.Done():
+		select {
+		case <-streamsDone:
+		case <-time.After(time.Second):
+			_ = stdout.Close()
+			_ = stderr.Close()
+			<-streamsDone
+		}
+	}
 	waitErr := cmd.Wait()
 	// Report cancellation as the context error so callers can
 	// distinguish a cancelled build from a failed one.

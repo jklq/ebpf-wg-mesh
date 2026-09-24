@@ -76,7 +76,6 @@ func buildDigest(nibble string) string {
 }
 
 func TestBuildLeaseWorkerDeathRequeuesWithBoundedRetry(t *testing.T) {
-	t.Parallel()
 	store, ctx, _, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceState(t, store, service, "commit-lease-1"); err != nil {
 		t.Fatal(err)
@@ -129,7 +128,6 @@ func TestBuildLeaseWorkerDeathRequeuesWithBoundedRetry(t *testing.T) {
 }
 
 func TestBuildLeaseRetryBudgetExhaustionIsTerminal(t *testing.T) {
-	t.Parallel()
 	store, ctx, _, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceState(t, store, service, "commit-retry-1"); err != nil {
 		t.Fatal(err)
@@ -189,7 +187,6 @@ func TestBuildLeaseRetryBudgetExhaustionIsTerminal(t *testing.T) {
 }
 
 func TestBuildLeaseSplitOwnershipFencing(t *testing.T) {
-	t.Parallel()
 	store, ctx, _, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceState(t, store, service, "commit-fence-1"); err != nil {
 		t.Fatal(err)
@@ -247,7 +244,6 @@ func TestBuildLeaseSplitOwnershipFencing(t *testing.T) {
 }
 
 func TestBuildCancelPreventsLateCompletionPublish(t *testing.T) {
-	t.Parallel()
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-cancel-lease", "Cancel me", "Ada"); err != nil {
 		t.Fatal(err)
@@ -326,8 +322,43 @@ func TestBuildCancelPreventsLateCompletionPublish(t *testing.T) {
 	claimBuildForTest(t, store, ctx, "builder-1", next.ID)
 }
 
+func TestCancelledBuildPastDeadlineRemainsCancelled(t *testing.T) {
+	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
+	if err := seedReadySourceState(t, store, service, "commit-cancel-timeout"); err != nil {
+		t.Fatal(err)
+	}
+	build, err := enqueueBuildForTest(ctx, store, userID, service.ID, "commit-cancel-timeout")
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build.ID)
+	current := currentDeploymentForTest(t, store, ctx, service.ID)
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, current.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_CANCEL, "cancel-timeout", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE build_runs SET deadline_at = statement_timestamp() - INTERVAL '1 minute' WHERE id = $1`, build.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := testDelivery(store).RecoverExpiredBuilds(ctx); err != nil {
+		t.Fatal(err)
+	}
+	completed, err := store.reads.BuildByID(ctx, build.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != deliverycore.BuildStateCancelled {
+		t.Fatalf("timed-out cancellation state = %q", completed.State)
+	}
+	attempts, err := testDelivery(store).BuildAttempts(ctx, testUser(userID), service.ID, build.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(attempts) != 1 || attempts[0].Outcome != deliverycore.BuildAttemptCancelled {
+		t.Fatalf("timed-out cancellation attempts = %+v", attempts)
+	}
+}
+
 func TestBuildSchedulerGlobalAndProjectCaps(t *testing.T) {
-	t.Parallel()
 	store, ctx, _, projectID, serviceA := setupSourceServiceForDeployment(t)
 	serviceB := createSecondRepoService(t, store, ctx, projectID)
 	d := schedulerTestDelivery(store, deliverycore.BuildSchedulerConfig{
@@ -374,7 +405,6 @@ func TestBuildSchedulerGlobalAndProjectCaps(t *testing.T) {
 }
 
 func TestBuildSchedulerReleasesCapOnRunningTerminalPaths(t *testing.T) {
-	t.Parallel()
 	store, ctx, userID, projectID, serviceA := setupSourceServiceForDeployment(t)
 	serviceB := createSecondRepoService(t, store, ctx, projectID)
 	d := schedulerTestDelivery(store, deliverycore.BuildSchedulerConfig{
@@ -535,7 +565,6 @@ func TestBuildSchedulerReleasesCapOnRunningTerminalPaths(t *testing.T) {
 }
 
 func TestBuildSchedulerQueuedTerminalPaths(t *testing.T) {
-	t.Parallel()
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	d := schedulerTestDelivery(store, deliverycore.DefaultBuildSchedulerConfig())
 
@@ -598,7 +627,6 @@ func TestBuildSchedulerQueuedTerminalPaths(t *testing.T) {
 }
 
 func TestBuildSchedulerDrainAndPause(t *testing.T) {
-	t.Parallel()
 	store, ctx, userID, projectID, serviceA := setupSourceServiceForDeployment(t)
 	serviceB := createSecondRepoService(t, store, ctx, projectID)
 	d := schedulerTestDelivery(store, deliverycore.DefaultBuildSchedulerConfig())

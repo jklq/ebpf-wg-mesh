@@ -119,7 +119,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
-	if cfg.SourceArchives.Provider == config.SourceArchiveProviderFile {
+	if strings.EqualFold(strings.TrimSpace(cfg.SourceArchives.Provider), config.SourceArchiveProviderFile) {
 		if err := verifySharedControlPlaneDirectory(ctx, store, "source-archives", cfg.SourceArchives.Directory); err != nil {
 			_ = store.Close()
 			return nil, err
@@ -131,7 +131,10 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	defer releaseInitialization()
-	store.source.ConfigureSourceArchives(archiveStore)
+	if err := store.source.ConfigureSourceArchives(archiveStore, filepath.Join(cfg.StateDir, "source-archive-stage")); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("configure source archive staging: %w", err)
+	}
 	if err := store.catalog.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
 		_ = store.Close()
 		return nil, err

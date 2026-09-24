@@ -36,7 +36,6 @@ type Store interface {
 	UpsertSourceBinding(context.Context, SourceBindingRecord) (SourceBindingRecord, error)
 	UpsertSourceRevision(context.Context, SourceRevisionRecord) (SourceRevisionRecord, error)
 	SourceSnapshotByRevisionID(context.Context, string) (SourceSnapshotRecord, error)
-	StoreSourceArchive(context.Context, []byte) (string, string, error)
 	StoreSourceArchiveFromReader(context.Context, io.Reader, int64) (string, string, int64, error)
 }
 

@@ -54,19 +54,13 @@ func s3CanonicalQuery(raw url.Values) string {
 	if len(raw) == 0 {
 		return ""
 	}
-	keys := make([]string, 0, len(raw))
-	for key := range raw {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
 	var parts []string
-	for _, key := range keys {
-		values := append([]string(nil), raw[key]...)
-		sort.Strings(values)
+	for key, values := range raw {
 		for _, value := range values {
 			parts = append(parts, s3Escape(key, true)+"="+s3Escape(value, true))
 		}
 	}
+	sort.Strings(parts)
 	return strings.Join(parts, "&")
 }
 

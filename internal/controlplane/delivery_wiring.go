@@ -8,10 +8,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/logs"
 )
 
-func newDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents, logEmitter *logs.LogEmitter) *deliverycore.Delivery {
-	return newDeliveryWithScheduler(store, nil, notifier, ingress, events, logEmitter)
-}
-
 func newDeliveryWithScheduler(store *persistence, scheduler *deliverycore.BuildSchedulerConfig, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents, logEmitter *logs.LogEmitter) *deliverycore.Delivery {
 	deps := deliveryDependencies(store, notifier, ingress, events, logEmitter)
 	if scheduler != nil {
@@ -24,7 +20,7 @@ func newDeliveryWithScheduler(store *persistence, scheduler *deliverycore.BuildS
 
 func buildSchedulerConfigFromControlPlane(cfg config.ControlPlaneBuilderConfig) deliverycore.BuildSchedulerConfig {
 	return deliverycore.BuildSchedulerConfig{
-		LeaseTTL:                time.Duration(cfg.HeartbeatTimeoutSeconds) * time.Second,
+		LeaseTTL:                time.Duration(cfg.LeaseTTLSeconds) * time.Second,
 		AttemptLimit:            int64(cfg.MaxAttempts),
 		MaxConcurrentGlobal:     cfg.MaxConcurrentGlobal,
 		MaxConcurrentPerProject: cfg.MaxConcurrentPerProject,

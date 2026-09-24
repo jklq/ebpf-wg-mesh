@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 
 	"ebof-wg-mesh/internal/controlplane/durablework"
 )
@@ -21,6 +22,7 @@ type SQLStore struct {
 	withCoordinationTx func(context.Context, func(context.Context, *sql.Tx) error) error
 	services           func(context.Context, string) (Service, error)
 	archives           ArchiveStore
+	archiveStagingDir  string
 	work               *durablework.Store
 }
 
@@ -44,8 +46,13 @@ func (s *SQLStore) ServiceSnapshot(ctx context.Context, serviceID string) (Servi
 	return s.services(ctx, serviceID)
 }
 
-func (s *SQLStore) ConfigureSourceArchives(store ArchiveStore) {
+func (s *SQLStore) ConfigureSourceArchives(store ArchiveStore, stagingDir string) error {
+	if err := os.MkdirAll(stagingDir, 0o700); err != nil {
+		return err
+	}
 	s.archives = store
+	s.archiveStagingDir = stagingDir
+	return nil
 }
 
 func (s *SQLStore) Archives() ArchiveStore {

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -97,7 +96,25 @@ func NewS3ArchiveStore(cfg config.SourceArchiveS3Config) (*S3ArchiveStore, error
 }
 
 func (s *S3ArchiveStore) Ready() bool {
-	return s != nil && s.endpoint != nil && s.region != "" && s.bucket != ""
+	if s == nil || s.endpoint == nil || s.region == "" || s.bucket == "" {
+		return false
+	}
+	endpoint := *s.endpoint
+	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/") + "/" + s.bucket
+	endpoint.RawPath = ""
+	endpoint.RawQuery = ""
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, endpoint.String(), nil)
+	if err != nil || s.authorize(req.Context(), req, emptyPayloadHash) != nil {
+		return false
+	}
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
 func (s *S3ArchiveStore) objectPath(key string) (string, error) {
@@ -148,45 +165,45 @@ func (s *S3ArchiveStore) Put(ctx context.Context, key string, body io.Reader, si
 	if size <= 0 || size > MaxArchiveCompressedBytes {
 		return fmt.Errorf("%w: size %d bytes", ErrArchiveTooLarge, size)
 	}
-	staged, err := os.CreateTemp("", "source-archive-upload-*")
-	if err != nil {
-		return fmt.Errorf("stage source archive upload: %w", err)
+	var upload io.ReadSeeker
+	var start int64
+	var staged *os.File
+	if seekable, ok := body.(io.ReadSeeker); ok {
+		upload = seekable
+		start, err = seekable.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("seek source archive upload: %w", err)
+		}
+	} else {
+		staged, err = os.CreateTemp("", "source-archive-upload-*")
+		if err != nil {
+			return fmt.Errorf("stage source archive upload: %w", err)
+		}
+		defer os.Remove(staged.Name())
+		defer staged.Close()
+		upload = staged
 	}
-	stagedPath := staged.Name()
-	defer os.Remove(stagedPath)
 	hash := sha256.New()
-	written, err := io.CopyN(io.MultiWriter(staged, hash), body, size+1)
+	var destination io.Writer = hash
+	if staged != nil {
+		destination = io.MultiWriter(staged, hash)
+	}
+	written, err := io.CopyN(destination, body, size+1)
 	if err != nil && !errors.Is(err, io.EOF) {
-		staged.Close()
 		return fmt.Errorf("stage source archive upload: %w", err)
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		staged.Close()
 		return ctxErr
 	}
 	if written != size {
-		staged.Close()
 		return fmt.Errorf("%w: declared size %d but body yielded %d bytes", ErrArchiveCorrupt, size, written)
-	}
-	if extra, err := io.Copy(io.Discard, io.LimitReader(body, 1)); err != nil {
-		staged.Close()
-		return fmt.Errorf("verify source archive body length: %w", err)
-	} else if extra != 0 {
-		staged.Close()
-		return fmt.Errorf("%w: declared size %d but body is longer", ErrArchiveCorrupt, size)
 	}
 	sum := hash.Sum(nil)
 	if actual := "sha256:" + fmt.Sprintf("%x", sum); actual != digest {
-		staged.Close()
 		return fmt.Errorf("%w: digest verification failed", ErrArchiveCorrupt)
-	}
-	if _, err := staged.Seek(0, io.SeekStart); err != nil {
-		staged.Close()
-		return fmt.Errorf("stage source archive upload: %w", err)
 	}
 	checksum := base64.StdEncoding.EncodeToString(sum)
 	payloadHash := fmt.Sprintf("%x", sum)
-	staged.Close()
 
 	var lastErr error
 	for attempt := 0; attempt <= s.maxRetries; attempt++ {
@@ -195,12 +212,10 @@ func (s *S3ArchiveStore) Put(ctx context.Context, key string, body io.Reader, si
 				return err
 			}
 		}
-		body, err := os.Open(stagedPath)
-		if err != nil {
-			return err
+		if _, err := upload.Seek(start, io.SeekStart); err != nil {
+			return fmt.Errorf("rewind source archive upload: %w", err)
 		}
-		done, attemptErr := s.putAttempt(ctx, key, body, size, digest, checksum, payloadHash)
-		_ = body.Close()
+		done, attemptErr := s.putAttempt(ctx, key, io.LimitReader(upload, size), size, digest, checksum, payloadHash)
 		if done {
 			return attemptErr
 		}
@@ -262,30 +277,6 @@ func (s *S3ArchiveStore) convergeOnDuplicate(ctx context.Context, key string, si
 	return nil
 }
 
-func (s *S3ArchiveStore) Open(ctx context.Context, key string) (io.ReadCloser, ObjectMetadata, error) {
-	meta, err := s.Stat(ctx, key)
-	if err != nil {
-		return nil, ObjectMetadata{}, err
-	}
-	var lastErr error
-	for attempt := 0; attempt <= s.maxRetries; attempt++ {
-		if attempt > 0 {
-			if err := s.backoff(ctx, attempt); err != nil {
-				return nil, ObjectMetadata{}, err
-			}
-		}
-		body, err := s.get(ctx, key)
-		if err == nil {
-			return &transientReadCloser{body: body}, meta, nil
-		}
-		if !IsArchiveTransient(err) {
-			return nil, ObjectMetadata{}, err
-		}
-		lastErr = err
-	}
-	return nil, ObjectMetadata{}, lastErr
-}
-
 func (s *S3ArchiveStore) ReadRange(ctx context.Context, key string, offset int64, limit int) ([]byte, error) {
 	if offset < 0 || limit <= 0 {
 		return nil, errors.New("invalid source archive range")
@@ -325,14 +316,6 @@ func (s *S3ArchiveStore) rangeAttempt(ctx context.Context, key, rangeHeader stri
 		return nil, false, fmt.Errorf("%w: range read exceeded requested limit", ErrArchiveCorrupt)
 	}
 	return chunk, false, nil
-}
-
-func (s *S3ArchiveStore) get(ctx context.Context, key string) (io.ReadCloser, error) {
-	body, _, err := s.getBody(ctx, key, "")
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
 }
 
 func (s *S3ArchiveStore) getBody(ctx context.Context, key, rangeHeader string) (io.ReadCloser, bool, error) {
@@ -426,12 +409,13 @@ func (s *S3ArchiveStore) statAttempt(ctx context.Context, key string) (ObjectMet
 			return ObjectMetadata{}, false, fmt.Errorf("%w: object size header is invalid", ErrArchiveCorrupt)
 		}
 		digest := strings.TrimSpace(resp.Header.Get("X-Amz-Meta-Digest"))
+		expected, err := DigestFromObjectKey(key)
+		if err != nil {
+			return ObjectMetadata{}, false, err
+		}
 		if digest == "" {
-			digest, err = DigestFromObjectKey(key)
-			if err != nil {
-				return ObjectMetadata{}, false, err
-			}
-		} else if expected, err := DigestFromObjectKey(key); err != nil || !strings.EqualFold(strings.TrimSpace(digest), expected) {
+			digest = expected
+		} else if !strings.EqualFold(digest, expected) {
 			return ObjectMetadata{}, false, fmt.Errorf("%w: stored digest metadata does not match object key", ErrArchiveCorrupt)
 		} else {
 			digest = expected
@@ -550,31 +534,4 @@ func isRetryableStatus(status int) bool {
 	default:
 		return status == 0
 	}
-}
-
-func isNetworkError(err error) bool {
-	var netErr net.Error
-	if errors.As(err, &netErr) {
-		return true
-	}
-	var urlErr *url.Error
-	return errors.As(err, &urlErr)
-}
-
-type transientReadCloser struct {
-	body io.ReadCloser
-}
-
-func (r *transientReadCloser) Read(p []byte) (int, error) {
-	n, err := r.body.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		if !IsArchiveTransient(err) && isNetworkError(err) {
-			return n, fmt.Errorf("%w: read source archive object: %v", ErrArchiveTransient, err)
-		}
-	}
-	return n, err
-}
-
-func (r *transientReadCloser) Close() error {
-	return r.body.Close()
 }

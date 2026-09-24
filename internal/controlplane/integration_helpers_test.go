@@ -3,6 +3,7 @@
 package controlplane
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/authz"
@@ -17,6 +18,11 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
+
+func storeTestArchive(ctx context.Context, store *persistence, archive []byte) (string, string, error) {
+	digest, key, _, err := store.source.StoreSourceArchiveFromReader(ctx, bytes.NewReader(archive), int64(len(archive)))
+	return digest, key, err
+}
 
 func testUser(id string) authz.User {
 	user, err := authz.AuthenticatedUser(id)

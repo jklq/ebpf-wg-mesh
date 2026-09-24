@@ -823,8 +823,8 @@ func newRepoBuildTestService(t *testing.T) (*persistence, string, deliverycore.S
 
 func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, commitMessage, commitAuthor string) error {
 	t.Helper()
-	archive := []byte("snapshot-" + commitSHA)
-	digest, objectKey, err := store.source.StoreSourceArchive(context.Background(), archive)
+	archive := dockerfileMarkerArchive("snapshot-" + commitSHA)
+	digest, objectKey, err := storeTestArchive(context.Background(), store, archive)
 	if err != nil {
 		return err
 	}

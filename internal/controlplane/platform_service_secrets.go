@@ -32,7 +32,9 @@ func (s *PlatformService) SealServiceSecret(ctx context.Context, req *platformv1
 		return nil, status.Error(codes.InvalidArgument, "service id is required")
 	}
 	// Values are never logged, never echoed, and never included in errors.
-	version, err := s.delivery.SealServiceSecret(ctx, user, req.GetServiceId(), req.GetName(), []byte(req.GetValue()))
+	value := []byte(req.GetValue())
+	defer clear(value)
+	version, err := s.delivery.SealServiceSecret(ctx, user, req.GetServiceId(), req.GetName(), value)
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped

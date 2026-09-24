@@ -9,9 +9,74 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
+
+func TestDuplicateEnvironmentSkipsDeletedChildren(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := store.catalog.productionEnvironmentByProjectInternal(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), source.ID, "data", 64<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := store.createStagedServiceForTest(ctx, "owner", source.ID, "web", directImageServiceSpec("example.test/web:1", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := store.db.ExecContext(ctx, `UPDATE volumes SET deleted_at=$1, delete_expires_at=$2 WHERE id=$3`, now, now.Add(time.Hour), volume.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx, `UPDATE services SET deleted_at=$1, delete_expires_at=$2 WHERE id=$3`, now, now.Add(time.Hour), service.ID); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := newTestDelivery(store, nil, nil, nil).DuplicateEnvironment(ctx, testUser("owner"), source.ID, "Staging", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var volumes, services int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM volumes WHERE environment_id=$1`, duplicate.ID).Scan(&volumes); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM services WHERE environment_id=$1`, duplicate.ID).Scan(&services); err != nil {
+		t.Fatal(err)
+	}
+	if volumes != 0 || services != 0 {
+		t.Fatalf("deleted children were duplicated: volumes=%d services=%d", volumes, services)
+	}
+}
+
+func TestDeletedProductionEnvironmentIsNotReused(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	production, err := store.catalog.productionEnvironmentByProjectInternal(ctx, project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), production.ID, production.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.catalog.productionEnvironmentByProjectInternal(ctx, project.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("production lookup after delete: %v", err)
+	}
+	if _, err := store.catalog.ensureProductionEnvironmentQuerier(ctx, store.db, project.ID); !errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+		t.Fatalf("ensure production after delete: %v", err)
+	}
+}
 
 func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	t.Parallel()
