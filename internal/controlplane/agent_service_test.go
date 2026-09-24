@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -242,4 +243,60 @@ func tokenAccessForCredential(t *testing.T, auth *registry.Auth, tokenService, u
 		t.Fatal(err)
 	}
 	return access
+}
+
+type countingPullMinter struct {
+	mints int
+}
+
+func (m *countingPullMinter) MintCredential(_ context.Context, _, _ string, _ []string, _ *time.Time) (string, string, error) {
+	m.mints++
+	return fmt.Sprintf("pull-%d", m.mints), fmt.Sprintf("secret-%d", m.mints), nil
+}
+
+func TestPullCredentialCacheReusesOnlyWhileValidThroughNextSession(t *testing.T) {
+	t.Parallel()
+	minter := &countingPullMinter{}
+	policy := registry.NewPolicy(config.RegistryConfig{
+		Host:                     "registry.example.test:5000",
+		NamespacePrefix:          "mesh",
+		TokenIssuer:              "registry-test",
+		TokenService:             "registry.example.test:5000",
+		CredentialTTLSeconds:     300,
+		PullCredentialTTLSeconds: 90,
+	}, minter)
+	now := time.Now()
+	service := &AgentService{registry: policy, credReuseHorizon: time.Minute}
+	service.credNow = func() time.Time { return now }
+	state := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{
+		AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1",
+		Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)},
+	}}}
+	first, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Well within validity the minted credential is reused across syncs.
+	now = now.Add(20 * time.Second)
+	reused, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused.GetCredentials()[0].GetPassword() != first.GetCredentials()[0].GetPassword() {
+		t.Fatal("fresh cached pull credential was not reused")
+	}
+	// Once the credential would expire before the next session rotation it
+	// must be re-minted now: a renewed session holding the cached token
+	// would otherwise fail to pull a private image after it expires.
+	now = now.Add(20 * time.Second)
+	renewed, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.GetCredentials()[0].GetPassword() == first.GetCredentials()[0].GetPassword() {
+		t.Fatal("pull credential that cannot outlive the next session was reused")
+	}
+	if minter.mints != 2 {
+		t.Fatalf("mint calls = %d, want 2", minter.mints)
+	}
 }

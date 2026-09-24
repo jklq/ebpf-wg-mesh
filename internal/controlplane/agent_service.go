@@ -44,13 +44,18 @@ type AgentService struct {
 	credMu    sync.Mutex
 	credCache map[string]cachedPullCredential
 	credNow   func() time.Time
+	// credReuseHorizon is the interval until the next guaranteed credential
+	// refresh: agent sessions rotate at least every client-certificate
+	// lifetime and re-deliver credentials there.
+	credReuseHorizon time.Duration
 }
 
 type cachedPullCredential struct {
-	username string
-	password string
-	mintedAt time.Time
-	image    string
+	username  string
+	password  string
+	mintedAt  time.Time
+	expiresAt time.Time
+	image     string
 }
 
 type LiveOwner interface {
@@ -153,6 +158,7 @@ func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *
 	service := &AgentService{
 		store: store, delivery: delivery, logStore: logStore, notifier: notifier, authority: authority, dashboard: dashboard,
 		enrollment:              identity.NewEnrollment(store, authority),
+		credReuseHorizon:        authority.ClientCertificateTTL(),
 		dashboardEnabled:        dashboardEnabled,
 		dashboardTrustedAgentID: strings.TrimSpace(dashboardTrustedAgentID),
 		dashboardCallerID:       strings.TrimSpace(dashboardCallerID),
@@ -786,7 +792,12 @@ func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID stri
 		s.credMu.Lock()
 		cached, ok := s.credCache[key]
 		s.credMu.Unlock()
-		if ok && cached.image == image && now.Sub(cached.mintedAt) < pullCredentialCacheTTL {
+		// Reuse a minted credential only while it stays valid through the
+		// next session. Sessions rotate at least every client-certificate
+		// lifetime and refresh credentials there; a token that would expire
+		// before then must be re-minted now, or a private-image restart
+		// during the renewed session fails to pull with the stale token.
+		if ok && cached.image == image && now.Sub(cached.mintedAt) < pullCredentialCacheTTL && cached.expiresAt.After(now.Add(s.credReuseHorizon)) {
 			if cached.username != "" || cached.password != "" {
 				out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{
 					AllocationId: svc.GetAllocationId(), Username: cached.username, Password: cached.password,
@@ -800,7 +811,7 @@ func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID stri
 			return nil, fmt.Errorf("mint pull credential for service %s: %w", svc.GetServiceId(), err)
 		}
 		s.credMu.Lock()
-		s.credCache[key] = cachedPullCredential{username: username, password: password, mintedAt: now, image: image}
+		s.credCache[key] = cachedPullCredential{username: username, password: password, mintedAt: now, expiresAt: now.Add(s.registry.PullCredentialLifetime()), image: image}
 		s.credMu.Unlock()
 		if username != "" || password != "" {
 			out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{
