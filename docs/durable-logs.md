@@ -142,7 +142,9 @@ Batches enter a bounded in-memory queue (default 512 batches and
 64 MiB of retained payload — line text, retained IDs, and attribute
 maps all count; both caps bind independently) behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
-buggy or hostile agent cannot starve ClickHouse. Batches are scoped
+buggy or hostile agent cannot starve ClickHouse — gap rows consume
+the same guard one token each, so gap-only spam cannot add retained
+rows past the limit. Batches are scoped
 line by line to the allocations the agent owns: a line for a stale
 allocation — one removed while its lines sat in the durable spool —
 or carrying a mismatched claim is excluded with a warning instead of

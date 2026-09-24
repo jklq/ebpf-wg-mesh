@@ -807,3 +807,35 @@ func TestAsyncIngesterReplayedProducerGapsDoNotInflate(t *testing.T) {
 		}
 	}
 }
+
+func TestAsyncIngesterLimitsGapRows(t *testing.T) {
+	t.Parallel()
+
+	// Gap rows are retained writes too: a producer spamming gap-only
+	// batches past the per-allocation guard gets its reports owed
+	// (kept visible, replay-safe) instead of unlimited ClickHouse
+	// rows.
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{RatePerSec: 1, Burst: 1})
+	summary := func(id string) *agentv1.LogBatch {
+		return &agentv1.LogBatch{AgentId: "agent-1", Drops: []*platformv1.LogDropSummary{{
+			ServiceId:    "svc-1",
+			AllocationId: "alloc-1",
+			DroppedCount: 2,
+			Reason:       logpipeline.ReasonSpoolOverflow,
+			WindowStart:  timestamppb.New(time.Now().UTC()),
+			WindowEnd:    timestamppb.New(time.Now().UTC()),
+			SummaryId:    id,
+		}}}
+	}
+	ingester.EnqueueAgentBatch("agent-1", summary("sum-1"))
+	ingester.EnqueueAgentBatch("agent-1", summary("sum-2"))
+	ingester.EnqueueAgentBatch("agent-1", summary("sum-3"))
+	stats := ingester.Stats()
+	if stats.QueuedFlushes != 1 {
+		t.Fatalf("queued %d flushes, want 1", stats.QueuedFlushes)
+	}
+	if stats.OwedGaps != 2 {
+		t.Fatalf("owed %d gap reports, want 2", stats.OwedGaps)
+	}
+}

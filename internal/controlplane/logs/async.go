@@ -288,6 +288,35 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 			reporter:     reporterControlPlane,
 		}]++
 	}
+	// Producer drop reports consume the same guard: gap rows are
+	// retained writes too, and a producer must not spam them past the
+	// per-allocation limit. A denied report becomes owed under its
+	// summary identity — a replay replaces it and the loss stays
+	// visible without retained-row pressure.
+	keptGaps := gaps[:0]
+	for _, gap := range gaps {
+		key := gap.AllocationID
+		if key == "" {
+			key = gap.BuildID
+		}
+		if key == "" || a.limiter.Allow("alloc:"+key) {
+			keptGaps = append(keptGaps, gap)
+			continue
+		}
+		a.mu.Lock()
+		a.noteOwedLocked(owedGapKey{
+			serviceID:    gap.ServiceID,
+			allocationID: gap.AllocationID,
+			buildID:      gap.BuildID,
+			logType:      string(normalizeLogType(gap.LogType)),
+			stream:       normalizeLogStream(gap.Stream),
+			reason:       gap.Reason,
+			reporter:     gap.Reporter,
+			summaryID:    gap.SummaryID,
+		}, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
+		a.mu.Unlock()
+	}
+	gaps = keptGaps
 	for key, count := range limited {
 		gaps = append(gaps, GapInput{
 			ServiceID:    key.serviceID,
@@ -307,6 +336,9 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 	// so the limiter's own denied map is redundant here: drain it so
 	// allocation churn cannot grow it without a bound.
 	a.limiter.DrainDrops()
+	if len(kept) == 0 && len(gaps) == 0 {
+		return true
+	}
 	if !a.enqueue(pendingFlush{lines: kept, gaps: gaps}) {
 		a.rejectFlush(kept, gaps)
 		return false
