@@ -104,6 +104,48 @@ func (s *workloadSupervisor) AcceptDesired(clusterID, sessionID string, state *a
 	return changed, nil
 }
 
+func (s *workloadSupervisor) AcceptDiff(clusterID, sessionID string, diff *agentv1.AllocationDiff) (bool, error) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	changed, err := s.store.acceptAllocationDiff(clusterID, sessionID, diff)
+	if err != nil {
+		return false, err
+	}
+	summary, err := s.store.summary()
+	if err != nil {
+		return false, err
+	}
+	s.ready.Store(summary.Initialization == initializationReady)
+	return changed, nil
+}
+
+func (s *workloadSupervisor) AcceptNodeConfig(clusterID, sessionID string, update *agentv1.NodeConfigUpdate) (bool, error) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	changed, err := s.store.acceptNodeConfigUpdate(clusterID, sessionID, update)
+	if err != nil {
+		return false, err
+	}
+	summary, err := s.store.summary()
+	if err != nil {
+		return false, err
+	}
+	s.ready.Store(summary.Initialization == initializationReady)
+	return changed, nil
+}
+
+func (s *workloadSupervisor) AcceptCredentials(clusterID, sessionID string, creds *agentv1.PullCredentialSet) (bool, error) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	return s.store.acceptPullCredentials(clusterID, sessionID, creds)
+}
+
+func (s *workloadSupervisor) AcceptReplicas(clusterID, sessionID string, replicas *agentv1.ReplicaEndpoints) (bool, error) {
+	s.reconcileMu.Lock()
+	defer s.reconcileMu.Unlock()
+	return s.store.acceptReplicaEndpoints(clusterID, sessionID, replicas)
+}
+
 func (s *workloadSupervisor) ReconcileAcceptedDesired() { s.requestReconcile() }
 
 func (s *workloadSupervisor) RestartManagedDashboard(ctx context.Context, state *agentv1.DesiredNodeState) error {

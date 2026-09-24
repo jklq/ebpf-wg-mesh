@@ -3,12 +3,24 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 	"ebof-wg-mesh/internal/mesh"
+	"ebof-wg-mesh/internal/reconciliation"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type recordingMesh struct {
@@ -103,6 +115,24 @@ func TestApplyNodeConfigKeepsPreviousAssignmentWhenUpdateFails(t *testing.T) {
 	}
 }
 
+func TestCumulativeAckFencesToConfirmedSessionEpoch(t *testing.T) {
+	t.Parallel()
+
+	// A fresh agent acks credentials before its first checkpoint; the ack
+	// must echo the confirmed session epoch, not the store's zero epoch.
+	summary := localStateSummary{ReconciliationCursor: 0, CredentialsVersion: "creds-v1"}
+	ack := cumulativeAck("node-1", "session-1", summary, 7)
+	if ack.GetAuthorityEpoch() != 7 {
+		t.Fatalf("ack authority epoch = %d, want confirmed session epoch 7", ack.GetAuthorityEpoch())
+	}
+	if ack.GetReconciliationCursor() != 0 || ack.GetCredentialsVersion() != "creds-v1" {
+		t.Fatalf("ack lost cumulative position: %+v", ack)
+	}
+	if ack.GetAgentId() != "node-1" || ack.GetSessionId() != "session-1" {
+		t.Fatalf("ack lost session identity: %+v", ack)
+	}
+}
+
 func TestNextReconnectDelayBoundsReconnectStorms(t *testing.T) {
 	t.Parallel()
 
@@ -154,5 +184,572 @@ func TestRuntimeEventReconcileLoop(t *testing.T) {
 	case <-done:
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("runtime event loop did not stop")
+	}
+}
+
+type syncFuncServer struct {
+	agentv1.UnimplementedAgentControlServer
+	sync  func(agentv1.AgentControl_SyncServer) error
+	issue func(context.Context, *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error)
+}
+
+func (s *syncFuncServer) Sync(stream agentv1.AgentControl_SyncServer) error { return s.sync(stream) }
+
+func (s *syncFuncServer) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+	if s.issue == nil {
+		return nil, errors.New("no managed dashboard certificate issuer")
+	}
+	return s.issue(ctx, req)
+}
+
+func newTestTLSAuthority(t *testing.T) *identity.TLSAuthority {
+	t.Helper()
+	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
+		StateDir: t.TempDir(),
+		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
+			ServerNames:             []string{"localhost"},
+			ServerCertValidityHours: 24,
+			ClientCertValidityHours: 6,
+		}},
+	}, signkeystest.New(t))
+	if err != nil {
+		t.Fatalf("NewTLSAuthority: %v", err)
+	}
+	return authority
+}
+
+func startSyncServer(t *testing.T, authority *identity.TLSAuthority, handler func(agentv1.AgentControl_SyncServer) error) string {
+	t.Helper()
+	return startSyncServerIssuing(t, authority, handler, nil)
+}
+
+func startSyncServerIssuing(t *testing.T, authority *identity.TLSAuthority, handler func(agentv1.AgentControl_SyncServer) error, issue func(context.Context, *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error)) string {
+	t.Helper()
+	server := grpc.NewServer(grpc.Creds(credentials.NewTLS(authority.HTTPConfig())))
+	agentv1.RegisterAgentControlServer(server, &syncFuncServer{sync: handler, issue: issue})
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go func() { _ = server.Serve(ln) }()
+	t.Cleanup(func() {
+		server.Stop()
+		_ = ln.Close()
+	})
+	return ln.Addr().String()
+}
+
+// newSyncSessionApp builds an App whose store accepted a checkpoint at epoch
+// 1, cursor 5 with one running allocation.
+func newSyncSessionApp(t *testing.T, authority *identity.TLSAuthority) (*App, credentials.TransportCredentials, time.Time, string) {
+	t.Helper()
+	enrollAddr := startEnrollServer(t, authority, func(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
+		return authority.Enroll(ctx, req)
+	})
+	privateKey, err := mesh.GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("GeneratePrivateKey: %v", err)
+	}
+	app := &App{
+		cfg: config.AgentConfig{
+			Node: config.NodeConfig{ID: "node-1"},
+			ControlPlane: config.ControlPlaneClientConfig{
+				Addresses: []string{enrollAddr},
+				TLS: config.ClientTLSConfig{
+					CAFile:         writeTrustBundleFile(t, authority),
+					ServerName:     "localhost",
+					BootstrapToken: "bootstrap-token",
+				},
+			},
+			Mesh:    config.MeshConfig{WireGuard: config.WireGuard{InterfaceName: "wg0", PrivateKey: privateKey}},
+			Runtime: config.RuntimeConfig{DataDir: t.TempDir(), ManagedDashboardSecretsDir: t.TempDir()},
+		},
+	}
+	creds, certNotAfter, clusterIdentity, err := app.clientCredentials(context.Background())
+	if err != nil {
+		t.Fatalf("clientCredentials: %v", err)
+	}
+	store := openTestLocalState(t)
+	if err := store.prepareStartup(clusterIdentity, nil); err != nil {
+		t.Fatal(err)
+	}
+	desired := testDesiredState(1, 5, "alloc-1")
+	desired.ClusterId = clusterIdentity
+	if _, err := store.acceptDesired(clusterIdentity, "test-session", desired); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &supervisorTestRuntime{inventory: []RuntimeResource{{AllocationID: "alloc-1", RuntimeID: "runtime-alloc-1"}}}
+	supervisor := newWorkloadSupervisor("node-1", runtime, store, func(context.Context, *agentv1.AssignedNodeConfig) error { return nil })
+	supervisorCtx, supervisorCancel := context.WithCancel(context.Background())
+	t.Cleanup(supervisorCancel)
+	if err := supervisor.Start(supervisorCtx, clusterIdentity); err != nil {
+		t.Fatalf("start supervisor: %v", err)
+	}
+	app.stateStore = store
+	app.supervisor = supervisor
+	// Drain the start-up reconcile so tests observe batch-driven publications only.
+	settleDeadline := time.Now().Add(5 * time.Second)
+	for {
+		if report, err := app.supervisor.CurrentReport(); err == nil && report != nil {
+			break
+		}
+		if time.Now().After(settleDeadline) {
+			t.Fatal("start-up report was not recorded")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	for {
+		select {
+		case <-app.supervisor.ReportNotifications():
+			continue
+		case <-time.After(50 * time.Millisecond):
+		}
+		break
+	}
+	return app, creds, certNotAfter, clusterIdentity
+}
+
+func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
+	t.Parallel()
+
+	// An independent-stream-only batch must still republish the runtime
+	// report; heartbeats alone leave allocations pending.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		if want := reconciliation.HashObservationOverlay(testDesiredState(1, 5, "alloc-1").GetServices()); hello.GetHello().GetAcceptedObservationOverlayVersion() != want {
+			return fmt.Errorf("hello observation overlay version = %q, want %q", hello.GetHello().GetAcceptedObservationOverlayVersion(), want)
+		}
+		nodeConfig := &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24"}
+		update := &agentv1.NodeConfigUpdate{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			NodeConfigVersion: reconciliation.HashNodeConfig(nodeConfig), NodeConfig: nodeConfig,
+			AuthorityEpoch: 1, SessionId: hello.GetHello().GetSessionId(),
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: hello.GetHello().GetSessionId()}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	sawAck, sawReport := false, false
+	deadline := time.After(10 * time.Second)
+	for !sawAck || !sawReport {
+		select {
+		case msg := <-messages:
+			switch payload := msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				if payload.Acknowledgement.GetAuthorityEpoch() != 1 {
+					t.Fatalf("ack authority epoch = %d, want session epoch 1", payload.Acknowledgement.GetAuthorityEpoch())
+				}
+				sawAck = true
+			case *agentv1.AgentClientMessage_StatusReport:
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout: ack=%v report=%v; the independent update must republish runtime status", sawAck, sawReport)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionDefersReportUntilBatchApplied(t *testing.T) {
+	t.Parallel()
+
+	// The report must not publish mid-batch: the pre-batch inventory is
+	// rejected by the control plane and closes the stream.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		creds := &agentv1.PullCredentialSet{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			Credentials:    []*agentv1.AllocationCredential{{AllocationId: "alloc-1", Username: "user", Password: "pass"}},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		creds.CredentialsVersion = reconciliation.HashCredentials(creds.GetCredentials())
+		diff := &agentv1.AllocationDiff{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			BaseRevision: 5, TargetRevision: 6, Stops: []string{"alloc-1"},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	acks := 0
+	sawReport := false
+	deadline := time.After(10 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			switch msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				acks++
+			case *agentv1.AgentClientMessage_StatusReport:
+				if acks < 2 {
+					t.Fatalf("status report published after %d acks; the batch's allocation diff must be applied and acknowledged first", acks)
+				}
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for deferred status report (acks=%d)", acks)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
+	t.Parallel()
+
+	// Several diffs replayed as one batch: publication must wait for the
+	// batch-end marker; an intermediate report closes the stream.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		forward := func(msg *agentv1.AgentClientMessage) {
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+		first := testDiff(5, 6, nil, []*agentv1.DesiredService{testDiffService("alloc-1", 2, 1)}, nil)
+		first.ClusterId, first.SessionId = clusterIdentity, sessionID
+		second := testDiff(6, 7, nil, nil, []string{"alloc-1"})
+		second.ClusterId, second.SessionId = clusterIdentity, sessionID
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: first}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			forward(msg)
+			if msg.GetAcknowledgement() != nil {
+				break
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: second}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			forward(msg)
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	acks := 0
+	sawReport := false
+	deadline := time.After(10 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			switch msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				acks++
+			case *agentv1.AgentClientMessage_StatusReport:
+				if acks < 2 {
+					t.Fatalf("status report published after %d acks; every diff in the batch must be applied and acknowledged first", acks)
+				}
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for status report after diff replay (acks=%d)", acks)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionHoldsReportThroughMidBatchPause(t *testing.T) {
+	t.Parallel()
+
+	// A batch paused past the quiet window must not publish: the report
+	// waits for the batch-end marker.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		creds := &agentv1.PullCredentialSet{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			Credentials:    []*agentv1.AllocationCredential{{AllocationId: "alloc-1", Username: "user", Password: "pass"}},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		creds.CredentialsVersion = reconciliation.HashCredentials(creds.GetCredentials())
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds}}); err != nil {
+			return err
+		}
+		// Pause past the quiet window with the diff still in flight.
+		time.Sleep(2*reportRepublishQuietPeriod + 100*time.Millisecond)
+		diff := &agentv1.AllocationDiff{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			BaseRevision: 5, TargetRevision: 6, Stops: []string{"alloc-1"},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	acks := 0
+	sawReport := false
+	deadline := time.After(15 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			switch msg.Payload.(type) {
+			case *agentv1.AgentClientMessage_Acknowledgement:
+				acks++
+			case *agentv1.AgentClientMessage_StatusReport:
+				if acks < 2 {
+					t.Fatalf("status report published after %d of 2 acks; a paused batch must withhold publication until its batch end", acks)
+				}
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatalf("timeout waiting for status report after the paused batch (acks=%d)", acks)
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+}
+
+func TestSyncSessionDiffEnsuresDashboardIdentityBeforeReconcile(t *testing.T) {
+	t.Parallel()
+
+	// A diff can introduce the managed dashboard allocation, so the identity
+	// must be refreshed before reconciliation lets the runtime start it.
+	authority := newTestTLSAuthority(t)
+	messages := make(chan *agentv1.AgentClientMessage, 16)
+	issued := make(chan struct{}, 4)
+	var clusterIdentity string
+	syncAddr := startSyncServerIssuing(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if hello.GetHello() == nil {
+			return errors.New("expected agent hello")
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		dashboard := testDiffService("dashboard-1", 1, 1)
+		dashboard.Spec.Runtime.Env = map[string]string{managedDashboardSecretMarker: managedDashboardSecretValue}
+		diff := &agentv1.AllocationDiff{
+			AgentId: "node-1", ClusterId: clusterIdentity,
+			BaseRevision: 5, TargetRevision: 6, Starts: []*agentv1.DesiredService{dashboard},
+			AuthorityEpoch: 1, SessionId: sessionID,
+			AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff}}); err != nil {
+			return err
+		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+			return err
+		}
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			select {
+			case messages <- msg:
+			default:
+			}
+		}
+	}, func(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+		select {
+		case issued <- struct{}{}:
+		default:
+		}
+		return authority.IssueManagedDashboardCertificate(ctx, "dashboard-test", req.GetCsrPem())
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+	secretsDir := app.cfg.Runtime.ManagedDashboardSecretsDir
+	runtime := app.supervisor.runtime.(*supervisorTestRuntime)
+
+	var mu sync.Mutex
+	dashboardReconciles, reconcilesWithoutIdentity := 0, 0
+	runtime.setOnReconcile(func(state *agentv1.DesiredNodeState) {
+		if !hasManagedDashboardService(state) {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		dashboardReconciles++
+		if _, err := os.Stat(filepath.Join(secretsDir, managedDashboardCertFileName)); err != nil {
+			reconcilesWithoutIdentity++
+		}
+	})
+
+	sessionCtx, sessionCancel := context.WithCancel(context.Background())
+	defer sessionCancel()
+	sessionDone := make(chan error, 1)
+	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+
+	// The post-batch report follows the diff's reconcile.
+	sawReport := false
+	deadline := time.After(10 * time.Second)
+	for !sawReport {
+		select {
+		case msg := <-messages:
+			if msg.GetStatusReport() != nil {
+				sawReport = true
+			}
+		case <-deadline:
+			t.Fatal("timeout waiting for status report after the dashboard diff")
+		}
+	}
+	sessionCancel()
+	select {
+	case <-sessionDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sync session did not stop")
+	}
+
+	select {
+	case <-issued:
+	default:
+		t.Fatal("managed dashboard identity was not issued for the diff-introduced dashboard")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if dashboardReconciles == 0 {
+		t.Fatal("dashboard allocation was never reconciled")
+	}
+	if reconcilesWithoutIdentity != 0 {
+		t.Fatalf("%d of %d dashboard reconciles ran without the certificate present", reconcilesWithoutIdentity, dashboardReconciles)
+	}
+	if _, err := os.Stat(filepath.Join(secretsDir, managedDashboardCertFileName)); err != nil {
+		t.Fatalf("managed dashboard certificate missing after session: %v", err)
 	}
 }

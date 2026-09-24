@@ -20,6 +20,12 @@ message AgentHello {
   string session_id = 10;
   // Last durable control-plane position accepted by the agent. These fields
   // describe local inventory; the connection does not own that state.
+  // reconciliation_cursor is the accepted per-node allocation revision
+  // (monotonic). The other accepted_*_version fields are content-hash
+  // versions of accepted content; empty means none accepted. The observation
+  // overlay version covers the observation-derived fields of accepted
+  // services (internal hosts, restart observations), which can drift at the
+  // same reconciliation cursor and are repaired with a checkpoint.
   uint64 accepted_authority_epoch = 11;
   int64 reconciliation_cursor = 12;
   bool recovery_mode = 13;
@@ -30,6 +36,10 @@ message AgentHello {
   repeated ServiceCondition allocations = 18;
   uint64 session_incarnation = 19;
   string wireguard_endpoint = 20;
+  string accepted_node_config_version = 21;
+  string accepted_credentials_version = 22;
+  string accepted_replicas_version = 23;
+  string accepted_observation_overlay_version = 24;
 }
 
 message RuntimeResource {
@@ -110,6 +120,9 @@ message DesiredService {
   string volume_id = 8;
   int64 desired_rollout_generation = 9;
   uint32 network_identity = 10;
+  // Runtime-only: the agent merges stored pull credentials here for the
+  // runtime. Wire checkpoints and diffs must leave these empty; credentials
+  // arrive in PullCredentialSet.
   string registry_username = 11;
   string registry_password = 12;
   string internal_hostname = 13;
@@ -135,6 +148,9 @@ message InternalHost {
 }
 
 message DesiredNodeState {
+  // Checkpoint: full allocation+volume set plus node config for this agent.
+  // Services must not carry registry credentials on the wire; credentials
+  // arrive in PullCredentialSet. Replica addresses arrive in ReplicaEndpoints.
   string agent_id = 1;
   int64 reconciliation_cursor = 2;
   repeated DesiredVolume volumes = 3;
@@ -147,7 +163,67 @@ message DesiredNodeState {
   string session_id = 10;
   google.protobuf.Timestamp authority_not_after = 11;
   string cluster_id = 12;
-  repeated string replica_addresses = 13;
+  string node_config_version = 14;
+}
+
+// Bounded incremental change from base_revision to target_revision.
+// Omission is not removal; only explicit stops remove. Agent-scoped:
+// agent_id/cluster must match, and authority fields fence acceptance.
+message AllocationDiff {
+  string agent_id = 1;
+  int64 base_revision = 2;
+  int64 target_revision = 3;
+  repeated DesiredService starts = 4;
+  repeated DesiredService updates = 5;
+  repeated string stops = 6;
+  repeated DesiredVolume volume_starts = 7;
+  repeated string volume_stops = 8;
+  google.protobuf.Timestamp generated_at = 9;
+  uint64 authority_epoch = 10;
+  string session_id = 11;
+  google.protobuf.Timestamp authority_not_after = 12;
+  string cluster_id = 13;
+}
+
+message AllocationCredential {
+  string allocation_id = 1;
+  string username = 2;
+  string password = 3;
+}
+
+// Independently versioned pull credentials for this agent's allocations.
+// Version is a content hash; empty credentials means none required.
+message PullCredentialSet {
+  string agent_id = 1;
+  string credentials_version = 2;
+  repeated AllocationCredential credentials = 3;
+  uint64 authority_epoch = 4;
+  string session_id = 5;
+  google.protobuf.Timestamp authority_not_after = 6;
+  string cluster_id = 7;
+}
+
+// Independently versioned node config (peers, identities, subnets).
+// 2.11/2.12 will split this further; 2.10 provides the versioned seam.
+message NodeConfigUpdate {
+  string agent_id = 1;
+  string node_config_version = 2;
+  AssignedNodeConfig node_config = 3;
+  uint64 authority_epoch = 4;
+  string session_id = 5;
+  google.protobuf.Timestamp authority_not_after = 6;
+  string cluster_id = 7;
+}
+
+// Independently versioned control-plane replica discovery.
+message ReplicaEndpoints {
+  string agent_id = 1;
+  string replicas_version = 2;
+  repeated string replica_addresses = 3;
+  uint64 authority_epoch = 4;
+  string session_id = 5;
+  google.protobuf.Timestamp authority_not_after = 6;
+  string cluster_id = 7;
 }
 
 enum SnapshotScope {
@@ -155,13 +231,17 @@ enum SnapshotScope {
   SNAPSHOT_SCOPE_AGENT = 1;
 }
 
-// Sent only after the desired snapshot and its cursor are durably committed.
-// Does not imply runtime success or release of any allocation or volume.
+// Sent only after the referenced state and its cursor/versions are durably
+// committed. Does not imply runtime success or release of any allocation
+// or volume. Carries the cumulative accepted position across all streams.
 message DesiredStateAcknowledgement {
   string agent_id = 1;
   string session_id = 2;
   uint64 authority_epoch = 3;
   int64 reconciliation_cursor = 4;
+  string node_config_version = 5;
+  string credentials_version = 6;
+  string replicas_version = 7;
 }
 
 message VolumeCondition {
@@ -227,9 +307,22 @@ message AgentClientMessage {
   }
 }
 
+// Terminates one server batch on the Sync stream. A batch is applied as a
+// unit: the agent withholds status publication until this marker, so an
+// intermediate inventory is never validated against the batch's final
+// assignments. Carries no state and is not acknowledged.
+message SyncBatchEnd {
+  string session_id = 1;
+}
+
 message AgentServerMessage {
   oneof payload {
     DesiredNodeState desired_state = 1;
+    AllocationDiff allocation_diff = 2;
+    NodeConfigUpdate node_config_update = 3;
+    PullCredentialSet pull_credentials = 4;
+    ReplicaEndpoints replica_endpoints = 5;
+    SyncBatchEnd batch_end = 6;
   }
 }
 

@@ -27,6 +27,7 @@ type Delivery struct {
 	rolloutNow     func() time.Time
 	failoverNow    func() time.Time
 	buildScheduler BuildSchedulerConfig
+	allocSync      *allocSync
 }
 
 func (d *Delivery) BuildSchedulerConfig() BuildSchedulerConfig {

@@ -113,6 +113,14 @@ func removeLegacyCAFiles(pkiDir string) {
 	}
 }
 
+// ClientCertificateTTL is the lifetime of issued client certificates.
+func (a *TLSAuthority) ClientCertificateTTL() time.Duration {
+	if a == nil {
+		return 0
+	}
+	return a.clientCertTTL
+}
+
 func (a *TLSAuthority) HTTPConfig() *tls.Config {
 	return &tls.Config{
 		GetConfigForClient: a.tlsConfigForClient,

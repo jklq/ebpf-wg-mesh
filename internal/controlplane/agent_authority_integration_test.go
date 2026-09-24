@@ -8,6 +8,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/reconciliation"
 )
 
@@ -22,7 +23,7 @@ func TestAuthorityCutoverWaitsForPartitionedAgentGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deadline, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, 0)
+	deadline, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, deliverycore.SyncVersions{Cursor: 0})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +46,7 @@ func TestAuthorityCutoverWaitsForPartitionedAgentGrant(t *testing.T) {
 	if err := reconciliation.ValidateCommand(delayed, hello.SessionId, time.Now().Add(-reconciliation.MaxClockSkew)); err == nil {
 		t.Fatal("isolated agent accepted delayed former command")
 	}
-	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, 1); err == nil {
+	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, epoch, deliverycore.SyncVersions{Cursor: 1}); err == nil {
 		t.Fatal("paused former holder renewed after takeover")
 	}
 	if err := store.advanceAgentAuthority(ctx, epoch); err == nil {
@@ -60,7 +61,7 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, hello); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, 1, 7); err != nil {
+	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, hello.SessionId, 1, deliverycore.SyncVersions{Cursor: 7}); err != nil {
 		t.Fatal(err)
 	}
 	ack := &agentv1.DesiredStateAcknowledgement{AgentId: hello.AgentId, SessionId: hello.SessionId, AuthorityEpoch: 1, ReconciliationCursor: 7}
@@ -98,7 +99,7 @@ func TestSessionAcknowledgementAndFreshStoreRecovery(t *testing.T) {
 	if err := store.fleet.acknowledgeAgentDesired(ctx, ack); err == nil {
 		t.Fatal("accepted delayed acknowledgement from superseded session")
 	}
-	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, "first", 1, 8); err == nil {
+	if _, err := store.fleet.grantAgentCommand(ctx, hello.AgentId, "first", 1, deliverycore.SyncVersions{Cursor: 8}); err == nil {
 		t.Fatal("superseded session received new command grant")
 	}
 	if err := testDelivery(store).ObserveAgentHeartbeat(ctx, hello.AgentId, "first", false); err == nil {

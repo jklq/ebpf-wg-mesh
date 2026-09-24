@@ -1,10 +1,17 @@
 package reconciliation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var ErrIdentityRecovery = errors.New("identity recovery required")
@@ -16,7 +23,14 @@ const (
 	MaxClockSkew = time.Second
 )
 
-func ValidateCommand(state *agentv1.DesiredNodeState, sessionID string, now time.Time) error {
+// FencedCommand is any agent-scoped message carrying session and
+// authority-expiry fencing.
+type FencedCommand interface {
+	GetSessionId() string
+	GetAuthorityNotAfter() *timestamppb.Timestamp
+}
+
+func ValidateCommand(state FencedCommand, sessionID string, now time.Time) error {
 	if sessionID == "" || state.GetSessionId() != sessionID {
 		return errors.New("desired state belongs to another session")
 	}
@@ -34,4 +48,96 @@ func ValidateCommand(state *agentv1.DesiredNodeState, sessionID string, now time
 // authority. Early release must never shorten that deadline.
 func CanTakeOver(now, outstandingNotAfter time.Time) bool {
 	return !now.Before(outstandingNotAfter)
+}
+
+// HashNodeConfig versions node config content for independent delivery.
+func HashNodeConfig(config *agentv1.AssignedNodeConfig) string {
+	if config == nil {
+		return hashBytes([]byte("node-config:nil"))
+	}
+	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(config)
+	if err != nil {
+		return ""
+	}
+	return hashBytes(raw)
+}
+
+func HashCredentials(creds []*agentv1.AllocationCredential) string {
+	ordered := append([]*agentv1.AllocationCredential(nil), creds...)
+	slices.SortFunc(ordered, func(a, b *agentv1.AllocationCredential) int {
+		return strings.Compare(a.GetAllocationId(), b.GetAllocationId())
+	})
+	h := sha256.New()
+	for _, c := range ordered {
+		h.Write([]byte(c.GetAllocationId()))
+		h.Write([]byte{0})
+		h.Write([]byte(c.GetUsername()))
+		h.Write([]byte{0})
+		h.Write([]byte(c.GetPassword()))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func HashReplicas(addresses []string) string {
+	ordered := append([]string(nil), addresses...)
+	slices.Sort(ordered)
+	h := sha256.New()
+	for _, addr := range ordered {
+		addr = strings.TrimSpace(addr)
+		if addr == "" {
+			continue
+		}
+		h.Write([]byte(addr))
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// HashObservationOverlay versions the observation-derived overlay of desired
+// services (internal hosts, restart observations), which can drift at a fixed
+// reconciliation cursor. Both peers compute it from DesiredService content so
+// a reconnect can detect drift and repair it with a same-cursor checkpoint.
+func HashObservationOverlay(services []*agentv1.DesiredService) string {
+	ordered := append([]*agentv1.DesiredService(nil), services...)
+	slices.SortFunc(ordered, func(a, b *agentv1.DesiredService) int {
+		return strings.Compare(a.GetAllocationId(), b.GetAllocationId())
+	})
+	h := sha256.New()
+	for _, svc := range ordered {
+		h.Write([]byte(svc.GetAllocationId()))
+		h.Write([]byte{0})
+		hosts := append([]*agentv1.InternalHost(nil), svc.GetInternalHosts()...)
+		slices.SortFunc(hosts, func(a, b *agentv1.InternalHost) int {
+			if n := strings.Compare(a.GetHostname(), b.GetHostname()); n != 0 {
+				return n
+			}
+			if n := strings.Compare(a.GetIpv4(), b.GetIpv4()); n != 0 {
+				return n
+			}
+			return strings.Compare(a.GetIpv6(), b.GetIpv6())
+		})
+		for _, host := range hosts {
+			h.Write([]byte(host.GetHostname()))
+			h.Write([]byte{0})
+			h.Write([]byte(host.GetIpv4()))
+			h.Write([]byte{0})
+			h.Write([]byte(host.GetIpv6()))
+			h.Write([]byte{0})
+		}
+		if obs := svc.GetRestartObservation(); obs != nil {
+			raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(obs)
+			if err != nil {
+				return ""
+			}
+			h.Write(raw)
+		}
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func hashBytes(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
