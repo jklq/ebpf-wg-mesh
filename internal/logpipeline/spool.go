@@ -64,6 +64,12 @@ type SpoolConfig struct {
 	MaxSegmentBytes int64
 	// SyncWrites fsyncs every append. Disable only in tests.
 	SyncWrites bool
+	// RejectOnFull keeps unshipped records instead of evicting them
+	// past the byte cap: Append fails with ErrSpoolFull and the caller
+	// sheds with its own accounting. The control-plane ingest journal
+	// uses it: an accepted batch must survive outages instead of
+	// being silently evicted from under the durable queue.
+	RejectOnFull bool
 	// Retention keeps committed sealed segments this long past their
 	// newest record so reconnect replay can re-send recently
 	// acknowledged records the backend may not have durably ingested
@@ -80,12 +86,13 @@ type SpoolConfig struct {
 // segments are evicted and their unshipped records counted per key
 // so callers can report explicit read gaps.
 type Spool struct {
-	mu        sync.Mutex
-	dir       string
-	maxBytes  int64
-	maxSeg    int64
-	sync      bool
-	retention time.Duration
+	mu           sync.Mutex
+	dir          string
+	maxBytes     int64
+	maxSeg       int64
+	rejectOnFull bool
+	sync         bool
+	retention    time.Duration
 
 	activeID   uint64
 	active     *os.File
@@ -147,6 +154,7 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 	s := &Spool{
 		dir:          cfg.Dir,
 		maxBytes:     maxBytes,
+		rejectOnFull: cfg.RejectOnFull,
 		maxSeg:       maxSeg,
 		sync:         cfg.SyncWrites,
 		retention:    cfg.Retention,
@@ -321,6 +329,10 @@ func (s *Spool) segmentPath(id uint64) string {
 
 // Append durably enqueues one payload, evicting the oldest segments
 // past the byte cap. Evicted unshipped records are counted per key.
+// ErrSpoolFull rejects an append that cannot fit the byte cap
+// without evicting unshipped records (RejectOnFull spools).
+var ErrSpoolFull = errors.New("log spool is full")
+
 // ErrRecordTooLarge rejects a record that cannot fit the configured
 // spool bounds; callers count it as a dropped line instead of
 // oversizing a segment past the caps.
@@ -341,6 +353,14 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 	}
 	if s.active == nil {
 		return errors.New("log spool has no writable segment")
+	}
+	if s.rejectOnFull {
+		// Evict what may be evicted (fully shipped segments), then
+		// reject rather than drop unshipped records.
+		s.evictLocked()
+		if s.bytes+int64(len(encoded)) > s.maxBytes {
+			return ErrSpoolFull
+		}
 	}
 	if s.activeSize+int64(len(encoded)) > s.maxSeg {
 		if err := s.rotateLocked(); err != nil {
@@ -365,7 +385,9 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 	}
 	s.records++
 	s.bytes += int64(len(encoded))
-	s.evictLocked()
+	if !s.rejectOnFull {
+		s.evictLocked()
+	}
 	return nil
 }
 
@@ -676,14 +698,27 @@ func (s *Spool) rotateLocked() error {
 // an in-flight batch are never evicted: the batch may already be
 // delivered, and evicting it would report a false gap and fail the
 // commit.
+// fullyShippedLocked reports whether every record in the segment is
+// behind the durable cursor.
+func (s *Spool) fullyShippedLocked(seg segmentInfo) bool {
+	if seg.id < s.cursor.Segment {
+		return true
+	}
+	return seg.id == s.cursor.Segment && seg.size <= s.cursor.Offset
+}
+
 func (s *Spool) evictLocked() {
 	for s.bytes > s.maxBytes && len(s.segments) > 1 {
 		idx := -1
 		for i, seg := range s.segments {
-			if seg.pins == 0 {
-				idx = i
-				break
+			if seg.pins != 0 {
+				continue
 			}
+			if s.rejectOnFull && !s.fullyShippedLocked(seg) {
+				continue
+			}
+			idx = i
+			break
 		}
 		if idx < 0 {
 			// Every segment is pinned by the in-flight batch. Hold

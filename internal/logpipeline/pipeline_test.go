@@ -801,3 +801,37 @@ func TestSpoolCommitKeepsCursorWhenSaveFails(t *testing.T) {
 		t.Fatalf("cursor advanced across a failed commit: %+v after %+v", cursor2, cursor)
 	}
 }
+
+func TestSpoolRejectOnFullKeepsUnshippedRecords(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 4096, MaxSegmentBytes: 2048, RejectOnFull: true})
+	payload := make([]byte, 1000)
+	var count int
+	for i := 0; i < 100; i++ {
+		err := s.Append("a", fmt.Sprintf("id-%d", i), time.Now().UTC(), payload)
+		if errors.Is(err, ErrSpoolFull) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+		count++
+	}
+	if count == 0 || count == 100 {
+		t.Fatalf("expected the cap to reject some appends, accepted %d", count)
+	}
+	recs, cur, err := s.Read(100)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != count {
+		t.Fatalf("read %d of %d accepted records: rejection must lose nothing", len(recs), count)
+	}
+	if err := s.Commit(cur); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	// Shipped segments are evictable again: appends resume.
+	if err := s.Append("a", "after", time.Now().UTC(), payload); err != nil {
+		t.Fatalf("Append after commit: %v", err)
+	}
+}
