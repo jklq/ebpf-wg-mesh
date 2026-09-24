@@ -102,7 +102,7 @@ func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPRes
 }
 
 // clientForTrustedRealm returns a client for one request to a validated
-// token-realm authority of an operator-allowlisted registry (see
+// token-realm authority the operator approved in its own right (see
 // tokenRealm): the same no-redirect policy and dial guard, with exactly
 // the realm's authority added to the dialer's approved hosts for this
 // client only, so its private auth host is reachable while every other
