@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 30
+const currentSchemaVersion = 31
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -446,7 +446,7 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE INDEX idx_build_artifacts_service_reuse ON build_artifacts(service_id, reuse_key) WHERE reuse_key <> ''`,
-	`CREATE UNIQUE INDEX idx_build_artifacts_service_direct_ref ON build_artifacts(service_id, image_ref) WHERE kind = 'direct_image'`,
+	`CREATE UNIQUE INDEX idx_build_artifacts_service_direct_ref ON build_artifacts(service_id, image_ref, source_image_ref) WHERE kind = 'direct_image'`,
 	`CREATE INDEX idx_build_artifacts_service_created ON build_artifacts(service_id, created_at DESC, id)`,
 	`CREATE UNIQUE INDEX idx_build_artifacts_build ON build_artifacts(build_id) WHERE build_id IS NOT NULL`,
 	`CREATE TABLE github_installations (

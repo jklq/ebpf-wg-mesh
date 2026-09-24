@@ -1185,3 +1185,119 @@ func TestSourceBuildReuseRecordsRevisionAndSkipsRedundantRollout(t *testing.T) {
 		t.Fatalf("build_runs rows = %d, want 2 (the build and one reuse record)", totalBuilds)
 	}
 }
+
+func TestDirectImageArtifactProvenanceFollowsEachInput(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two different tags resolve to the same image.
+	sameDigest := testDigest("a")
+	resolver := &registry.StaticResolver{Tags: map[string]string{
+		"example.test/web:one": sameDigest,
+		"example.test/web:two": sameDigest,
+	}}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+
+	service, err := delivery.CreateService(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID), "web",
+		directImageServiceSpec("example.test/web:one", &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}), "node-1")
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+	pinned := testPinnedRef("example.test/web", "a")
+
+	// The later release names a different tag for the same image: its
+	// provenance must follow the new input instead of inheriting the
+	// older tag's record.
+	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec("example.test/web:two", &platformv1.ServiceRuntime{
+		Ports: runtimePortsFromInts([]int32{8080}), Env: map[string]string{"STAGE": "two"},
+	})); err != nil {
+		t.Fatalf("updateService: %v", err)
+	}
+	if _, err := delivery.ReleaseEnvironment(ctx, testUser("user-1"), service.EnvironmentID); err != nil {
+		t.Fatalf("ReleaseEnvironment: %v", err)
+	}
+	artifacts, err := delivery.ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil || len(artifacts) != 2 {
+		t.Fatalf("artifacts = %v, %v; each input keeps its own provenance record", artifacts, err)
+	}
+	for _, input := range []string{"example.test/web:one", "example.test/web:two"} {
+		matched := 0
+		for _, artifact := range artifacts {
+			if artifact.SourceImageRef == input {
+				matched++
+				if artifact.ImageRef != pinned {
+					t.Fatalf("artifact for %q = %+v, want pinned %q", input, artifact, pinned)
+				}
+			}
+		}
+		if matched != 1 {
+			t.Fatalf("artifacts recording %q = %d, want exactly one: %+v", input, matched, artifacts)
+		}
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != pinned {
+		t.Fatalf("deployment image = %q, want %q", got, pinned)
+	}
+}
+
+func TestPushCannotInstallTheFirstHeadWithoutAFetch(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-observed"); err != nil {
+		t.Fatalf("seedReadySourceState: %v", err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+	// A binding that has not proven a head yet — the pre-fetch state of
+	// a fresh binding.
+	if _, err := store.db.ExecContext(ctx, `UPDATE source_bindings SET head_commit_sha = '' WHERE id = $1`, binding.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// A delayed push with a nonzero predecessor must not install itself
+	// as the first head: its chain anchors to nothing and the ref has
+	// usually moved on already. Recording it and queueing it are both
+	// refused for currency; only a fetch establishes the first head.
+	push := source.BuildTransition{PreviousCommit: "commit-parent"}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-delayed", "Delayed push", "Octocat", push); err != nil {
+		t.Fatalf("seedReadySourceState commit-delayed: %v", err)
+	}
+	superseded, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-delayed", source.SourceSnapshotRecord{}, push)
+	if err != nil || !superseded.Superseded || !superseded.ChainUnproven {
+		t.Fatalf("delayed push over an empty head = %+v, %v, want superseded with unproven chain", superseded, err)
+	}
+	if head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID); err != nil || head != "" {
+		t.Fatalf("head = %q, %v; a push must not install the first head", head, err)
+	}
+
+	// The tracked-head fetch over the empty basis still establishes the
+	// real first head and builds it — the delayed push must not have
+	// displaced its proof.
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-real", "Real head", "Octocat", source.BuildTransition{History: true}); err != nil {
+		t.Fatalf("seedReadySourceState commit-real: %v", err)
+	}
+	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-real", source.SourceSnapshotRecord{}, source.BuildTransition{TrackedHead: true, FetchedFromHead: ""})
+	if err != nil || queued.Superseded || queued.BuildID == "" {
+		t.Fatalf("fetched first head = %+v, %v, want queued build", queued, err)
+	}
+	if head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID); err != nil || head != "commit-real" {
+		t.Fatalf("head = %q, %v; the fetch must establish the first head", head, err)
+	}
+}
