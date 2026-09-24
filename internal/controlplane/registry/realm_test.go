@@ -274,3 +274,37 @@ func TestAnonymousTokenRefusesRedirects(t *testing.T) {
 		t.Fatalf("anonymousToken = %v, want redirect refusal", err)
 	}
 }
+
+// TestRegistryHostAllowedMatchesPortsExactly pins the allowlist identity:
+// an entry matches its own endpoint only, a bare entry means the default
+// port, and other ports must be listed explicitly — one declaration must
+// never waive the address checks for a different port.
+func TestRegistryHostAllowedMatchesPortsExactly(t *testing.T) {
+	entries := []string{"registry.internal.test", "registry.internal.test:5000", "[fd00::1]:5000"}
+	for _, tc := range []struct {
+		endpoint string
+		allowed  bool
+	}{
+		{endpoint: "registry.internal.test", allowed: true},
+		{endpoint: "registry.internal.test:443", allowed: true},
+		{endpoint: "REGISTRY.INTERNAL.TEST:443", allowed: true},
+		{endpoint: "registry.internal.test:5000", allowed: true},
+		{endpoint: "registry.internal.test:8443", allowed: false},
+		{endpoint: "registry.internal.test:5001", allowed: false},
+		{endpoint: "registry.internal.test:0443", allowed: false},
+		{endpoint: "other.internal.test:5000", allowed: false},
+		{endpoint: "registry.internal.test.evil:5000", allowed: false},
+		{endpoint: "[fd00::1]:5000", allowed: true},
+		{endpoint: "[fd00::1]:5001", allowed: false},
+		{endpoint: "docker.io", allowed: false},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			if got := registryHostAllowed(tc.endpoint, entries); got != tc.allowed {
+				t.Fatalf("registryHostAllowed(%q) = %v, want %v", tc.endpoint, got, tc.allowed)
+			}
+		})
+	}
+	if !registryHostAllowed("registry-1.docker.io", []string{"docker.io"}) {
+		t.Fatal("docker hub aliases must collapse to one endpoint")
+	}
+}

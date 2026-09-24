@@ -91,15 +91,34 @@ func permittedRegistryDestination(ctx context.Context, registryHost string, allo
 }
 
 // registryHostAllowed reports whether hostport is on the operator's
-// direct-image registry allowlist (exact host[:port] match).
+// direct-image registry allowlist. Ports are part of the identity: an
+// entry matches the endpoint exactly and a bare host entry means that
+// host on the default port. An allowlist for one port never waives the
+// address checks for another, so a DNS change cannot smuggle registry
+// traffic to an unverified address on an unlisted port.
 func registryHostAllowed(hostport string, allowedPrivateHosts []string) bool {
-	hostport = strings.TrimSpace(hostport)
+	want := normalizedRegistryEndpoint(hostport)
 	for _, allowed := range allowedPrivateHosts {
-		if strings.EqualFold(strings.TrimSpace(allowed), hostport) {
+		if strings.EqualFold(normalizedRegistryEndpoint(allowed), want) {
 			return true
 		}
 	}
 	return false
+}
+
+// normalizedRegistryEndpoint canonicalizes a registry endpoint for
+// matching: Docker Hub aliases collapse to registry-1.docker.io and a
+// bare host means the default port.
+func normalizedRegistryEndpoint(hostport string) string {
+	host, port, err := net.SplitHostPort(strings.TrimSpace(hostport))
+	if err != nil {
+		host, port = strings.TrimSpace(hostport), ""
+	}
+	host = strings.Trim(hostnameOf(host), "[]")
+	if port == "" {
+		port = "443"
+	}
+	return net.JoinHostPort(registryEndpoint(host), port)
 }
 
 func hostnameOf(hostport string) string {

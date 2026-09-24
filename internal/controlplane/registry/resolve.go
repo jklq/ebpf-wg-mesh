@@ -159,8 +159,11 @@ func approvedDialTransport(base http.RoundTripper, allowedPrivateHosts []string)
 // second resolution can swap in an unverified one between check and
 // connect. Resolution failures fail closed.
 func dialApprovedAddress(ctx context.Context, network, addr string, allowedPrivateHosts []string, next func(context.Context, string, string) (net.Conn, error)) (net.Conn, error) {
-	if registryHostAllowed(addr, allowedPrivateHosts) || registryHostAllowed(hostnameOf(addr), allowedPrivateHosts) {
+	if registryHostAllowed(addr, allowedPrivateHosts) {
 		// An operator-declared internal registry: dial it as configured.
+		// Ports are part of the allowlist identity (see
+		// registryHostAllowed) — the declaration covers this endpoint,
+		// not every port on the host.
 		return next(ctx, network, addr)
 	}
 	host, port, err := net.SplitHostPort(addr)
