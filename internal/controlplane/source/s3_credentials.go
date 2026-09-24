@@ -88,17 +88,17 @@ func (p *s3CredentialsProvider) get(ctx context.Context) (s3Credentials, bool, e
 	if creds, ok, err := p.containerCredentials(ctx); err != nil {
 		return s3Credentials{}, false, err
 	} else if ok {
-		p.store(cached, creds)
+		p.store(creds)
 		return creds, false, nil
 	}
 	if creds, ok := p.instanceCredentials(ctx); ok {
-		p.store(cached, creds)
+		p.store(creds)
 		return creds, false, nil
 	}
 	return s3Credentials{}, true, nil
 }
 
-func (p *s3CredentialsProvider) store(_ s3Credentials, creds s3Credentials) {
+func (p *s3CredentialsProvider) store(creds s3Credentials) {
 	p.mu.Lock()
 	p.cached, p.has = creds, true
 	p.mu.Unlock()

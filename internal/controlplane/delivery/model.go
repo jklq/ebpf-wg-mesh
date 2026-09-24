@@ -37,11 +37,6 @@ type DeletionInfo struct {
 	Inherited       bool
 }
 
-// Expired reports whether the grace period ended at or before cutoff.
-func (d *DeletionInfo) Expired(cutoff time.Time) bool {
-	return d != nil && !d.ExpiresAt.After(cutoff)
-}
-
 // EffectiveDeletion resolves the deletion state from a resource's own
 // tombstone plus ancestor tombstones ordered nearest-first. The nearest
 // active tombstone wins; ancestors mark the result inherited.
@@ -275,7 +270,6 @@ type BuildRunRecord struct {
 	AttemptCount            int64
 	AttemptLimit            int64
 	CancelRequestedAt       sql.NullTime
-	CancelRequestedBy       string
 	DeadlineAt              sql.NullTime
 	LastHeartbeatAt         sql.NullTime
 	ImageDigest             string
@@ -291,8 +285,6 @@ type BuildRunRecord struct {
 }
 
 type BuildAttemptRecord struct {
-	ID            string
-	BuildID       string
 	AttemptNumber int64
 	BuilderID     string
 	OwnerEpoch    int64

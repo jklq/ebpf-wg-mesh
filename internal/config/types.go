@@ -146,6 +146,7 @@ type RegistryConfig struct {
 
 type ControlPlaneBuilderConfig struct {
 	HeartbeatTimeoutSeconds int
+	LeaseTTLSeconds         int
 	MaxAttempts             int
 	MaxConcurrentGlobal     int
 	MaxConcurrentPerProject int

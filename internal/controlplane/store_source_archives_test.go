@@ -88,12 +88,12 @@ func TestSourceArchiveObjectsConvergeOnDuplicateDigest(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	archive := []byte("duplicate-source-archive")
-	digest, key, err := store.source.StoreSourceArchive(ctx, archive)
+	archive := dockerfileMarkerArchive("duplicate-source-archive")
+	digest, key, err := storeTestArchive(ctx, store, archive)
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest2, key2, err := store.source.StoreSourceArchive(ctx, archive)
+	digest2, key2, err := storeTestArchive(ctx, store, archive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +321,9 @@ func TestOpenSnapshotArchiveMapsS3BackendFailures(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		store.source.ConfigureSourceArchives(backend)
+		if err := store.source.ConfigureSourceArchives(backend, t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
 	}
 	useBackend(http.StatusServiceUnavailable)
 	if _, _, err := store.source.OpenSnapshotArchive(ctx, snapshotID); !errors.Is(err, source.ErrSnapshotTransient) {
@@ -426,8 +428,8 @@ func TestPruneSourceArchivesSerializesRacingStoreBehindCollection(t *testing.T) 
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	archive := []byte("racing-source-archive")
-	_, key, err := store.source.StoreSourceArchive(ctx, archive)
+	archive := dockerfileMarkerArchive("racing-source-archive")
+	_, key, err := storeTestArchive(ctx, store, archive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +440,7 @@ func TestPruneSourceArchivesSerializesRacingStoreBehindCollection(t *testing.T) 
 	backend := store.source.Archives()
 	deleteStarted := make(chan struct{})
 	var deleteOnce sync.Once
-	store.source.ConfigureSourceArchives(deleteHookArchiveStore{
+	if err := store.source.ConfigureSourceArchives(deleteHookArchiveStore{
 		ArchiveStore: backend,
 		onDelete: func(ctx context.Context, deleteKey string) error {
 			deleteOnce.Do(func() { close(deleteStarted) })
@@ -448,7 +450,9 @@ func TestPruneSourceArchivesSerializesRacingStoreBehindCollection(t *testing.T) 
 			time.Sleep(500 * time.Millisecond)
 			return backend.Delete(ctx, deleteKey)
 		},
-	})
+	}, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	type storeResult struct {
 		elapsed time.Duration
 		err     error
@@ -457,7 +461,7 @@ func TestPruneSourceArchivesSerializesRacingStoreBehindCollection(t *testing.T) 
 	go func() {
 		<-deleteStarted
 		start := time.Now()
-		_, _, err := store.source.StoreSourceArchive(ctx, archive)
+		_, _, err := storeTestArchive(ctx, store, archive)
 		racerDone <- storeResult{elapsed: time.Since(start), err: err}
 	}()
 	deleted, err := store.source.PruneSourceArchives(ctx, time.Now().UTC().AddDate(0, 0, -30))

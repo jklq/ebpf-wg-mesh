@@ -94,13 +94,11 @@ func (s *SQLStore) SourceBindingsForGitHubRepositoryAndRef(ctx context.Context, 
 		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
 		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
 		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
-		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
+		   FROM source_bindings sb JOIN live_services s ON s.id = sb.service_id
 		   JOIN environments e ON e.id = s.environment_id
-		   JOIN projects p ON p.id = e.project_id
 		  WHERE sb.provider = 'github'
 		    AND sb.provider_repository_external_id = $1
 		    AND sb.tracked_ref = $2
-		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL
 		  ORDER BY sb.created_at ASC, sb.id ASC`,
 		strings.TrimSpace(repositoryExternalID), strings.TrimSpace(trackedRef),
 	)
@@ -148,12 +146,10 @@ func (s *SQLStore) SourceBindingsForProviderScope(ctx context.Context, provider,
 		`SELECT sb.id, sb.service_id, e.project_id, s.environment_id, sb.provider, sb.repository_selector, sb.tracked_ref,
 		        sb.provider_repository_external_id, sb.provider_scope_external_id, sb.access_state,
 		        sb.build_recipe_json, sb.resolved_at, sb.fresh_until, sb.created_at, sb.updated_at
-		   FROM source_bindings sb JOIN services s ON s.id = sb.service_id
+		   FROM source_bindings sb JOIN live_services s ON s.id = sb.service_id
 		   JOIN environments e ON e.id = s.environment_id
-		   JOIN projects p ON p.id = e.project_id
 		  WHERE sb.provider = $1
 		    AND sb.provider_scope_external_id = $2
-		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL
 		  ORDER BY sb.created_at ASC, sb.id ASC`,
 		strings.TrimSpace(provider), strings.TrimSpace(providerScopeExternalID),
 	)

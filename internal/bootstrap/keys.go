@@ -143,15 +143,11 @@ func keysProvision(keysCfg config.SecretKeysConfig, keyID string) error {
 		return fmt.Errorf("controlplane keys provision: %w", err)
 	}
 	defer provider.Close()
-	keyring, ok := provider.(*secretkeys.Keyring)
-	if !ok {
-		return fmt.Errorf("controlplane keys provision: provider %s cannot provision versions", provider.Name())
-	}
-	version, err := keyring.GenerateKey(context.Background(), keyID)
+	version, err := provider.GenerateKey(context.Background(), keyID)
 	if err != nil {
 		return fmt.Errorf("controlplane keys provision: %w", err)
 	}
-	fmt.Fprintf(os.Stdout, "provisioned key version %s in %s\n", version, keyring.Path())
+	fmt.Fprintf(os.Stdout, "provisioned key version %s in %s\n", version, provider.Path())
 	fmt.Fprintln(os.Stdout, "copy this keyring file to every replica (and back it up separately from the database), then run `controlplane keys activate --key-id "+version+"`")
 	return nil
 }
@@ -170,14 +166,12 @@ func keysList(ctx context.Context, svc *secretkeys.Service, signing *signkeys.Se
 		return err
 	}
 	local := map[string]bool{}
-	if keyring, ok := svc.Provider().(*secretkeys.Keyring); ok {
-		versions, err := keyring.LocalKeyVersions()
-		if err != nil {
-			fmt.Fprintf(os.Stdout, "warning: cannot read local keyring %s: %v\n", keyring.Path(), err)
-		} else {
-			for _, version := range versions {
-				local[version] = true
-			}
+	versions, err := svc.Provider().LocalKeyVersions()
+	if err != nil {
+		fmt.Fprintf(os.Stdout, "warning: cannot read local keyring %s: %v\n", svc.Provider().Path(), err)
+	} else {
+		for _, version := range versions {
+			local[version] = true
 		}
 	}
 	fmt.Fprintf(os.Stdout, "provider: %s\n", svc.ProviderName())
@@ -231,11 +225,7 @@ func keysDelete(ctx context.Context, svc *secretkeys.Service, keyID string) erro
 
 func keysCheck(ctx context.Context, svc *secretkeys.Service, signing *signkeys.Service, onlyVersion string) error {
 	if version := strings.TrimSpace(onlyVersion); version != "" {
-		checker, ok := svc.Provider().(secretkeys.MaterialChecker)
-		if !ok {
-			return fmt.Errorf("controlplane keys check: provider %s cannot report local material", svc.ProviderName())
-		}
-		present, err := checker.HasKeyMaterial(ctx, version)
+		present, err := svc.Provider().HasKeyMaterial(ctx, version)
 		if err != nil {
 			return fmt.Errorf("controlplane keys check: %w", err)
 		}

@@ -18,7 +18,7 @@ import (
 // the workspace with an owner marker, clearing any leftover from a
 // dead run first. It returns the root and the build's daemon
 // directory.
-func prepareDaemonRoot(workDir, buildID string, now func() time.Time) (root, buildDir string, err error) {
+func prepareDaemonRoot(workDir, buildID string) (root, buildDir string, err error) {
 	roots, err := safeChildPath(workDir, sandboxDaemonRootsDirName)
 	if err != nil {
 		return "", "", err
@@ -38,10 +38,8 @@ func prepareDaemonRoot(workDir, buildID string, now func() time.Time) (root, bui
 		return "", "", fmt.Errorf("mkdir daemon root: %w", err)
 	}
 	owner := executorOwner{
-		Executor:  ExecutorHardened,
-		PID:       os.Getpid(),
-		BuildID:   buildID,
-		StartedAt: now().UTC(),
+		PID:     os.Getpid(),
+		BuildID: buildID,
 	}
 	data, err := json.Marshal(owner)
 	if err != nil {
@@ -141,7 +139,6 @@ type hardenedExecutor struct {
 	backend         SandboxBackend
 	buildkitdBinary string
 	nameservers     []string
-	now             func() time.Time
 	startDaemon     func(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error)
 }
 
@@ -151,7 +148,6 @@ func newHardenedExecutor(workDir string, backend SandboxBackend, buildkitdBinary
 		backend:         backend,
 		buildkitdBinary: buildkitdBinary,
 		nameservers:     nameservers,
-		now:             time.Now,
 		startDaemon:     defaultStartBuildkitd,
 	}
 }
@@ -176,7 +172,7 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	execCtx, cancel := context.WithTimeout(ctx, spec.Limits.Timeout)
 	defer cancel()
 
-	workspace, err := prepareExecutionWorkspace(e.workDir, spec.BuildID, ExecutorHardened, e.now)
+	workspace, err := prepareExecutionWorkspace(e.workDir, spec.BuildID)
 	if err != nil {
 		return ExecutionResult{}, &buildFailureError{kind: failureKindBuild, err: err}
 	}
@@ -253,7 +249,7 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if err := os.MkdirAll(socketDir, 0o755); err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("mkdir daemon socket dir: %w", err)})
 	}
-	daemonRoot, daemonBuildDir, err := prepareDaemonRoot(e.workDir, spec.BuildID, e.now)
+	daemonRoot, daemonBuildDir, err := prepareDaemonRoot(e.workDir, spec.BuildID)
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: err})
 	}

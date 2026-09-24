@@ -253,7 +253,7 @@ func (s *Domains) RestoreDomainBinding(ctx context.Context, user authz.User, hos
 		if errors.Is(err, authz.ErrDenied) {
 			return nil, status.Errorf(codes.PermissionDenied, "restore domain binding: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrAncestorDeleted) {
+		if errors.Is(err, deliverycore.ErrAncestorDeleted) || errors.Is(err, deliverycore.ErrDeletionExpired) {
 			return nil, status.Errorf(codes.FailedPrecondition, "restore domain binding: %v", err)
 		}
 		if errors.Is(err, sql.ErrNoRows) {

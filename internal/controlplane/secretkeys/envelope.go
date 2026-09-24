@@ -50,15 +50,6 @@ func generatePrefixedID(prefix string) (string, error) {
 	return prefix + hex.EncodeToString(raw[:]), nil
 }
 
-// GenerateNonce returns a fresh random GCM nonce.
-func GenerateNonce() ([]byte, error) {
-	nonce := make([]byte, NonceSize)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, fmt.Errorf("generate nonce: %w", err)
-	}
-	return nonce, nil
-}
-
 // SealValue encrypts plaintext with dek under additional authenticated data.
 // The AAD binds the ciphertext to its location (service, name, version) so a
 // sealed row copied elsewhere does not decrypt. It returns the random nonce
@@ -67,7 +58,7 @@ func SealValue(dek [DEKSize]byte, aad, plaintext []byte) (nonce, ciphertext []by
 	if len(plaintext) > MaxSealedValueSize {
 		return nil, nil, fmt.Errorf("%w: values are capped at %d bytes", ErrSealedValueTooLarge, MaxSealedValueSize)
 	}
-	sealed, err := sealWithNonce(dek[:], aad, plaintext, nil)
+	sealed, err := sealWithNonce(dek[:], aad, plaintext)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -92,22 +83,15 @@ func OpenValue(dek [DEKSize]byte, aad, nonce, ciphertext []byte) ([]byte, error)
 	return plaintext, nil
 }
 
-// sealWithNonce encrypts plaintext and prefixes the nonce when nonceOut is
-// nil (generating a fresh nonce) or uses the supplied buffer layout. It is
-// shared by sealed values and the keyring wrap format.
-func sealWithNonce(key, aad, plaintext, nonce []byte) ([]byte, error) {
+// sealWithNonce encrypts plaintext with a fresh nonce and prefixes it.
+func sealWithNonce(key, aad, plaintext []byte) ([]byte, error) {
 	aead, err := newCipher(key)
 	if err != nil {
 		return nil, err
 	}
-	if nonce == nil {
-		nonce = make([]byte, NonceSize)
-		if _, err := rand.Read(nonce); err != nil {
-			return nil, fmt.Errorf("generate nonce: %w", err)
-		}
-	}
-	if len(nonce) != NonceSize {
-		return nil, errors.New("seal requires a 96-bit nonce")
+	nonce := make([]byte, NonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("generate nonce: %w", err)
 	}
 	out := make([]byte, 0, NonceSize+len(plaintext)+aead.Overhead())
 	out = append(out, nonce...)

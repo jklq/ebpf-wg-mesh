@@ -57,7 +57,7 @@ func (s *CatalogOperations) RestoreEnvironment(ctx context.Context, environmentI
 		if errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost) {
 			return nil, err
 		}
-		if errors.Is(err, deliverycore.ErrAncestorDeleted) {
+		if errors.Is(err, deliverycore.ErrAncestorDeleted) || errors.Is(err, deliverycore.ErrDeletionExpired) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, writeAccessError("restore environment", err)
@@ -104,6 +104,9 @@ func (s *CatalogOperations) RestoreProject(ctx context.Context, projectID string
 	if err != nil {
 		if errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost) {
 			return nil, err
+		}
+		if errors.Is(err, deliverycore.ErrDeletionExpired) {
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, writeAccessError("restore project", err)
 	}

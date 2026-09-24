@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // DEKScopeKindEnvironment scopes a data-encryption key to one environment.
@@ -24,17 +25,6 @@ const DEKWrapPurposeContext = "dek-wrap/v1"
 // DEKWrapPurpose returns the wrap purpose binding a wrapped DEK to its row.
 func DEKWrapPurpose(dekID string) string { return DEKWrapPurposeContext + "/" + dekID }
 
-// DEKRecord describes one wrapped data-encryption key. Only the wrapped
-// bytes are persisted; plaintext DEKs live in process memory.
-type DEKRecord struct {
-	ID            string
-	ScopeKind     string
-	ScopeID       string
-	WrappingKeyID string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-}
-
 // DEKStore mints, caches, and rewraps per-scope data-encryption keys. All
 // replicas share the wrapped rows; each replica unwraps into its own memory
 // cache on first use.
@@ -43,8 +33,8 @@ type DEKStore struct {
 	registry *Registry
 
 	mu      sync.Mutex
-	byScope map[string]string        // scopeKind + "\x00" + scopeID -> dek ID
-	byID    map[string][DEKSize]byte // dek ID -> plaintext DEK
+	byScope map[string]string         // scopeKind + "\x00" + scopeID -> dek ID
+	byID    map[string]*[DEKSize]byte // dek ID -> plaintext DEK
 }
 
 // NewDEKStore builds the shared DEK inventory.
@@ -53,7 +43,7 @@ func NewDEKStore(db *sql.DB, registry *Registry) *DEKStore {
 		db:       db,
 		registry: registry,
 		byScope:  map[string]string{},
-		byID:     map[string][DEKSize]byte{},
+		byID:     map[string]*[DEKSize]byte{},
 	}
 }
 
@@ -71,7 +61,7 @@ func (s *DEKStore) DEKForScope(ctx context.Context, q Querier, scopeKind, scopeI
 	if id, ok := s.byScope[scopeCacheKey(scopeKind, scopeID)]; ok {
 		if dek, ok := s.byID[id]; ok {
 			s.mu.Unlock()
-			return dek, id, nil
+			return *dek, id, nil
 		}
 	}
 	s.mu.Unlock()
@@ -82,7 +72,7 @@ func (s *DEKStore) DEKForScope(ctx context.Context, q Querier, scopeKind, scopeI
 	}
 	s.mu.Lock()
 	s.byScope[scopeCacheKey(scopeKind, scopeID)] = id
-	s.byID[id] = dek
+	s.byID[id] = &dek
 	s.mu.Unlock()
 	return dek, id, nil
 }
@@ -95,7 +85,7 @@ func (s *DEKStore) DEKByID(ctx context.Context, q Querier, dekID string) ([DEKSi
 	s.mu.Lock()
 	if dek, ok := s.byID[dekID]; ok {
 		s.mu.Unlock()
-		return dek, nil
+		return *dek, nil
 	}
 	s.mu.Unlock()
 
@@ -114,6 +104,7 @@ func (s *DEKStore) DEKByID(ctx context.Context, q Querier, dekID string) ([DEKSi
 	if err != nil {
 		return zero, err
 	}
+	defer clear(raw)
 	if len(raw) != DEKSize {
 		return zero, &UnwrapError{KeyID: wrappingKeyID, Reason: UnwrapReasonCorruptCiphertext,
 			Err: fmt.Errorf("data-encryption key %s has invalid length", dekID)}
@@ -121,7 +112,7 @@ func (s *DEKStore) DEKByID(ctx context.Context, q Querier, dekID string) ([DEKSi
 	var dek [DEKSize]byte
 	copy(dek[:], raw)
 	s.mu.Lock()
-	s.byID[dekID] = dek
+	s.byID[dekID] = &dek
 	// Opportunistically heal the scope mapping so later scope lookups hit.
 	ck := scopeCacheKey(scopeKind, scopeID)
 	if _, ok := s.byScope[ck]; !ok {
@@ -129,30 +120,6 @@ func (s *DEKStore) DEKByID(ctx context.Context, q Querier, dekID string) ([DEKSi
 	}
 	s.mu.Unlock()
 	return dek, nil
-}
-
-// ListDEKs returns every wrapped DEK record for operator inspection. It
-// never returns plaintext.
-func (s *DEKStore) ListDEKs(ctx context.Context) ([]DEKRecord, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, scope_kind, scope_id, wrapping_key_id, created_at, updated_at
-		   FROM envelope_data_keys ORDER BY scope_kind, scope_id, id`)
-	if err != nil {
-		return nil, fmt.Errorf("list data-encryption keys: %w", err)
-	}
-	defer rows.Close()
-	var out []DEKRecord
-	for rows.Next() {
-		var rec DEKRecord
-		if err := rows.Scan(&rec.ID, &rec.ScopeKind, &rec.ScopeID, &rec.WrappingKeyID, &rec.CreatedAt, &rec.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan data-encryption key: %w", err)
-		}
-		out = append(out, rec)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list data-encryption keys: %w", err)
-	}
-	return out, nil
 }
 
 // RewrapAll unwraps every DEK with its current wrapping key and re-wraps it
@@ -205,6 +172,7 @@ func (s *DEKStore) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 			return rewrapped, fmt.Errorf("rewrap data-encryption key %s: %w", item.id, err)
 		}
 		newKeyID, newWrapped, err := s.registry.WrapWithActive(ctx, DEKWrapPurpose(item.id), raw)
+		clear(raw)
 		if err != nil {
 			return rewrapped, fmt.Errorf("rewrap data-encryption key %s: %w", item.id, err)
 		}
@@ -252,8 +220,10 @@ func (s *DEKStore) VerifyAll(ctx context.Context) (verified int, err error) {
 			return verified, fmt.Errorf("verify data-encryption key %s: %w", item.id, err)
 		}
 		if len(raw) != DEKSize {
+			clear(raw)
 			return verified, fmt.Errorf("verify data-encryption key %s: invalid length", item.id)
 		}
+		clear(raw)
 		verified++
 	}
 	return verified, nil
@@ -294,6 +264,7 @@ func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scop
 		if err != nil {
 			return zero, "", err
 		}
+		defer clear(raw)
 		if len(raw) != DEKSize {
 			return zero, "", &UnwrapError{KeyID: wrappingKeyID, Reason: UnwrapReasonCorruptCiphertext,
 				Err: fmt.Errorf("data-encryption key %s has invalid length", id)}
@@ -309,6 +280,7 @@ func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scop
 	if err != nil {
 		return zero, "", err
 	}
+	defer clear(candidate[:])
 	candidateID, err := GenerateDEKID()
 	if err != nil {
 		return zero, "", err
@@ -330,9 +302,9 @@ func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scop
 	} else if n == 1 {
 		return candidate, candidateID, nil
 	}
-	// Lost the race: load the winner (recursion depth is bounded by
-	// contention; a steady winner returns on the next select).
-	return s.loadOrMintDEK(ctx, q, scopeKind, scopeID)
+	// The winner may be invisible to this transaction's snapshot. Let the
+	// transaction retry rather than minting candidates indefinitely.
+	return zero, "", &pgconn.PgError{Code: "40001", Message: "retry data-encryption key mint after concurrent insert"}
 }
 
 func scopeCacheKey(kind, id string) string { return kind + "\x00" + id }

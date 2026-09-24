@@ -27,8 +27,7 @@ const keyringWrapVersion byte = 0x01
 // wrap to its key reference and purpose.
 const keyringWrapContext = "keyring-wrap/v1"
 
-// MaxKeyVersionLength caps keyring key version IDs.
-const MaxKeyVersionLength = 128
+const maxKeyVersionLength = 128
 
 // keyVersionPattern restricts version IDs to operator-friendly text without
 // whitespace or path separators.
@@ -37,9 +36,9 @@ var keyVersionPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 // ValidateKeyVersionID rejects empty, overlong, or oddly shaped key version
 // IDs before they reach the keyring file or the registry.
 func ValidateKeyVersionID(id string) error {
-	if len(id) == 0 || len(id) > MaxKeyVersionLength || !keyVersionPattern.MatchString(id) {
+	if len(id) == 0 || len(id) > maxKeyVersionLength || !keyVersionPattern.MatchString(id) {
 		return fmt.Errorf("key version %q must match [A-Za-z0-9_][A-Za-z0-9_.-]* and be 1-%d characters",
-			id, MaxKeyVersionLength)
+			id, maxKeyVersionLength)
 	}
 	return nil
 }
@@ -53,8 +52,8 @@ type KeyringOptions struct {
 	AllowGenerate bool
 }
 
-// Keyring is the in-process Provider. Versioned AES-256 master keys live in
-// an explicitly provisioned JSON file that the operator replicates to every
+// Keyring holds versioned AES-256 master keys in an explicitly provisioned
+// JSON file that the operator replicates to every
 // control-plane replica, separately from the database. Wrap and unwrap run
 // in process; no network call and no manual unlock happen on restart.
 //
@@ -78,12 +77,11 @@ func NewKeyring(path string, opts KeyringOptions) (*Keyring, error) {
 	return &Keyring{path: path, allowGenerate: opts.AllowGenerate}, nil
 }
 
-// Name implements Provider.
+// Name identifies the keyring backend.
 func (k *Keyring) Name() string { return ProviderKeyring }
 
-// ProvisionKey implements Provider. hint must name a key version already
-// provisioned to this replica's keyring file; ProvisionKey verifies the
-// material round-trips and returns the hint as the reference. It never
+// ProvisionKey verifies that hint names a version provisioned to this
+// replica's keyring file, checks the material, and returns the reference. It never
 // generates material: provision the version to every replica before
 // activating it.
 func (k *Keyring) ProvisionKey(ctx context.Context, hint string) (string, error) {
@@ -115,8 +113,7 @@ func (k *Keyring) ProvisionKey(ctx context.Context, hint string) (string, error)
 	return ref, nil
 }
 
-// Wrap implements Provider. The ciphertext is bound to both the key
-// reference and the purpose, so wrapped bytes cannot be transplanted across
+// Wrap binds ciphertext to the key reference and purpose, so wrapped bytes cannot be transplanted across
 // keys or records.
 func (k *Keyring) Wrap(ctx context.Context, ref, purpose string, plaintext []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
@@ -135,7 +132,8 @@ func (k *Keyring) Wrap(ctx context.Context, ref, purpose string, plaintext []byt
 	if err != nil {
 		return nil, err
 	}
-	sealed, err := sealWithNonce(key, keyringAAD(ref, purpose), plaintext, nil)
+	defer clear(key)
+	sealed, err := sealWithNonce(key, keyringAAD(ref, purpose), plaintext)
 	if err != nil {
 		return nil, fmt.Errorf("keyring wrap: %w", err)
 	}
@@ -144,7 +142,7 @@ func (k *Keyring) Wrap(ctx context.Context, ref, purpose string, plaintext []byt
 	return append(out, sealed...), nil
 }
 
-// Unwrap implements Provider.
+// Unwrap decrypts a wrapped key.
 func (k *Keyring) Unwrap(ctx context.Context, ref, purpose string, wrapped []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -162,6 +160,7 @@ func (k *Keyring) Unwrap(ctx context.Context, ref, purpose string, wrapped []byt
 	if err != nil {
 		return nil, err
 	}
+	defer clear(key)
 	payload := wrapped[1:]
 	if len(payload) < NonceSize {
 		return nil, fmt.Errorf("%w: keyring wrapped key is truncated", ErrCiphertextInvalid)
@@ -177,15 +176,15 @@ func (k *Keyring) Unwrap(ctx context.Context, ref, purpose string, wrapped []byt
 	return plaintext, nil
 }
 
-// Close implements Provider.
+// Close releases keyring resources.
 func (k *Keyring) Close() error { return nil }
 
 // Path reports the keyring file location for diagnostics. It never appears
 // alongside key material.
 func (k *Keyring) Path() string { return k.path }
 
-// HasKeyMaterial implements MaterialChecker. It reports whether this
-// replica's keyring file holds validated material for ref. A missing or
+// HasKeyMaterial reports whether this replica's keyring file holds
+// validated material for ref. A missing or
 // unreadable file is an error, not an absence: callers must distinguish "no
 // such version" from "cannot read the keyring".
 func (k *Keyring) HasKeyMaterial(_ context.Context, ref string) (bool, error) {
@@ -227,8 +226,8 @@ func (k *Keyring) LocalKeyVersions() ([]string, error) {
 	return out, nil
 }
 
-// EnsureBootstrapKey implements BootstrapProvisioner. With AllowGenerate it
-// creates a missing keyring file, mints the first version when the file
+// EnsureBootstrapKey creates a missing keyring file when AllowGenerate is set,
+// mints the first version when the file
 // holds none, and returns the single version when the file holds exactly
 // one. Without AllowGenerate it fails closed: production keys are
 // provisioned explicitly and activated with `controlplane keys activate`.
@@ -348,6 +347,7 @@ func validateKeyringEntry(id string, entry keyringEntry) error {
 	if err != nil {
 		return fmt.Errorf("keyring version %q is not valid base64", id)
 	}
+	defer clear(key)
 	if len(key) != DEKSize {
 		return fmt.Errorf("keyring version %q must hold a 256-bit key", id)
 	}
@@ -371,6 +371,7 @@ func generateKeyringEntry(id string) (string, keyringEntry, error) {
 		id = generated
 	}
 	key := make([]byte, DEKSize)
+	defer clear(key)
 	if _, err := rand.Read(key); err != nil {
 		return "", keyringEntry{}, fmt.Errorf("generate keyring material: %w", err)
 	}

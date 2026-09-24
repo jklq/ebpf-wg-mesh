@@ -25,9 +25,12 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestBuildctlCommandPlacesGlobalFlagsBeforeSubcommand(t *testing.T) {
@@ -348,6 +351,81 @@ func TestExtractSourceSnapshotStripsArchiveRoot(t *testing.T) {
 	}
 }
 
+func TestExtractSourceSnapshotRejectsMultipleRoots(t *testing.T) {
+	archive := makeSnapshotArchive(t, map[string]string{
+		"first/app.txt":  "first",
+		"second/app.txt": "second",
+	})
+	if err := extractSourceSnapshot(t.TempDir(), archive); err == nil {
+		t.Fatal("expected multiple archive roots to be rejected")
+	}
+}
+
+func TestExtractSourceSnapshotPreservesInternalLinks(t *testing.T) {
+	var archive bytes.Buffer
+	gzw := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gzw)
+	for _, header := range []*tar.Header{
+		{Name: "repo/main.txt", Typeflag: tar.TypeReg, Mode: 0o644, Size: 4},
+		{Name: "repo/alias.txt", Typeflag: tar.TypeSymlink, Linkname: "main.txt"},
+		{Name: "repo/copy.txt", Typeflag: tar.TypeLink, Linkname: "repo/main.txt"},
+	} {
+		if err := tw.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Typeflag == tar.TypeReg {
+			if _, err := tw.Write([]byte("data")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repo := t.TempDir()
+	if err := extractSourceSnapshot(repo, archive.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"alias.txt", "copy.txt"} {
+		data, err := os.ReadFile(filepath.Join(repo, name))
+		if err != nil || string(data) != "data" {
+			t.Fatalf("%s = %q, %v", name, data, err)
+		}
+	}
+}
+
+func TestExtractSourceSnapshotRejectsEscapingLinks(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		hdr  tar.Header
+	}{
+		{"absolute symlink", tar.Header{Name: "repo/link", Typeflag: tar.TypeSymlink, Linkname: "/etc/passwd"}},
+		{"parent symlink", tar.Header{Name: "repo/link", Typeflag: tar.TypeSymlink, Linkname: "../outside"}},
+		{"hardlink outside root", tar.Header{Name: "repo/link", Typeflag: tar.TypeLink, Linkname: "other/file"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var archive bytes.Buffer
+			gz := gzip.NewWriter(&archive)
+			tarWriter := tar.NewWriter(gz)
+			if err := tarWriter.WriteHeader(&tc.hdr); err != nil {
+				t.Fatal(err)
+			}
+			if err := tarWriter.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := gz.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := extractSourceSnapshot(t.TempDir(), archive.Bytes()); err == nil {
+				t.Fatal("expected escaping link to be rejected")
+			}
+		})
+	}
+}
+
 func TestDownloadSourceSnapshotStreamsAndVerifiesArchive(t *testing.T) {
 	t.Parallel()
 
@@ -657,6 +735,8 @@ type recordingBuilderServiceClient struct {
 	failErr        error
 	downloadChunks []*platformv1.SourceSnapshotChunk
 	downloadErr    error
+	heartbeatErr   error
+	completeCalls  int
 }
 
 func (c *recordingBuilderServiceClient) ClaimBuild(context.Context, *platformv1.ClaimBuildRequest, ...grpc.CallOption) (*platformv1.BuildJob, error) {
@@ -704,6 +784,9 @@ func (s *sourceSnapshotTestStream) RecvMsg(message any) error {
 }
 
 func (c *recordingBuilderServiceClient) ReportBuildHeartbeat(context.Context, *platformv1.BuilderHeartbeatRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+	if c.heartbeatErr != nil {
+		return nil, c.heartbeatErr
+	}
 	return &emptypb.Empty{}, nil
 }
 
@@ -727,7 +810,60 @@ func (c *recordingBuilderServiceClient) ReportBuildLogs(_ context.Context, in *p
 }
 
 func (c *recordingBuilderServiceClient) CompleteBuild(context.Context, *platformv1.CompleteBuildRequest, ...grpc.CallOption) (*emptypb.Empty, error) {
+	c.mu.Lock()
+	c.completeCalls++
+	c.mu.Unlock()
 	return &emptypb.Empty{}, nil
+}
+
+type leaseBlockingExecutor struct {
+	started chan struct{}
+	stopped chan struct{}
+}
+
+func (*leaseBlockingExecutor) Name() string                                        { return ExecutorDevelopment }
+func (*leaseBlockingExecutor) Isolating() bool                                     { return false }
+func (*leaseBlockingExecutor) RecoverStaleWorkspaces(context.Context) (int, error) { return 0, nil }
+func (e *leaseBlockingExecutor) Execute(ctx context.Context, _ ExecutionSpec) (ExecutionResult, error) {
+	close(e.started)
+	<-ctx.Done()
+	close(e.stopped)
+	return ExecutionResult{}, ctx.Err()
+}
+
+func TestExecuteJobStopsBuildOnLostLease(t *testing.T) {
+	archive := dockerfileArchiveForTest(t)
+	digest, chunks := snapshotChunksForTest("snapshot-lease", archive)
+	client := &recordingBuilderServiceClient{
+		downloadChunks: chunks,
+		heartbeatErr:   status.Error(codes.PermissionDenied, "lease lost"),
+	}
+	executor := &leaseBlockingExecutor{started: make(chan struct{}), stopped: make(chan struct{})}
+	cfg := testBuilderConfig("builder-lease", t.TempDir())
+	app := &App{cfg: cfg, client: client, executor: executor}
+	job := &platformv1.BuildJob{
+		BuildId: "build-lease",
+		Source: &platformv1.BuildJobSource{
+			SourceSnapshotId: "snapshot-lease", SourceSnapshotDigest: digest,
+			BuildRecipe: dockerfileRecipeForTest(),
+		},
+		LeaseExpiresAt: timestamppb.New(time.Now().Add(300 * time.Millisecond)),
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	if err := app.executeJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-executor.stopped:
+	default:
+		t.Fatal("build kept running after lease loss")
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.completeCalls != 0 {
+		t.Fatalf("reported %d completions after lease loss", client.completeCalls)
+	}
 }
 
 func (c *recordingBuilderServiceClient) ReportRequests() []*platformv1.ReportBuildLogsRequest {

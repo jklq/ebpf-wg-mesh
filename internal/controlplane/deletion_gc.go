@@ -17,13 +17,7 @@ type DeletionGCStats struct {
 	ByKind    map[string]int
 }
 
-// DeletionGC irreversibly deletes expired tombstones. It runs on the
-// singleton owner next to the other reconciliation loops (the durable-work
-// package in 2.1 may adopt it later). Each tombstone is collected in its own
-// transaction: one failure never blocks the others, and every collection is
-// idempotent, so failures are retried on the next tick. Post-commit effects
-// (agent wakeups, ingress sync) are level-triggered and converge even if a
-// pass crashes between commit and notify.
+// DeletionGC removes expired tombstones, committing each removal separately.
 type DeletionGC struct {
 	store     *persistence
 	notifier  deliverycore.PlatformNotifier
@@ -101,6 +95,7 @@ func (g *DeletionGC) CollectOnce(ctx context.Context, cutoff time.Time) (Deletio
 		if len(expired) == 0 {
 			break
 		}
+		collectedThisPass := 0
 		for _, item := range expired {
 			if err := ctx.Err(); err != nil {
 				return stats, err
@@ -118,6 +113,7 @@ func (g *DeletionGC) CollectOnce(ctx context.Context, cutoff time.Time) (Deletio
 			}
 			if collected {
 				stats.Collected++
+				collectedThisPass++
 				stats.ByKind[item.Kind]++
 				if item.Kind == ExpiredDeletionProject && g.purgeLogs != nil {
 					if err := g.purgeLogs(ctx, item.ID); err != nil && ctx.Err() == nil {
@@ -127,7 +123,7 @@ func (g *DeletionGC) CollectOnce(ctx context.Context, cutoff time.Time) (Deletio
 				}
 			}
 		}
-		if len(expired) < g.batchSize*5 {
+		if len(expired) < g.batchSize || collectedThisPass == 0 {
 			break
 		}
 	}
