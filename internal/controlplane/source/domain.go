@@ -178,19 +178,26 @@ type BuildTransition struct {
 // ProvesCurrent reports whether a request carrying t proves itself current
 // against the binding's proven head commit: it is the head, it advances
 // from the head, or the caller fetched it as the tracked head over a basis
-// that still holds — a request with no head established yet establishes
-// it. Recording an observation never speaks for currency by itself —
-// arrival order is not push order, and a delayed observation of an unseen
-// older commit must not become the head.
+// that still holds. With no head established yet, only a fetch (or a
+// request that claims no push chain at all) establishes it: a push must
+// chain to the proven head, and with none yet its chain anchors to
+// nothing — a delayed push would install a commit the ref has already
+// moved past and then even fence out the fetch that knows the real head.
+// Recording an observation never speaks for currency by itself — arrival
+// order is not push order, and a delayed observation of an unseen older
+// commit must not become the head.
 func (t BuildTransition) ProvesCurrent(revisionCommit, headCommit string) bool {
 	if t.History {
 		return false
 	}
-	if headCommit == "" || headCommit == revisionCommit {
+	if headCommit == revisionCommit {
 		return true
 	}
 	if t.TrackedHead {
 		return t.FetchedFromHead == headCommit
+	}
+	if headCommit == "" {
+		return t.PreviousCommit == ""
 	}
 	return t.PreviousCommit != "" && t.PreviousCommit == headCommit
 }
