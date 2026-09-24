@@ -76,13 +76,18 @@ func TestLogShipperShipsAndCommits(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		sender.mu.Lock()
-		got := len(sender.batches)
+		var shipped int
+		for _, batch := range sender.batches {
+			shipped += len(batch.GetEntries())
+		}
 		sender.mu.Unlock()
-		if got > 0 {
+		// The ship tick may fire between the appends; wait for both
+		// lines instead of the first batch.
+		if shipped >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("timed out waiting for shipped batch")
+			t.Fatal("timed out waiting for shipped lines")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -216,12 +221,22 @@ func TestLogShipperRateLimitsPerAllocation(t *testing.T) {
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		sender.mu.Lock()
-		var drops uint64
+		var drops, quiet, hot uint64
 		for _, batch := range sender.batches {
 			drops += batch.GetDroppedLines()
+			for _, entry := range batch.GetEntries() {
+				switch entry.GetAllocationId() {
+				case "alloc-quiet":
+					quiet++
+				case "alloc-hot":
+					hot++
+				}
+			}
 		}
 		sender.mu.Unlock()
-		if drops >= 8 {
+		// Drop summaries and entries ride separate messages; wait
+		// for everything under assertion, not just the drop report.
+		if drops >= 8 && quiet >= 1 && hot >= 2 {
 			break
 		}
 		if time.Now().After(deadline) {
