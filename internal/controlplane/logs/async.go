@@ -2,6 +2,9 @@ package logs
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -12,8 +15,9 @@ import (
 )
 
 const (
-	defaultIngestQueueFlushes    = 512
 	defaultIngestQueueBytes      = 64 << 20
+	ingestJournalRecordBytes     = 2 << 20
+	ingestFlushRecords           = 8
 	ingestRowOverheadBytes       = 256
 	ingestAttributeOverheadBytes = 48
 	defaultIngestRatePerSec      = 2000.0
@@ -26,10 +30,10 @@ const (
 
 // AsyncIngesterConfig bounds the control-plane log ingest path.
 type AsyncIngesterConfig struct {
-	// QueueFlushes caps queued agent batches. Past the cap whole
-	// batches shed with owed gap rows. Defaults to 512.
-	QueueFlushes int
-	// QueueBytes caps the retained size of queued batches, so many
+	// SpoolDir holds the durable ingest journal. Required when the
+	// store is enabled.
+	SpoolDir string
+	// QueueBytes caps the journal's retained size, so many
 	// maximum-size batches can never hold a memory-limited control
 	// plane hostage during a backend outage. Past the budget whole
 	// batches shed with owed gap rows. Defaults to 64 MiB.
@@ -68,14 +72,17 @@ type flushStore interface {
 
 // AsyncIngester decouples agent log batches from ClickHouse writes so
 // a backend outage cannot stall the agent Sync loop and block
-// workload reconciliation. Enqueue never blocks: it rate-limits,
-// converts, and queues, shedding whole batches with explicit gap
-// accounting past the queue cap. The Run loop flushes with unbounded
-// retry, so queued lines wait out an outage instead of dropping.
+// workload reconciliation. The queue is a durable journal: Enqueue
+// rate-limits, converts, and appends to it, and the caller's
+// acceptance follows the durable append — a control-plane crash can
+// never lose acknowledged batches, and a backlog outlives outages
+// and restarts. Overload sheds whole batches with explicit gap
+// accounting. The Run loop flushes the journal with unbounded retry
+// and commits it once written.
 type AsyncIngester struct {
 	store          flushStore
-	queue          chan pendingFlush
-	queueBytes     atomic.Int64
+	backlog        *logpipeline.Spool
+	wake           chan struct{}
 	queueByteLimit int64
 	limiter        *logpipeline.Limiter
 	backoff        *logpipeline.Backoff
@@ -99,9 +106,13 @@ type AsyncIngester struct {
 type pendingFlush struct {
 	lines []LogLineInput
 	gaps  []GapInput
-	// bytes is the admitted retained size, subtracted from the
-	// queue budget when the flush is pulled.
-	bytes int64
+}
+
+// journalRecord is one durable queue entry: a slice of an accepted
+// flush small enough to fit a journal segment.
+type journalRecord struct {
+	Lines []LogLineInput `json:"lines"`
+	Gaps  []GapInput     `json:"gaps"`
 }
 
 type owedGapKey struct {
@@ -195,12 +206,9 @@ func (a *AsyncIngester) noteOwedLocked(key owedGapKey, count uint64, start, end 
 }
 
 // NewAsyncIngester builds the ingest queue. A nil or disabled store
-// makes Enqueue a no-op and Run return immediately.
-func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester {
-	queueFlushes := cfg.QueueFlushes
-	if queueFlushes <= 0 {
-		queueFlushes = defaultIngestQueueFlushes
-	}
+// makes Enqueue a no-op and Run return immediately; otherwise a
+// durable journal is required and its failure is returned.
+func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) (*AsyncIngester, error) {
 	queueBytes := cfg.QueueBytes
 	if queueBytes <= 0 {
 		queueBytes = defaultIngestQueueBytes
@@ -217,16 +225,30 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 	if grace <= 0 {
 		grace = defaultIngestShutdownGrace
 	}
+	var backlog *logpipeline.Spool
+	if store != nil && store.Enabled() {
+		var err error
+		backlog, err = logpipeline.OpenSpool(logpipeline.SpoolConfig{
+			Dir:          cfg.SpoolDir,
+			MaxBytes:     queueBytes,
+			SyncWrites:   true,
+			RejectOnFull: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("open log ingest journal: %w", err)
+		}
+	}
 	return &AsyncIngester{
 		store:          store,
-		queue:          make(chan pendingFlush, queueFlushes),
+		backlog:        backlog,
+		wake:           make(chan struct{}, 1),
 		queueByteLimit: queueBytes,
 		limiter:        logpipeline.NewLimiter(rate, burst),
 		backoff:        &logpipeline.Backoff{},
 		owed:           make(map[owedGapKey]*owedGap),
 		owedFold:       make(map[owedGapKey]*owedGap),
 		shutdownGrace:  grace,
-	}
+	}, nil
 }
 
 // flushEstimateBytes approximates one flush's retained size: every
@@ -343,7 +365,6 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 		a.rejectFlush(kept, gaps)
 		return false
 	}
-	a.acceptedLines.Add(uint64(len(kept)))
 	return true
 }
 
@@ -359,7 +380,6 @@ func (a *AsyncIngester) EnqueueLines(lines []LogLineInput) bool {
 		a.rejectFlush(lines, nil)
 		return false
 	}
-	a.acceptedLines.Add(uint64(len(lines)))
 	return true
 }
 
@@ -384,55 +404,94 @@ func (a *AsyncIngester) rejectFlush(lines []LogLineInput, gaps []GapInput) {
 // enqueue admits one flush under the admission lock so sealing the
 // queue at drain end is atomic with admission: a flush is either
 // visible to the drain or rejected, never lost in between.
+// enqueue appends the flush to the durable journal in bounded
+// records and wakes the flusher. True means accepted: journaled or
+// shed with gap accounting. False is only the sealed drain state,
+// when the caller should fall back to a synchronous write or rely on
+// producer replay.
 func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.drainDone {
+	sealed := a.drainDone
+	a.mu.Unlock()
+	if sealed {
 		return false
 	}
-	flush.bytes = flushEstimateBytes(flush)
-	if a.queueBytes.Load()+flush.bytes > a.queueByteLimit {
-		a.shedFlushLocked(flush)
-		return true
+	for _, record := range splitJournalRecords(flush) {
+		payload, err := json.Marshal(record)
+		if err != nil {
+			slog.Error("encode log ingest journal record", "error", err)
+			a.mu.Lock()
+			a.shedFlushLocked(pendingFlush{lines: record.Lines, gaps: record.Gaps})
+			a.mu.Unlock()
+			continue
+		}
+		err = a.backlog.Append("ingest", "", time.Now().UTC(), payload)
+		if err != nil {
+			a.mu.Lock()
+			a.shedFlushLocked(pendingFlush{lines: record.Lines, gaps: record.Gaps})
+			a.mu.Unlock()
+			if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
+				slog.Warn("append log ingest journal", "error", err)
+			}
+			continue
+		}
+		a.acceptedLines.Add(uint64(len(record.Lines)))
 	}
 	select {
-	case a.queue <- flush:
-		a.queueBytes.Add(flush.bytes)
+	case a.wake <- struct{}{}:
 	default:
-		a.shedFlushLocked(flush)
 	}
 	return true
 }
 
-// sealAdmission closes the queue against further admissions and
-// returns every flush that raced in since the drain last found the
-// queue empty, oldest first. The seal and the pull share the
-// admission lock, so a racing batch either lands in the returned set
-// or is rejected and accounted by enqueue — never lost in between.
-func (a *AsyncIngester) sealAdmission() []pendingFlush {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.drainDone = true
-	var rest []pendingFlush
-	for {
-		select {
-		case next := <-a.queue:
-			a.queueBytes.Add(-next.bytes)
-			rest = append(rest, next)
-		default:
-			return rest
+// splitJournalRecords cuts one flush into journal records bounded by
+// rows and estimated bytes, so even maximum-size line batches fit
+// journal segments and store writes stay bounded.
+func splitJournalRecords(flush pendingFlush) []journalRecord {
+	var records []journalRecord
+	cur := journalRecord{}
+	curBytes := int64(0)
+	flushRow := func(record *journalRecord, bytes *int64, lines []LogLineInput, gaps []GapInput) {
+		slice := pendingFlush{lines: lines, gaps: gaps}
+		est := flushEstimateBytes(slice)
+		if len(record.Lines)+len(record.Gaps) > 0 &&
+			(len(record.Lines)+len(record.Gaps) >= maxIngestCoalescedLines || *bytes+est > ingestJournalRecordBytes) {
+			records = append(records, *record)
+			*record = journalRecord{}
+			*bytes = 0
 		}
+		record.Lines = append(record.Lines, lines...)
+		record.Gaps = append(record.Gaps, gaps...)
+		*bytes += est
 	}
+	for _, in := range flush.lines {
+		flushRow(&cur, &curBytes, []LogLineInput{in}, nil)
+	}
+	for _, gap := range flush.gaps {
+		flushRow(&cur, &curBytes, nil, []GapInput{gap})
+	}
+	if len(cur.Lines)+len(cur.Gaps) > 0 {
+		records = append(records, cur)
+	}
+	return records
 }
 
-// Run flushes queued batches until ctx ends, then drains the
-// accepted backlog under a grace deadline so shutdown does not
-// discard data the Sync loop already acknowledged. Flushes retry with
-// backoff across a ClickHouse outage; only a hard kill or a grace
-// expiry drops the backlog, which agents then replay from their
-// recent spool window or which surfaces in the loud shutdown
-// accounting. Run always blocks until ctx ends, even when disabled,
-// so hosting
+// seal admission against further appends once the shutdown drain
+// finished. A batch racing the seal either journaled before it or is
+// rejected and accounted by the caller — never lost in between.
+func (a *AsyncIngester) seal() {
+	a.mu.Lock()
+	a.drainDone = true
+	a.mu.Unlock()
+}
+
+// Run flushes the durable journal until ctx ends, then drains the
+// accepted backlog under a grace deadline so shutdown writes
+// everything it can. Flushes retry with backoff across a ClickHouse
+// outage. What the drain cannot write stays journaled for the next
+// boot, so only a lost journal directory ever loses accepted lines;
+// the loud accounting covers the gap-shed overload path instead. Run
+// always blocks until ctx ends, even when disabled, so hosting
 // servers never observe an early clean return as a shutdown signal.
 func (a *AsyncIngester) Run(ctx context.Context) error {
 	if a == nil || a.store == nil || !a.store.Enabled() {
@@ -440,98 +499,106 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 		return nil
 	}
 	for {
-		select {
-		case <-ctx.Done():
-			a.drainShutdown(ctx, pendingFlush{})
-			return nil
-		case flush := <-a.queue:
-			a.queueBytes.Add(-flush.bytes)
-			a.coalesce(&flush)
-			a.attachOwed(&flush)
-			if len(flush.lines) == 0 && len(flush.gaps) == 0 {
+		flush, cursor, ok, err := a.nextFlush(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			select {
+			case <-a.wake:
 				continue
+			case <-ctx.Done():
+				a.drainShutdown(ctx)
+				return nil
 			}
-			if err := a.flushWithRetry(ctx, flush); err != nil {
-				if ctx.Err() != nil {
-					// The dequeued batch was never accepted and its
-					// attached gaps already left the owed maps: hand
-					// the in-flight flush to the drain so shutdown
-					// does not drop accepted data mid-retry.
-					a.drainShutdown(ctx, flush)
-					return nil
-				}
-				return err
+		}
+		attached := a.attachOwed(&flush)
+		if err := a.flushWithRetry(ctx, flush); err != nil {
+			a.backlog.Release()
+			a.reoweGaps(flush.gaps[len(flush.gaps)-attached:])
+			if ctx.Err() != nil {
+				a.drainShutdown(ctx)
+				return nil
 			}
+			return err
+		}
+		if err := a.backlog.Commit(cursor); err != nil {
+			slog.Warn("commit log ingest journal", "error", err)
 		}
 	}
 }
 
-// drainShutdown flushes everything already accepted — the in-flight
-// batch handed over from Run, queued batches, owed gap windows, and
-// anything arriving during the drain — under a grace deadline
-// decoupled from the canceled run context. It ends by sealing
-// admission atomically with the final pull, so a batch racing the
-// seal either flushes here or is rejected and accounted, never
-// silently dropped. If the grace expires first, every line and gap
-// count still held lands in the loud shutdown accounting instead of
-// vanishing.
-func (a *AsyncIngester) drainShutdown(ctx context.Context, inFlight pendingFlush) {
+// nextFlush reads one bounded round of journal records and merges it
+// into a single store write. Every read is paired with a commit or a
+// release, so unprocessed records stay queued and pinned against
+// eviction in between.
+func (a *AsyncIngester) nextFlush(ctx context.Context) (pendingFlush, logpipeline.Cursor, bool, error) {
+	records, cursor, err := a.backlog.Read(ingestFlushRecords)
+	if err != nil {
+		return pendingFlush{}, cursor, false, err
+	}
+	if len(records) == 0 {
+		// Gap-only pump: owed shed windows must reach reads even
+		// when nothing else is queued.
+		a.mu.Lock()
+		hasOwed := len(a.owed) > 0 || len(a.owedFold) > 0
+		a.mu.Unlock()
+		if !hasOwed {
+			return pendingFlush{}, cursor, false, nil
+		}
+		owed := pendingFlush{}
+		a.attachOwed(&owed)
+		if len(owed.gaps) == 0 {
+			return pendingFlush{}, cursor, false, nil
+		}
+		return owed, cursor, true, nil
+	}
+	flush := pendingFlush{}
+	for _, record := range records {
+		var decoded journalRecord
+		if err := json.Unmarshal(record.Payload, &decoded); err != nil {
+			slog.Error("decode log ingest journal record", "error", err, "key", record.Key, "id", record.ID)
+			continue
+		}
+		flush.lines = append(flush.lines, decoded.Lines...)
+		flush.gaps = append(flush.gaps, decoded.Gaps...)
+	}
+	if len(flush.lines) == 0 && len(flush.gaps) == 0 {
+		if err := a.backlog.Commit(cursor); err != nil {
+			return pendingFlush{}, cursor, false, err
+		}
+		return a.nextFlush(ctx)
+	}
+	return flush, cursor, true, nil
+}
+
+// drainShutdown flushes everything still journaled under a grace
+// deadline decoupled from the canceled run context, then seals
+// admission so later arrivals fall back to synchronous writes or
+// producer replay. What the grace cannot write stays journaled and
+// lands after the next boot instead of vanishing.
+func (a *AsyncIngester) drainShutdown(ctx context.Context) {
 	graceCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), a.shutdownGrace)
 	defer cancel()
-	remaining := []pendingFlush{inFlight}
-	sealed := false
+	a.seal()
 	for {
-		if len(remaining) == 0 {
-			if sealed {
-				return
-			}
-			remaining = a.sealAdmission()
-			sealed = true
-			continue
-		}
-		flush := remaining[0]
-		remaining = remaining[1:]
-		a.coalesce(&flush)
-		a.attachOwed(&flush)
-		if len(flush.lines) == 0 && len(flush.gaps) == 0 {
-			continue
-		}
-		if err := a.flushWithRetry(graceCtx, flush); err != nil {
-			if !sealed {
-				remaining = append(remaining, a.sealAdmission()...)
-			}
-			// Gap counts shed while the drain was retrying are still
-			// owed; fold them into the accounted loss so they surface
-			// as gaps instead of vanishing.
-			a.attachOwed(&flush)
-			a.accountDrainedLoss(append([]pendingFlush{flush}, remaining...))
+		flush, cursor, ok, err := a.nextFlush(graceCtx)
+		if err != nil || !ok {
 			return
 		}
-	}
-}
-
-// accountDrainedLoss lands a drain that expired its grace in the
-// loud accounting: every held line and gap count is added to
-// GapsLost and logged in full, so abandoning the accepted backlog is
-// observable instead of silent.
-func (a *AsyncIngester) accountDrainedLoss(flushes []pendingFlush) {
-	var lines, gapRows, gapLines uint64
-	for _, flush := range flushes {
-		lines += uint64(len(flush.lines))
-		gapRows += uint64(len(flush.gaps))
-		for _, gap := range flush.gaps {
-			gapLines += gap.DroppedCount
+		attached := a.attachOwed(&flush)
+		if err := a.flushWithRetry(graceCtx, flush); err != nil {
+			a.backlog.Release()
+			a.reoweGaps(flush.gaps[len(flush.gaps)-attached:])
+			slog.Warn("log ingest shutdown drain expired; queued lines stay journaled for the next boot",
+				"pending_records", a.backlog.Stats().PendingRecords,
+				"error", err)
+			return
+		}
+		if err := a.backlog.Commit(cursor); err != nil {
+			slog.Warn("commit log ingest journal", "error", err)
 		}
 	}
-	a.gapsLost.Add(lines + gapLines)
-	slog.Error("log ingest shutdown drain dropped accepted data",
-		"lines", lines,
-		"gaps", gapRows,
-		"gap_lines", gapLines,
-		"accepted_lines", a.acceptedLines.Load(),
-		"flushed_lines", a.flushedLines.Load(),
-		"shed_lines", a.shedLines.Load(),
-		"gaps_lost", a.gapsLost.Load())
 }
 
 // Stats reports a point-in-time snapshot.
@@ -541,9 +608,15 @@ func (a *AsyncIngester) Stats() IngesterStats {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	queuedFlushes, queuedBytes := 0, int64(0)
+	if a.backlog != nil {
+		backlogStats := a.backlog.Stats()
+		queuedFlushes = int(backlogStats.PendingRecords)
+		queuedBytes = backlogStats.Bytes
+	}
 	return IngesterStats{
-		QueuedFlushes: len(a.queue),
-		QueuedBytes:   a.queueBytes.Load(),
+		QueuedFlushes: queuedFlushes,
+		QueuedBytes:   queuedBytes,
 		AcceptedLines: a.acceptedLines.Load(),
 		ShedLines:     a.shedLines.Load(),
 		OwedGaps:      len(a.owed) + len(a.owedFold),
@@ -579,55 +652,52 @@ func (a *AsyncIngester) shedFlushLocked(flush pendingFlush) {
 	// Producer gap reports inside a shed flush are owed too; without
 	// them the producer's own drops would vanish silently.
 	for _, gap := range flush.gaps {
-		if gap.ServiceID == "" || gap.DroppedCount == 0 {
-			continue
-		}
-		key := owedGapKey{
-			serviceID:    gap.ServiceID,
-			allocationID: gap.AllocationID,
-			buildID:      gap.BuildID,
-			logType:      string(normalizeLogType(gap.LogType)),
-			stream:       normalizeLogStream(gap.Stream),
-			reason:       logpipeline.NormalizeDropReason(gap.Reason),
-			reporter:     normalizeReporter(gap.Reporter),
-			summaryID:    gap.SummaryID,
-		}
-		a.noteOwedLocked(key, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
+		a.noteGapLocked(gap)
 	}
 }
 
-// coalesce drains additional queued flushes into one ClickHouse
-// write, bounded so a single insert stays small.
-// coalesce merges queued flushes into the in-flight one while it
-// retries, up to the row and byte budgets. Pulled flushes return
-// their queue budget. The merged buffer stays under one budget plus
-// one admitted flush, so backlog drainage can never accumulate
-// maximum-size lines without bound.
-func (a *AsyncIngester) coalesce(flush *pendingFlush) {
-	for len(flush.lines) < maxIngestCoalescedLines && flush.bytes < a.queueByteLimit {
-		select {
-		case next := <-a.queue:
-			a.queueBytes.Add(-next.bytes)
-			flush.lines = append(flush.lines, next.lines...)
-			flush.gaps = append(flush.gaps, next.gaps...)
-			flush.bytes += next.bytes
-		default:
-			return
-		}
-	}
-}
-
-// attachOwed pops owed gap rows into the outgoing flush.
-func (a *AsyncIngester) attachOwed(flush *pendingFlush) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.attachOwedLocked(flush)
-}
-
-func (a *AsyncIngester) attachOwedLocked(flush *pendingFlush) {
-	if len(a.owed) == 0 && len(a.owedFold) == 0 {
+// noteGapLocked re-owes one gap row under its detailed identity.
+// The admission lock must be held.
+func (a *AsyncIngester) noteGapLocked(gap GapInput) {
+	if gap.ServiceID == "" || gap.DroppedCount == 0 {
 		return
 	}
+	key := owedGapKey{
+		serviceID:    gap.ServiceID,
+		allocationID: gap.AllocationID,
+		buildID:      gap.BuildID,
+		logType:      string(normalizeLogType(gap.LogType)),
+		stream:       normalizeLogStream(gap.Stream),
+		reason:       logpipeline.NormalizeDropReason(gap.Reason),
+		reporter:     normalizeReporter(gap.Reporter),
+		summaryID:    gap.SummaryID,
+	}
+	a.noteOwedLocked(key, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
+}
+
+// reoweGaps returns gap rows of a failed flush to the owed maps so
+// their counts reach reads with a later flush instead of vanishing.
+func (a *AsyncIngester) reoweGaps(gaps []GapInput) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, gap := range gaps {
+		a.noteGapLocked(gap)
+	}
+}
+
+// attachOwed pops owed gap rows into the outgoing flush and reports
+// how many rows it attached.
+func (a *AsyncIngester) attachOwed(flush *pendingFlush) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.attachOwedLocked(flush)
+}
+
+func (a *AsyncIngester) attachOwedLocked(flush *pendingFlush) int {
+	if len(a.owed) == 0 && len(a.owedFold) == 0 {
+		return 0
+	}
+	attached := 0
 	for _, owedMap := range []map[owedGapKey]*owedGap{a.owed, a.owedFold} {
 		for key, owed := range owedMap {
 			flush.gaps = append(flush.gaps, GapInput{
@@ -644,8 +714,10 @@ func (a *AsyncIngester) attachOwedLocked(flush *pendingFlush) {
 				SummaryID:    key.summaryID,
 			})
 			delete(owedMap, key)
+			attached++
 		}
 	}
+	return attached
 }
 
 func (a *AsyncIngester) flushWithRetry(ctx context.Context, flush pendingFlush) error {

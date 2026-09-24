@@ -63,14 +63,10 @@ type ClickHouseConfig struct {
 type LogCaptureConfig struct {
 	ClickHouse    ClickHouseConfig
 	RetentionDays int
-	// IngestQueueFlushes caps queued agent batches in the
-	// control-plane ingest queue. Past the cap whole batches shed
-	// with explicit gap rows.
-	IngestQueueFlushes int
-	// IngestQueueBytes caps the retained size of queued batches so a
-	// backend outage can never make the queue hold a memory-limited
-	// control plane hostage. Past the budget whole batches shed with
-	// explicit gap rows.
+	// IngestQueueBytes caps the retained size of the durable ingest
+	// journal, so a backend outage can never make the queue hold a
+	// memory-limited control plane hostage. Past the budget whole
+	// batches shed with explicit gap rows.
 	IngestQueueBytes int
 	// IngestRatePerSec and IngestBurst bound the per-allocation
 	// ingest guard, which sits above agent-side limits.

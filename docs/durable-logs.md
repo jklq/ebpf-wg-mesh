@@ -72,11 +72,13 @@ overflow eviction until it commits or is released: a delivered batch
 is never evicted mid-send, which would report a false gap and fail the
 commit. Committed sealed segments stay for
 the replay window after their newest record: acknowledgement is
-queue admission on the control plane — one acceptance ack per batch
-(`LogBatchAck`), and the agent commits its spool cursor only after it
-arrives, so a batch lost before acceptance always retries — so the
-retained copy is what reconnect replay re-sends when the backend
-acknowledged but did not durably ingest (server-side dedup collapses
+durable queueing on the control plane — one acceptance ack per batch
+(`LogBatchAck`) sent after the batch lands in the control plane's
+durable ingest journal, and the agent commits its spool cursor only
+after it arrives — so a batch lost before acceptance always retries,
+and the retained copy is what reconnect replay re-sends when the
+backend acknowledged but did not durably ingest (server-side dedup
+collapses
 the overlap). Builders
 need no retention: their report RPC writes durably before it
 returns. Nothing on this path blocks workload
@@ -138,9 +140,9 @@ its output from scratch.
 
 ## Control-plane ingest
 
-Batches enter a bounded in-memory queue (default 512 batches and
-64 MiB of retained payload — line text, retained IDs, and attribute
-maps all count; both caps bind independently) behind a
+Batches enter a durable ingest journal (default 64 MiB of retained
+payload — line text, retained IDs, and attribute maps all count)
+behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
 buggy or hostile agent cannot starve ClickHouse — gap rows consume
 the same guard one token each, so gap-only spam cannot add retained
@@ -150,32 +152,30 @@ allocation — one removed while its lines sat in the durable spool —
 or carrying a mismatched claim is excluded with a warning instead of
 rejecting the whole batch, so one bad line can never wedge durable
 delivery behind it (excluded lines carry no verifiable tenant and
-therefore no gap row). The flush loop retries
-with backoff across a backend outage and coalesces queued batches
-into the retried flush up to the same line and byte budgets. Queue overflow
+therefore no gap row). The flush loop drains the journal in bounded
+rounds and retries with backoff across an outage; because the
+journal is durable, an accepted batch survives ClickHouse outages
+that outlast the replay window and control-plane restarts — only a
+lost journal directory can drop it. Journal overflow
 sheds whole batches with owed gap rows so the loss still surfaces in
 reads; past the owed-gap key cap shed windows fold into service-level
 aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as
 ingest gaps per affected service and allocation.
-Shutdown drains the accepted backlog under a 15s grace deadline:
-the batch caught mid-retry, queued batches, and owed gap windows
+Shutdown drains the journal under a 15s grace deadline:
+the batch caught mid-retry, journaled batches, and owed gap windows
 flush before the process exits,
 even when the run context is already canceled, and the server waits
 for the drain before closing the log store so every flush runs
 against a live backend. gRPC streams stop before the drain, and
-admission seals atomically with the drain's final pull: a
-batch racing the seal either flushes in the drain or is rejected and
-loudly accounted — and the producer's retained replay window
-re-sends it on reconnect. Only a hard kill or an
-expired grace loses the unflushed remainder, and every leftover line
-and gap count lands in the loud shutdown accounting rather than
-vanishing — including counts shed while the drain was retrying, which
-are folded into the accounted loss instead of waiting for an owed
-window that will never attach (producers
-additionally replay their unshipped spool window on reconnect).
+admission seals when the drain starts: a
+batch racing the seal is rejected and loudly accounted while the
+producer's retained replay window
+re-sends it on reconnect. What the grace cannot write stays
+journaled and lands after the next boot; post-seal arrivals fall
+back to synchronous writes or producer replay.
 Platform events (build/deploy lifecycle, crash loops) ride the same
-bounded queue: retry across outages, shed with gap accounting, drain
-at shutdown.
+durable journal: retry across outages, shed with gap accounting,
+drain at shutdown.
 Ingest is per replica: each replica flushes the agent streams it
 terminates, and the agent Sync loop never waits on ClickHouse.
 
@@ -231,7 +231,6 @@ querying, so tenant isolation follows the existing project membership.
 | builder | `logs-flush-batch-size`, `logs-flush-interval-seconds` / `BUILDER_LOGS_FLUSH_BATCH_SIZE`, `BUILDER_LOGS_FLUSH_INTERVAL_SECONDS` | 100, 1s |
 | control plane | `logs-clickhouse-url` / `CONTROLPLANE_LOGS_CLICKHOUSE_URL` | unset (log storage disabled) |
 | control plane | `logs-retention-days` / `CONTROLPLANE_LOGS_RETENTION_DAYS` | 14 |
-| control plane | `logs-ingest-queue-flushes` / `CONTROLPLANE_LOGS_INGEST_QUEUE_FLUSHES` | 512 |
 | control plane | `logs-ingest-queue-bytes` / `CONTROLPLANE_LOGS_INGEST_QUEUE_BYTES` | 64 MiB |
 | control plane | `logs-ingest-rate-per-sec`, `logs-ingest-burst` / `CONTROLPLANE_LOGS_INGEST_RATE_PER_SEC`, `CONTROLPLANE_LOGS_INGEST_BURST` | 2000/s, 10000 |
 

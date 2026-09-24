@@ -47,7 +47,7 @@ func TestLogEmitterEventsSurviveBackendOutageAndShutdown(t *testing.T) {
 	t.Parallel()
 
 	store := &fakeFlushStore{enabled: true, failLines: errors.New("clickhouse down"), failUntil: time.Now().Add(300 * time.Millisecond)}
-	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 4, ShutdownGrace: 10 * time.Second})
+	ingester := newTestIngester(t, store, AsyncIngesterConfig{ShutdownGrace: 10 * time.Second})
 	emitter := NewLogEmitter(store, ingester)
 
 	emitter.EmitEvent(context.Background(), ServiceScope{EnvironmentID: "env-1", ServiceID: "svc-1"}, LogTypeDeploy, "", 0, time.Date(2026, 9, 22, 5, 0, 0, 0, time.UTC), EventDeployStarted, "deployment started", nil)

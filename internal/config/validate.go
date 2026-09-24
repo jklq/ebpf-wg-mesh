@@ -32,9 +32,6 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Logs.RetentionDays <= 0 {
 		return errors.New("controlplane.logs.retentionDays must be greater than 0")
 	}
-	if cfg.Logs.IngestQueueFlushes < 0 {
-		return errors.New("controlplane.logs.ingestQueueFlushes must be non-negative")
-	}
 	if cfg.Logs.IngestQueueBytes < 0 {
 		return errors.New("controlplane.logs.ingestQueueBytes must be non-negative")
 	}

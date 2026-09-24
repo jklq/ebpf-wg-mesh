@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -165,12 +166,15 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if logStore != nil {
 		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	}
-	logIngester := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
-		QueueFlushes: cfg.Logs.IngestQueueFlushes,
-		QueueBytes:   int64(cfg.Logs.IngestQueueBytes),
-		RatePerSec:   float64(cfg.Logs.IngestRatePerSec),
-		Burst:        cfg.Logs.IngestBurst,
+	logIngester, err := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
+		SpoolDir:   filepath.Join(cfg.StateDir, "log-ingest"),
+		QueueBytes: int64(cfg.Logs.IngestQueueBytes),
+		RatePerSec: float64(cfg.Logs.IngestRatePerSec),
+		Burst:      cfg.Logs.IngestBurst,
 	})
+	if err != nil {
+		return nil, err
+	}
 	logEmitter := logs.NewLogEmitter(logStore, logIngester)
 	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)

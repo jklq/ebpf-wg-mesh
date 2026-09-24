@@ -88,7 +88,10 @@ func TestCrashLoopLinesRouteThroughDurableQueue(t *testing.T) {
 	t.Parallel()
 
 	sink := &recordingLogSink{}
-	ingester := logs.NewAsyncIngester(sink, logs.AsyncIngesterConfig{QueueFlushes: 4, ShutdownGrace: 5 * time.Second})
+	ingester, err := logs.NewAsyncIngester(sink, logs.AsyncIngesterConfig{SpoolDir: t.TempDir(), ShutdownGrace: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("NewAsyncIngester: %v", err)
+	}
 	s := &AgentService{logIngester: ingester}
 
 	cond := &agentv1.ServiceCondition{
