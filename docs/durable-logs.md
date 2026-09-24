@@ -99,7 +99,8 @@ detached, so counted losses survive a crash without a session or
 clean shutdown. Builders persist theirs next to the attempt spool and a
 retried attempt takes them over: it re-emits its own output from
 scratch but can never recreate the lines a dead attempt dropped, so
-their gap accounting survives across the retry. Pending summaries coalesce by identity — counts sum and the
+their gap accounting survives across the retry. The takeover copies
+are removed only after the merged snapshot is durable. Pending summaries coalesce by identity — counts sum and the
 covered window widens — so a sustained outage holds one entry per
 identity instead of one per flush interval, and a failed send folds
 its taken summaries back into the pending set. Spool records lost to crash corruption are counted the same

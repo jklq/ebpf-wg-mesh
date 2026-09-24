@@ -643,3 +643,56 @@ func TestBuildLogReporterCapsBatchBytes(t *testing.T) {
 		t.Fatalf("chunking lost lines: reported %d of 40", total)
 	}
 }
+
+func TestBuildLogReporterKeepsInheritedDropsWhenSaveFails(t *testing.T) {
+	t.Parallel()
+
+	base := t.TempDir()
+	now := time.Now().UTC()
+
+	// A dead attempt's accounting persists beside its spool.
+	prior := buildLogSpoolDir(base, "build-1", 1)
+	if err := os.MkdirAll(prior, 0o700); err != nil {
+		t.Fatalf("create prior attempt dir: %v", err)
+	}
+	if err := logpipeline.SaveDrops(prior, []*platformv1.LogDropSummary{{
+		ServiceId:    "svc-1",
+		BuildId:      "build-1",
+		LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD,
+		Stream:       "stdout",
+		DroppedCount: 3,
+		Reason:       logpipeline.ReasonRateLimited,
+		WindowStart:  timestamppb.New(now),
+		WindowEnd:    timestamppb.New(now),
+	}}); err != nil {
+		t.Fatalf("save prior drops: %v", err)
+	}
+
+	// The merged snapshot cannot commit this time: the summary path
+	// is occupied by a directory, so SaveDrops' rename fails.
+	own := buildLogSpoolDir(base, "build-1", 2)
+	if err := os.MkdirAll(filepath.Join(own, logpipeline.PendingDropsFile), 0o700); err != nil {
+		t.Fatalf("block pending drops file: %v", err)
+	}
+	cfg := buildLogShipConfig{
+		SpoolDir:      own,
+		SpoolMaxBytes: 1 << 20,
+		RatePerSec:    100000,
+		Burst:         100000,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+		CloseTimeout:  5 * time.Second,
+	}
+	reporter, err := newBuildLogReporter(context.Background(), &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}, "builder-1", "build-1", "svc-1", 2, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
+	defer reporter.Close()
+
+	// The takeover copy must survive until a merged snapshot is
+	// durable: deleting it on a failed save loses the accounting
+	// forever.
+	if _, err := os.Stat(filepath.Join(prior, logpipeline.PendingDropsFile)); err != nil {
+		t.Fatalf("inherited drop summaries removed before the merge was durable: %v", err)
+	}
+}

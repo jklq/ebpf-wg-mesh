@@ -133,9 +133,15 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 	// recreate lines the dead attempt dropped, so their gap
 	// accounting must survive into this attempt's reports.
 	consumed := loadAttemptDrops(filepath.Dir(cfg.SpoolDir), buildID, cfg.SpoolDir, reporter.pending)
-	reporter.persistPendingLocked()
-	for _, dir := range consumed {
-		_ = os.Remove(filepath.Join(dir, logpipeline.PendingDropsFile))
+	if err := reporter.persistPendingLocked(); err != nil {
+		// The merged snapshot is not durable: keep the takeover
+		// copies as the surviving record instead of deleting the
+		// only copy of the dead attempt's accounting.
+		slog.Warn("persist inherited build log drops", "builder_id", builderID, "build_id", buildID, "error", err)
+	} else {
+		for _, dir := range consumed {
+			_ = os.Remove(filepath.Join(dir, logpipeline.PendingDropsFile))
+		}
 	}
 	go reporter.run()
 	return reporter, nil
@@ -188,10 +194,12 @@ func loadAttemptDrops(baseDir, buildID, ownDir string, pending *logpipeline.Drop
 // persistPendingLocked snapshots the pending drop summaries next to
 // the attempt spool so a dead attempt's accounting survives into the
 // retry. Callers hold r.mu.
-func (r *buildLogReporter) persistPendingLocked() {
+func (r *buildLogReporter) persistPendingLocked() error {
 	if err := logpipeline.SaveDrops(r.spoolDir, r.pending.Summaries()); err != nil {
 		slog.Warn("persist pending build log drops", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+		return err
 	}
+	return nil
 }
 
 // Report rate-limits and spools one build output line. It never
