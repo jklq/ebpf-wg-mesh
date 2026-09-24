@@ -1,6 +1,7 @@
 package logpipeline
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -742,5 +743,61 @@ func TestSpoolCompactionKeepsUnshippedRecordsAfterCorruption(t *testing.T) {
 	evicted, corrupt := s.DrainDrops()
 	if evicted != nil || corrupt["k2"] != 1 {
 		t.Fatalf("corrupt frame accounting: evicted=%v corrupt=%v", evicted, corrupt)
+	}
+}
+
+func TestSpoolRejectsOversizedRecords(t *testing.T) {
+	t.Parallel()
+	// A record that cannot fit one segment breaks the configured
+	// bounds; it must be rejected and counted as a drop instead.
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 4096, MaxSegmentBytes: 4096})
+	err := s.Append("a", "huge", time.Now().UTC(), make([]byte, 8192))
+	if !errors.Is(err, ErrRecordTooLarge) {
+		t.Fatalf("oversized Append error = %v, want ErrRecordTooLarge", err)
+	}
+	if err := s.Append("a", "ok", time.Now().UTC(), []byte("fine")); err != nil {
+		t.Fatalf("regular Append after rejection: %v", err)
+	}
+	recs, _, err := s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) != 1 || recs[0].ID != "ok" {
+		t.Fatalf("spool holds %d records after rejection: %+v", len(recs), recs)
+	}
+}
+
+func TestSpoolCommitKeepsCursorWhenSaveFails(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s := openTestSpool(t, SpoolConfig{Dir: dir, SyncWrites: true})
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	for i := 0; i < 2; i++ {
+		if err := s.Append("a", fmt.Sprintf("id-%d", i), now, []byte{byte(i)}); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	recs, cursor, err := s.Read(10)
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("Read: %d records, %v", len(recs), err)
+	}
+	// Make cursor persistence fail, then restore the path so reads
+	// work again.
+	s.mu.Lock()
+	realDir := s.dir
+	s.dir = filepath.Join(dir, "missing")
+	s.mu.Unlock()
+	if err := s.Commit(cursor); err == nil {
+		t.Fatal("Commit must fail when the cursor cannot be saved")
+	}
+	s.mu.Lock()
+	s.dir = realDir
+	s.mu.Unlock()
+	again, cursor2, err := s.Read(10)
+	if err != nil || len(again) != 2 {
+		t.Fatalf("Read after failed commit: %d records, %v (cursor must not advance)", len(again), err)
+	}
+	if cursor2 != cursor {
+		t.Fatalf("cursor advanced across a failed commit: %+v after %+v", cursor2, cursor)
 	}
 }

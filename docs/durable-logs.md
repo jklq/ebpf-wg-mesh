@@ -87,7 +87,10 @@ active file instead of overshooting until rotation. A failed append
 rolls its partial frame back out of the segment so later records can
 never hide behind damaged bytes; when the file cannot be repaired the
 segment is sealed and rotated and its readable prefix survives
-recovery.
+recovery. Records larger than the segment cap are rejected and
+counted as drops, and a cursor commit only advances after its save
+succeeds: a failed save leaves the read cursor unchanged, so the
+batch re-sends (deduplicated server-side) instead of being skipped.
 
 Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted
@@ -136,7 +139,8 @@ Batches enter a bounded in-memory queue (default 512 batches and
 64 MiB of retained payload; both caps bind independently) behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
 buggy or hostile agent cannot starve ClickHouse. The flush loop retries
-with backoff across a backend outage. Queue overflow
+with backoff across a backend outage and coalesces queued batches
+into the retried flush up to the same line and byte budgets. Queue overflow
 sheds whole batches with owed gap rows so the loss still surfaces in
 reads; past the owed-gap key cap shed windows fold into service-level
 aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as

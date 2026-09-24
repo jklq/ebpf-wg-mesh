@@ -321,8 +321,19 @@ func (s *Spool) segmentPath(id uint64) string {
 
 // Append durably enqueues one payload, evicting the oldest segments
 // past the byte cap. Evicted unshipped records are counted per key.
+// ErrRecordTooLarge rejects a record that cannot fit the configured
+// spool bounds; callers count it as a dropped line instead of
+// oversizing a segment past the caps.
+var ErrRecordTooLarge = errors.New("log record exceeds the spool size cap")
+
 func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) error {
 	encoded := encodeRecord(key, id, observedAt, payload)
+	// A record must fit one segment (segments never exceed the total
+	// budget), so an oversized record can never be stored within the
+	// configured bounds and is rejected up front.
+	if int64(len(encoded)) > s.maxSeg {
+		return ErrRecordTooLarge
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -466,7 +477,10 @@ func (s *Spool) releaseInflightLocked() {
 
 // Commit advances the durable cursor past a shipped batch,
 // releases its eviction pin, and collects fully shipped sealed
-// segments past the retention horizon.
+// segments past the retention horizon. The cursor only moves once
+// it is durably saved: when saving fails, the read cursor is
+// unchanged and the batch re-reads and re-sends (deduplicated
+// server-side) instead of being skipped forever.
 func (s *Spool) Commit(c Cursor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -478,8 +492,10 @@ func (s *Spool) Commit(c Cursor) error {
 		(c.Segment == s.cursor.Segment && c.Offset < s.cursor.Offset) {
 		return fmt.Errorf("log spool commit moved backwards: %+v after %+v", c, s.cursor)
 	}
+	previous := s.cursor
 	s.cursor = c
 	if err := s.persistCursorLocked(); err != nil {
+		s.cursor = previous
 		return err
 	}
 	s.collectLocked()
