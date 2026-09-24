@@ -647,9 +647,6 @@ func clampRetentionDays(projectDays, platformDefault int) int {
 	if platformDefault <= 0 {
 		return 14
 	}
-	if platformDefault > MaxProjectRetentionDays {
-		return MaxProjectRetentionDays
-	}
 	return platformDefault
 }
 

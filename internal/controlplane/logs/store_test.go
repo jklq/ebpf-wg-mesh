@@ -230,6 +230,9 @@ func TestClampRetentionDays(t *testing.T) {
 	if got := clampRetentionDays(0, 0); got != 14 {
 		t.Fatalf("zero default not floored: %d", got)
 	}
+	if got := clampRetentionDays(0, 180); got != 180 {
+		t.Fatalf("platform default capped below configured retention: %d", got)
+	}
 }
 
 func TestAttributionRefusesUnresolvableServices(t *testing.T) {

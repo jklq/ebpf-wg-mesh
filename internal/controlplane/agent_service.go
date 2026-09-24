@@ -398,14 +398,26 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if err := s.store.scopeAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
 				return status.Errorf(codes.Internal, "log batch ownership: %v", err)
 			}
-			if s.logIngester == nil || !s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch) {
+			writeSync := s.logIngester == nil
+			if s.logIngester != nil {
+				switch s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch) {
+				case logs.AdmitAccepted:
+				case logs.AdmitRetry:
+					// The journal cannot store this batch or a gap for it.
+					// A synchronous ClickHouse write here would stall the
+					// Sync stream for the whole outage; the agent still
+					// holds the batch and retries when this stream ends.
+					return status.Error(codes.Unavailable, "log ingest backlog is full")
+				case logs.AdmitClosed:
+					writeSync = true
+				}
+			}
+			if writeSync && s.logStore != nil {
 				// No queue, or the shutdown drain already sealed it:
 				// fall back to a synchronous write while the store
 				// is still up.
-				if s.logStore != nil {
-					if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
-						return status.Errorf(codes.Internal, "log batch: %v", err)
-					}
+				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
+					return status.Errorf(codes.Internal, "log batch: %v", err)
 				}
 			}
 			// Acceptance ack: the agent keeps its spool batch
@@ -785,8 +797,15 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 // or once the shutdown drain sealed the queue, it falls back to a
 // synchronous write.
 func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
-	if s.logIngester != nil && s.logIngester.EnqueueLines(lines) {
-		return
+	if s.logIngester != nil {
+		switch s.logIngester.EnqueueLines(lines) {
+		case logs.AdmitAccepted:
+			return
+		case logs.AdmitRetry:
+			slog.Warn("platform log lines not journaled", "agent_id", agentID, "lines", len(lines))
+			return
+		case logs.AdmitClosed:
+		}
 	}
 	if err := s.logStore.WriteLogLines(ctx, lines); err != nil {
 		slog.Warn("write platform log line", "error", err, "agent_id", agentID)
