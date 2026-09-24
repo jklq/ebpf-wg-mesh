@@ -53,6 +53,14 @@ func (s *SQLStore) ObserveSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec 
 	return created, nil
 }
 
+// SourceBindingHeadCommit returns the binding's proven head commit outside
+// a caller transaction, or "" when no observation has yet proven itself
+// current. Callers use it to observe the fetch basis before fetching the
+// tracked head (see BuildTransition.FetchedFromHead).
+func (s *SQLStore) SourceBindingHeadCommit(ctx context.Context, bindingID string) (string, error) {
+	return s.SourceBindingHeadCommitTx(ctx, s.db, bindingID)
+}
+
 // SourceBindingHeadCommitTx returns the binding's proven head commit, or
 // ” when no observation has yet proven itself current.
 func (s *SQLStore) SourceBindingHeadCommitTx(ctx context.Context, q Querier, bindingID string) (string, error) {

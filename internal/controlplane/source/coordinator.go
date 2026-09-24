@@ -253,6 +253,14 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if binding.AccessState != SourceAccessStateAvailable {
 		return nil
 	}
+	// The fetch below proves currency only over the head observed before it
+	// began (see BuildTransition): a push that lands while the fetch is in
+	// flight makes this observation stale, and a delayed sync must never
+	// move the proven head backward.
+	fetchedFrom, err := c.store.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil {
+		return err
+	}
 	commitSHA, err := c.client.GetBranchHead(ctx, view.Owner, view.Repo, trackedRef, providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID))
 	if err != nil {
 		return err
@@ -266,7 +274,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	// releases, so they honor the environment auto-deploy switch. The
 	// commit is the freshly fetched tracked head, so the request is
 	// authoritative regardless of observed order.
-	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0, BuildTransition{TrackedHead: true})
+	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0, BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom})
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload WorkPayload) error {
@@ -279,10 +287,42 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 		return nil
 	}
 	for _, binding := range bindings {
+		transition := BuildTransition{PreviousCommit: payload.PreviousCommitSHA}
+		stalePush := false
+		if NoPushPredecessor(payload.PreviousCommitSHA) {
+			// A created or recreated ref: the payload's all-zero "before"
+			// names a predecessor that can never be observed — the
+			// binding's stored tip predates the deletion — so chaining to
+			// it would pend this push as an early successor forever. Prove
+			// currency the way syncs do instead: fetch the tracked head.
+			// The pushed commit must still be it; anything newer made this
+			// delivery stale.
+			fetchedFrom, err := c.store.SourceBindingHeadCommit(ctx, binding.ID)
+			if err != nil {
+				return err
+			}
+			owner, repo, err := SplitGitHubRepositorySelector(binding.RepositorySelector)
+			if err != nil {
+				return err
+			}
+			head, err := c.client.GetBranchHead(ctx, owner, repo, binding.TrackedRef, providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID))
+			if err != nil {
+				return err
+			}
+			if head == payload.CommitSHA {
+				transition = BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom}
+			} else {
+				// The ref moved past this delivery before it was applied:
+				// record it as history only and let the push that moved the
+				// head carry the work.
+				slog.InfoContext(ctx, "github recreated-ref push superseded by newer tracked head; recording only", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "tracked_head", head)
+				stalePush = true
+			}
+		}
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
 			if binding.AccessState == SourceAccessStateAvailable {
-				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, BuildTransition{PreviousCommit: payload.PreviousCommitSHA}); err != nil {
+				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, transition); err != nil {
 					return err
 				}
 			}
@@ -295,8 +335,14 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 			slog.InfoContext(ctx, "github source binding unavailable", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "access_state", binding.AccessState)
 			continue
 		}
+		if stalePush {
+			if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, transition); err != nil {
+				return err
+			}
+			continue
+		}
 		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
-		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, true, BuildTransition{PreviousCommit: payload.PreviousCommitSHA}); err != nil {
+		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, true, transition); err != nil {
 			return err
 		}
 	}

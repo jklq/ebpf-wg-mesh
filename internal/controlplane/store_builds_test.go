@@ -847,6 +847,16 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 		if err != nil {
 			return err
 		}
+		if transition.TrackedHead && transition.FetchedFromHead == "" {
+			// A tracked-head observation fetches over the binding's
+			// current proven head; realistic seeds carry that basis so
+			// later seeds advance the head like a sync would.
+			head, err := store.source.SourceBindingHeadCommitTx(ctx, tx, binding.ID)
+			if err != nil {
+				return err
+			}
+			transition.FetchedFromHead = head
+		}
 		revision, err := store.source.ObserveSourceRevisionTx(context.Background(), tx, source.SourceRevisionRecord{
 			SourceBindingID:              binding.ID,
 			ServiceID:                    service.ID,
