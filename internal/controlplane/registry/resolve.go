@@ -184,11 +184,22 @@ func dialApprovedAddress(ctx context.Context, network, addr string, allowedPriva
 	if err != nil {
 		return nil, fmt.Errorf("registry dial host %q cannot be verified: %w", addr, err)
 	}
+	var lastDialErr error
 	for _, candidate := range addrs {
 		if prohibitedIP(candidate.IP) {
 			continue
 		}
-		return next(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+		conn, err := next(ctx, network, net.JoinHostPort(candidate.IP.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		// A reachable registry usually answers on one address; the first
+		// permitted answer failing must not end the request before the
+		// remaining ones are tried.
+		lastDialErr = err
+	}
+	if lastDialErr != nil {
+		return nil, fmt.Errorf("registry dial address %q failed on every permitted address: %w", addr, lastDialErr)
 	}
 	return nil, fmt.Errorf("registry dial address %q resolves to a prohibited private destination; list it in CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES if the control plane should reach it", addr)
 }

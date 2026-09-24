@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -396,5 +397,45 @@ func TestDialGuardRejectsAllowlistedHostnameOnOtherPorts(t *testing.T) {
 	}
 	if len(dialed) != 2 {
 		t.Fatalf("passthrough dials = %v, want only the listed endpoints", dialed)
+	}
+}
+
+func TestHTTPResolverTriesLaterRegistryAddressesAfterFailedDial(t *testing.T) {
+	t.Parallel()
+	digest := "sha256:" + strings.Repeat("7b", 32)
+	served := 0
+	registryServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		served++
+		w.Header().Set("Docker-Content-Digest", digest)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(registryServer.Close)
+	registryPort := portOf(t, registryServer.URL)
+
+	// DNS answers with two permitted addresses and the first one is
+	// dead: a reachable registry must still resolve instead of failing
+	// on the first connection error.
+	original := lookupIPAddr
+	lookupIPAddr = func(context.Context, string) ([]net.IPAddr, error) {
+		return []net.IPAddr{{IP: net.ParseIP("93.184.216.35")}, {IP: net.ParseIP("93.184.216.34")}}, nil
+	}
+	t.Cleanup(func() { lookupIPAddr = original })
+
+	client := &http.Client{Transport: &http.Transport{
+		DialContext: fakeHostDial(map[string]string{
+			"93.184.216.34:" + registryPort: stripScheme(t, registryServer.URL),
+		}),
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // test-only local servers
+	}}
+	resolver := NewHTTPResolver(client, nil)
+	got, err := resolver.Resolve(context.Background(), "example.test:"+registryPort+"/app:latest")
+	if err != nil {
+		t.Fatalf("Resolve with a dead first address: %v", err)
+	}
+	if got.ManifestDigest != digest {
+		t.Fatalf("Resolve digest = %q, want %q", got.ManifestDigest, digest)
+	}
+	if served != 1 {
+		t.Fatalf("manifest requests = %d, want exactly one on the reachable address", served)
 	}
 }
