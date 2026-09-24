@@ -876,11 +876,11 @@ message ListServiceLogsRequest {
   ServiceLogType log_type = 6;
   string build_id = 7;
   string search = 8;
-  // Opaque forward cursor from a previous ListServiceLogsResponse.
-  // Empty starts from start_time. Lines return oldest first.
+  // Opaque older-page cursor from a previous ListServiceLogsResponse.
+  // Empty starts with the newest lines in the requested time range.
   string page_token = 9;
-  // Opaque forward cursor from ListServiceLogsResponse.next_gap_page_token.
-  // Empty starts from start_time. Gaps return oldest first (window_start).
+  // Opaque older-page cursor from ListServiceLogsResponse.next_gap_page_token.
+  // Empty starts with the newest gaps in the requested time range.
   string gap_page_token = 10;
 }
 
