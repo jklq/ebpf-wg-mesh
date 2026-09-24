@@ -146,7 +146,10 @@ behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
 buggy or hostile agent cannot starve ClickHouse — gap rows consume
 the same guard one token each, so gap-only spam cannot add retained
-rows past the limit. Batches are scoped
+rows past the limit, and a denied report is never erased: its
+accounting coalesces per window (summary-identified reports keep
+their replace semantics) and rides the batch's own journal record,
+durable before the batch is acknowledged. Batches are scoped
 line by line to the allocations the agent owns: a line for a stale
 allocation — one removed while its lines sat in the durable spool —
 or carrying a mismatched claim is excluded with a warning instead of
@@ -156,7 +159,9 @@ therefore no gap row). The flush loop drains the journal in bounded
 rounds and retries with backoff across an outage; because the
 journal is durable, an accepted batch survives ClickHouse outages
 that outlast the replay window and control-plane restarts — only a
-lost journal directory can drop it. Journal overflow
+lost journal directory can drop it. Each replica keeps its own
+journal directory inside the shared state volume, so failover never
+races two drainers over one journal. Journal overflow
 sheds whole batches with owed gap rows so the loss still surfaces in
 reads; past the owed-gap key cap shed windows fold into service-level
 aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as

@@ -881,9 +881,11 @@ func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 	t.Parallel()
 
 	// Gap rows are retained writes too: a producer spamming gap-only
-	// batches past the per-allocation guard gets its reports owed
-	// (kept visible, replay-safe) instead of unlimited ClickHouse
-	// rows.
+	// batches past the per-allocation guard never gets its accounting
+	// erased — denied reports coalesce per window and
+	// summary-identified reports keep their replace semantics — but
+	// the accounting rides the batch's journal record and is durable
+	// before the batch is acknowledged.
 	store := &fakeFlushStore{enabled: true}
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{RatePerSec: 1, Burst: 1})
 	summary := func(id string) *agentv1.LogBatch {
@@ -897,15 +899,66 @@ func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 			SummaryId:    id,
 		}}}
 	}
-	ingester.EnqueueAgentBatch("agent-1", summary("sum-1"))
-	ingester.EnqueueAgentBatch("agent-1", summary("sum-2"))
-	ingester.EnqueueAgentBatch("agent-1", summary("sum-3"))
-	stats := ingester.Stats()
-	if stats.QueuedFlushes != 1 {
-		t.Fatalf("queued %d flushes, want 1", stats.QueuedFlushes)
+	for _, id := range []string{"sum-1", "sum-2", "sum-3"} {
+		if !ingester.EnqueueAgentBatch("agent-1", summary(id)) {
+			t.Fatal("enqueue must accept-or-shed, never fail")
+		}
 	}
-	if stats.OwedGaps != 2 {
-		t.Fatalf("owed %d gap reports, want 2", stats.OwedGaps)
+
+	// Every denied summary still reaches the store, durably.
+	stop := runIngester(t, ingester)
+	defer stop()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		store.mu.Lock()
+		var total uint64
+		for _, gap := range store.gaps {
+			total += gap.DroppedCount
+		}
+		store.mu.Unlock()
+		if total == 6 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("denied summaries lost: %d of 6 dropped", total)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Anonymous reports inside one batch coalesce into bounded rows:
+	// the guard limits retained rows without erasing accounting.
+	anonymous := &agentv1.LogBatch{AgentId: "agent-2"}
+	for i := 0; i < 5; i++ {
+		anonymous.Drops = append(anonymous.Drops, &platformv1.LogDropSummary{
+			ServiceId:    "svc-2",
+			AllocationId: "alloc-2",
+			DroppedCount: 1,
+			Reason:       logpipeline.ReasonSpoolOverflow,
+			WindowStart:  timestamppb.New(time.Now().UTC()),
+			WindowEnd:    timestamppb.New(time.Now().UTC()),
+		})
+	}
+	ingester.EnqueueAgentBatch("agent-2", anonymous)
+	deadline = time.Now().Add(10 * time.Second)
+	for {
+		store.mu.Lock()
+		var merged int
+		for _, gap := range store.gaps {
+			if gap.ServiceID == "svc-2" {
+				merged++
+			}
+		}
+		store.mu.Unlock()
+		if merged > 0 {
+			if merged > 2 {
+				t.Fatalf("anonymous denied reports not coalesced: %d rows", merged)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("anonymous denied reports never reached the store")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

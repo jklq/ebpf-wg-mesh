@@ -319,6 +319,7 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 	// summary identity — a replay replaces it and the loss stays
 	// visible without retained-row pressure.
 	keptGaps := gaps[:0]
+	deniedGaps := make(map[owedGapKey]GapInput)
 	for _, gap := range gaps {
 		key := gap.AllocationID
 		if key == "" {
@@ -328,8 +329,16 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 			keptGaps = append(keptGaps, gap)
 			continue
 		}
-		a.mu.Lock()
-		a.noteOwedLocked(owedGapKey{
+		// A denied report is coalesced, never erased: its accounting
+		// rides the batch's own journal record so it is durable
+		// before the batch is acknowledged. Summary identities keep
+		// their replace semantics in the store (replays stay
+		// idempotent); anonymous reports merge per window here.
+		if gap.SummaryID != "" {
+			keptGaps = append(keptGaps, gap)
+			continue
+		}
+		mergeKey := owedGapKey{
 			serviceID:    gap.ServiceID,
 			allocationID: gap.AllocationID,
 			buildID:      gap.BuildID,
@@ -337,9 +346,26 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 			stream:       normalizeLogStream(gap.Stream),
 			reason:       gap.Reason,
 			reporter:     gap.Reporter,
-			summaryID:    gap.SummaryID,
-		}, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
-		a.mu.Unlock()
+		}
+		merged := deniedGaps[mergeKey]
+		merged.ServiceID = gap.ServiceID
+		merged.AllocationID = gap.AllocationID
+		merged.BuildID = gap.BuildID
+		merged.LogType = LogType(mergeKey.logType)
+		merged.Stream = mergeKey.stream
+		merged.Reason = gap.Reason
+		merged.Reporter = gap.Reporter
+		if merged.DroppedCount == 0 || gap.WindowStart.Before(merged.WindowStart) {
+			merged.WindowStart = gap.WindowStart
+		}
+		if gap.WindowEnd.After(merged.WindowEnd) {
+			merged.WindowEnd = gap.WindowEnd
+		}
+		merged.DroppedCount += gap.DroppedCount
+		deniedGaps[mergeKey] = merged
+	}
+	for _, merged := range deniedGaps {
+		keptGaps = append(keptGaps, merged)
 	}
 	gaps = keptGaps
 	for key, count := range limited {
