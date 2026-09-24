@@ -135,7 +135,7 @@ func enqueueBuildForTest(ctx context.Context, store *persistence, userID, servic
 	if err != nil {
 		return deliverycore.BuildRunRecord{}, err
 	}
-	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, commitSHA, source.SourceSnapshotRecord{})
+	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, commitSHA, source.SourceSnapshotRecord{}, source.BuildTransition{})
 	if err != nil {
 		return deliverycore.BuildRunRecord{}, err
 	}

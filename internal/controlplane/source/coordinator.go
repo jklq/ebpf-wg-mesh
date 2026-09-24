@@ -102,7 +102,7 @@ func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, inst
 	return err
 }
 
-func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repositoryExternalID, trackedRef, commitSHA, commitMessage, commitAuthor string) error {
+func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor string) error {
 	if !c.Enabled() {
 		return errors.New("github integration disabled")
 	}
@@ -112,7 +112,7 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	if repositoryExternalID == "" || trackedRef == "" || commitSHA == "" {
 		return errors.New("repository id, tracked ref, and commit sha are required")
 	}
-	inserted, err := c.work.Enqueue(ctx, RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, commitMessage, commitAuthor))
+	inserted, err := c.work.Enqueue(ctx, RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor))
 	if err != nil {
 		return err
 	}
@@ -246,6 +246,14 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if binding.AccessState != SourceAccessStateAvailable {
 		return nil
 	}
+	// The fetch below proves currency only over the head observed before it
+	// began (see BuildTransition): a push that lands while the fetch is in
+	// flight makes this observation stale, and a delayed sync must never
+	// move the proven head backward.
+	fetchedFrom, err := c.store.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil {
+		return err
+	}
 	commitSHA, err := c.client.GetBranchHead(ctx, view.Owner, view.Repo, trackedRef, providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID))
 	if err != nil {
 		return err
@@ -256,8 +264,10 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	}
 	// Unanchored syncs carry no spec revision: they are automatic refreshes
 	// triggered by push or provider events, not explicit spec writes or
-	// releases, so they honor the environment auto-deploy switch.
-	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0)
+	// releases, so they honor the environment auto-deploy switch. The
+	// commit is the freshly fetched tracked head, so the request is
+	// authoritative regardless of observed order.
+	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0, BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom})
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload WorkPayload) error {
@@ -270,10 +280,44 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 		return nil
 	}
 	for _, binding := range bindings {
+		transition := BuildTransition{PreviousCommit: payload.PreviousCommitSHA}
+		stalePush := false
+		if NoPushPredecessor(payload.PreviousCommitSHA) {
+			// A created or recreated ref: the payload's all-zero "before"
+			// names a predecessor that can never be observed — the
+			// binding's stored tip predates the deletion — so chaining to
+			// it would pend this push as an early successor forever. Prove
+			// currency the way syncs do instead: fetch the tracked head.
+			// The pushed commit must still be it; anything newer made this
+			// delivery stale.
+			fetchedFrom, err := c.store.SourceBindingHeadCommit(ctx, binding.ID)
+			if err != nil {
+				return err
+			}
+			owner, repo, err := SplitGitHubRepositorySelector(binding.RepositorySelector)
+			if err != nil {
+				return err
+			}
+			head, err := c.client.GetBranchHead(ctx, owner, repo, binding.TrackedRef, providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID))
+			if err != nil {
+				return err
+			}
+			if head == payload.CommitSHA {
+				transition = BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom}
+			} else {
+				// The ref moved past this delivery before it was applied:
+				// record it as history only — never as a head, even when the
+				// binding has none yet — and let the push that moved the head
+				// carry the work.
+				slog.InfoContext(ctx, "github recreated-ref push superseded by newer tracked head; recording only", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "tracked_head", head)
+				stalePush = true
+				transition = BuildTransition{History: true}
+			}
+		}
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
 			if binding.AccessState == SourceAccessStateAvailable {
-				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor); err != nil {
+				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, transition); err != nil {
 					return err
 				}
 			}
@@ -286,8 +330,14 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 			slog.InfoContext(ctx, "github source binding unavailable", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "access_state", binding.AccessState)
 			continue
 		}
+		if stalePush {
+			if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, transition); err != nil {
+				return err
+			}
+			continue
+		}
 		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
-		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, true); err != nil {
+		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, true, transition); err != nil {
 			return err
 		}
 	}
@@ -298,8 +348,8 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 // queues a build for it. Automatic observations (pushes and refresh syncs)
 // honor the environment auto-deploy switch: when it is off the revision is
 // recorded and held for a manual release instead of building.
-func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool) error {
-	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor)
+func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool, transition BuildTransition) error {
+	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor, transition)
 	if err != nil {
 		return err
 	}
@@ -313,11 +363,11 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 			return nil
 		}
 	}
-	return c.queueBoundRevisionBuild(ctx, binding, revision)
+	return c.queueBoundRevisionBuild(ctx, binding, revision, transition)
 }
 
-func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string) (SourceRevisionRecord, error) {
-	return c.store.UpsertSourceRevision(ctx, SourceRevisionRecord{
+func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, transition BuildTransition) (SourceRevisionRecord, error) {
+	return c.store.ObserveSourceRevision(ctx, SourceRevisionRecord{
 		SourceBindingID:              binding.ID,
 		ServiceID:                    binding.ServiceID,
 		Provider:                     binding.Provider,
@@ -327,10 +377,10 @@ func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding Sou
 		CommitMessage:                strings.TrimSpace(commitMessage),
 		CommitAuthor:                 strings.TrimSpace(commitAuthor),
 		ObservedAt:                   time.Now().UTC(),
-	})
+	}, transition)
 }
 
-func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding SourceBindingRecord, revision SourceRevisionRecord) error {
+func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding SourceBindingRecord, revision SourceRevisionRecord, transition BuildTransition) error {
 	owner, repo, err := SplitGitHubRepositorySelector(binding.RepositorySelector)
 	if err != nil {
 		return err
@@ -362,9 +412,30 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 		return err
 	}
 
-	queued, err := c.delivery.QueueSourceBuild(ctx, binding, revision.CommitSHA, pendingSnapshot)
+	queued, err := c.delivery.QueueSourceBuild(ctx, binding, revision.CommitSHA, pendingSnapshot, transition)
 	if err != nil {
 		return err
+	}
+	if queued.Superseded {
+		if queued.ChainUnproven {
+			// A push whose predecessor chains to neither the proven head
+			// nor a fetched one: an unobserved predecessor whose webhook
+			// may never arrive, or one recorded as history by an earlier
+			// recreated-ref push that never held the head. Only a fetch
+			// decides whether the pushed commit is still current, so
+			// reconcile the tracked head now instead of leaving the
+			// service on an older image until the binding expires.
+			if _, err := c.work.Enqueue(ctx, SourceSpecChangedParams(binding.ServiceID, 0, true)); err != nil {
+				return err
+			}
+			return nil
+		}
+		slog.InfoContext(ctx, "github revision superseded by newer observed commit; skipping", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
+		return nil
+	}
+	if queued.Reused {
+		slog.InfoContext(ctx, "github build reused existing image", "service_id", binding.ServiceID, "build_id", queued.BuildID, "deployment_id", queued.DeploymentID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
+		return nil
 	}
 	slog.InfoContext(ctx, "github build queued", "service_id", binding.ServiceID, "build_id", queued.BuildID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", revision.CommitSHA, "source_revision_id", revision.ID)
 	return nil

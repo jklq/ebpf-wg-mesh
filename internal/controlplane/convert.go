@@ -298,6 +298,7 @@ func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.Depl
 		RequestedByUserId: rec.RequestedByUserID,
 		Status:            status,
 		ImageDigest:       rec.ImageDigest,
+		Artifact:          deliverycore.ToProtoBuildArtifact(rec.Artifact),
 		VariableVersions:  rec.VariableVersions,
 		SealedVersions:    rec.SealedVersions,
 	}

@@ -74,6 +74,11 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion ExpiredDel
 		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
 			`SELECT id FROM projects WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
+				if err := detachArtifactReferencesTx(ctx, tx,
+					`service_id IN (SELECT id FROM services WHERE environment_id IN (SELECT id FROM environments WHERE project_id = $1))`,
+					id); err != nil {
+					return err
+				}
 				return journal.RecordProjectRemoval(ctx, tx, id)
 			},
 			`DELETE FROM projects WHERE id = $1`)
@@ -81,6 +86,11 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion ExpiredDel
 		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
 			`SELECT id FROM environments WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
+				if err := detachArtifactReferencesTx(ctx, tx,
+					`service_id IN (SELECT id FROM services WHERE environment_id = $1)`,
+					id); err != nil {
+					return err
+				}
 				return journal.RecordEnvironmentRemoval(ctx, tx, id)
 			},
 			`DELETE FROM environments WHERE id = $1`)
@@ -88,6 +98,9 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion ExpiredDel
 		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
 			`SELECT id FROM services WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
+				if err := detachArtifactReferencesTx(ctx, tx, `service_id = $1`, id); err != nil {
+					return err
+				}
 				return journal.RecordServiceRemoval(ctx, tx, id)
 			},
 			`DELETE FROM services WHERE id = $1`)
@@ -101,6 +114,26 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion ExpiredDel
 	default:
 		return false, nil
 	}
+}
+
+// detachArtifactReferencesTx clears artifact FKs that RESTRICT deletion of
+// build_artifacts. Service/environment/project collection cascades into
+// artifacts in an unspecified order; leaving these pointers in place can
+// block the delete. Prune still uses RESTRICT so live rollback material
+// cannot be removed while these rows exist.
+func detachArtifactReferencesTx(ctx context.Context, tx *sql.Tx, servicePredicate string, args ...any) error {
+	statements := []string{
+		`UPDATE service_delivery_status SET current_artifact_id = NULL WHERE ` + servicePredicate,
+		`UPDATE service_rollouts SET artifact_id = NULL WHERE ` + servicePredicate,
+		`UPDATE deployment_transitions SET artifact_id = NULL WHERE deployment_id IN (SELECT id FROM deployments WHERE ` + servicePredicate + `)`,
+		`UPDATE deployments SET artifact_id = NULL WHERE ` + servicePredicate,
+	}
+	for _, q := range statements {
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func hardDeleteExpiredRow(ctx context.Context, db *database, id string, cutoff time.Time, lockQuery string, record func(context.Context, *sql.Tx, string) error, deleteQuery string) (bool, error) {

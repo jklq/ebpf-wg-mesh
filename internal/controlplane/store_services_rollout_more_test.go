@@ -5,6 +5,7 @@ package controlplane
 import (
 	"context"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"errors"
 	"testing"
 
@@ -13,6 +14,17 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 )
+
+// testPinnedImage resolves a direct-image input the way the delivery test
+// harness does, returning the digest-pinned runtime identity.
+func testPinnedImage(t *testing.T, input string) string {
+	t.Helper()
+	resolved, err := registry.StaticResolverForTest().Resolve(context.Background(), input)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", input, err)
+	}
+	return resolved.Ref
+}
 
 func TestDirectImageEnvironmentReleaseUpdatesDesiredImage(t *testing.T) {
 	t.Parallel()
@@ -42,8 +54,10 @@ func TestDirectImageEnvironmentReleaseUpdatesDesiredImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("desiredStateForAgent before environment release: %v", err)
 	}
-	if got := before.GetServices()[0].GetSpec().GetImage(); got != "example.test/web:a" {
-		t.Fatalf("draft image leaked before environment release: got %q", got)
+	// The mutable tag is user input only: what is scheduled is the digest it
+	// resolved to at deploy time.
+	if got := before.GetServices()[0].GetSpec().GetImage(); got != testPinnedImage(t, "example.test/web:a") {
+		t.Fatalf("draft image leaked before environment release: got %q want %q", got, testPinnedImage(t, "example.test/web:a"))
 	}
 	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
 		t.Fatalf("releaseEnvironment: %v", err)
@@ -52,8 +66,8 @@ func TestDirectImageEnvironmentReleaseUpdatesDesiredImage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("desiredStateForAgent after environment release: %v", err)
 	}
-	if got := after.GetServices()[0].GetSpec().GetImage(); got != "example.test/web:b" {
-		t.Fatalf("environment release kept stale image: got %q", got)
+	if got := after.GetServices()[0].GetSpec().GetImage(); got != testPinnedImage(t, "example.test/web:b") {
+		t.Fatalf("environment release kept stale image: got %q want %q", got, testPinnedImage(t, "example.test/web:b"))
 	}
 }
 

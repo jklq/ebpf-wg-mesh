@@ -192,7 +192,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		EnvironmentId: environmentID,
 		Service: &platformv1.ServiceInput{
 			Name: "web",
-			Spec: directImageServiceSpec("example.test/e2e:1", &platformv1.ServiceRuntime{
+			Spec: directImageServiceSpec(pinnedImage("e"), &platformv1.ServiceRuntime{
 				CpuMillis:       250,
 				MemoryMebibytes: 256,
 				Ports:           runtimePortsFromInts([]int32{8080}),
@@ -210,7 +210,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 		t.Fatalf("desired services: got %d, want 1", len(desired.GetServices()))
 	}
 	desiredService := desired.GetServices()[0]
-	if desiredService.GetServiceId() != service.GetId() || desiredService.GetSpec().GetImage() != "example.test/e2e:1" {
+	if desiredService.GetServiceId() != service.GetId() || desiredService.GetSpec().GetImage() != pinnedImage("e") {
 		t.Fatalf("unexpected desired service: %+v", desiredService)
 	}
 

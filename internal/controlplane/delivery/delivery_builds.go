@@ -3,14 +3,16 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -130,12 +132,31 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		default:
 			return errors.New("invalid terminal build state")
 		}
-		if stateValue == BuildStateSuperseded {
-			imageDigest = ""
-		}
+		var artifact BuildArtifactRecord
 		if stateValue == BuildStateSucceeded {
 			if build.SourceRevisionID == "" || build.SourceSnapshotID == "" || build.SourceSnapshotDigest == "" {
 				return errSourceStateNotReady
+			}
+			repository, manifestDigest, err := registry.SplitPinnedReference(imageDigest)
+			if err != nil {
+				return fmt.Errorf("builder reported an invalid image reference: %w", err)
+			}
+			artifact, err = s.insertBuildArtifactTx(ctx, tx, insertArtifactParams{
+				ServiceID:            build.ServiceID,
+				BuildID:              build.ID,
+				Kind:                 BuildArtifactBuild,
+				SourceSnapshotDigest: build.SourceSnapshotDigest,
+				CommitSHA:            commitSHA,
+				BuildRecipe:          build.BuildRecipe,
+				BuilderVersion:       BuilderToolchainVersion,
+				ImageRepository:      repository,
+				ImageManifestDigest:  manifestDigest,
+				BuildActorKind:       build.BuildActorKind,
+				BuildActorID:         build.BuildActorID,
+				CreatedAt:            now,
+			})
+			if err != nil {
+				return err
 			}
 			var newerCount int
 			if err := tx.QueryRowContext(ctx,
@@ -147,7 +168,6 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			}
 			if newerCount > 0 {
 				stateValue = BuildStateSuperseded
-				imageDigest = ""
 				failureReason = "superseded by newer build"
 			}
 		}
@@ -155,12 +175,12 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			`UPDATE build_runs
 			    SET state = $1,
 			        commit_sha = $2,
-			        image_digest = $3,
+			        artifact_id = NULLIF($3, ''),
 			        failure_reason = $4,
 			        finished_at = $5,
 			        lease_expires_at = NULL
 			  WHERE id = $6 AND state = $7 AND builder_id = $8 AND owner_epoch = $9`,
-			stateValue, commitSHA, imageDigest, failureReason, now, buildID, BuildStateRunning, builderID, epoch,
+			stateValue, commitSHA, artifact.ID, failureReason, now, buildID, BuildStateRunning, builderID, epoch,
 		)
 		if err != nil {
 			return err
@@ -174,7 +194,12 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		}
 		changed = true
 		completed.State = stateValue
-		completed.ImageDigest = imageDigest
+		completed.ArtifactID = artifact.ID
+		if artifact.ID != "" {
+			completed.ImageDigest = artifact.ImageRef
+			artifactCopy := artifact
+			completed.Artifact = &artifactCopy
+		}
 		completed.FailureReason = failureReason
 		completed.FinishedAt = sql.NullTime{Time: now, Valid: true}
 		if _, err := tx.ExecContext(ctx,
@@ -221,6 +246,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			}
 			return nil
 		}
+
 		currentDep, currentOK, err := s.currentDeploymentTx(ctx, tx, build.ServiceID)
 		if err != nil {
 			return err
@@ -232,87 +258,18 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		if err != nil {
 			return err
 		}
-		nextRolloutGeneration := service.RolloutGeneration
-		var currentRolloutState string
-		var currentRolloutSpec int64
-		err = tx.QueryRowContext(ctx,
-			`SELECT state, spec_revision FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
-			build.ServiceID, service.RolloutGeneration,
-		).Scan(&currentRolloutState, &currentRolloutSpec)
-		usePendingRollout := err == nil && currentRolloutState == rolloutStatePendingBuild && currentRolloutSpec == service.SpecRevision
-		if err != nil && err != sql.ErrNoRows {
+		depID := ""
+		if dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, build.ServiceID, build.ID); err != nil {
+			return err
+		} else if ok {
+			depID = dep.ID
+		}
+		_, scheduled, err := d.scheduleSucceededArtifactTx(ctx, tx, service, artifact, commitSHA, build.ID, depID,
+			deploymentActor{Kind: DeploymentCauseBuilder, ID: builderID}, reasonBuildSucceeded, "Image ready; scheduling rollout", now)
+		if err != nil {
 			return err
 		}
-		if !usePendingRollout && ServiceVolumeName(service.Spec) != "" {
-			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-				ToState:        DeploymentStateFailed,
-				Actor:          deploymentActor{Kind: DeploymentCauseSystem},
-				ReasonCode:     reasonDeploymentFailed,
-				Detail:         ErrVolumeRollingUnsupported.Error(),
-				ImageDigest:    imageDigest,
-				HasImageDigest: true,
-			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			return nil
-		}
-		if !usePendingRollout && (currentRolloutState == rolloutStateInProgress || currentRolloutState == rolloutStatePendingBuild) {
-			existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, build.ServiceID, true)
-			if err != nil {
-				return err
-			}
-			if _, err := d.prepareReplacementRolloutTx(ctx, tx, service, existing, now); err != nil {
-				return err
-			}
-		}
-		if !usePendingRollout {
-			nextRolloutGeneration++
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE service_delivery_status
-			    SET current_resolved_image = NULLIF($1, ''),
-			        last_successful_commit_sha = NULLIF($2, ''),
-			        current_rollout_generation = $3,
-			        latest_build_id = $4,
-			        updated_at = $5
-			  WHERE service_id = $6`,
-			imageDigest, commitSHA, nextRolloutGeneration, buildID, now, build.ServiceID,
-		); err != nil {
-			return err
-		}
-		journal.RecordService(ctx, build.ServiceID)
-		if usePendingRollout {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE service_rollouts
-				    SET state = $1, image_digest = $2, build_id = $3
-				  WHERE service_id = $4 AND rollout_generation = $5`,
-				rolloutStateInProgress, imageDigest, build.ID, build.ServiceID, nextRolloutGeneration,
-			); err != nil {
-				return err
-			}
-			journal.RecordRollout(ctx, build.ServiceID, nextRolloutGeneration)
-		} else if err := s.insertServiceRolloutTx(ctx, tx, build.ServiceID, nextRolloutGeneration, service.SpecRevision, "build-success", build.ID, "", now); err != nil {
-			return err
-		}
-		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-			ToState:           DeploymentStateScheduling,
-			Actor:             deploymentActor{Kind: DeploymentCauseBuilder, ID: builderID},
-			ReasonCode:        reasonBuildSucceeded,
-			Detail:            "Image ready; scheduling rollout",
-			ImageDigest:       imageDigest,
-			HasImageDigest:    true,
-			RolloutGeneration: nextRolloutGeneration,
-			HasRollout:        true,
-			SpecRevision:      service.SpecRevision,
-			HasSpecRevision:   true,
-			IgnoreIfTerminal:  true,
-		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		if _, err := d.advanceRolloutTx(ctx, tx, build.ServiceID, now); err != nil {
-			return err
-		}
-		rolloutScheduled = true
+		rolloutScheduled = scheduled
 		return nil
 	})
 	if err != nil || !changed {
@@ -338,6 +295,105 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 	return BuildCompletion{Build: completed, Changed: changed, RolloutScheduled: rolloutScheduled}, nil
 }
 
+// scheduleSucceededArtifactTx adopts a build artifact as the service's
+// resolved image and schedules its rollout. Build completion and the
+// skip-rebuild path share it so a reused image rolls out exactly like a
+// freshly built one. depID carries the image to scheduling; empty skips
+// the deployment transition while still scheduling the rollout.
+func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, artifact BuildArtifactRecord, commitSHA, buildID, depID string, actor deploymentActor, reasonCode, detail string, now time.Time) (DeploymentRecord, bool, error) {
+	s := d.store
+	transition := func(input deploymentTransitionInput) (DeploymentRecord, error) {
+		if depID == "" {
+			return DeploymentRecord{}, nil
+		}
+		updated, err := s.applyDeploymentTransitionTx(ctx, tx, depID, input)
+		if err != nil && errors.Is(err, sql.ErrNoRows) {
+			return DeploymentRecord{}, nil
+		}
+		return updated, err
+	}
+	nextRolloutGeneration := service.RolloutGeneration
+	var currentRolloutState string
+	var currentRolloutSpec int64
+	err := tx.QueryRowContext(ctx,
+		`SELECT state, spec_revision FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
+		service.ID, service.RolloutGeneration,
+	).Scan(&currentRolloutState, &currentRolloutSpec)
+	usePendingRollout := err == nil && currentRolloutState == rolloutStatePendingBuild && currentRolloutSpec == service.SpecRevision
+	if err != nil && err != sql.ErrNoRows {
+		return DeploymentRecord{}, false, err
+	}
+	if !usePendingRollout && ServiceVolumeName(service.Spec) != "" {
+		updated, err := transition(deploymentTransitionInput{
+			ToState:       DeploymentStateFailed,
+			Actor:         deploymentActor{Kind: DeploymentCauseSystem},
+			ReasonCode:    reasonDeploymentFailed,
+			Detail:        ErrVolumeRollingUnsupported.Error(),
+			ArtifactID:    artifact.ID,
+			HasArtifactID: true,
+		})
+		return updated, false, err
+	}
+	if !usePendingRollout && (currentRolloutState == rolloutStateInProgress || currentRolloutState == rolloutStatePendingBuild) {
+		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+		if err != nil {
+			return DeploymentRecord{}, false, err
+		}
+		if _, err := d.prepareReplacementRolloutTx(ctx, tx, service, existing, now); err != nil {
+			return DeploymentRecord{}, false, err
+		}
+	}
+	if !usePendingRollout {
+		nextRolloutGeneration++
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE service_delivery_status
+		    SET current_artifact_id = NULLIF($1, ''),
+		        last_successful_commit_sha = NULLIF($2, ''),
+		        current_rollout_generation = $3,
+		        latest_build_id = $4,
+		        updated_at = $5
+		  WHERE service_id = $6`,
+		artifact.ID, commitSHA, nextRolloutGeneration, buildID, now, service.ID,
+	); err != nil {
+		return DeploymentRecord{}, false, err
+	}
+	journal.RecordService(ctx, service.ID)
+	if usePendingRollout {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE service_rollouts
+			    SET state = $1, artifact_id = NULLIF($2, ''), build_id = $3
+			  WHERE service_id = $4 AND rollout_generation = $5`,
+			rolloutStateInProgress, artifact.ID, buildID, service.ID, nextRolloutGeneration,
+		); err != nil {
+			return DeploymentRecord{}, false, err
+		}
+		journal.RecordRollout(ctx, service.ID, nextRolloutGeneration)
+	} else if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRolloutGeneration, service.SpecRevision, "build-success", buildID, "", now); err != nil {
+		return DeploymentRecord{}, false, err
+	}
+	updated, err := transition(deploymentTransitionInput{
+		ToState:           DeploymentStateScheduling,
+		Actor:             actor,
+		ReasonCode:        reasonCode,
+		Detail:            detail,
+		ArtifactID:        artifact.ID,
+		HasArtifactID:     true,
+		RolloutGeneration: nextRolloutGeneration,
+		HasRollout:        true,
+		SpecRevision:      service.SpecRevision,
+		HasSpecRevision:   true,
+		IgnoreIfTerminal:  true,
+	})
+	if err != nil {
+		return DeploymentRecord{}, false, err
+	}
+	if _, err := d.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
+		return DeploymentRecord{}, false, err
+	}
+	return updated, true, nil
+}
+
 func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, error) {
 	var (
 		rec        BuildRunRecord
@@ -358,11 +414,14 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 		&rec.CancelRequestedAt,
 		&rec.DeadlineAt,
 		&rec.LastHeartbeatAt,
+		&rec.ArtifactID,
 		&rec.ImageDigest,
 		&rec.FailureReason,
 		&rec.SourceRevisionID,
 		&rec.SourceSnapshotID,
 		&rec.SourceSnapshotDigest,
+		&rec.BuildActorKind,
+		&rec.BuildActorID,
 		&rec.TargetRolloutGeneration,
 		&recipeJSON,
 		&rec.QueuedAt,
@@ -393,36 +452,108 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 	return rec, err
 }
 
-func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor) (BuildRunRecord, error) {
-	s := d.store
-	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
-		return BuildRunRecord{}, err
-	}
-	service, err := s.serviceByIDInternalQuerier(ctx, tx, service.ID)
-	if err != nil {
-		return BuildRunRecord{}, err
-	}
-	if err := requireLiveService(service.Deletion); err != nil {
-		return BuildRunRecord{}, err
-	}
-	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
-		return BuildRunRecord{}, errSourceStateNotReady
-	}
-	if err := source.EnsureReadySnapshot(snapshot); err != nil {
-		return BuildRunRecord{}, err
-	}
+// errSourceRevisionSuperseded reports a build request that cannot prove it
+// is current against the binding's observed history. No work is created.
+var errSourceRevisionSuperseded = errors.New("source revision superseded by a newer observed revision")
 
-	now := time.Now().UTC()
-	if _, err := tx.ExecContext(ctx,
+// errSourceRevisionChainUnproven refuses a build request whose push
+// transition chains to neither the binding's proven head nor a fetched
+// one. The predecessor may be unobserved (the successor's webhook beat
+// its predecessor's) or recorded without ever holding the head (a
+// recreated-branch push that lost to newer history): staleness is not
+// provable from that, so the tracked head must be reconciled instead of
+// dropping the push.
+var errSourceRevisionChainUnproven = errors.New("source revision push chain cannot prove currency")
+
+// supersedeQueuedBuildsTx retires still-queued builds so only the newest
+// request proceeds to build or deploy.
+func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) error {
+	_, err := tx.ExecContext(ctx,
 		`UPDATE build_runs
 		    SET state = $2,
 		        finished_at = $3,
 		        failure_reason = $4
 		  WHERE service_id = $1
 		    AND state = $5`,
-		service.ID, BuildStateSuperseded, now, "superseded by newer queued build", BuildStateQueued,
-	); err != nil {
-		return BuildRunRecord{}, err
+		serviceID, BuildStateSuperseded, now, "superseded by newer queued build", BuildStateQueued,
+	)
+	return err
+}
+
+// enqueueBuildFromSourceStateTx queues a build for verified source state, or
+// skips the build when the same source already produced an image: the
+// existing artifact rolls out with the service's current spec instead of
+// rebuilding. Only current requests are served (see source.BuildTransition):
+// a redelivered or retried older revision is refused with
+// errSourceRevisionSuperseded before it can supersede queued newer work or
+// regress the rollout. Reuse returns an empty build, the scheduled
+// deployment, and reused=true.
+func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor, transition source.BuildTransition) (BuildRunRecord, DeploymentRecord, bool, error) {
+	s := d.store
+	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	service, err := s.serviceByIDInternalQuerier(ctx, tx, service.ID)
+	if err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	if err := requireLiveService(service.Deletion); err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	if revision.ID == "" || snapshot.ID == "" || !sourceSnapshotMatchesRevision(snapshot, revision) {
+		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceStateNotReady
+	}
+	if err := source.EnsureReadySnapshot(snapshot); err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	if actor.Kind == "" {
+		actor.Kind = DeploymentCauseSystem
+	}
+
+	now := time.Now().UTC()
+	// Freshness fence: before anything is superseded or created, the
+	// request must prove it is current — its revision is the binding's
+	// proven head commit, it advances from that head (an ordered push
+	// transition such as a force-push back to an older commit), or the
+	// caller just fetched the commit as the tracked head (see
+	// source.BuildTransition). A redelivered or retried older revision
+	// carries no proof and is refused: it must never supersede queued
+	// newer work or regress the rollout. Moving backward on purpose is
+	// the rollback and exact-redeploy actions' job. Arrival order is not
+	// push order, so currency is proven against the head established by
+	// proven transitions, never against "latest observed".
+	head, err := s.sourceStore.SourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID)
+	if err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	if !transition.ProvesCurrent(revision.CommitSHA, head) {
+		if transition.PreviousCommit != "" {
+			// A push whose predecessor does not chain to the proven head
+			// cannot prove currency here at all — see
+			// errSourceRevisionChainUnproven. The coordinator reconciles
+			// the tracked head and queues the commit still current.
+			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionChainUnproven
+		}
+		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
+	}
+	if head != revision.CommitSHA {
+		if err := s.sourceStore.SetSourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID, revision.CommitSHA); err != nil {
+			return BuildRunRecord{}, DeploymentRecord{}, false, err
+		}
+	}
+	artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe)
+	if err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	if err := supersedeQueuedBuildsTx(ctx, tx, service.ID, now); err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
+	}
+	if ok {
+		dep, err := d.reuseBuildArtifactTx(ctx, tx, service, revision, artifact, actor, now)
+		if err != nil {
+			return BuildRunRecord{}, DeploymentRecord{}, false, err
+		}
+		return BuildRunRecord{}, dep, true, nil
 	}
 
 	targetGeneration := service.RolloutGeneration + 1
@@ -431,7 +562,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		`SELECT state FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
 		service.ID, service.RolloutGeneration,
 	).Scan(&currentRolloutState); err != nil && err != sql.ErrNoRows {
-		return BuildRunRecord{}, err
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	if currentRolloutState == rolloutStatePendingBuild {
 		targetGeneration = service.RolloutGeneration
@@ -450,24 +581,27 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		SourceRevisionID:        revision.ID,
 		SourceSnapshotID:        snapshot.ID,
 		SourceSnapshotDigest:    snapshot.Digest,
+		BuildActorKind:          actor.Kind,
+		BuildActorID:            actor.ID,
 		TargetRolloutGeneration: targetGeneration,
 		BuildRecipe:             source.CloneBuildRecipe(buildRecipe),
 		QueuedAt:                now,
 	}
 	recipeJSON, err := source.MarshalBuildRecipe(rec.BuildRecipe)
 	if err != nil {
-		return BuildRunRecord{}, err
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO build_runs(
 			id, service_id, commit_sha, commit_message, commit_author, state,
 			source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
-			builder_id, queued_at, attempt_limit
-		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, NULL, $12, $13)`,
+			build_actor_kind, build_actor_id, builder_id, queued_at, attempt_limit
+		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, $12, $13, NULL, $14, $15)`,
 		rec.ID, rec.ServiceID, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.State,
-		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, rec.TargetRolloutGeneration, recipeJSON, rec.QueuedAt, rec.AttemptLimit,
+		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, rec.TargetRolloutGeneration, recipeJSON,
+		rec.BuildActorKind, rec.BuildActorID, rec.QueuedAt, rec.AttemptLimit,
 	); err != nil {
-		return BuildRunRecord{}, err
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status
@@ -476,22 +610,94 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		  WHERE service_id = $3`,
 		rec.ID, now, service.ID,
 	); err != nil {
-		return BuildRunRecord{}, err
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	journal.RecordService(ctx, service.ID)
-	if actor.Kind == "" {
-		actor.Kind = DeploymentCauseSystem
-	}
 	reasonCode := reasonBuildQueued
 	detail := "Build queued"
 	if actor.Kind == DeploymentCauseWebhook {
 		reasonCode = reasonWebhookPush
 		detail = "Build queued from webhook"
 	}
-	if _, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateQueuedBuild, actor, reasonCode, detail, service.SpecRevision, rec.TargetRolloutGeneration, rec.ID, "", "", now); err != nil {
-		return BuildRunRecord{}, err
+	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateQueuedBuild, actor, reasonCode, detail, service.SpecRevision, rec.TargetRolloutGeneration, rec.ID, "", "", now)
+	if err != nil {
+		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-	return rec, nil
+	return rec, dep, false, nil
+}
+
+// reuseBuildArtifactTx deploys an already-built image for verified source
+// state without queueing builder work. The reuse is recorded as the
+// source revision's build: manual release asks whether the revision is
+// built to decide if a sync is needed, so an unrecorded reuse leaves
+// every later release syncing and reusing the same image again. When the
+// service already runs this exact artifact at the current spec revision,
+// no new deployment is created — identical bytes need no rollout, and a
+// refresh sync must not restart one. The deployment captures the
+// service's current spec, so a reused image always runs with current
+// variables rather than the original build's.
+func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, artifact BuildArtifactRecord, actor deploymentActor, now time.Time) (DeploymentRecord, error) {
+	s := d.store
+	recipeJSON, err := source.MarshalBuildRecipe(artifact.BuildRecipe)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	var reuseBuildID string
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO build_runs(
+			id, service_id, commit_sha, commit_message, commit_author, state,
+			artifact_id, source_revision_id, source_snapshot_digest, build_recipe_json,
+			build_actor_kind, build_actor_id, queued_at, started_at, finished_at
+		)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13
+		 WHERE NOT EXISTS (SELECT 1 FROM build_runs WHERE source_revision_id = $8)
+		 RETURNING id`,
+		uuid.NewString(), service.ID, revision.CommitSHA, revision.CommitMessage, revision.CommitAuthor, BuildStateSucceeded,
+		artifact.ID, revision.ID, artifact.SourceSnapshotDigest, recipeJSON,
+		actor.Kind, actor.ID, now,
+	).Scan(&reuseBuildID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if err := tx.QueryRowContext(ctx,
+			`SELECT id FROM build_runs WHERE source_revision_id = $1`,
+			revision.ID,
+		).Scan(&reuseBuildID); err != nil {
+			return DeploymentRecord{}, err
+		}
+	case err != nil:
+		return DeploymentRecord{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE service_delivery_status
+		    SET latest_build_id = $1,
+		        updated_at = $2
+		  WHERE service_id = $3`,
+		reuseBuildID, now, service.ID,
+	); err != nil {
+		return DeploymentRecord{}, err
+	}
+	current, ok, err := s.currentDeploymentTx(ctx, tx, service.ID)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	if ok && current.ArtifactID == artifact.ID && current.SpecRevision == service.SpecRevision &&
+		current.State != DeploymentStateFailed && current.State != DeploymentStateCancelled &&
+		current.State != DeploymentStateCrashed && current.State != DeploymentStateRemoved {
+		journal.RecordService(ctx, service.ID)
+		return current, nil
+	}
+	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateStaged, actor, reasonBuildReused,
+		"Reusing previously built image for commit "+shortSHA(revision.CommitSHA),
+		service.SpecRevision, 0, reuseBuildID, artifact.ID, "", now)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	updated, _, err := d.scheduleSucceededArtifactTx(ctx, tx, service, artifact, revision.CommitSHA, reuseBuildID, dep.ID,
+		actor, reasonBuildReused, "Reusing previously built image for commit "+shortSHA(revision.CommitSHA), now)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	return updated, nil
 }
 
 func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName string) (BuildRunRecord, error) {

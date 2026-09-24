@@ -67,6 +67,12 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Deletion.GCIntervalSeconds <= 0 {
 		return errors.New("controlplane.deletion.gcIntervalSeconds must be greater than 0")
 	}
+	if cfg.BuildArtifacts.RetentionDays <= 0 {
+		return errors.New("controlplane.buildArtifacts.retentionDays must be greater than 0")
+	}
+	if cfg.BuildArtifacts.KeepRecent <= 0 {
+		return errors.New("controlplane.buildArtifacts.keepRecent must be greater than 0")
+	}
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
 	}

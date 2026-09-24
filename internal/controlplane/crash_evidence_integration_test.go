@@ -52,7 +52,7 @@ func TestCrashEvidenceSurvivesContainerRemoval(t *testing.T) {
 		EnvironmentId: environmentID,
 		Service: &platformv1.ServiceInput{
 			Name: "web",
-			Spec: directImageServiceSpec("example.test/crash:1", &platformv1.ServiceRuntime{
+			Spec: directImageServiceSpec(pinnedImage("c"), &platformv1.ServiceRuntime{
 				CpuMillis:       250,
 				MemoryMebibytes: 256,
 				Ports:           runtimePortsFromInts([]int32{8080}),

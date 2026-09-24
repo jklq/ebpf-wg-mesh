@@ -316,8 +316,10 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 
 	// Phase 1: one allocation per agent in the shared environment.
-	webA := newService("web-a", "example.test/e2e:1", "region-a")
-	newService("web-b", "example.test/e2e:1", "region-b")
+	// Pinned digests: deploy-by-digest resolves mutable tags at create
+	// and release, which these allocation-sync tests do not exercise.
+	webA := newService("web-a", pinnedImage("1"), "region-a")
+	newService("web-b", pinnedImage("1"), "region-b")
 	release()
 	sawAllocationA := false
 	for !sawAllocationA {
@@ -370,7 +372,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 
 	// Phase 3: the follow-up allocation change must chain from the cursor
 	// the no-op diff delivered.
-	webA2 := newService("web-a2", "example.test/e2e:2", "region-a")
+	webA2 := newService("web-a2", pinnedImage("2"), "region-a")
 	release()
 	sawAllocationA2 := false
 	for !sawAllocationA2 {

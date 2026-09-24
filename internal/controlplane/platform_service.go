@@ -72,6 +72,7 @@ type platformDelivery interface {
 	DeleteServiceSecret(ctx context.Context, user authz.User, serviceID, name string) error
 	ListServiceSecrets(ctx context.Context, user authz.User, serviceID string) ([]secretkeys.SecretMetadata, error)
 	BuildAttempts(ctx context.Context, user authz.User, serviceID, buildID string) ([]deliverycore.BuildAttemptRecord, error)
+	ListServiceArtifacts(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.BuildArtifactRecord, error)
 	livePositionReader
 }
 

@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -29,6 +31,7 @@ type Delivery struct {
 	failoverNow    func() time.Time
 	buildScheduler BuildSchedulerConfig
 	allocSync      *allocSync
+	imageResolver  registry.ImageResolver
 }
 
 func (d *Delivery) BuildSchedulerConfig() BuildSchedulerConfig {
@@ -47,6 +50,16 @@ func (d *Delivery) SetBuildSchedulerConfigForTest(cfg BuildSchedulerConfig) {
 	d.configMu.Lock()
 	defer d.configMu.Unlock()
 	d.buildScheduler = cfg.WithDefaults()
+}
+
+// SetImageResolver installs the direct-image tag resolver. Production
+// wires the HTTP resolver; tests install a static one. Nil resolves
+// digest-pinned references only.
+func (d *Delivery) SetImageResolver(resolver registry.ImageResolver) {
+	if d == nil {
+		return
+	}
+	d.imageResolver = resolver
 }
 
 type ReleasedService struct {
@@ -94,19 +107,53 @@ func (d *Delivery) ApplyDeploymentAction(ctx context.Context, user authz.User, s
 }
 
 func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, environmentID string) ([]ReleasedService, error) {
-	d.schedulerMu.Lock()
-	defer d.schedulerMu.Unlock()
 	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
 	if err != nil {
 		return nil, err
 	}
+	// Direct-image tags resolve outside the product transaction and
+	// outside the scheduler lock: registry calls must never hold product
+	// locks, and a slow or unreachable registry must not stall other
+	// scheduler-serialized mutations (rollout, failover, agent status,
+	// deployment actions) while pins are fetched. Only the services this
+	// release selects are resolved, so an unchanged service's stale tag
+	// cannot block unrelated pending changes. A spec racing the pre-read
+	// retries with a fresh map: the release transaction re-verifies each
+	// input before using its pre-resolved digest.
+	var services []ReleasedService
+	var errRelease error
+	for attempt := 0; attempt < 3; attempt++ {
+		inputs, err := d.store.pendingDirectImageInputs(ctx, scope)
+		if err != nil {
+			return nil, err
+		}
+		resolved, err := d.resolveDirectImages(ctx, inputs)
+		if err != nil {
+			return nil, err
+		}
+		services, errRelease = d.releaseEnvironmentTx(ctx, scope, resolved)
+		if !errors.Is(errRelease, errDirectImageChanged) {
+			break
+		}
+	}
+	if errRelease != nil {
+		return nil, fmt.Errorf("release environment: %w", errRelease)
+	}
+	return services, nil
+}
+
+func (d *Delivery) releaseEnvironmentTx(ctx context.Context, scope authz.Environment, resolved map[string]resolvedDirectImage) ([]ReleasedService, error) {
+	// The scheduler lock serializes the mutation phase only; resolution
+	// and pre-reads run outside it (see ReleaseEnvironment).
+	d.schedulerMu.Lock()
+	defer d.schedulerMu.Unlock()
 	var services []ReleasedService
 	var (
 		serviceIDs             []string
 		agentIDs               []string
 		identityCatalogChanged bool
 	)
-	err = d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err := d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		services = nil
 		serviceIDs = nil
 		agentIDs = nil
@@ -187,7 +234,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 			if err != nil {
 				return err
 			}
-			released, err := d.releaseServiceRevisionTx(ctx, tx, scope, serviceID)
+			released, err := d.releaseServiceRevisionTx(ctx, tx, scope, serviceID, resolved)
 			if err != nil {
 				return err
 			}
@@ -236,7 +283,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("release environment: %w", err)
+		return nil, err
 	}
 	for _, agentID := range agentIDs {
 		if d.notifier != nil {
@@ -250,7 +297,7 @@ func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, se
 	if source.DesiredSourceSpec(service.Spec) == nil {
 		return false, nil
 	}
-	if service.RolloutGeneration == 0 || strings.TrimSpace(service.ResolvedImage) == "" {
+	if service.RolloutGeneration == 0 || strings.TrimSpace(service.ResolvedArtifactID) == "" {
 		return true, nil
 	}
 	if !autoDeploy {
@@ -280,7 +327,7 @@ func (d *Delivery) serviceNeedsSourceBuildTx(ctx context.Context, tx *sql.Tx, se
 type replacementRolloutBump struct {
 	SpecRevision  int64
 	Replicas      int32
-	ResolvedImage string
+	ArtifactID    string
 	BuildID       *string
 	RolloutReason string
 	UserID        string
@@ -308,12 +355,12 @@ func (d *Delivery) bumpServiceRolloutTx(ctx context.Context, tx *sql.Tx, service
 	result, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status AS ds
 		    SET current_rollout_generation = $1,
-		        current_resolved_image = NULLIF($2, ''),
+		        current_artifact_id = NULLIF($2, ''),
 		        latest_build_id = CASE WHEN $3::text IS NULL THEN latest_build_id ELSE NULLIF($3::text, '') END,
 		        updated_at = $4
 		  WHERE service_id = $5 AND COALESCE(current_rollout_generation, 0) = $7
 		    AND EXISTS (SELECT 1 FROM services s WHERE s.id = ds.service_id AND s.current_spec_revision = $6)`,
-		nextRollout, bump.ResolvedImage, buildID, now,
+		nextRollout, bump.ArtifactID, buildID, now,
 		service.ID, service.SpecRevision, service.RolloutGeneration,
 	)
 	if err != nil {
@@ -336,7 +383,7 @@ func (d *Delivery) bumpServiceRolloutTx(ctx context.Context, tx *sql.Tx, service
 	return nextRollout, nil
 }
 
-func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env authz.Environment, serviceID string) (ServiceRecord, error) {
+func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env authz.Environment, serviceID string, resolved map[string]resolvedDirectImage) (ServiceRecord, error) {
 
 	current, err := d.store.serviceByIDInEnvironmentQuerier(ctx, tx, env, serviceID)
 	if err != nil {
@@ -369,30 +416,35 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env
 	if _, err := d.beginReplacementRolloutTx(ctx, tx, current, now); err != nil {
 		return ServiceRecord{}, err
 	}
-	resolvedImage := current.ResolvedImage
+	artifactID := current.ResolvedArtifactID
 	if directImage := directImageRef(current.Spec); directImage != "" {
-		resolvedImage = directImage
+		artifact, err := d.directImageArtifactTx(ctx, tx, current.ID, directImage, resolved[current.ID], deploymentActor{Kind: DeploymentCauseUser, ID: env.UserID()}, now)
+		if err != nil {
+			return ServiceRecord{}, err
+		}
+		artifactID = artifact.ID
 	}
 	nextRolloutGeneration, err := d.bumpServiceRolloutTx(ctx, tx, current, replacementRolloutBump{
 		SpecRevision: current.SpecRevision, Replicas: current.DesiredReplicaCount,
-		ResolvedImage: resolvedImage, RolloutReason: "environment_release", UserID: env.UserID(),
+		ArtifactID: artifactID, RolloutReason: "environment_release", UserID: env.UserID(),
 	}, now)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
 	releaseState := DeploymentStateScheduling
 	releaseDetail := "Environment release scheduled"
-	if source.DesiredSourceSpec(current.Spec) != nil && resolvedImage == "" {
+	if source.DesiredSourceSpec(current.Spec) != nil && artifactID == "" {
 		releaseState = DeploymentStateStaged
 		releaseDetail = "Environment release waiting for source build"
 	}
-	dep, err := d.store.insertDeploymentTx(ctx, tx, serviceID, releaseState, deploymentActor{Kind: DeploymentCauseUser, ID: env.UserID()}, reasonEnvironmentRelease, releaseDetail, current.SpecRevision, nextRolloutGeneration, "", resolvedImage, env.UserID(), now)
+	dep, err := d.store.insertDeploymentTx(ctx, tx, serviceID, releaseState, deploymentActor{Kind: DeploymentCauseUser, ID: env.UserID()}, reasonEnvironmentRelease, releaseDetail, current.SpecRevision, nextRolloutGeneration, "", artifactID, env.UserID(), now)
 	if err != nil {
 		return ServiceRecord{}, err
 	}
 	current.LatestDeployment = &dep
 	current.RolloutGeneration = nextRolloutGeneration
-	current.ResolvedImage = resolvedImage
+	current.ResolvedArtifactID = artifactID
+	current.ResolvedImage = dep.ImageDigest
 	current.PendingChanges = false
 	current.UpdatedAt = now
 	if _, err := d.advanceRolloutTx(ctx, tx, serviceID, now); err != nil {

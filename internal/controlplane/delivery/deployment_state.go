@@ -41,6 +41,7 @@ const (
 	reasonBuildQueued          = "BUILD_QUEUED"
 	reasonBuildStarted         = "BUILD_STARTED"
 	reasonBuildSucceeded       = "BUILD_SUCCEEDED"
+	reasonBuildReused          = "BUILD_REUSED"
 	reasonBuildFailed          = "BUILD_FAILED"
 	reasonBuildSuperseded      = "BUILD_SUPERSEDED"
 	reasonBuildRequeued        = "BUILD_REQUEUED"
@@ -87,11 +88,11 @@ type deploymentTransitionInput struct {
 	ReasonCode        string
 	Detail            string
 	SpecRevision      int64
-	ImageDigest       string
+	ArtifactID        string
 	RolloutGeneration int64
 	BuildID           string
 	HasSpecRevision   bool
-	HasImageDigest    bool
+	HasArtifactID     bool
 	HasRollout        bool
 	HasBuildID        bool
 	IgnoreIfTerminal  bool
@@ -342,8 +343,8 @@ func decideDeploymentTransition(rec DeploymentRecord, input deploymentTransition
 	if input.HasSpecRevision {
 		rec.SpecRevision = input.SpecRevision
 	}
-	if input.HasImageDigest {
-		rec.ImageDigest = input.ImageDigest
+	if input.HasArtifactID {
+		rec.ArtifactID = input.ArtifactID
 	}
 	if input.HasRollout {
 		rec.RolloutGeneration = input.RolloutGeneration

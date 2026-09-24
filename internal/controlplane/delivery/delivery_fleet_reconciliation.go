@@ -81,7 +81,7 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 			if err != nil {
 				return err
 			}
-			if !ok || current.ResolvedSpec == nil || strings.TrimSpace(current.ImageDigest) == "" {
+			if !ok || current.ResolvedSpec == nil || strings.TrimSpace(current.ArtifactID) == "" {
 				blocked["service has no reusable image snapshot for a rolling replacement"] = struct{}{}
 				continue
 			}

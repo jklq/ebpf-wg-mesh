@@ -10,6 +10,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 
 	"github.com/google/uuid"
 )
@@ -22,7 +23,11 @@ type testDeliveryHarness struct {
 }
 
 func newTestDelivery(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *PlatformEvents) *testDeliveryHarness {
-	return &testDeliveryHarness{Delivery: newDelivery(store, notifier, ingress, events, nil), store: store}
+	delivery := newDelivery(store, notifier, ingress, events, nil)
+	// Tests pin tags without touching a registry; suites that control
+	// tag movement install their own StaticResolver.
+	delivery.SetImageResolver(registry.StaticResolverForTest())
+	return &testDeliveryHarness{Delivery: delivery, store: store}
 }
 func (d *testDeliveryHarness) ReconcileRollouts(ctx context.Context) error {
 	d.SetClocks(d.rolloutNow, d.failoverNow)

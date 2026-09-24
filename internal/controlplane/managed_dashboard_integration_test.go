@@ -4,7 +4,10 @@ package controlplane
 
 import (
 	"context"
+	"time"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -102,6 +105,72 @@ func TestManagedDashboardSameAgentSyncRequiresNewGenerationObservation(t *testin
 	}
 }
 
+// TestManagedEnsureResolvesOutsideSchedulerLock proves managed
+// reconciliation resolves changed-spec images outside the scheduler
+// lock: a slow or unreachable registry must not stall unrelated
+// scheduler-serialized mutations while the sync waits on its pin.
+func TestManagedEnsureResolvesOutsideSchedulerLock(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	trusted := agentHello("trusted-dashboard-node")
+	if _, err := upsertTestAgent(t, store, ctx, trusted); err != nil {
+		t.Fatal(err)
+	}
+	store.reserveAgents(trusted.AgentId)
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const slowTag = "example.test/dashboard:2"
+	resolver := &blockingTagResolver{
+		StaticResolver: registry.StaticResolver{Tags: map[string]string{
+			"example.test/dashboard:1": testDigest("a"),
+			slowTag:                    testDigest("b"),
+		}},
+		block:   slowTag,
+		entered: make(chan struct{}),
+		unblock: make(chan struct{}),
+	}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+	if _, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec("example.test/dashboard:1", nil), trusted.AgentId); err != nil {
+		t.Fatal(err)
+	}
+
+	ensured := make(chan error, 1)
+	go func() {
+		_, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", directImageServiceSpec(slowTag, nil), trusted.AgentId)
+		ensured <- err
+	}()
+	select {
+	case <-resolver.entered:
+	case <-time.After(15 * time.Second):
+		t.Fatal("managed ensure never reached the registry")
+	}
+
+	proceed := make(chan error, 1)
+	go func() {
+		proceed <- delivery.ReconcileFleetCapacity(ctx)
+	}()
+	select {
+	case err := <-proceed:
+		if err != nil {
+			close(resolver.unblock)
+			t.Fatalf("concurrent ReconcileFleetCapacity: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(resolver.unblock)
+		t.Fatal("scheduler mutation stalled behind registry resolution")
+	}
+	close(resolver.unblock)
+
+	if err := <-ensured; err != nil {
+		t.Fatalf("EnsureManagedService: %v", err)
+	}
+}
+
 func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T) {
 	t.Parallel()
 
@@ -159,6 +228,86 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 	}
 	if got := mustListAllocations(t, store, ctx, service.ID); len(got) != 2 {
 		t.Fatalf("idempotent sync created another replacement: %+v", got)
+	}
+}
+
+// TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged proves managed
+// reconciliation never consults the registry for an unchanged spec: a
+// no-op sync and a placement-only migration keep the stored artifact even
+// after the tag moves, while a real spec change re-resolves at deploy time.
+func TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	ctx := context.Background()
+	oldTrusted := agentHello("trusted-dashboard-old")
+	newTrusted := agentHello("trusted-dashboard-new")
+	if _, err := upsertTestAgent(t, store, ctx, oldTrusted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, newTrusted); err != nil {
+		t.Fatal(err)
+	}
+	store.reserveAgents(oldTrusted.AgentId, newTrusted.AgentId)
+	project, err := store.catalog.ensureManagedProject(ctx, "Platform Dashboard", "dashboard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const tagInput = "example.test/dashboard:1"
+	resolver := &registry.StaticResolver{Tags: map[string]string{tagInput: testDigest("a")}}
+	delivery := newTestDelivery(store, nil, nil, nil)
+	delivery.SetImageResolver(resolver)
+	spec := directImageServiceSpec(tagInput, nil)
+	service, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pinnedA := testPinnedRef("example.test/dashboard", "a")
+
+	// The image disappears from the registry. A no-op sync must not
+	// consult the registry at all.
+	delete(resolver.Tags, tagInput)
+	if _, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId); err != nil {
+		t.Fatalf("unchanged sync consulted the registry: %v", err)
+	}
+
+	// The tag comes back pointing at a different digest. A placement-only
+	// migration keeps the stored artifact: the image cannot change under it.
+	resolver.Tags[tagInput] = testDigest("b")
+	moved, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId)
+	if err != nil {
+		t.Fatalf("placement migration: %v", err)
+	}
+	if moved.AllocatedAgentID != newTrusted.AgentId {
+		t.Fatalf("allocated agent = %q, want %q", moved.AllocatedAgentID, newTrusted.AgentId)
+	}
+	if moved.ResolvedImage != pinnedA {
+		t.Fatalf("placement migration swapped the image: got %q, want stored %q", moved.ResolvedImage, pinnedA)
+	}
+	var artifactCount int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_artifacts WHERE service_id = $1`, service.ID).Scan(&artifactCount); err != nil {
+		t.Fatal(err)
+	}
+	if artifactCount != 1 {
+		t.Fatalf("placement migration recorded %d artifacts, want only the stored one", artifactCount)
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != pinnedA {
+		t.Fatalf("migration deployment image = %q, want stored %q", got, pinnedA)
+	}
+
+	// A real spec change resolves the tag at deploy time and records the
+	// new digest.
+	changed := directImageServiceSpec(tagInput, &platformv1.ServiceRuntime{Env: map[string]string{"STAGE": "two"}})
+	updated, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", changed, newTrusted.AgentId)
+	if err != nil {
+		t.Fatalf("spec change: %v", err)
+	}
+	pinnedB := testPinnedRef("example.test/dashboard", "b")
+	if updated.ResolvedImage != pinnedB {
+		t.Fatalf("changed spec image = %q, want re-resolved %q", updated.ResolvedImage, pinnedB)
+	}
+	if got := currentDeploymentForTest(t, store, ctx, service.ID).ImageDigest; got != pinnedB {
+		t.Fatalf("changed-spec deployment image = %q, want %q", got, pinnedB)
 	}
 }
 

@@ -20,6 +20,7 @@ type rolloutRecord struct {
 	State               string
 	Strategy            *platformv1.RollingStrategy
 	DesiredReplicaCount int32
+	ArtifactID          string
 	ImageDigest         string
 	FailureReason       string
 	TargetAllocationID  string
@@ -303,12 +304,14 @@ func loadCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord
 	var strategyRaw []byte
 	err := tx.QueryRowContext(ctx,
 		`SELECT service_id, rollout_generation, spec_revision, state, strategy_json,
-		        desired_replica_count, image_digest, failure_reason, COALESCE(target_allocation_id, ''), created_at, progress_at
+		        desired_replica_count, COALESCE(artifact_id, ''),
+		        COALESCE((SELECT image_ref FROM build_artifacts WHERE id = service_rollouts.artifact_id), ''),
+		        failure_reason, COALESCE(target_allocation_id, ''), created_at, progress_at
 		   FROM service_rollouts
 		  WHERE service_id = $1 AND rollout_generation = $2
 		  FOR UPDATE`, service.ID, service.RolloutGeneration,
 	).Scan(&rec.ServiceID, &rec.Generation, &rec.SpecRevision, &rec.State, &strategyRaw,
-		&rec.DesiredReplicaCount, &rec.ImageDigest, &rec.FailureReason, &rec.TargetAllocationID, &rec.CreatedAt, &rec.ProgressAt)
+		&rec.DesiredReplicaCount, &rec.ArtifactID, &rec.ImageDigest, &rec.FailureReason, &rec.TargetAllocationID, &rec.CreatedAt, &rec.ProgressAt)
 	if err == sql.ErrNoRows {
 		return rolloutRecord{}, false, nil
 	}

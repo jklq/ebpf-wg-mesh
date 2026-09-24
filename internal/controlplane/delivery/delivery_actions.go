@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/journal"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -179,16 +178,16 @@ func (d *Delivery) applyDeploymentActionTx(ctx context.Context, tx *sql.Tx, serv
 	case deploymentActionRestart:
 		return d.restartDeploymentTx(ctx, tx, service, target, allocationID, userID)
 	case deploymentActionExactRedeploy:
-		if !immutableImageReference(target.ImageDigest) {
-			return "", fmt.Errorf("%w: selected deployment image is not digest-pinned", ErrDeploymentActionInvalid)
+		if strings.TrimSpace(target.ArtifactID) == "" {
+			return "", fmt.Errorf("%w: selected deployment has no pinned image artifact", ErrDeploymentActionInvalid)
 		}
 		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonExactRedeploy, "Exact redeploy scheduled")
 	case deploymentActionRollback:
 		if target.IsCurrent || !deploymentReusableForRollback(target.State) {
 			return "", ErrDeploymentActionInvalid
 		}
-		if !immutableImageReference(target.ImageDigest) {
-			return "", fmt.Errorf("%w: selected deployment image is not digest-pinned", ErrDeploymentActionInvalid)
+		if strings.TrimSpace(target.ArtifactID) == "" {
+			return "", fmt.Errorf("%w: selected deployment has no pinned image artifact", ErrDeploymentActionInvalid)
 		}
 		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonRollback, "Rollback scheduled")
 	case deploymentActionCancel:
@@ -211,27 +210,13 @@ func deploymentReusableForRollback(state string) bool {
 	}
 }
 
-func immutableImageReference(image string) bool {
-	const separator = "@sha256:"
-	index := strings.LastIndex(strings.TrimSpace(image), separator)
-	if index <= 0 {
-		return false
-	}
-	digest := image[index+len(separator):]
-	if len(digest) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(digest)
-	return err == nil
-}
-
 func (d *Delivery) copyDeploymentRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, target DeploymentRecord, userID, reasonCode, detail string) (string, error) {
 	return d.copyDeploymentRolloutTargetTx(ctx, tx, service, target, userID, reasonCode, detail, "")
 }
 
 func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, target DeploymentRecord, userID, reasonCode, detail, targetAllocationID string) (string, error) {
 	s := d.store
-	if target.ResolvedSpec == nil || strings.TrimSpace(target.ImageDigest) == "" {
+	if target.ResolvedSpec == nil || strings.TrimSpace(target.ArtifactID) == "" {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image snapshot", ErrDeploymentActionInvalid)
 	}
 	now := time.Now().UTC()
@@ -273,7 +258,7 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	}
 	nextRollout, err := d.bumpServiceRolloutTx(ctx, tx, service, replacementRolloutBump{
 		SpecRevision: nextSpecRevision, Replicas: desiredReplicas,
-		ResolvedImage: target.ImageDigest, BuildID: &target.BuildID,
+		ArtifactID: target.ArtifactID, BuildID: &target.BuildID,
 		RolloutReason: strings.ToLower(reasonCode), UserID: userID,
 	}, now)
 	if err != nil {
@@ -294,7 +279,7 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	}
 	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateScheduling,
 		actor, reasonCode, detail,
-		nextSpecRevision, nextRollout, target.BuildID, target.ImageDigest, userID, now)
+		nextSpecRevision, nextRollout, target.BuildID, target.ArtifactID, userID, now)
 	if err != nil {
 		return "", err
 	}
@@ -313,7 +298,8 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
 	service.RolloutGeneration = nextRollout
-	service.ResolvedImage = target.ImageDigest
+	service.ResolvedArtifactID = target.ArtifactID
+	service.ResolvedImage = dep.ImageDigest
 	service.DesiredReplicaCount = desiredReplicas
 	if _, err := d.advanceRolloutTx(ctx, tx, service.ID, now); err != nil {
 		return "", err
@@ -386,7 +372,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err != nil {
 		return "", err
 	}
-	if ok && immutableImageReference(fallback.ImageDigest) && fallback.ResolvedSpec != nil {
+	if ok && strings.TrimSpace(fallback.ArtifactID) != "" && fallback.ResolvedSpec != nil {
 		if err := d.supersedeCancelledRolloutTx(ctx, tx, service, now); err != nil {
 			return "", err
 		}
@@ -411,7 +397,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, nil, now); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status SET current_resolved_image = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status SET current_artifact_id = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
 		return "", err
 	}
 	journal.RecordService(ctx, service.ID)
@@ -487,7 +473,7 @@ func (s *persistence) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.T
 		return err
 	}
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE service_delivery_status SET current_resolved_image = NULL, placement_message = NULL, updated_at = $1 WHERE service_id = $2`,
+		`UPDATE service_delivery_status SET current_artifact_id = NULL, placement_message = NULL, updated_at = $1 WHERE service_id = $2`,
 		now, serviceID,
 	); err != nil {
 		return err
@@ -501,7 +487,7 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	if target.State != DeploymentStateFailed && target.State != DeploymentStateCancelled && target.State != DeploymentStateCrashed {
 		return "", ErrDeploymentActionInvalid
 	}
-	if target.ImageDigest != "" {
+	if strings.TrimSpace(target.ArtifactID) != "" {
 		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonUserRetry, "Deployment retry scheduled")
 	}
 	if target.BuildID == "" {
@@ -535,32 +521,21 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	journal.RecordService(ctx, service.ID)
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
-	retried, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: DeploymentCauseUser, ID: userID})
+	_, dep, reused, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: DeploymentCauseUser, ID: userID}, source.BuildTransition{})
+	if errors.Is(err, errSourceRevisionSuperseded) {
+		return "", fmt.Errorf("%w: the deployment's source revision is superseded by a newer one", ErrDeploymentActionInvalid)
+	}
 	if err != nil {
 		return "", err
 	}
-	updatedDeployments, err := tx.QueryContext(ctx, `UPDATE deployments SET reason_code = $1, detail = $2 WHERE build_id = $3 RETURNING id`, reasonUserRetry, "Build retry queued from immutable source snapshot", retried.ID)
-	if err != nil {
+	detail := "Build retry queued from immutable source snapshot"
+	if reused {
+		detail = "Retry reusing previously built image"
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET reason_code = $1, detail = $2 WHERE id = $3`, reasonUserRetry, detail, dep.ID); err != nil {
 		return "", err
 	}
-	for updatedDeployments.Next() {
-		var updatedID string
-		if err := updatedDeployments.Scan(&updatedID); err != nil {
-			updatedDeployments.Close()
-			return "", err
-		}
-		journal.RecordDeployment(ctx, updatedID)
-	}
-	if err := updatedDeployments.Close(); err != nil {
-		return "", err
-	}
-	if err := updatedDeployments.Err(); err != nil {
-		return "", err
-	}
-	dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, service.ID, retried.ID)
-	if err != nil || !ok {
-		return "", err
-	}
+	journal.RecordDeployment(ctx, dep.ID)
 	return dep.ID, nil
 }
 
@@ -595,7 +570,7 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	noBuild := ""
 	nextRollout, err := d.bumpServiceRolloutTx(ctx, tx, service, replacementRolloutBump{
 		SpecRevision: nextSpecRevision, Replicas: desiredReplicas,
-		ResolvedImage: "", BuildID: &noBuild, RolloutReason: "retry", UserID: userID,
+		ArtifactID: "", BuildID: &noBuild, RolloutReason: "retry", UserID: userID,
 	}, now)
 	if err != nil {
 		return "", err
@@ -616,7 +591,7 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 func (s *persistence) latestSuccessfulDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID, excludeID string) (DeploymentRecord, bool, error) {
 	rec, err := scanDeploymentRow(tx.QueryRowContext(ctx,
 		`SELECT `+deploymentSelectColumns+` FROM deployments
-		  WHERE service_id = $1 AND id != $2 AND state IN ($3, $4, $5) AND image_digest != ''
+		  WHERE service_id = $1 AND id != $2 AND state IN ($3, $4, $5) AND artifact_id IS NOT NULL
 		  ORDER BY rollout_generation DESC, created_at DESC LIMIT 1 FOR UPDATE`,
 		serviceID, excludeID, DeploymentStateActive, DeploymentStateCompleted, DeploymentStateDraining,
 	))

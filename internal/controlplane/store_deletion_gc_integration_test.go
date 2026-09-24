@@ -132,6 +132,52 @@ func TestDeletionGCCollectsExpiredAcrossKinds(t *testing.T) {
 	}
 }
 
+func TestDeletionGCCollectsDigestPinnedService(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	_, environment := deletionFixture(t, store, "owner", "demo")
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	service, err := createService(ctx, store, "owner", environment.ID, "web",
+		directImageServiceSpec(testPinnedRef("example.test/web", "a"), nil), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var artifacts int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_artifacts WHERE service_id = $1`, service.ID).Scan(&artifacts); err != nil {
+		t.Fatal(err)
+	}
+	if artifacts == 0 {
+		t.Fatal("expected a digest-pinned artifact before collection")
+	}
+	if err := deleteService(ctx, store, "owner", service.ID); err != nil {
+		t.Fatal(err)
+	}
+	expireTombstone(t, store, "services", "id", service.ID)
+	stats, err := NewDeletionGC(store, nil, nil, time.Minute).CollectOnce(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("collect digest-pinned service: %v", err)
+	}
+	if stats.ByKind[ExpiredDeletionService] != 1 {
+		t.Fatalf("service collection = %v", stats.ByKind)
+	}
+	var remaining int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE id = $1`, service.ID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatal("digest-pinned service survived collection")
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_artifacts WHERE service_id = $1`, service.ID).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatal("digest-pinned artifacts survived collection")
+	}
+}
+
 func TestDeletionGCCollectsProjectWithLiveDescendants(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()

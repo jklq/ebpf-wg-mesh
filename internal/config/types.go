@@ -201,6 +201,29 @@ type DeletionConfig struct {
 	GCIntervalSeconds int
 }
 
+// BuildArtifactConfig tunes deploy-by-digest artifact retention. Artifacts
+// referenced by a deployment, deployment transition, rollout, or the current
+// pointer are rollback material and survive any age. Only artifacts nothing
+// references age out past RetentionDays, beyond the newest KeepRecent per
+// service.
+type BuildArtifactConfig struct {
+	RetentionDays int
+	KeepRecent    int
+}
+
+// DirectImageConfig governs how user-supplied direct-image references are
+// resolved against external registries.
+type DirectImageConfig struct {
+	// AllowedPrivateRegistryHosts lists registry hosts (host[:port]) the
+	// control plane may resolve direct images from even when they live on
+	// loopback, private, link-local, or otherwise prohibited networks:
+	// internal registries the operator has declared reachable and
+	// trusted. Every other registry host must be a public destination, so
+	// a project writer cannot point the control plane at internal
+	// services.
+	AllowedPrivateRegistryHosts []string
+}
+
 type ControlPlaneConfig struct {
 	Profile          Profile
 	Health           HealthConfig
@@ -213,6 +236,8 @@ type ControlPlaneConfig struct {
 	SourceArchives   SourceArchiveConfig
 	SecretKeys       SecretKeysConfig
 	Deletion         DeletionConfig
+	BuildArtifacts   BuildArtifactConfig
+	DirectImages     DirectImageConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
 	Bootstrap        BootstrapConfig
