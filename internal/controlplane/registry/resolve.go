@@ -241,11 +241,11 @@ func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, 
 }
 
 func registryScheme(host string) string {
-	bare := host
-	if h, _, ok := strings.Cut(host, ":"); ok {
-		bare = h
+	name := hostnameOf(host)
+	if strings.EqualFold(name, "localhost") {
+		return "http"
 	}
-	if bare == "localhost" || bare == "127.0.0.1" || bare == "::1" {
+	if ip := net.ParseIP(name); ip != nil && ip.IsLoopback() {
 		return "http"
 	}
 	return "https"

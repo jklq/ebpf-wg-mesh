@@ -55,7 +55,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	credentials := &retryBuildCredentials{}
 	notifier := &recordingNotifier{}
 	logWriter := &recordingLogWriter{enabled: true}
-	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, credentials, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter)))
+	operations := NewBuildOperations(store.builds, store.reads, store.source, newDelivery(store, notifier, nil, nil, nil), policy, credentials, WithBuilderLogEmitter(logscore.NewLogEmitter(logWriter, nil)))
 	builder := contextWithClientIdentity(serviceCallerBuilder, "builder-1")
 	claim := &platformv1.ClaimBuildRequest{BuilderId: "builder-1"}
 	if _, err := operations.ClaimBuild(builder, claim); err == nil {

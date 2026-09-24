@@ -12,6 +12,14 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 )
 
+func TestOpenCurrentMissingSecretReturnsSentinel(t *testing.T) {
+	store := openTestStore(t)
+	_, _, err := store.secrets.Sealed().OpenCurrent(context.Background(), store.db, "missing-service", "TOKEN")
+	if !errors.Is(err, secretkeys.ErrNoSuchSecret) {
+		t.Fatalf("missing secret error = %v, want ErrNoSuchSecret", err)
+	}
+}
+
 func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 	t.Parallel()
 
@@ -406,11 +414,7 @@ func dekIDForScope(t *testing.T, store *persistence, ctx context.Context, enviro
 // keyring, as `controlplane keys provision` would before activation.
 func provisionVersion(t *testing.T, svc *secretkeys.Service) string {
 	t.Helper()
-	keyring, ok := svc.Provider().(*secretkeys.Keyring)
-	if !ok {
-		t.Fatalf("provider is %T, want *secretkeys.Keyring", svc.Provider())
-	}
-	version, err := keyring.GenerateKey(context.Background(), "")
+	version, err := svc.Provider().GenerateKey(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

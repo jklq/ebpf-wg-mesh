@@ -17,13 +17,7 @@ type DeletionGCStats struct {
 	ByKind    map[string]int
 }
 
-// DeletionGC irreversibly deletes expired tombstones. It runs on the
-// singleton owner next to the other reconciliation loops (the durable-work
-// package in 2.1 may adopt it later). Each tombstone is collected in its own
-// transaction: one failure never blocks the others, and every collection is
-// idempotent, so failures are retried on the next tick. Post-commit effects
-// (agent wakeups, ingress sync) are level-triggered and converge even if a
-// pass crashes between commit and notify.
+// DeletionGC removes expired tombstones, committing each removal separately.
 type DeletionGC struct {
 	store     *persistence
 	notifier  deliverycore.PlatformNotifier
@@ -31,6 +25,7 @@ type DeletionGC struct {
 	interval  time.Duration
 	batchSize int
 	failOn    func(kind, id string) error
+	purgeLogs func(ctx context.Context, projectID string) error
 }
 
 // NewDeletionGC builds the collector. Non-positive intervals and batch sizes
@@ -46,6 +41,13 @@ func NewDeletionGC(store *persistence, notifier deliverycore.PlatformNotifier, i
 // collection. A nil hook disables injection.
 func (g *DeletionGC) SetFailHook(hook func(kind, id string) error) {
 	g.failOn = hook
+}
+
+// SetLogPurgeHook installs the post-commit log purge for destroyed
+// projects. Purge failures are best-effort: per-row TTL expiry
+// remains the backstop.
+func (g *DeletionGC) SetLogPurgeHook(hook func(ctx context.Context, projectID string) error) {
+	g.purgeLogs = hook
 }
 
 // Run collects expired tombstones every interval until ctx ends.
@@ -93,6 +95,7 @@ func (g *DeletionGC) CollectOnce(ctx context.Context, cutoff time.Time) (Deletio
 		if len(expired) == 0 {
 			break
 		}
+		collectedThisPass := 0
 		for _, item := range expired {
 			if err := ctx.Err(); err != nil {
 				return stats, err
@@ -110,10 +113,17 @@ func (g *DeletionGC) CollectOnce(ctx context.Context, cutoff time.Time) (Deletio
 			}
 			if collected {
 				stats.Collected++
+				collectedThisPass++
 				stats.ByKind[item.Kind]++
+				if item.Kind == ExpiredDeletionProject && g.purgeLogs != nil {
+					if err := g.purgeLogs(ctx, item.ID); err != nil && ctx.Err() == nil {
+						slog.Warn("project log purge failed; TTL expiry remains the backstop",
+							"project_id", item.ID, "error", err)
+					}
+				}
 			}
 		}
-		if len(expired) < g.batchSize*5 {
+		if len(expired) < g.batchSize || collectedThisPass == 0 {
 			break
 		}
 	}

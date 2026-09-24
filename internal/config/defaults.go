@@ -145,23 +145,27 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 			cfg.Registry.TokenService = cfg.Registry.Host
 		}
 	}
+	builderDefaults := DefaultControlPlaneBuilderConfig()
 	if cfg.Builder.HeartbeatTimeoutSeconds <= 0 {
-		cfg.Builder.HeartbeatTimeoutSeconds = 120
+		cfg.Builder.HeartbeatTimeoutSeconds = builderDefaults.HeartbeatTimeoutSeconds
+	}
+	if cfg.Builder.LeaseTTLSeconds <= 0 {
+		cfg.Builder.LeaseTTLSeconds = builderDefaults.LeaseTTLSeconds
 	}
 	if cfg.Builder.MaxAttempts <= 0 {
-		cfg.Builder.MaxAttempts = 3
+		cfg.Builder.MaxAttempts = builderDefaults.MaxAttempts
 	}
 	if cfg.Builder.MaxConcurrentGlobal <= 0 {
-		cfg.Builder.MaxConcurrentGlobal = 20
+		cfg.Builder.MaxConcurrentGlobal = builderDefaults.MaxConcurrentGlobal
 	}
 	if cfg.Builder.MaxConcurrentPerProject <= 0 {
-		cfg.Builder.MaxConcurrentPerProject = 5
+		cfg.Builder.MaxConcurrentPerProject = builderDefaults.MaxConcurrentPerProject
 	}
 	if cfg.Builder.BuildTimeoutSeconds <= 0 {
-		cfg.Builder.BuildTimeoutSeconds = 1800
+		cfg.Builder.BuildTimeoutSeconds = builderDefaults.BuildTimeoutSeconds
 	}
 	if cfg.Builder.MaxQueueAgeSeconds <= 0 {
-		cfg.Builder.MaxQueueAgeSeconds = 7200
+		cfg.Builder.MaxQueueAgeSeconds = builderDefaults.MaxQueueAgeSeconds
 	}
 	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
 		cfg.Failover.ReconcileIntervalSeconds = 60
@@ -194,6 +198,14 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	cfg.ReplicaAddresses = uniqueAddresses(append([]string{cfg.AdvertiseAddr}, cfg.ReplicaAddresses...))
 	if cfg.AdvertiseAddr == "" && len(cfg.ReplicaAddresses) == 1 {
 		cfg.AdvertiseAddr = cfg.ReplicaAddresses[0]
+	}
+}
+
+func DefaultControlPlaneBuilderConfig() ControlPlaneBuilderConfig {
+	return ControlPlaneBuilderConfig{
+		HeartbeatTimeoutSeconds: 120, LeaseTTLSeconds: 120, MaxAttempts: 3,
+		MaxConcurrentGlobal: 20, MaxConcurrentPerProject: 5,
+		BuildTimeoutSeconds: 1800, MaxQueueAgeSeconds: 7200,
 	}
 }
 
@@ -308,6 +320,7 @@ func applyAgentDefaults(cfg *AgentConfig) {
 }
 
 func applyBuilderDefaults(cfg *BuilderConfig) {
+	limits := DefaultBuilderLimits()
 	if cfg.Name == "" {
 		cfg.Name = cfg.ID
 	}
@@ -347,33 +360,40 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 	}
 	applyBuilderSandboxDefaults(&cfg.Sandbox)
 	if cfg.Limits.TimeoutSeconds <= 0 {
-		cfg.Limits.TimeoutSeconds = 1800
+		cfg.Limits.TimeoutSeconds = limits.TimeoutSeconds
 	}
 	if cfg.Limits.MemoryBytes <= 0 {
-		cfg.Limits.MemoryBytes = 8 << 30
+		cfg.Limits.MemoryBytes = limits.MemoryBytes
 	}
 	if cfg.Limits.CPUSeconds <= 0 {
-		cfg.Limits.CPUSeconds = 3600
+		cfg.Limits.CPUSeconds = limits.CPUSeconds
 	}
 	if cfg.Limits.MaxFileBytes <= 0 {
-		cfg.Limits.MaxFileBytes = 10 << 30
+		cfg.Limits.MaxFileBytes = limits.MaxFileBytes
 	}
 	if cfg.Limits.MaxProcesses <= 0 {
-		cfg.Limits.MaxProcesses = 4096
+		cfg.Limits.MaxProcesses = limits.MaxProcesses
 	}
 	if cfg.Limits.MaxWorkspaceBytes <= 0 {
-		cfg.Limits.MaxWorkspaceBytes = 20 << 30
+		cfg.Limits.MaxWorkspaceBytes = limits.MaxWorkspaceBytes
 	}
 	if len(cfg.Network.DeniedCIDRs) == 0 {
-		cfg.Network.DeniedCIDRs = []string{
-			"169.254.169.254/32",
-			"100.100.100.200/32",
-			"fd00:ec2::254/128",
-		}
+		cfg.Network.DeniedCIDRs = DefaultBuilderDeniedCIDRs()
 	}
 	if cfg.Cache.Mode == "" {
 		cfg.Cache.Mode = "none"
 	}
+}
+
+func DefaultBuilderLimits() BuilderLimitsConfig {
+	return BuilderLimitsConfig{
+		TimeoutSeconds: 1800, MemoryBytes: 8 << 30, CPUSeconds: 3600,
+		MaxFileBytes: 10 << 30, MaxProcesses: 4096, MaxWorkspaceBytes: 20 << 30,
+	}
+}
+
+func DefaultBuilderDeniedCIDRs() []string {
+	return []string{"169.254.169.254/32", "100.100.100.200/32", "fd00:ec2::254/128"}
 }
 
 func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {

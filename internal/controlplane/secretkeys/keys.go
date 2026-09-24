@@ -41,21 +41,13 @@ type KeyRecord struct {
 // DEKs onto the new active key.
 type Registry struct {
 	db       *sql.DB
-	provider Provider
+	provider *Keyring
 }
 
 // NewRegistry builds the shared key inventory over db with provider as the
 // wrap/unwrap backend.
-func NewRegistry(db *sql.DB, provider Provider) *Registry {
+func NewRegistry(db *sql.DB, provider *Keyring) *Registry {
 	return &Registry{db: db, provider: provider}
-}
-
-// ProviderName reports the configured backend name.
-func (r *Registry) ProviderName() string {
-	if r == nil || r.provider == nil {
-		return ""
-	}
-	return r.provider.Name()
 }
 
 // EnsureActiveKey returns the active key, bootstrapping the installation's
@@ -70,12 +62,7 @@ func (r *Registry) EnsureActiveKey(ctx context.Context) (KeyRecord, error) {
 	} else if !errors.Is(err, ErrActiveKeyRequired) {
 		return KeyRecord{}, err
 	}
-	bootstrap, ok := r.provider.(BootstrapProvisioner)
-	if !ok {
-		return KeyRecord{}, fmt.Errorf("%w: activate a provisioned key version with `controlplane keys activate --key-id <version>`",
-			ErrActiveKeyRequired)
-	}
-	ref, err := bootstrap.EnsureBootstrapKey(ctx)
+	ref, err := r.provider.EnsureBootstrapKey(ctx)
 	if err != nil {
 		return KeyRecord{}, err
 	}
@@ -147,17 +134,13 @@ func (r *Registry) ActiveKey(ctx context.Context) (KeyRecord, error) {
 // keys still unwrap live ciphertext, so a replica missing one cannot serve
 // reads or rewrap. Replicas start and report ready only when this passes.
 func (r *Registry) VerifyLocalCoverage(ctx context.Context) error {
-	checker, ok := r.provider.(MaterialChecker)
-	if !ok {
-		return nil
-	}
 	keys, err := r.ListKeys(ctx)
 	if err != nil {
 		return err
 	}
 	var missing []string
 	for _, key := range keys {
-		present, err := checker.HasKeyMaterial(ctx, key.ProviderRef)
+		present, err := r.provider.HasKeyMaterial(ctx, key.ProviderRef)
 		if err != nil {
 			return fmt.Errorf("verify key material for envelope key %s (version %s): %w",
 				key.ID, key.ProviderRef, err)

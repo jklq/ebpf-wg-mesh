@@ -2,15 +2,20 @@ package logs
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"hash"
+	"log/slog"
 	"strings"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/logpipeline"
 
 	_ "github.com/ClickHouse/clickhouse-go/v2"
 )
@@ -18,6 +23,14 @@ import (
 const (
 	defaultLogQueryLimit = 500
 	maxLogQueryLimit     = 5000
+	maxLogGapResults     = 500
+	maxEntriesPerBatch   = 2000
+
+	// MinProjectRetentionDays and MaxProjectRetentionDays bound
+	// per-project log retention. Zero on a project means the platform
+	// default.
+	MinProjectRetentionDays = 1
+	MaxProjectRetentionDays = 90
 )
 
 type LogType string
@@ -32,12 +45,26 @@ const (
 
 var ErrDisabled = errors.New("log storage is not configured")
 
+// ProjectRetention is the resolved tenant policy for one service.
+type ProjectRetention struct {
+	ProjectID     string
+	RetentionDays int
+}
+
+// ProjectResolver maps service IDs to their tenant retention policy.
+// The control plane injects a CockroachDB-backed implementation; a nil
+// resolver keeps the platform default for every service.
+type ProjectResolver func(ctx context.Context, serviceIDs []string) (map[string]ProjectRetention, error)
+
 type LogStore struct {
-	db *sql.DB
+	db                   *sql.DB
+	resolve              ProjectResolver
+	defaultRetentionDays int
 }
 
 type ServiceLog struct {
 	ObservedAt        time.Time
+	ProjectID         string
 	EnvironmentID     string
 	ServiceID         string
 	AllocationID      string
@@ -45,14 +72,42 @@ type ServiceLog struct {
 	Stream            string
 	RolloutGeneration int64
 	Sequence          uint64
+	LineID            string
 	Line              string
 	LogType           string
 	BuildID           string
 	Stage             string
+	Event             string
+	Attributes        map[string]string
+	Truncated         bool
+}
+
+type ServiceLogGap struct {
+	AllocationID string
+	BuildID      string
+	LogType      string
+	Stream       string
+	DroppedCount uint64
+	Reason       string
+	WindowStart  time.Time
+	WindowEnd    time.Time
+}
+
+// ServiceLogPage is one authorized read: lines newest-first with an
+// older-page cursor, plus the explicit gaps overlapping the range. Gaps
+// paginate independently of lines.
+type ServiceLogPage struct {
+	Lines            []ServiceLog
+	Gaps             []ServiceLogGap
+	NextPageToken    string
+	NextGapPageToken string
 }
 
 type LogLineInput struct {
+	ID                string
 	ObservedAt        time.Time
+	ExpiresAt         time.Time
+	ProjectID         string
 	EnvironmentID     string
 	ServiceID         string
 	AllocationID      string
@@ -61,27 +116,43 @@ type LogLineInput struct {
 	LogType           LogType
 	BuildID           string
 	Stage             string
+	Event             string
+	Attributes        map[string]string
+	Truncated         bool
 	RolloutGeneration int64
 	Sequence          uint64
 	Line              string
 }
 
-type logStoreMigration struct {
-	name  string
-	stmts []string
+// GapInput is one persisted drop window. ProjectID and ExpiresAt are
+// normally resolved from the service's retention policy; callers
+// override them only when they already know the tenant.
+type GapInput struct {
+	ProjectID    string
+	ServiceID    string
+	AllocationID string
+	BuildID      string
+	LogType      LogType
+	Stream       string
+	WindowStart  time.Time
+	WindowEnd    time.Time
+	DroppedCount uint64
+	Reason       string
+	Reporter     string
+	// SummaryID is the producer's stable identity for a coalesced
+	// drop lineage. When set, it keys the gap row so retried reports
+	// replace their row even after their totals grew.
+	SummaryID string
+	ExpiresAt time.Time
 }
 
-func logStoreMigrations(retentionDays int) []logStoreMigration {
-	if retentionDays <= 0 {
-		retentionDays = 14
-	}
-	return []logStoreMigration{
-		{
-			name: "service_logs_table",
-			stmts: []string{
-				fmt.Sprintf(`CREATE TABLE IF NOT EXISTS service_logs (
+func logStoreSchema() []string {
+	return []string{
+		`CREATE TABLE IF NOT EXISTS service_logs (
 	observed_at DateTime64(9, 'UTC'),
 	ingested_at DateTime64(9, 'UTC'),
+	expires_at DateTime,
+	project_id String,
 	environment_id String,
 	service_id String,
 	allocation_id String,
@@ -89,16 +160,37 @@ func logStoreMigrations(retentionDays int) []logStoreMigration {
 	stream LowCardinality(String),
 	rollout_generation Int64,
 	sequence UInt64,
+	line_id String,
 	line String,
-	log_type LowCardinality(String) DEFAULT 'runtime',
+	log_type LowCardinality(String),
 	build_id String DEFAULT '',
-	stage LowCardinality(String) DEFAULT ''
-) ENGINE = MergeTree
+	stage LowCardinality(String) DEFAULT '',
+	event LowCardinality(String) DEFAULT '',
+	attributes Map(String, String),
+	truncated UInt8 DEFAULT 0
+) ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMM(observed_at)
-ORDER BY (environment_id, service_id, log_type, observed_at, allocation_id, sequence)
-TTL toDateTime(observed_at) + INTERVAL %d DAY`, retentionDays),
-			},
-		},
+ORDER BY (service_id, observed_at, line_id)
+TTL expires_at`,
+		`CREATE TABLE IF NOT EXISTS service_log_gaps (
+	service_id String,
+	project_id String,
+	allocation_id String,
+	build_id String,
+	log_type LowCardinality(String),
+	stream LowCardinality(String),
+	window_start DateTime64(9, 'UTC'),
+	window_end DateTime64(9, 'UTC'),
+	dropped_count UInt64,
+	reason LowCardinality(String),
+	reporter LowCardinality(String),
+	gap_id String,
+	ingested_at DateTime64(9, 'UTC'),
+	expires_at DateTime
+) ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY toYYYYMM(window_start)
+ORDER BY (service_id, gap_id)
+TTL expires_at`,
 	}
 }
 
@@ -118,12 +210,22 @@ func OpenLogStore(ctx context.Context, cfg config.LogCaptureConfig) (*LogStore, 
 		_ = db.Close()
 		return nil, fmt.Errorf("ping clickhouse: %w", err)
 	}
-	store := &LogStore{db: db}
-	if err := store.ensureSchema(ctx, cfg.RetentionDays); err != nil {
+	store := &LogStore{db: db, defaultRetentionDays: cfg.RetentionDays}
+	if err := store.ensureSchema(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+// SetProjectResolver injects tenant retention resolution. It must be
+// called before serving traffic; it is not safe for concurrent use
+// with writes.
+func (s *LogStore) SetProjectResolver(resolve ProjectResolver) {
+	if s == nil {
+		return
+	}
+	s.resolve = resolve
 }
 
 func normalizeLogCaptureConfig(cfg *config.LogCaptureConfig) {
@@ -159,34 +261,79 @@ func (s *LogStore) Ready(ctx context.Context) bool {
 	return s.db.PingContext(ctx) == nil
 }
 
-func (s *LogStore) ensureSchema(ctx context.Context, retentionDays int) error {
+func (s *LogStore) ensureSchema(ctx context.Context) error {
 	if !s.Enabled() {
 		return nil
 	}
-	for _, migration := range logStoreMigrations(retentionDays) {
-		for _, stmt := range migration.stmts {
-			if _, err := s.db.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("apply log migration %s: %w", migration.name, err)
-			}
+	var engine string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT engine_full FROM system.tables WHERE database = currentDatabase() AND name = 'service_logs'`,
+	).Scan(&engine)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("inspect log table engine: %w", err)
+	}
+	if engine != "" && !strings.Contains(engine, "ReplacingMergeTree") {
+		// Clean cutover from the pre-2.9 MergeTree schema, which has
+		// no line identity, no tenant attribution, and no per-row
+		// retention. Telemetry is not customer authority, so the old
+		// rows are dropped rather than carried forward with
+		// incompatible semantics.
+		slog.WarnContext(ctx, "dropping legacy log table for durable bounded logs cutover", "engine", engine)
+		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS service_logs`); err != nil {
+			return fmt.Errorf("drop legacy log table: %w", err)
+		}
+	}
+	for i, stmt := range logStoreSchema() {
+		if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("apply log schema statement %d: %w", i, err)
 		}
 	}
 	return nil
 }
 
+// WriteAgentBatch converts one agent batch already scoped onto its
+// allocation owners into durable line and gap inputs. Ownership
+// scoping stays with the caller; this method enforces size caps,
+// truncates defensively, resolves tenant retention, and persists
+// both lines and producer drop reports. Batches larger than
+// maxEntriesPerBatch are trimmed with the tail counted as ingest
+// gaps per affected service and allocation.
 func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
-	if !s.Enabled() || batch == nil || len(batch.GetEntries()) == 0 {
+	if !s.Enabled() || batch == nil {
 		return nil
 	}
-	inputs := make([]LogLineInput, 0, len(batch.GetEntries()))
-	for _, entry := range batch.GetEntries() {
+	inputs, gaps := convertAgentBatch(agentID, batch)
+	// A producer total without a breakdown cannot be attributed to a
+	// service, so it only feeds the dropped counter, never a gap row.
+	if err := s.WriteLogLines(ctx, inputs); err != nil {
+		return err
+	}
+	return s.WriteGaps(ctx, gaps)
+}
+
+// convertAgentBatch maps one scoped agent batch onto durable line
+// and gap inputs. Ownership scoping stays with the caller.
+func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput, []GapInput) {
+	entries := batch.GetEntries()
+	var trimmed []*agentv1.LogEntry
+	if len(entries) > maxEntriesPerBatch {
+		trimmed = entries[maxEntriesPerBatch:]
+		entries = entries[:maxEntriesPerBatch]
+	}
+	inputs := make([]LogLineInput, 0, len(entries))
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
 		if strings.TrimSpace(entry.GetEnvironmentId()) == "" ||
 			strings.TrimSpace(entry.GetServiceId()) == "" ||
 			strings.TrimSpace(entry.GetAllocationId()) == "" {
 			continue
 		}
-		observedAt := entry.GetObservedAt().AsTime()
+		line, truncated := logpipeline.TruncateLine(entry.GetLine())
 		inputs = append(inputs, LogLineInput{
-			ObservedAt:        observedAt,
+			ID:                strings.TrimSpace(entry.GetLineId()),
+			ObservedAt:        entry.GetObservedAt().AsTime(),
 			EnvironmentID:     entry.GetEnvironmentId(),
 			ServiceID:         entry.GetServiceId(),
 			AllocationID:      entry.GetAllocationId(),
@@ -195,12 +342,81 @@ func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *a
 			LogType:           logTypeFromProto(entry.GetLogType()),
 			BuildID:           entry.GetBuildId(),
 			Stage:             entry.GetStage(),
+			Event:             entry.GetEvent(),
+			Attributes:        entry.GetAttributes(),
+			Truncated:         truncated || entry.GetTruncated(),
 			RolloutGeneration: entry.GetRolloutGeneration(),
 			Sequence:          entry.GetSequence(),
-			Line:              entry.GetLine(),
+			Line:              line,
 		})
 	}
-	return s.WriteLogLines(ctx, inputs)
+	gaps := dropSummariesToGaps(batch.GetDrops(), agentID)
+	// The trimmed tail keeps its own attribution: each affected
+	// service and allocation gets its own gap, never a single gap
+	// pinned to the first entry.
+	now := time.Now().UTC()
+	type trimKey struct{ serviceID, allocationID, logType, stream string }
+	trimmedCounts := make(map[trimKey]uint64)
+	trimmedHashes := make(map[trimKey]hash.Hash)
+	for _, entry := range trimmed {
+		if entry == nil || strings.TrimSpace(entry.GetServiceId()) == "" {
+			continue
+		}
+		key := trimKey{
+			serviceID:    entry.GetServiceId(),
+			allocationID: entry.GetAllocationId(),
+			logType:      string(logTypeFromProto(entry.GetLogType())),
+			stream:       normalizeLogStream(entry.GetStream()),
+		}
+		trimmedCounts[key]++
+		if trimmedHashes[key] == nil {
+			trimmedHashes[key] = sha256.New()
+		}
+		// Line IDs survive retries. Include timestamp, sequence and
+		// content too so batches without IDs still get a stable key.
+		fmt.Fprintf(trimmedHashes[key], "%q|%d|%d|%q\n", entry.GetLineId(),
+			entry.GetObservedAt().AsTime().UnixNano(), entry.GetSequence(), entry.GetLine())
+	}
+	for key, count := range trimmedCounts {
+		summaryID := "trim:" + hex.EncodeToString(trimmedHashes[key].Sum(nil)[:16])
+		gaps = append(gaps, GapInput{
+			ServiceID:    key.serviceID,
+			AllocationID: key.allocationID,
+			LogType:      LogType(key.logType),
+			Stream:       key.stream,
+			WindowStart:  now,
+			WindowEnd:    now,
+			DroppedCount: count,
+			Reason:       logpipeline.ReasonIngestOverflow,
+			Reporter:     agentID,
+			SummaryID:    summaryID,
+		})
+	}
+	return inputs, gaps
+}
+
+// attribution resolves a row's tenant attribution and expiry. A row
+// that carries neither explicit attribution nor a resolver entry is
+// refused when the store resolves retention: it would land without a
+// project ID — invisible to the deletion purge — under the platform
+// default TTL instead of the project's own retention, outliving a
+// short project policy after its service or project was hard-deleted.
+func (s *LogStore) attribution(projectID string, expiresAt time.Time, serviceID string, resolved map[string]ProjectRetention, now time.Time) (string, time.Time, bool) {
+	projectID = strings.TrimSpace(projectID)
+	if policy, ok := resolved[serviceID]; ok {
+		if projectID == "" {
+			projectID = policy.ProjectID
+		}
+		if expiresAt.IsZero() {
+			expiresAt = now.AddDate(0, 0, clampRetentionDays(policy.RetentionDays, s.defaultRetentionDays))
+		}
+	} else if s.resolve != nil && projectID == "" {
+		return "", time.Time{}, false
+	}
+	if expiresAt.IsZero() {
+		expiresAt = now.AddDate(0, 0, clampRetentionDays(0, s.defaultRetentionDays))
+	}
+	return projectID, expiresAt.UTC(), true
 }
 
 func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) error {
@@ -208,21 +424,46 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 		return nil
 	}
 	now := time.Now().UTC()
+	resolved, err := s.resolveProjects(ctx, inputs)
+	if err != nil {
+		return err
+	}
 	values := make([]string, 0, len(inputs))
-	args := make([]any, 0, len(inputs)*13)
+	args := make([]any, 0, len(inputs)*19)
+	refused := 0
 	for _, in := range inputs {
-		if strings.TrimSpace(in.EnvironmentID) == "" || strings.TrimSpace(in.ServiceID) == "" {
+		if strings.TrimSpace(in.ServiceID) == "" {
 			continue
 		}
 		observedAt := in.ObservedAt
 		if observedAt.IsZero() {
 			observedAt = now
 		}
-		logType := normalizeLogType(in.LogType)
-		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		observedAt = observedAt.UTC()
+		line, truncated := logpipeline.TruncateLine(in.Line)
+		id := strings.TrimSpace(in.ID)
+		if id == "" {
+			id = logpipeline.SyntheticLineID()
+		}
+		projectID, expiresAt, ok := s.attribution(in.ProjectID, in.ExpiresAt, in.ServiceID, resolved, now)
+		if !ok {
+			refused++
+			continue
+		}
+		attrs := logpipeline.NormalizeAttributes(in.Attributes)
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		var truncatedFlag uint8
+		if truncated || in.Truncated {
+			truncatedFlag = 1
+		}
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 		args = append(args,
-			observedAt.UTC(),
+			observedAt,
 			now,
+			expiresAt.UTC(),
+			projectID,
 			in.EnvironmentID,
 			in.ServiceID,
 			in.AllocationID,
@@ -230,11 +471,18 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 			normalizeLogStream(in.Stream),
 			in.RolloutGeneration,
 			in.Sequence,
-			in.Line,
-			string(logType),
+			id,
+			line,
+			string(normalizeLogType(in.LogType)),
 			in.BuildID,
 			normalizeStageName(in.Stage),
+			logpipeline.NormalizeEvent(in.Event),
+			attrs,
+			truncatedFlag,
 		)
+	}
+	if refused > 0 {
+		slog.Warn("log rows refused: service no longer resolves to a project", "refused", refused)
 	}
 	if len(values) == 0 {
 		return nil
@@ -242,6 +490,8 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	query := `INSERT INTO service_logs (
 	observed_at,
 	ingested_at,
+	expires_at,
+	project_id,
 	environment_id,
 	service_id,
 	allocation_id,
@@ -249,10 +499,14 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	stream,
 	rollout_generation,
 	sequence,
+	line_id,
 	line,
 	log_type,
 	build_id,
-	stage
+	stage,
+	event,
+	attributes,
+	truncated
 ) VALUES ` + strings.Join(values, ",")
 	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("insert clickhouse log batch: %w", err)
@@ -260,9 +514,189 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	return nil
 }
 
-func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]ServiceLog, error) {
+// WriteGaps persists drop windows. Gap identity derives from the
+// window itself so retried reports collapse instead of double
+// counting.
+func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
+	if !s.Enabled() || len(gaps) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	serviceIDs := make([]string, 0, len(gaps))
+	seen := make(map[string]struct{}, len(gaps))
+	for _, gap := range gaps {
+		if gap.ServiceID == "" {
+			continue
+		}
+		if _, ok := seen[gap.ServiceID]; !ok {
+			seen[gap.ServiceID] = struct{}{}
+			serviceIDs = append(serviceIDs, gap.ServiceID)
+		}
+	}
+	var resolved map[string]ProjectRetention
+	if s.resolve != nil && len(serviceIDs) > 0 {
+		var err error
+		resolved, err = s.resolve(ctx, serviceIDs)
+		if err != nil {
+			return fmt.Errorf("resolve log retention: %w", err)
+		}
+	}
+	values := make([]string, 0, len(gaps))
+	args := make([]any, 0, len(gaps)*14)
+	refused := 0
+	for _, gap := range gaps {
+		if gap.ServiceID == "" || gap.DroppedCount == 0 {
+			continue
+		}
+		windowStart := gap.WindowStart.UTC()
+		if windowStart.IsZero() {
+			windowStart = now
+		}
+		windowEnd := gap.WindowEnd.UTC()
+		if windowEnd.IsZero() || windowEnd.Before(windowStart) {
+			windowEnd = windowStart
+		}
+		projectID, expiresAt, ok := s.attribution(gap.ProjectID, gap.ExpiresAt, gap.ServiceID, resolved, now)
+		if !ok {
+			refused++
+			continue
+		}
+		logType := normalizeLogType(gap.LogType)
+		values = append(values, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args,
+			gap.ServiceID,
+			projectID,
+			gap.AllocationID,
+			gap.BuildID,
+			string(logType),
+			normalizeLogStream(gap.Stream),
+			windowStart,
+			windowEnd,
+			gap.DroppedCount,
+			logpipeline.NormalizeDropReason(gap.Reason),
+			normalizeReporter(gap.Reporter),
+			gapIdentity(gap.ServiceID, gap.AllocationID, gap.BuildID, string(logType), gap.Stream, gap.Reason, gap.Reporter, gap.SummaryID, windowStart, windowEnd, gap.DroppedCount),
+			now,
+			expiresAt.UTC(),
+		)
+	}
+	if refused > 0 {
+		slog.Warn("log gap rows refused: service no longer resolves to a project", "refused", refused)
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	query := `INSERT INTO service_log_gaps (
+	service_id,
+	project_id,
+	allocation_id,
+	build_id,
+	log_type,
+	stream,
+	window_start,
+	window_end,
+	dropped_count,
+	reason,
+	reporter,
+	gap_id,
+	ingested_at,
+	expires_at
+) VALUES ` + strings.Join(values, ",")
+	if _, err := s.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("insert clickhouse log gaps: %w", err)
+	}
+	return nil
+}
+
+func (s *LogStore) resolveProjects(ctx context.Context, inputs []LogLineInput) (map[string]ProjectRetention, error) {
+	if s.resolve == nil {
+		return nil, nil
+	}
+	serviceIDs := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	for _, in := range inputs {
+		if in.ServiceID == "" || strings.TrimSpace(in.ProjectID) != "" && !in.ExpiresAt.IsZero() {
+			continue
+		}
+		if _, ok := seen[in.ServiceID]; ok {
+			continue
+		}
+		seen[in.ServiceID] = struct{}{}
+		serviceIDs = append(serviceIDs, in.ServiceID)
+	}
+	if len(serviceIDs) == 0 {
+		return nil, nil
+	}
+	resolved, err := s.resolve(ctx, serviceIDs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve log retention: %w", err)
+	}
+	return resolved, nil
+}
+
+func clampRetentionDays(projectDays, platformDefault int) int {
+	if projectDays > 0 {
+		if projectDays < MinProjectRetentionDays {
+			return MinProjectRetentionDays
+		}
+		if projectDays > MaxProjectRetentionDays {
+			return MaxProjectRetentionDays
+		}
+		return projectDays
+	}
+	if platformDefault <= 0 {
+		return 14
+	}
+	return platformDefault
+}
+
+// gapIdentity keys one gap row for ReplacingMergeTree dedup. Gaps
+// carrying a stable producer summary ID key on that ID plus the drop
+// identity: retries of the same coalesced lineage replace their row
+// even after the reported totals or window grew. Internally derived
+// gaps have no producer ID and are immutable per event, so they key
+// on their full content.
+func gapIdentity(serviceID, allocationID, buildID, logType, stream, reason, reporter, summaryID string, windowStart, windowEnd time.Time, count uint64) string {
+	payload := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%d",
+		serviceID, allocationID, buildID, logType, stream,
+		logpipeline.NormalizeDropReason(reason), reporter,
+		windowStart.UnixNano(), windowEnd.UnixNano(), count)
+	if summaryID != "" {
+		payload = fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00sid\x00%s",
+			serviceID, allocationID, buildID, logType, stream,
+			logpipeline.NormalizeDropReason(reason), reporter, summaryID)
+	}
+	sum := sha256.Sum256([]byte(payload))
+	return "gap:" + hex.EncodeToString(sum[:16])
+}
+
+// PurgeProjectLogs deletes every line and gap attributed to a
+// destroyed project. Mutations run synchronously so a returned nil
+// means the rows are gone; per-row TTL expiry remains the backstop
+// if a purge is lost.
+func (s *LogStore) PurgeProjectLogs(ctx context.Context, projectID string) error {
 	if !s.Enabled() {
-		return nil, ErrDisabled
+		return nil
+	}
+	if strings.TrimSpace(projectID) == "" {
+		return errors.New("project id is required")
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE service_logs DELETE WHERE project_id = ? SETTINGS mutations_sync = 1`, projectID); err != nil {
+		return fmt.Errorf("purge project logs: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE service_log_gaps DELETE WHERE project_id = ? SETTINGS mutations_sync = 1`, projectID); err != nil {
+		return fmt.Errorf("purge project log gaps: %w", err)
+	}
+	return nil
+}
+
+// ListServiceLogs returns one authorized page, newest first, with the
+// gaps overlapping the queried range. Callers must authorize the
+// service before calling.
+func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (ServiceLogPage, error) {
+	var page ServiceLogPage
+	if !s.Enabled() {
+		return page, ErrDisabled
 	}
 	limit := int(req.GetLimit())
 	if limit <= 0 {
@@ -270,6 +704,14 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 	}
 	if limit > maxLogQueryLimit {
 		limit = maxLogQueryLimit
+	}
+	cursorTime, cursorID, err := logpipeline.DecodeCursor(req.GetPageToken())
+	if err != nil {
+		return page, fmt.Errorf("invalid page token: %w", err)
+	}
+	gapCursorTime, gapCursorID, err := logpipeline.DecodeCursor(req.GetGapPageToken())
+	if err != nil {
+		return page, fmt.Errorf("invalid gap page token: %w", err)
 	}
 	filters := []string{"service_id = ?"}
 	args := []any{req.GetServiceId()}
@@ -293,28 +735,33 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 		filters = append(filters, "observed_at <= ?")
 		args = append(args, end.AsTime().UTC())
 	}
+	if req.GetPageToken() != "" {
+		filters = append(filters, "(observed_at, line_id) < (?, ?)")
+		args = append(args, cursorTime, cursorID)
+	}
 	if search := strings.TrimSpace(req.GetSearch()); search != "" {
 		filters = append(filters, "positionCaseInsensitive(line, ?) > 0")
 		args = append(args, search)
 	}
-	args = append(args, limit)
+	args = append(args, limit+1)
 	query := `
-SELECT observed_at, environment_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line, log_type, build_id, stage
-  FROM service_logs
+SELECT observed_at, project_id, environment_id, service_id, allocation_id, agent_id, stream, rollout_generation, sequence, line_id, line, log_type, build_id, stage, event, attributes, truncated
+  FROM service_logs FINAL
  WHERE ` + strings.Join(filters, " AND ") + `
- ORDER BY observed_at DESC, sequence DESC
+ ORDER BY observed_at DESC, line_id DESC
  LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("query clickhouse service logs: %w", err)
+		return page, fmt.Errorf("query clickhouse service logs: %w", err)
 	}
 	defer rows.Close()
 
-	var newestFirst []ServiceLog
 	for rows.Next() {
 		var rec ServiceLog
+		var truncated uint8
 		if err := rows.Scan(
 			&rec.ObservedAt,
+			&rec.ProjectID,
 			&rec.EnvironmentID,
 			&rec.ServiceID,
 			&rec.AllocationID,
@@ -322,23 +769,149 @@ SELECT observed_at, environment_id, service_id, allocation_id, agent_id, stream,
 			&rec.Stream,
 			&rec.RolloutGeneration,
 			&rec.Sequence,
+			&rec.LineID,
 			&rec.Line,
 			&rec.LogType,
 			&rec.BuildID,
 			&rec.Stage,
+			&rec.Event,
+			&rec.Attributes,
+			&truncated,
 		); err != nil {
-			return nil, fmt.Errorf("scan clickhouse service log: %w", err)
+			return page, fmt.Errorf("scan clickhouse service log: %w", err)
 		}
-		newestFirst = append(newestFirst, rec)
+		rec.Truncated = truncated != 0
+		page.Lines = append(page.Lines, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate clickhouse service logs: %w", err)
+		return page, fmt.Errorf("iterate clickhouse service logs: %w", err)
 	}
-	out := make([]ServiceLog, len(newestFirst))
-	for i := range newestFirst {
-		out[len(newestFirst)-1-i] = newestFirst[i]
+	if len(page.Lines) > limit {
+		last := page.Lines[limit-1]
+		page.NextPageToken = logpipeline.EncodeCursor(last.ObservedAt, last.LineID)
+		page.Lines = page.Lines[:limit]
 	}
-	return out, nil
+	gaps, nextGapToken, err := s.listGaps(ctx, req, gapCursorTime, gapCursorID)
+	if err != nil {
+		return page, err
+	}
+	page.Gaps = gaps
+	page.NextGapPageToken = nextGapToken
+	return page, nil
+}
+
+// listGaps returns up to maxLogGapResults gap rows newest-first with an
+// older-page cursor, so every gap stays reachable even when the range
+// holds more rows than one response may carry.
+func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogsRequest, cursorTime time.Time, cursorID string) ([]ServiceLogGap, string, error) {
+	filters := []string{"service_id = ?"}
+	args := []any{req.GetServiceId()}
+	if allocationID := strings.TrimSpace(req.GetAllocationId()); allocationID != "" {
+		filters = append(filters, "(allocation_id = ? OR allocation_id = '')")
+		args = append(args, allocationID)
+	}
+	if buildID := strings.TrimSpace(req.GetBuildId()); buildID != "" {
+		filters = append(filters, "(build_id = ? OR build_id = '')")
+		args = append(args, buildID)
+	}
+	if logType := logTypeFromProto(req.GetLogType()); logType != "" {
+		filters = append(filters, "log_type = ?")
+		args = append(args, string(logType))
+	}
+	if start := req.GetStartTime(); start != nil {
+		filters = append(filters, "window_end >= ?")
+		args = append(args, start.AsTime().UTC())
+	}
+	if end := req.GetEndTime(); end != nil {
+		filters = append(filters, "window_start <= ?")
+		args = append(args, end.AsTime().UTC())
+	}
+	if req.GetGapPageToken() != "" {
+		filters = append(filters, "(window_start, gap_id) < (?, ?)")
+		args = append(args, cursorTime, cursorID)
+	}
+	args = append(args, maxLogGapResults+1)
+	query := `
+SELECT gap_id, allocation_id, build_id, log_type, stream, dropped_count, reason, window_start, window_end
+  FROM service_log_gaps FINAL
+ WHERE ` + strings.Join(filters, " AND ") + `
+ ORDER BY window_start DESC, gap_id DESC
+ LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("query clickhouse log gaps: %w", err)
+	}
+	defer rows.Close()
+	var gaps []ServiceLogGap
+	var gapIDs []string
+	for rows.Next() {
+		var gap ServiceLogGap
+		var gapID string
+		if err := rows.Scan(
+			&gapID,
+			&gap.AllocationID,
+			&gap.BuildID,
+			&gap.LogType,
+			&gap.Stream,
+			&gap.DroppedCount,
+			&gap.Reason,
+			&gap.WindowStart,
+			&gap.WindowEnd,
+		); err != nil {
+			return nil, "", fmt.Errorf("scan clickhouse log gap: %w", err)
+		}
+		gaps = append(gaps, gap)
+		gapIDs = append(gapIDs, gapID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", fmt.Errorf("iterate clickhouse log gaps: %w", err)
+	}
+	var nextToken string
+	if len(gaps) > maxLogGapResults {
+		nextToken = logpipeline.EncodeCursor(gaps[maxLogGapResults-1].WindowStart, gapIDs[maxLogGapResults-1])
+		gaps = gaps[:maxLogGapResults]
+	}
+	return gaps, nextToken, nil
+}
+
+func dropSummariesToGaps(drops []*platformv1.LogDropSummary, reporter string) []GapInput {
+	var gaps []GapInput
+	for _, drop := range drops {
+		if drop == nil || drop.GetDroppedCount() == 0 || strings.TrimSpace(drop.GetServiceId()) == "" {
+			continue
+		}
+		gaps = append(gaps, GapInput{
+			ServiceID:    drop.GetServiceId(),
+			AllocationID: drop.GetAllocationId(),
+			BuildID:      drop.GetBuildId(),
+			LogType:      logTypeFromProto(drop.GetLogType()),
+			Stream:       drop.GetStream(),
+			WindowStart:  drop.GetWindowStart().AsTime(),
+			WindowEnd:    drop.GetWindowEnd().AsTime(),
+			DroppedCount: drop.GetDroppedCount(),
+			Reason:       drop.GetReason(),
+			Reporter:     reporter,
+			SummaryID:    drop.GetSummaryId(),
+		})
+	}
+	return gaps
+}
+
+// DropSummariesToGaps converts producer drop reports into gap inputs
+// for non-agent producers such as builders.
+func DropSummariesToGaps(drops []*platformv1.LogDropSummary, reporter string) []GapInput {
+	return dropSummariesToGaps(drops, reporter)
+}
+
+func normalizeReporter(reporter string) string {
+	reporter = strings.TrimSpace(reporter)
+	if reporter == "" {
+		return "controlplane"
+	}
+	if len(reporter) > 128 {
+		return reporter[:128]
+	}
+	return reporter
 }
 
 func normalizeLogStream(stream string) string {
@@ -373,6 +946,9 @@ func normalizeStageName(stage string) string {
 	stage = strings.TrimSpace(stage)
 	if stage == "" {
 		return ""
+	}
+	if len(stage) > logpipeline.MaxStageNameBytes {
+		stage = stage[:logpipeline.MaxStageNameBytes]
 	}
 	return strings.ToLower(stage)
 }

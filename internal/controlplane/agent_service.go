@@ -8,15 +8,19 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/restartpolicy"
 
@@ -30,6 +34,7 @@ type AgentService struct {
 	store                   *fleetPersistence
 	delivery                agentDelivery
 	logStore                *logs.LogStore
+	logIngester             *logs.AsyncIngester
 	notifier                *Notifier
 	authority               *identity.TLSAuthority
 	enrollment              *identity.Enrollment
@@ -108,6 +113,15 @@ type agentDelivery interface {
 func WithAgentRegistry(policy *registry.Policy) AgentServiceOption {
 	return func(service *AgentService) {
 		service.registry = policy
+	}
+}
+
+// WithLogIngester routes agent log batches through the async ingest
+// queue so a ClickHouse outage cannot stall the Sync loop. Without
+// it, batches write synchronously (used by focused tests).
+func WithLogIngester(ingester *logs.AsyncIngester) AgentServiceOption {
+	return func(service *AgentService) {
+		service.logIngester = ingester
 	}
 }
 
@@ -295,8 +309,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	defer stop()
 
 	sendErr := make(chan error, 1)
+	var streamSendMu sync.Mutex
 	go func() {
-		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, hello, notifyCh, ownerChanged)
+		sendErr <- s.sendLoop(ctx, stream, &streamSendMu, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, hello, notifyCh, ownerChanged)
 	}()
 	s.notifier.Notify(hello.AgentId)
 
@@ -380,16 +395,53 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if batch.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "log batch agent_id does not match session")
 			}
-			if err := s.store.validateAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
-				return status.Errorf(codes.PermissionDenied, "log batch ownership: %v", err)
+			if err := s.store.scopeAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
+				return status.Errorf(codes.Internal, "log batch ownership: %v", err)
 			}
-			if s.logStore != nil {
+			writeSync := s.logIngester == nil
+			if s.logIngester != nil {
+				switch s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch) {
+				case logs.AdmitAccepted:
+				case logs.AdmitRetry:
+					// The journal cannot store this batch or a gap for it.
+					// A synchronous ClickHouse write here would stall the
+					// Sync stream for the whole outage; the agent still
+					// holds the batch and retries when this stream ends.
+					return status.Error(codes.Unavailable, "log ingest backlog is full")
+				case logs.AdmitClosed:
+					writeSync = true
+				}
+			}
+			if writeSync && s.logStore != nil {
+				// No queue, or the shutdown drain already sealed it:
+				// fall back to a synchronous write while the store
+				// is still up.
 				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
 					return status.Errorf(codes.Internal, "log batch: %v", err)
 				}
 			}
+			// Acceptance ack: the agent keeps its spool batch
+			// uncommitted until this arrives, so a batch lost
+			// before acceptance is always retried instead of being
+			// skipped past the replay window.
+			streamSendMu.Lock()
+			err := stream.Send(&agentv1.AgentServerMessage{
+				Payload: &agentv1.AgentServerMessage_LogBatchAck{LogBatchAck: &agentv1.LogBatchAck{BatchId: batch.GetBatchId()}},
+			})
+			streamSendMu.Unlock()
+			if err != nil {
+				return status.Errorf(codes.Internal, "log batch ack: %v", err)
+			}
 		}
 	}
+}
+
+// sendLocked serializes stream writes with the log-batch
+// acknowledgements sent from the message handler.
+func sendLocked(mu *sync.Mutex, stream agentv1.AgentControl_SyncServer, msg *agentv1.AgentServerMessage) error {
+	mu.Lock()
+	defer mu.Unlock()
+	return stream.Send(msg)
 }
 
 // syncSent is the position delivered on this session's sync stream: the
@@ -403,7 +455,7 @@ type syncSent struct {
 	overlay     string
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
+func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
 	// Initialize from hello so an unchanged reconnect sends nothing.
 	sent := syncSent{
 		alloc:       hello.GetReconciliationCursor(),
@@ -418,7 +470,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 	first := true
 	for {
 		slog.Info("checking desired state", "agent_id", agentID)
-		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, sent, helloInventory, helloInit, helloEpoch, first)
+		next, err := s.sendSyncBatch(ctx, stream, sendMu, agentID, sessionID, clusterID, epoch, sent, helloInventory, helloInit, helloEpoch, first)
 		if err != nil {
 			return err
 		}
@@ -447,7 +499,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 // sendSyncBatch emits one fenced batch — node config, credentials,
 // allocations (checkpoint or ordered diffs), then replicas — terminated by a
 // batch-end marker. It returns the new sent position.
-func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
+func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
 		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
@@ -526,7 +578,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			NodeConfig: state.GetNodeConfig(), ClusterId: clusterID,
 		}
 		stampNodeConfigUpdate(update, sessionID, epoch, deadline)
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update},
 		}); err != nil {
 			return sent, err
@@ -535,7 +587,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	if needCreds {
 		creds.ClusterId = clusterID
 		stampPullCredentials(creds, sessionID, epoch, deadline)
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds},
 		}); err != nil {
 			return sent, err
@@ -545,7 +597,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		stampAgentCommand(state, sessionID, epoch, deadline)
 		state.ClusterId = clusterID
 		slog.Info("sending checkpoint", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
 		}); err != nil {
 			return sent, err
@@ -556,7 +608,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			diff.ClusterId = clusterID
 			stampAllocationDiff(diff, sessionID, epoch, deadline)
 			slog.Info("sending diff", "agent_id", agentID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
-			if err := stream.Send(&agentv1.AgentServerMessage{
+			if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 				Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff},
 			}); err != nil {
 				return sent, err
@@ -570,14 +622,14 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			ClusterId:        clusterID,
 		}
 		stampReplicaEndpoints(replicas, sessionID, epoch, deadline)
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_ReplicaEndpoints{ReplicaEndpoints: replicas},
 		}); err != nil {
 			return sent, err
 		}
 	}
 	// The agent withholds status publication until this marker.
-	if err := stream.Send(&agentv1.AgentServerMessage{
+	if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 		Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}},
 	}); err != nil {
 		return sent, err
@@ -653,6 +705,63 @@ func normalizeReplicaAddresses(addresses []string) []string {
 	return result
 }
 
+// crashLoopEventLine builds the platform event for one crash-loop
+// observation. Its identity and observed_at derive from
+// content-stable facts (allocation, rollout generation, restart
+// window), so an agent resending the same observation after a
+// reconnect — or a duplicated status report — collapses into one
+// event row via the log store's (observed_at, line_id) dedup instead
+// of accumulating duplicates.
+func crashLoopEventLine(agentID, environmentID string, cond *agentv1.ServiceCondition) logs.LogLineInput {
+	restart := cond.GetRestart()
+	var onset time.Time
+	for _, ts := range []*timestamppb.Timestamp{
+		restart.GetWindowStartedAt(),
+		restart.GetStartedAt(),
+		restart.GetLastRestartAt(),
+	} {
+		if ts != nil && !ts.AsTime().IsZero() {
+			onset = ts.AsTime().UTC()
+			break
+		}
+	}
+	if onset.IsZero() {
+		// Synthetic conditions without restart timestamps cannot
+		// anchor an onset; the event stays retry-stable but
+		// re-observations may duplicate.
+		onset = time.Now().UTC()
+	}
+	message := cond.GetMessage()
+	if message == "" {
+		message = restart.GetMessage()
+	}
+	if message == "" {
+		message = "allocation entered crash loop; authorized restart or new rollout required"
+	}
+	return logs.LogLineInput{
+		ID: logpipeline.StableEventID(
+			logs.EventCrashLoop,
+			agentID,
+			cond.GetAllocationId(),
+			strconv.FormatInt(cond.GetDesiredRolloutGeneration(), 10),
+			onset.Format(time.RFC3339Nano),
+		),
+		ObservedAt:        onset,
+		EnvironmentID:     environmentID,
+		ServiceID:         cond.GetServiceId(),
+		AllocationID:      cond.GetAllocationId(),
+		AgentID:           agentID,
+		Stream:            "combined",
+		LogType:           logs.LogTypeDeploy,
+		Stage:             "restart",
+		Event:             logs.EventCrashLoop,
+		Attributes:        map[string]string{"phase": cond.GetPhase()},
+		RolloutGeneration: cond.GetDesiredRolloutGeneration(),
+		Sequence:          logs.NextSequence(),
+		Line:              message,
+	}
+}
+
 func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, report *agentv1.StatusReport) {
 	if s == nil || report == nil || s.logStore == nil || !s.logStore.Enabled() {
 		return
@@ -666,38 +775,40 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 		if err != nil {
 			continue
 		}
-		message := cond.GetMessage()
-		if message == "" {
-			message = cond.GetRestart().GetMessage()
-		}
-		if message == "" {
-			message = "allocation entered crash loop; authorized restart or new rollout required"
-		}
 		slog.Warn("allocation entered crash loop",
 			"agent_id", agentID,
 			"service_id", cond.GetServiceId(),
 			"allocation_id", cond.GetAllocationId(),
-			"message", message,
+			"message", cond.GetMessage(),
 		)
-		lines = append(lines, logs.LogLineInput{
-			ObservedAt:        time.Now().UTC(),
-			EnvironmentID:     alloc.EnvironmentID,
-			ServiceID:         cond.GetServiceId(),
-			AllocationID:      cond.GetAllocationId(),
-			AgentID:           agentID,
-			Stream:            "combined",
-			LogType:           logs.LogTypeDeploy,
-			Stage:             "restart",
-			RolloutGeneration: cond.GetDesiredRolloutGeneration(),
-			Sequence:          logs.NextSequence(),
-			Line:              message,
-		})
+		lines = append(lines, crashLoopEventLine(agentID, alloc.EnvironmentID, cond))
 	}
 	if len(lines) == 0 {
 		return
 	}
+	s.deliverPlatformLines(ctx, agentID, lines)
+}
+
+// deliverPlatformLines routes platform-emitted lines through the
+// async ingest queue so they retry across backend outages, shed with
+// gap accounting, and drain at shutdown like agent batches — a
+// synchronous write here would block the agent Sync receive loop and
+// lose the event when ClickHouse is unavailable. Without an ingester,
+// or once the shutdown drain sealed the queue, it falls back to a
+// synchronous write.
+func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
+	if s.logIngester != nil {
+		switch s.logIngester.EnqueueLines(lines) {
+		case logs.AdmitAccepted:
+			return
+		case logs.AdmitRetry:
+			slog.Warn("platform log lines not journaled", "agent_id", agentID, "lines", len(lines))
+			return
+		case logs.AdmitClosed:
+		}
+	}
 	if err := s.logStore.WriteLogLines(ctx, lines); err != nil {
-		slog.Warn("write crash-loop event", "error", err, "agent_id", agentID)
+		slog.Warn("write platform log line", "error", err, "agent_id", agentID)
 	}
 }
 

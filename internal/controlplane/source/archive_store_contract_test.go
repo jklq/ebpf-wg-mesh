@@ -13,7 +13,7 @@ import (
 
 func runArchiveStoreContractSuite(t *testing.T, name string, newStore func(t *testing.T) ArchiveStore) {
 	t.Helper()
-	t.Run(name+"/round-trip streams content", func(t *testing.T) {
+	t.Run(name+"/round-trip range content", func(t *testing.T) {
 		t.Parallel()
 		store := newStore(t)
 		ctx := context.Background()
@@ -36,20 +36,12 @@ func runArchiveStoreContractSuite(t *testing.T, name string, newStore func(t *te
 		if meta.Size != int64(len(payload)) || meta.Digest != digest {
 			t.Fatalf("stat = %+v, want size %d digest %s", meta, len(payload), digest)
 		}
-		reader, opened, err := store.Open(ctx, key)
+		got, err := store.ReadRange(ctx, key, 0, len(payload))
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := io.ReadAll(reader)
-		closeErr := reader.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
-		if closeErr != nil {
-			t.Fatal(closeErr)
-		}
-		if !bytes.Equal(got, payload) || opened.Size != int64(len(payload)) || opened.Digest != digest {
-			t.Fatal("streamed content does not match stored content")
+		if !bytes.Equal(got, payload) {
+			t.Fatal("read content does not match stored content")
 		}
 	})
 
@@ -206,9 +198,6 @@ func runArchiveStoreContractSuite(t *testing.T, name string, newStore func(t *te
 		}
 		if _, err := store.Stat(ctx, key); !IsArchiveNotFound(err) {
 			t.Fatalf("stat error = %v, want not found", err)
-		}
-		if _, _, err := store.Open(ctx, key); !IsArchiveNotFound(err) {
-			t.Fatalf("open error = %v, want not found", err)
 		}
 		if _, err := store.ReadRange(ctx, key, 0, 8); !IsArchiveNotFound(err) {
 			t.Fatalf("range error = %v, want not found", err)

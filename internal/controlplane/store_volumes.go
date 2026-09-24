@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
@@ -107,7 +108,10 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, 
 				return err
 			}
 		}
-		now := time.Now().UTC()
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		tombstoned, err := s.tombstoneVolumeTx(ctx, tx, rec.ID, user.ID(), now)
 		if err != nil {
 			return err
@@ -126,12 +130,9 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, 
 func (s *catalogPersistence) requireVolumeDetachedTx(ctx context.Context, tx *sql.Tx, rec deliverycore.VolumeRecord) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT s.id, r.spec_json
-		   FROM services s
+		   FROM live_services s
 		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
-		   JOIN environments e ON e.id = s.environment_id
-		   JOIN projects p ON p.id = e.project_id
-		  WHERE s.environment_id = $1
-		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`,
+		  WHERE s.environment_id = $1`,
 		rec.EnvironmentID,
 	)
 	if err != nil {

@@ -14,7 +14,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
@@ -26,10 +25,8 @@ import (
 const executorOwnerMarker = ".executor-owner.json"
 
 type executorOwner struct {
-	Executor  string    `json:"executor"`
-	PID       int       `json:"pid"`
-	BuildID   string    `json:"build_id"`
-	StartedAt time.Time `json:"started_at"`
+	PID     int    `json:"pid"`
+	BuildID string `json:"build_id"`
 }
 
 // executionWorkspace is the executor-owned directory layout for one
@@ -109,7 +106,11 @@ func validateExecutionSpec(spec ExecutionSpec) error {
 
 func validSnapshotDigest(digest string) bool {
 	digest = strings.TrimSpace(digest)
-	return strings.HasPrefix(digest, "sha256:") && len(digest) == len("sha256:")+sha256.Size*2
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != len("sha256:")+sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+	return err == nil
 }
 
 // validatePushCredentials requires push credentials scoped to exactly
@@ -151,7 +152,7 @@ func splitPushReference(ref string) (host, repository string, err error) {
 	return host, repository, nil
 }
 
-func prepareExecutionWorkspace(workDir, buildID, executorName string, now func() time.Time) (executionWorkspace, error) {
+func prepareExecutionWorkspace(workDir, buildID string) (executionWorkspace, error) {
 	root, err := safeChildPath(workDir, buildID)
 	if err != nil {
 		return executionWorkspace{}, err
@@ -183,10 +184,8 @@ func prepareExecutionWorkspace(workDir, buildID, executorName string, now func()
 	}
 	workspace.metadataFile = filepath.Join(root, "metadata.json")
 	owner := executorOwner{
-		Executor:  executorName,
-		PID:       os.Getpid(),
-		BuildID:   buildID,
-		StartedAt: now().UTC(),
+		PID:     os.Getpid(),
+		BuildID: buildID,
 	}
 	data, err := json.Marshal(owner)
 	if err != nil {
@@ -210,7 +209,7 @@ func destroyExecutionWorkspace(root string) error {
 		}
 		if entry.IsDir() {
 			_ = os.Chmod(path, 0o755)
-		} else {
+		} else if entry.Type().IsRegular() {
 			_ = os.Chmod(path, 0o644)
 		}
 		return nil
@@ -342,6 +341,9 @@ func makeSnapshotReadOnly(repoDir string) error {
 		mode := fs.FileMode(0o444)
 		if entry.IsDir() {
 			mode = 0o555
+		}
+		if !entry.IsDir() && !entry.Type().IsRegular() {
+			return nil
 		}
 		if err := os.Chmod(path, mode); err != nil {
 			return fmt.Errorf("chmod snapshot path: %w", err)

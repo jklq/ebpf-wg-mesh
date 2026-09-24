@@ -2,9 +2,17 @@ package source
 
 import (
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 )
+
+func TestS3CanonicalQuerySortsEncodedPairs(t *testing.T) {
+	query := url.Values{"z": {"1"}, "é": {"2"}, "a": {"~", " "}}
+	if got, want := s3CanonicalQuery(query), "%C3%A9=2&a=%20&a=~&z=1"; got != want {
+		t.Fatalf("canonical query = %q, want %q", got, want)
+	}
+}
 
 // Golden SigV4 vectors cross-checked against botocore's SigV4Auth with frozen
 // time 20240524T120000Z and the AWS documentation example credentials.

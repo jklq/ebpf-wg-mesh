@@ -62,9 +62,8 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	archive := bytes.Repeat([]byte("bounded-source-snapshot"), sourceSnapshotChunkBytes/8)
-	archive = append(archive, []byte("final-chunk")...)
-	digest, objectKey, err := store.source.StoreSourceArchive(ctx, archive)
+	archive := dockerfileMarkerArchive(string(bytes.Repeat([]byte("bounded-source-snapshot"), sourceSnapshotChunkBytes/8)) + "final-chunk")
+	digest, objectKey, err := storeTestArchive(ctx, store, archive)
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}

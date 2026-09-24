@@ -95,6 +95,11 @@ func (a connectPlatformService) RestoreProject(ctx context.Context, req *connect
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) UpdateProjectLogRetention(ctx context.Context, req *connect.Request[platformv1.UpdateProjectLogRetentionRequest]) (*connect.Response[platformv1.Project], error) {
+	result, err := a.service.UpdateProjectLogRetention(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) PreviewProjectDeletion(ctx context.Context, req *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {
 	result, err := a.service.PreviewProjectDeletion(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

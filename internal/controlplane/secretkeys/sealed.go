@@ -12,20 +12,6 @@ import (
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 )
 
-// SealedVersion is one immutable sealed value. Plaintext never appears here:
-// only the envelope (DEK reference, nonce, ciphertext) alongside location
-// metadata.
-type SealedVersion struct {
-	ServiceID     string
-	Name          string
-	Version       int64
-	EnvironmentID string
-	DEKID         string
-	Nonce         []byte
-	Ciphertext    []byte
-	CreatedAt     time.Time
-}
-
 // SecretMetadata is the masked existence record listable through the API:
 // names and versions, never values.
 type SecretMetadata struct {
@@ -73,6 +59,7 @@ func (s *SealedStore) Seal(ctx context.Context, q Querier, serviceID, environmen
 		if err != nil {
 			return err
 		}
+		defer clear(dek[:])
 		for attempt := 0; ; attempt++ {
 			var current sql.NullInt64
 			if err := tx.QueryRowContext(ctx,
@@ -197,6 +184,7 @@ func (s *SealedStore) OpenVersion(ctx context.Context, q Querier, serviceID, nam
 	if err != nil {
 		return nil, fmt.Errorf("open sealed secret %q for service %s: %w", name, serviceID, err)
 	}
+	defer clear(dek[:])
 	plaintext, err := OpenValue(dek, sealAAD(serviceID, name, version), nonce, ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("open sealed secret %q for service %s: %w", name, serviceID, err)
@@ -206,7 +194,7 @@ func (s *SealedStore) OpenVersion(ctx context.Context, q Querier, serviceID, nam
 
 // OpenCurrent decrypts the newest live version of a sealed secret.
 func (s *SealedStore) OpenCurrent(ctx context.Context, q Querier, serviceID, name string) ([]byte, int64, error) {
-	var version int64
+	var version sql.NullInt64
 	if err := q.QueryRowContext(ctx,
 		`SELECT max(v.version) FROM service_secret_versions v
 		  WHERE v.service_id = $1 AND v.name = $2
@@ -215,14 +203,14 @@ func (s *SealedStore) OpenCurrent(ctx context.Context, q Querier, serviceID, nam
 		serviceID, name).Scan(&version); err != nil {
 		return nil, 0, fmt.Errorf("load sealed secret %q: %w", name, err)
 	}
-	if version == 0 {
+	if !version.Valid {
 		return nil, 0, fmt.Errorf("%w: service %s has no live sealed secret %q", ErrNoSuchSecret, serviceID, name)
 	}
-	plaintext, err := s.OpenVersion(ctx, q, serviceID, name, version)
+	plaintext, err := s.OpenVersion(ctx, q, serviceID, name, version.Int64)
 	if err != nil {
 		return nil, 0, err
 	}
-	return plaintext, version, nil
+	return plaintext, version.Int64, nil
 }
 
 // ResolveMany decrypts the live secrets for each service, honoring pinned
@@ -263,6 +251,7 @@ func (s *SealedStore) ResolveMany(ctx context.Context, q Querier, serviceIDs []s
 				return nil, err
 			}
 			resolved[name] = string(plaintext)
+			clear(plaintext)
 		}
 		out[serviceID] = resolved
 	}

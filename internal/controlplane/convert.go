@@ -12,12 +12,13 @@ import (
 
 func toProtoProject(rec deliverycore.ProjectRecord) *platformv1.Project {
 	return &platformv1.Project{
-		Id:        rec.ID,
-		Name:      rec.Name,
-		CreatedAt: ts(rec.CreatedAt),
-		Kind:      toProtoProjectKind(rec.Kind),
-		SystemKey: rec.SystemKey,
-		Deletion:  toProtoDeletion(rec.Deletion),
+		Id:               rec.ID,
+		Name:             rec.Name,
+		CreatedAt:        ts(rec.CreatedAt),
+		Kind:             toProtoProjectKind(rec.Kind),
+		SystemKey:        rec.SystemKey,
+		Deletion:         toProtoDeletion(rec.Deletion),
+		LogRetentionDays: rec.LogRetentionDays,
 	}
 }
 
@@ -264,6 +265,23 @@ func toProtoServiceLogLine(rec logs.ServiceLog) *platformv1.ServiceLogLine {
 		LogType:           logs.TypeToProto(rec.LogType),
 		BuildId:           rec.BuildID,
 		Stage:             rec.Stage,
+		Attributes:        rec.Attributes,
+		Truncated:         rec.Truncated,
+		Event:             rec.Event,
+		LineId:            rec.LineID,
+	}
+}
+
+func toProtoServiceLogGap(gap logs.ServiceLogGap) *platformv1.ServiceLogGap {
+	return &platformv1.ServiceLogGap{
+		AllocationId: gap.AllocationID,
+		BuildId:      gap.BuildID,
+		LogType:      logs.TypeToProto(gap.LogType),
+		Stream:       gap.Stream,
+		DroppedCount: gap.DroppedCount,
+		Reason:       gap.Reason,
+		WindowStart:  ts(gap.WindowStart),
+		WindowEnd:    ts(gap.WindowEnd),
 	}
 }
 

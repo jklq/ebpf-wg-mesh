@@ -1,7 +1,6 @@
 package source
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -130,30 +129,6 @@ const (
 	ArchiveObjectStateDeleting = "deleting"
 )
 
-func (s *SQLStore) StoreSourceArchive(ctx context.Context, archive []byte) (string, string, error) {
-	if s.archives == nil {
-		return "", "", errors.New("source archive store is not configured")
-	}
-	if len(archive) == 0 {
-		return "", "", fmt.Errorf("%w: source archive is empty", ErrSnapshotCorrupt)
-	}
-	if len(archive) > MaxArchiveCompressedBytes {
-		return "", "", fmt.Errorf("%w: %d bytes", ErrSnapshotTooLarge, len(archive))
-	}
-	digest := ArchiveDigest(archive)
-	key, err := ArchiveObjectKey(digest)
-	if err != nil {
-		return "", "", err
-	}
-	put := func() error {
-		return s.archives.Put(ctx, key, bytes.NewReader(archive), int64(len(archive)), digest)
-	}
-	if err := s.commitStagedArchive(ctx, key, digest, int64(len(archive)), put); err != nil {
-		return "", "", err
-	}
-	return digest, key, nil
-}
-
 func (s *SQLStore) commitStagedArchive(ctx context.Context, key, digest string, size int64, put func() error) error {
 	if err := s.upsertSourceArchiveObject(ctx, key, digest, size); err != nil {
 		return err
@@ -177,7 +152,7 @@ func (s *SQLStore) StoreSourceArchiveFromReader(ctx context.Context, body io.Rea
 	if size > MaxArchiveCompressedBytes {
 		return "", "", 0, fmt.Errorf("%w: %d bytes", ErrSnapshotTooLarge, size)
 	}
-	staged, err := os.CreateTemp("", "source-archive-stage-*")
+	staged, err := os.CreateTemp(s.archiveStagingDir, "source-archive-stage-*")
 	if err != nil {
 		return "", "", 0, fmt.Errorf("stage source archive: %w", err)
 	}

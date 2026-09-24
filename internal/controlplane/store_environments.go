@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 
@@ -20,6 +21,9 @@ func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Cont
 	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
 		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if err == nil {
+		if rec.Deletion != nil {
+			return deliverycore.EnvironmentRecord{}, deliverycore.ErrEnvironmentDeleted
+		}
 		return rec, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -101,7 +105,8 @@ func (s *catalogPersistence) listEnvironments(ctx context.Context, user authz.Us
 
 func (s *catalogPersistence) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
 	return deliverycore.ScanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+`
-		 WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
+		 WHERE e.project_id = $1 AND e.is_production = TRUE
+		   AND e.deleted_at IS NULL AND p.deleted_at IS NULL`, projectID))
 }
 
 func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
@@ -186,7 +191,10 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.U
 				return err
 			}
 		}
-		now := time.Now().UTC()
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		tombstoned, err := s.tombstoneEnvironmentTx(ctx, tx, rec.ID, user.ID(), now)
 		if err != nil {
 			return err
@@ -237,8 +245,7 @@ func (s *catalogPersistence) restoreEnvironment(ctx context.Context, user authz.
 			return err
 		}
 		if !restored {
-			rec, err = s.environmentByScopeQuerier(ctx, tx, scope)
-			return err
+			return deliverycore.ErrDeletionExpired
 		}
 		if err := dropEnvironmentAssignmentsTx(ctx, tx, current.ID); err != nil {
 			return err

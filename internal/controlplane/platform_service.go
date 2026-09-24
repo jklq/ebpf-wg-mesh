@@ -44,6 +44,7 @@ type platformStore interface {
 	createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
 	listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
 	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
+	updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
 	ListServices(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
@@ -132,7 +133,7 @@ func (s *PlatformService) environmentForUser(ctx context.Context, user authz.Use
 }
 
 type serviceLogStore interface {
-	ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) ([]logs.ServiceLog, error)
+	ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (logs.ServiceLogPage, error)
 }
 
 type PlatformServiceOption func(*PlatformService)
@@ -274,6 +275,33 @@ func (s *PlatformService) RestoreProject(ctx context.Context, req *platformv1.Re
 		return nil, mapped
 	}
 	return result, err
+}
+
+func (s *PlatformService) UpdateProjectLogRetention(ctx context.Context, req *platformv1.UpdateProjectLogRetentionRequest) (*platformv1.Project, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetProjectId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "project_id is required")
+	}
+	rec, err := s.store.updateProjectLogRetention(ctx, user, req.GetProjectId(), req.GetLogRetentionDays())
+	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
+		if errors.Is(err, deliverycore.ErrProjectDeleted) {
+			return nil, status.Errorf(codes.FailedPrecondition, "update project log retention: %v", err)
+		}
+		if errors.Is(err, errInvalidLogRetention) {
+			return nil, status.Errorf(codes.InvalidArgument, "update project log retention: %v", err)
+		}
+		return nil, writeAccessError("update project log retention", err)
+	}
+	return toProtoProject(rec), nil
 }
 
 func (s *PlatformService) PreviewProjectDeletion(ctx context.Context, req *platformv1.PreviewProjectDeletionRequest) (*platformv1.DeletionPreview, error) {

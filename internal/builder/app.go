@@ -64,6 +64,20 @@ func (e *buildFailureError) Error() string {
 	return e.kind + ": " + e.err.Error()
 }
 
+// logDeliveryError means the attempt's transcript was not accepted.
+// The build stays non-terminal so the lease can expire and another
+// attempt can deliver the output. Marking it failed would end the
+// revision.
+type logDeliveryError struct {
+	err error
+}
+
+func (e *logDeliveryError) Error() string {
+	return e.err.Error()
+}
+
+func (e *logDeliveryError) Unwrap() error { return e.err }
+
 func (e *buildFailureError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -168,6 +182,11 @@ func (a *App) Run(ctx context.Context) error {
 	} else if reclaimed > 0 {
 		slog.Info("reclaimed stale build workspaces", "count", reclaimed)
 	}
+	if reclaimed, err := gcStaleBuildLogSpools(a.buildLogSpoolBase(), staleBuildLogSpoolMaxAge); err != nil {
+		return fmt.Errorf("collect stale build log spools: %w", err)
+	} else if reclaimed > 0 {
+		slog.Info("collected stale build log spools", "count", reclaimed)
+	}
 	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
 		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
 		if err != nil {
@@ -211,7 +230,16 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	cancelledByControlPlane := make(chan struct{}, 1)
 	go func() {
 		defer close(heartbeatDone)
-		ticker := time.NewTicker(time.Duration(a.cfg.HeartbeatIntervalSeconds) * time.Second)
+		interval := time.Duration(a.cfg.HeartbeatIntervalSeconds) * time.Second
+		if expiry := job.GetLeaseExpiresAt(); expiry != nil {
+			untilExpiry := time.Until(expiry.AsTime())
+			if untilExpiry <= 0 {
+				interval = min(interval, time.Second)
+			} else if untilExpiry < interval*3 {
+				interval = max(untilExpiry/3, 100*time.Millisecond)
+			}
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
@@ -248,6 +276,14 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	}
 
 	if err != nil {
+		var undelivered *logDeliveryError
+		if errors.As(err, &undelivered) {
+			// The image or the failure is real, but the transcript
+			// never landed. A failed completion is terminal, so leave
+			// the build leased until it expires and another attempt
+			// can deliver the output.
+			return err
+		}
 		_, completeErr := a.client.CompleteBuild(ctx, &platformv1.CompleteBuildRequest{
 			BuilderId:     a.cfg.ID,
 			BuildId:       job.GetBuildId(),
@@ -281,16 +317,54 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	return nil
 }
 
+func (a *App) buildLogSpoolBase() string {
+	return filepath.Join(a.cfg.WorkDir, "log-spool")
+}
+
+func (a *App) buildLogShipConfig(buildID string, leaseEpoch int64) buildLogShipConfig {
+	ship := a.cfg.Logs
+	burst := ship.Burst
+	if burst <= 0 {
+		burst = 1000
+	}
+	maxBytes := ship.SpoolMaxBytes
+	if maxBytes <= 0 {
+		maxBytes = defaultBuildLogSpoolMaxBytes
+	}
+	return buildLogShipConfig{
+		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID, leaseEpoch),
+		SpoolMaxBytes: maxBytes,
+		// A non-positive rate disables producer limiting; zero is a
+		// deliberate operator choice, not an unset default.
+		RatePerSec:    float64(ship.RatePerSec),
+		Burst:         burst,
+		BatchSize:     ship.FlushBatchSize,
+		FlushInterval: time.Duration(ship.FlushIntervalSeconds) * time.Second,
+	}
+}
+
 func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (string, error) {
 	archivePath, digest, err := a.downloadSourceSnapshot(ctx, job)
 	if err != nil {
 		return "", err
 	}
 	defer os.Remove(archivePath)
-	reporter := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetLeaseEpoch())
-	defer reporter.Close()
+	reporter, err := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
+	if err != nil {
+		// Without a log pipeline the attempt's transcript would be
+		// lost, so the build must not run and complete without it.
+		return "", err
+	}
+	defer func() { _ = reporter.Close() }()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
+	// The transcript is part of the build's durable record. A failed
+	// delivery leaves the build non-terminal whether the command
+	// itself failed or the image is already pushed: completing either
+	// outcome without the output would drop the attempt's logs.
+	if closeErr := reporter.Close(); closeErr != nil {
+		return "", &logDeliveryError{err: closeErr}
+	}
 	if err != nil {
 		return "", err
 	}
@@ -299,14 +373,9 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 
 func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob, archivePath, digest string, reporter *buildLogReporter) ExecutionSpec {
 	return ExecutionSpec{
-		BuildID:       job.GetBuildId(),
-		ServiceID:     job.GetServiceId(),
-		ProjectID:     job.GetProjectId(),
-		EnvironmentID: job.GetEnvironmentId(),
-		CommitSHA:     job.GetCommitSha(),
+		BuildID: job.GetBuildId(),
 
 		SnapshotArchivePath: archivePath,
-		SnapshotID:          job.GetSource().GetSourceSnapshotId(),
 		SnapshotDigest:      digest,
 
 		Recipe: job.GetSource().GetBuildRecipe(),

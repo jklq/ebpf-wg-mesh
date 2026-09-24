@@ -69,7 +69,7 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, scope authz.Envi
 		}
 		var volumes []volumeCopy
 		rows, err := tx.QueryContext(ctx, `SELECT name, size_bytes FROM volumes
-			WHERE environment_id = $1 ORDER BY created_at, id`, source.ID)
+			WHERE environment_id = $1 AND deleted_at IS NULL ORDER BY created_at, id`, source.ID)
 		if err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, scope authz.Envi
 		serviceRows, err := tx.QueryContext(ctx, `SELECT s.name, r.spec_json
 			FROM services s JOIN service_revisions r
 			  ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
-			WHERE s.environment_id = $1 ORDER BY s.created_at, s.id`, source.ID)
+			WHERE s.environment_id = $1 AND s.deleted_at IS NULL ORDER BY s.created_at, s.id`, source.ID)
 		if err != nil {
 			return err
 		}
