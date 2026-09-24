@@ -147,7 +147,7 @@ func TestDurableLogsRetryDedupTruncationAndPagination(t *testing.T) {
 		t.Fatal("truncated prefix is not byte-exact")
 	}
 
-	// Cursor pagination walks the whole range oldest-first without
+	// Cursor pagination walks the whole range newest-first without
 	// duplicates or omissions.
 	userCtx := userContext(t, cp, ctx, "user-a")
 	var (
@@ -182,22 +182,22 @@ func TestDurableLogsRetryDedupTruncationAndPagination(t *testing.T) {
 		}
 		seen[id] = struct{}{}
 	}
-	// The last five in range order are the page markers, in order.
+	// The first five in newest-first order are the page markers.
 	resp, err := cp.dashboard.ListServiceLogs(userCtx, &platformv1.ListServiceLogsRequest{ServiceId: svc.ID, Limit: 5000})
 	if err != nil {
 		t.Fatalf("full list: %v", err)
 	}
 	got := resp.GetLines()
 	for i := 0; i < 5; i++ {
-		want := fmt.Sprintf("page-marker-%d", i)
-		if got[len(got)-5+i].GetLine() != want {
-			t.Fatalf("range order wrong at tail %d: %q", i, got[len(got)-5+i].GetLine())
+		want := fmt.Sprintf("page-marker-%d", 4-i)
+		if got[i].GetLine() != want {
+			t.Fatalf("range order wrong at %d: %q", i, got[i].GetLine())
 		}
 	}
 	for i := 1; i < len(got); i++ {
 		prev, cur := got[i-1].GetObservedAt().AsTime(), got[i].GetObservedAt().AsTime()
-		if cur.Before(prev) {
-			t.Fatal("lines are not oldest-first")
+		if cur.After(prev) {
+			t.Fatal("lines are not newest-first")
 		}
 	}
 
@@ -801,8 +801,8 @@ func TestDurableLogsGapPagination(t *testing.T) {
 		t.Fatalf("gap pagination lost rows: got %d of %d", len(seen), totalGaps)
 	}
 	for i := 1; i < len(seen); i++ {
-		if !seen[i].After(seen[i-1]) {
-			t.Fatalf("gap pages not oldest-first at %d: %v after %v", i, seen[i], seen[i-1])
+		if seen[i].After(seen[i-1]) {
+			t.Fatalf("gap pages not newest-first at %d: %v before %v", i, seen[i], seen[i-1])
 		}
 	}
 	if _, err := cp.dashboard.ListServiceLogs(userCtx, &platformv1.ListServiceLogsRequest{ServiceId: svc.ID, GapPageToken: "bogus"}); status.Code(err) != codes.Internal {
