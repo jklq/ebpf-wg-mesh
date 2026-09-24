@@ -697,3 +697,33 @@ func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
 		t.Fatalf("owed gap not flushed: %+v", store.gaps)
 	}
 }
+
+func TestAsyncIngesterCoalesceStaysWithinByteBudget(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 512, QueueBytes: 2000})
+	// Stuff the queue directly so the budget admits more than the
+	// coalesce bound would merge: 4 flushes of 780 estimated bytes.
+	one := testAgentBatch("svc-1", "alloc-1", 3)
+	inputs, _ := convertAgentBatch("agent-1", one)
+	for i := 0; i < 4; i++ {
+		ingester.queueBytes.Add(780)
+		ingester.queue <- pendingFlush{lines: inputs, bytes: 780}
+	}
+
+	merged := pendingFlush{lines: inputs, bytes: 780}
+	ingester.coalesce(&merged)
+	// Merging stops at the byte budget: the in-flight flush plus two
+	// merges reach 2340 bytes, the last flush is left for the next
+	// round, and everything pulled returned its queue budget.
+	if len(merged.lines) != 9 {
+		t.Fatalf("coalesced %d lines, want 9 (byte budget must stop the merge)", len(merged.lines))
+	}
+	if got := len(ingester.queue); got != 2 {
+		t.Fatalf("queue holds %d flushes after coalesce, want 2", got)
+	}
+	if got := ingester.queueBytes.Load(); got != 1560 {
+		t.Fatalf("queued budget is %d bytes after coalesce, want 1560", got)
+	}
+}

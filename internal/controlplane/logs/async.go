@@ -535,12 +535,19 @@ func (a *AsyncIngester) shedFlushLocked(flush pendingFlush) {
 
 // coalesce drains additional queued flushes into one ClickHouse
 // write, bounded so a single insert stays small.
+// coalesce merges queued flushes into the in-flight one while it
+// retries, up to the row and byte budgets. Pulled flushes return
+// their queue budget. The merged buffer stays under one budget plus
+// one admitted flush, so backlog drainage can never accumulate
+// maximum-size lines without bound.
 func (a *AsyncIngester) coalesce(flush *pendingFlush) {
-	for len(flush.lines) < maxIngestCoalescedLines {
+	for len(flush.lines) < maxIngestCoalescedLines && flush.bytes < a.queueByteLimit {
 		select {
 		case next := <-a.queue:
+			a.queueBytes.Add(-next.bytes)
 			flush.lines = append(flush.lines, next.lines...)
 			flush.gaps = append(flush.gaps, next.gaps...)
+			flush.bytes += next.bytes
 		default:
 			return
 		}
