@@ -107,8 +107,9 @@ type AsyncIngester struct {
 }
 
 type pendingFlush struct {
-	lines []LogLineInput
-	gaps  []GapInput
+	lines        []LogLineInput
+	gaps         []GapInput
+	corruptDrops map[string]logpipeline.CorruptDrop
 }
 
 // journalRecord is one durable queue entry: a slice of an accepted
@@ -555,6 +556,9 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		if err := a.backlog.AcknowledgeCorruptDrops(flush.corruptDrops); err != nil {
+			slog.Warn("acknowledge log journal corruption gaps", "error", err)
+		}
 		if err := a.backlog.Commit(cursor); err != nil {
 			slog.Warn("commit log ingest journal", "error", err)
 		}
@@ -622,33 +626,36 @@ func parseIngestKeyCounts(key string) map[string]uint64 {
 // spoolDropsToGaps converts corrupted journal records into gap rows:
 // accepted batches lost to corruption must surface in reads with
 // their service attribution.
-func (a *AsyncIngester) spoolDropsToGaps() []GapInput {
-	_, corrupt := a.backlog.DrainDrops()
+func (a *AsyncIngester) spoolDropsToGaps() ([]GapInput, map[string]logpipeline.CorruptDrop) {
+	corrupt := a.backlog.PendingCorruptDrops()
 	if len(corrupt) == 0 {
-		return nil
+		return nil, nil
 	}
 	now := time.Now().UTC()
 	var gaps []GapInput
-	for key, records := range corrupt {
+	reported := make(map[string]logpipeline.CorruptDrop)
+	for key, drop := range corrupt {
 		for service, count := range parseIngestKeyCounts(key) {
 			gaps = append(gaps, GapInput{
 				ServiceID:    service,
 				LogType:      normalizeLogType(""),
 				WindowStart:  now,
 				WindowEnd:    now,
-				DroppedCount: count * records,
+				DroppedCount: count * drop.Count,
 				Reason:       logpipeline.ReasonCorruptSpool,
 				Reporter:     reporterControlPlane,
+				SummaryID:    drop.ID + ":" + service,
 			})
+			reported[key] = drop
 		}
 	}
-	return gaps
+	return gaps, reported
 }
 
 func (a *AsyncIngester) nextFlush(ctx context.Context) (pendingFlush, logpipeline.Cursor, bool, error) {
 	// Corrupted journal records surface as gap rows before anything
 	// else ships.
-	drops := a.spoolDropsToGaps()
+	drops, corruptDrops := a.spoolDropsToGaps()
 	records, cursor, err := a.backlog.Read(ingestFlushRecords)
 	if err != nil {
 		return pendingFlush{}, cursor, false, err
@@ -662,14 +669,14 @@ func (a *AsyncIngester) nextFlush(ctx context.Context) (pendingFlush, logpipelin
 		if !hasOwed && len(drops) == 0 {
 			return pendingFlush{}, cursor, false, nil
 		}
-		owed := pendingFlush{gaps: drops}
+		owed := pendingFlush{gaps: drops, corruptDrops: corruptDrops}
 		a.attachOwed(&owed)
 		if len(owed.gaps) == 0 {
 			return pendingFlush{}, cursor, false, nil
 		}
 		return owed, cursor, true, nil
 	}
-	flush := pendingFlush{gaps: drops}
+	flush := pendingFlush{gaps: drops, corruptDrops: corruptDrops}
 	for _, record := range records {
 		var decoded journalRecord
 		if err := json.Unmarshal(record.Payload, &decoded); err != nil {
@@ -710,6 +717,9 @@ func (a *AsyncIngester) drainShutdown(ctx context.Context) {
 				"pending_records", a.backlog.Stats().PendingRecords,
 				"error", err)
 			return
+		}
+		if err := a.backlog.AcknowledgeCorruptDrops(flush.corruptDrops); err != nil {
+			slog.Warn("acknowledge log journal corruption gaps", "error", err)
 		}
 		if err := a.backlog.Commit(cursor); err != nil {
 			slog.Warn("commit log ingest journal", "error", err)
