@@ -476,12 +476,14 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 // is current against the binding's observed history. No work is created.
 var errSourceRevisionSuperseded = errors.New("source revision superseded by a newer observed revision")
 
-// errSourceRevisionPredecessorPending refuses a build request whose push
-// transition names a predecessor this binding has not observed yet: the
-// successor arrived before its predecessor's webhook was processed. It is
-// not stale — just early — so the work layer requeues it instead of
-// dropping it.
-var errSourceRevisionPredecessorPending = errors.New("source revision predecessor not observed yet")
+// errSourceRevisionChainUnproven refuses a build request whose push
+// transition chains to neither the binding's proven head nor a fetched
+// one. The predecessor may be unobserved (the successor's webhook beat
+// its predecessor's) or recorded without ever holding the head (a
+// recreated-branch push that lost to newer history): staleness is not
+// provable from that, so the tracked head must be reconciled instead of
+// dropping the push.
+var errSourceRevisionChainUnproven = errors.New("source revision push chain cannot prove currency")
 
 // supersedeQueuedBuildsTx retires still-queued builds so only the newest
 // request proceeds to build or deploy.
@@ -546,16 +548,11 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	}
 	if !transition.ProvesCurrent(revision.CommitSHA, head) {
 		if transition.PreviousCommit != "" {
-			if _, err := s.sourceStore.SourceRevisionByBindingAndCommitTx(ctx, tx, revision.SourceBindingID, transition.PreviousCommit); errors.Is(err, sql.ErrNoRows) {
-				// The push transition names a predecessor this binding
-				// has not observed yet: the successor's webhook beat its
-				// predecessor's. Not stale — just early. Requeue instead
-				// of dropping, so the build lands once the predecessor
-				// advances the head.
-				return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionPredecessorPending
-			} else if err != nil {
-				return BuildRunRecord{}, DeploymentRecord{}, false, err
-			}
+			// A push whose predecessor does not chain to the proven head
+			// cannot prove currency here at all — see
+			// errSourceRevisionChainUnproven. The coordinator reconciles
+			// the tracked head and queues the commit still current.
+			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionChainUnproven
 		}
 		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
 	}

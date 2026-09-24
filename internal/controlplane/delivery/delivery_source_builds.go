@@ -36,14 +36,14 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 		}
 		var dep DeploymentRecord
 		build, dep, reused, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook}, transition)
-		if errors.Is(err, errSourceRevisionSuperseded) || errors.Is(err, errSourceRevisionPredecessorPending) {
+		if errors.Is(err, errSourceRevisionSuperseded) || errors.Is(err, errSourceRevisionChainUnproven) {
 			// A late webhook or retried older revision creates no work:
 			// the binding has moved on to a newer commit. Deliberate
 			// redeploys of old images go through deployment actions.
-			// A request whose predecessor is simply not observed yet is
-			// not stale, just early: report that so the work layer
-			// requeues it instead of completing it.
-			result = source.QueuedBuild{Superseded: true, PendingPredecessor: errors.Is(err, errSourceRevisionPredecessorPending)}
+			// A push whose chain cannot prove currency is neither: report
+			// that so the coordinator reconciles the tracked head and only
+			// the commit still current builds.
+			result = source.QueuedBuild{Superseded: true, ChainUnproven: errors.Is(err, errSourceRevisionChainUnproven)}
 			return nil
 		}
 		if err != nil {
