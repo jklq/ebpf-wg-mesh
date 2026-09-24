@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"os"
@@ -12,6 +13,8 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/reconciliation"
+	"google.golang.org/protobuf/proto"
 
 	"go.etcd.io/bbolt"
 )
@@ -24,14 +27,21 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 		t.Fatal(err)
 	}
 	desired := testDesiredState(4, 12, "alloc-1")
-	desired.Services[0].RegistryUsername = "pull-user"
-	desired.Services[0].RegistryPassword = "pull-secret"
 	changed, err := store.acceptDesired("cluster-a", "test-session", desired)
 	if err != nil {
 		t.Fatalf("accept desired: %v", err)
 	}
 	if !changed {
 		t.Fatal("first accepted desired state was not marked changed")
+	}
+	creds := &agentv1.PullCredentialSet{
+		AgentId: "node-1", ClusterId: "cluster-a", SessionId: "test-session",
+		AuthorityEpoch: 4, AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		Credentials: []*agentv1.AllocationCredential{{AllocationId: "alloc-1", Username: "pull-user", Password: "pull-secret"}},
+	}
+	creds.CredentialsVersion = reconciliation.HashCredentials(creds.GetCredentials())
+	if _, err := store.acceptPullCredentials("cluster-a", "test-session", creds); err != nil {
+		t.Fatalf("accept credentials: %v", err)
 	}
 
 	restored, err := store.desiredState()
@@ -61,22 +71,10 @@ func TestLocalStateCommitsDesiredConfigurationAndCredentialsSeparately(t *testin
 		t.Fatalf("state database mode = %o, want 600", got)
 	}
 
+	// Wire checkpoints must not carry credentials; they arrive separately.
 	desired.Services[0].RegistryPassword = "renewed-secret"
-	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
-	if err != nil {
-		t.Fatalf("renew credential: %v", err)
-	}
-	if changed {
-		t.Fatal("credential renewal manufactured an allocation change")
-	}
-
-	desired.ReplicaAddresses = []string{"replica-a:9443"}
-	changed, err = store.acceptDesired("cluster-a", "test-session", desired)
-	if err != nil {
-		t.Fatalf("accept desired with replica metadata: %v", err)
-	}
-	if changed {
-		t.Fatal("replica metadata manufactured an allocation change")
+	if _, err := store.acceptDesired("cluster-a", "test-session", desired); err == nil {
+		t.Fatal("checkpoint with wire credentials was accepted")
 	}
 }
 
@@ -418,10 +416,12 @@ func TestLocalStateTracksDrainPhaseThroughObservation(t *testing.T) {
 }
 
 type supervisorTestRuntime struct {
-	mu        sync.Mutex
-	inventory []RuntimeResource
-	calls     int
-	cleanup   []bool
+	mu                sync.Mutex
+	inventory         []RuntimeResource
+	calls             int
+	cleanup           []bool
+	onReconcile       func(*agentv1.DesiredNodeState)
+	dashboardRestarts int
 }
 
 func (r *supervisorTestRuntime) DiscoverRuntimeResources(context.Context) ([]RuntimeResource, error) {
@@ -433,6 +433,9 @@ func (r *supervisorTestRuntime) ReconcileWithCleanup(_ context.Context, state *a
 	defer r.mu.Unlock()
 	r.calls++
 	r.cleanup = append(r.cleanup, cleanup)
+	if r.onReconcile != nil {
+		r.onReconcile(state)
+	}
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
 	for _, service := range state.GetServices() {
 		report.Services = append(report.Services, &agentv1.ServiceCondition{
@@ -446,6 +449,19 @@ func (r *supervisorTestRuntime) ReconcileWithCleanup(_ context.Context, state *a
 }
 
 func (*supervisorTestRuntime) Close() error { return nil }
+
+func (r *supervisorTestRuntime) RestartManagedDashboard(context.Context, *agentv1.DesiredNodeState) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dashboardRestarts++
+	return nil
+}
+
+func (r *supervisorTestRuntime) setOnReconcile(fn func(*agentv1.DesiredNodeState)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onReconcile = fn
+}
 
 func TestSupervisorRestoresAndReconcilesWithoutControlPlane(t *testing.T) {
 	t.Parallel()
@@ -572,5 +588,123 @@ func testDesiredState(epoch uint64, cursor int64, allocationIDs ...string) *agen
 			Spec: &platformv1.ResolvedServiceSpec{Image: "example.test/image@sha256:abc", Runtime: &platformv1.ServiceRuntime{}},
 		})
 	}
+	state.NodeConfigVersion = reconciliation.HashNodeConfig(state.GetNodeConfig())
 	return state
+}
+
+func TestOpenLocalStateMigratesFormat2StoresInPlace(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := openLocalStateStore(dir, "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.prepareStartup("cluster-a", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(4, 12, "alloc-1", "alloc-2")); err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the store the way the previous release wrote it; reopening must
+	// migrate instead of rejecting it and killing workload supervision.
+	if err := store.db.Update(func(tx *bbolt.Tx) error {
+		meta := tx.Bucket(localMetaBucket)
+		if err := putUint64(meta, formatVersionKey, 2); err != nil {
+			return err
+		}
+		for _, key := range [][]byte{nodeConfigVersionKey, credentialsVersionKey, replicasVersionKey} {
+			if err := meta.Delete(key); err != nil {
+				return err
+			}
+		}
+		return meta.ForEach(func(key, _ []byte) error {
+			if bytes.HasPrefix(key, []byte("state_ack")) {
+				return meta.Delete(key)
+			}
+			return nil
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Update(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket(localDesiredBucket)
+		var state agentv1.DesiredNodeState
+		if err := proto.Unmarshal(bucket.Get(desiredStateKey), &state); err != nil {
+			return err
+		}
+		state.NodeConfigVersion = ""
+		for i, j := 0, len(state.Services)-1; i < j; i, j = i+1, j-1 {
+			state.Services[i], state.Services[j] = state.Services[j], state.Services[i]
+		}
+		raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(&state)
+		if err != nil {
+			return err
+		}
+		return bucket.Put(desiredStateKey, raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := openLocalStateStore(dir, "node-1")
+	if err != nil {
+		t.Fatalf("reopen previous-release store: %v", err)
+	}
+	t.Cleanup(func() { _ = migrated.Close() })
+	if migrated.quarantined != "" {
+		t.Fatalf("store was quarantined at %s", migrated.quarantined)
+	}
+	if err := migrated.db.View(func(tx *bbolt.Tx) error {
+		if got := readUint64(tx.Bucket(localMetaBucket).Get(formatVersionKey)); got != localStateFormatVersion {
+			t.Fatalf("format marker = %d, want %d", got, localStateFormatVersion)
+		}
+		var state agentv1.DesiredNodeState
+		if err := proto.Unmarshal(tx.Bucket(localDesiredBucket).Get(desiredStateKey), &state); err != nil {
+			return err
+		}
+		if len(state.Services) != 2 || state.Services[0].GetAllocationId() != "alloc-1" || state.Services[1].GetAllocationId() != "alloc-2" {
+			t.Fatalf("accepted services not canonical after migration: %+v", state.Services)
+		}
+		wantVersion := reconciliation.HashNodeConfig(state.GetNodeConfig())
+		if state.GetNodeConfigVersion() != wantVersion {
+			t.Fatalf("stamped node config version = %q, want %q", state.GetNodeConfigVersion(), wantVersion)
+		}
+		if got := string(tx.Bucket(localMetaBucket).Get(nodeConfigVersionKey)); got != wantVersion {
+			t.Fatalf("persisted node config version = %q, want %q", got, wantVersion)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A differently ordered same-cursor repair checkpoint with the latest
+	// node config must be accepted instead of tripping equality.
+	repair := testDesiredState(4, 12, "alloc-2", "alloc-1")
+	repair.NodeConfig.WorkloadIpv4Subnet = "10.9.0.0/24"
+	repair.NodeConfigVersion = reconciliation.HashNodeConfig(repair.GetNodeConfig())
+	if _, err := migrated.acceptDesired("cluster-a", "test-session", repair); err != nil {
+		t.Fatalf("same-cursor repair after migration: %v", err)
+	}
+}
+
+func TestOpenLocalStateRejectsUnknownFormat(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	store, err := openLocalStateStore(dir, "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.Update(func(tx *bbolt.Tx) error {
+		return putUint64(tx.Bucket(localMetaBucket), formatVersionKey, 99)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := openLocalStateStore(dir, "node-1"); err == nil || !strings.Contains(err.Error(), "unsupported local state format 99") {
+		t.Fatalf("unknown format must be rejected loudly, got %v", err)
+	}
 }

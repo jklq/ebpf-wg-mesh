@@ -110,6 +110,7 @@ func New(deps Dependencies) *Delivery {
 	scheduler := deps.BuildScheduler.WithDefaults()
 	return &Delivery{
 		buildScheduler: scheduler,
+		allocSync:      newAllocSync(),
 		store: &persistence{
 			db:                       deps.DB,
 			mesh:                     deps.Mesh,

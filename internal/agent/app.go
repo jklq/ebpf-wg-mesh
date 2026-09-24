@@ -45,6 +45,9 @@ const (
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 	diskEnforcementInterval = 15 * time.Second
+	// reportRepublishQuietPeriod defers report publication to stream-quiet
+	// points; eager publication can emit a report predating the batch.
+	reportRepublishQuietPeriod = 250 * time.Millisecond
 )
 
 var (
@@ -212,6 +215,17 @@ func (a *App) runSession(ctx context.Context) error {
 	return fmt.Errorf("no reachable control-plane replica: %w", errors.Join(failures...))
 }
 
+// cumulativeAck acknowledges the whole accepted position. The authority epoch
+// is the session's confirmed epoch, not the store's: independent streams ack
+// before the first checkpoint or diff advances the accepted epoch.
+func cumulativeAck(agentID, sessionID string, summary localStateSummary, confirmedEpoch uint64) *agentv1.DesiredStateAcknowledgement {
+	return &agentv1.DesiredStateAcknowledgement{
+		AgentId: agentID, SessionId: sessionID,
+		AuthorityEpoch: confirmedEpoch, ReconciliationCursor: summary.ReconciliationCursor,
+		NodeConfigVersion: summary.NodeConfigVersion, CredentialsVersion: summary.CredentialsVersion, ReplicasVersion: summary.ReplicasVersion,
+	}
+}
+
 func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCredentials, certNotAfter time.Time, clusterID, addr string) error {
 	sessionCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
@@ -264,32 +278,36 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
 	}
-	handshakeExpire := time.AfterFunc(replicaRPCTimeout, func() {
-		cancel(errHandshakeTimeout)
-	})
-	defer handshakeExpire.Stop()
+	// An unchanged reconnect sends no server messages: after the handshake
+	// window, confirm authority optimistically and publish the observation.
+	handshakeTimer := time.NewTimer(replicaRPCTimeout)
+	defer handshakeTimer.Stop()
 	if err := send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
-			AgentId:                 a.cfg.Node.ID,
-			Name:                    a.cfg.Node.Name,
-			AdvertiseAddr:           a.cfg.Node.AdvertiseAddr,
-			CpuMillisCapacity:       a.cfg.Node.Resources.AdvertisedCPUMillis(),
-			MemoryMebibytesCapacity: a.cfg.Node.Resources.AdvertisedMemoryMebibytes(),
-			WireguardPublicKey:      publicKey,
-			WireguardListenPort:     int32(a.cfg.Mesh.WireGuard.ListenPort),
-			WireguardEndpoint:       a.cfg.Mesh.WireGuard.AdvertiseEndpoint,
-			RuntimeCapabilities:     []string{"containerd", "wireguard", "ebpf-policy"},
-			SoftwareVersion:         Version,
-			SessionId:               sessionID,
-			SessionIncarnation:      incarnation,
-			ClusterId:               clusterID,
-			LocalStoreId:            summary.LocalStoreID,
-			InitializationState:     string(summary.Initialization),
-			Allocations:             summary.Allocations,
-			AcceptedAuthorityEpoch:  summary.AuthorityEpoch,
-			ReconciliationCursor:    summary.ReconciliationCursor,
-			RecoveryMode:            summary.Initialization == initializationRecovery,
-			RuntimeResources:        runtimeResources,
+			AgentId:                           a.cfg.Node.ID,
+			Name:                              a.cfg.Node.Name,
+			AdvertiseAddr:                     a.cfg.Node.AdvertiseAddr,
+			CpuMillisCapacity:                 a.cfg.Node.Resources.AdvertisedCPUMillis(),
+			MemoryMebibytesCapacity:           a.cfg.Node.Resources.AdvertisedMemoryMebibytes(),
+			WireguardPublicKey:                publicKey,
+			WireguardListenPort:               int32(a.cfg.Mesh.WireGuard.ListenPort),
+			WireguardEndpoint:                 a.cfg.Mesh.WireGuard.AdvertiseEndpoint,
+			RuntimeCapabilities:               []string{"containerd", "wireguard", "ebpf-policy"},
+			SoftwareVersion:                   Version,
+			SessionId:                         sessionID,
+			SessionIncarnation:                incarnation,
+			ClusterId:                         clusterID,
+			LocalStoreId:                      summary.LocalStoreID,
+			InitializationState:               string(summary.Initialization),
+			Allocations:                       summary.Allocations,
+			AcceptedAuthorityEpoch:            summary.AuthorityEpoch,
+			ReconciliationCursor:              summary.ReconciliationCursor,
+			AcceptedNodeConfigVersion:         summary.NodeConfigVersion,
+			AcceptedCredentialsVersion:        summary.CredentialsVersion,
+			AcceptedReplicasVersion:           summary.ReplicasVersion,
+			AcceptedObservationOverlayVersion: summary.ObservationOverlayVersion,
+			RecoveryMode:                      summary.Initialization == initializationRecovery,
+			RuntimeResources:                  runtimeResources,
 		}},
 	}); err != nil {
 		if cause := handshakeCause(sessionCtx); cause != nil {
@@ -329,11 +347,25 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	}()
 	var lastSentSequence uint64
 	authorityConfirmed := false
+	// Newest authority epoch whose stamped payloads this session confirmed.
+	confirmedEpoch := summary.AuthorityEpoch
 	handshake := true
+	// batchOpen marks a server batch whose batch-end marker has not arrived.
+	batchOpen := false
 	sendCurrentReport := func() error {
 		report, err := a.supervisor.CurrentReport()
 		if err != nil || report == nil {
 			return err
+		}
+		summary, err := a.supervisor.Summary()
+		if err != nil {
+			return err
+		}
+		// Publish only reports at the accepted allocation position: mid-batch
+		// the persisted report trails the accepts and would be rejected
+		// against the control plane's final assignments.
+		if report.GetAuthorityEpoch() != summary.AuthorityEpoch || report.GetReconciliationCursor() != summary.ReconciliationCursor {
+			return nil
 		}
 		if report.GetObservationSequence() <= lastSentSequence {
 			return nil
@@ -345,6 +377,52 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		lastSentSequence = report.GetObservationSequence()
 		return nil
 	}
+	sendAck := func() error {
+		summary, err := a.supervisor.Summary()
+		if err != nil {
+			return err
+		}
+		return send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
+			Acknowledgement: cumulativeAck(a.cfg.Node.ID, sessionID, summary, confirmedEpoch),
+		}})
+	}
+	confirmAuthority := func(epoch uint64) {
+		if epoch > confirmedEpoch {
+			confirmedEpoch = epoch
+		}
+		if !authorityConfirmed {
+			a.sessionEstablishedAt = time.Now()
+		}
+		authorityConfirmed = true
+	}
+	// The managed dashboard identity must be in place before reconciliation
+	// lets the runtime start the dashboard, for diffs as for checkpoints.
+	reconcileAcceptedAllocations := func() error {
+		desired, err := a.stateStore.desiredState()
+		if err != nil {
+			return fmt.Errorf("load desired state for dashboard identity: %w", err)
+		}
+		if err := a.refreshManagedDashboardIdentity(sessionCtx, client, desired); err != nil {
+			a.supervisor.ReconcileAcceptedDesired()
+			return err
+		}
+		a.supervisor.ReconcileAcceptedDesired()
+		return nil
+	}
+	// Reports publish at stream-quiet points, never inside an open batch.
+	reportRepublish := make(chan struct{}, 1)
+	var republishTimer *time.Timer
+	scheduleReportRepublish := func() {
+		if republishTimer != nil {
+			republishTimer.Stop()
+		}
+		republishTimer = time.AfterFunc(reportRepublishQuietPeriod, func() {
+			select {
+			case reportRepublish <- struct{}{}:
+			default:
+			}
+		})
+	}
 	for {
 		select {
 		case <-sessionCtx.Done():
@@ -352,13 +430,20 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				return cause
 			}
 			return nil
+		case <-handshakeTimer.C:
+			if handshake {
+				handshake = false
+				confirmAuthority(summary.AuthorityEpoch)
+				slog.Info("no sync batch; assuming unchanged reconnect", "agent_id", a.cfg.Node.ID)
+				if err := sendCurrentReport(); err != nil {
+					return err
+				}
+			}
 		case <-a.supervisor.ReportNotifications():
 			if handshake || !authorityConfirmed {
 				continue
 			}
-			if err := sendCurrentReport(); err != nil {
-				return err
-			}
+			scheduleReportRepublish()
 		case <-credentialTicker.C:
 			if handshake {
 				continue
@@ -376,10 +461,25 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				}
 				slog.Warn("refresh managed dashboard identity", "agent_id", a.cfg.Node.ID, "error", err)
 			}
+		case <-reportRepublish:
+			if handshake || !authorityConfirmed {
+				continue
+			}
+			if batchOpen {
+				continue
+			}
+			if err := sendCurrentReport(); err != nil {
+				return err
+			}
 		case result := <-received:
 			if handshake {
 				handshake = false
-				handshakeExpire.Stop()
+				if !handshakeTimer.Stop() {
+					select {
+					case <-handshakeTimer.C:
+					default:
+					}
+				}
 			}
 			if result.err != nil {
 				if cause := handshakeCause(sessionCtx); cause != nil {
@@ -393,38 +493,97 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if result.message == nil {
 				continue
 			}
-			state := result.message.GetDesiredState()
-			if state == nil {
+			if end := result.message.GetBatchEnd(); end != nil {
+				if end.GetSessionId() != sessionID {
+					return fmt.Errorf("batch end for foreign session %q", end.GetSessionId())
+				}
+				batchOpen = false
+				scheduleReportRepublish()
 				continue
 			}
-			if err := a.stateStore.setReplicaAddresses(state.GetReplicaAddresses()); err != nil {
-				return fmt.Errorf("persist control-plane replica addresses: %w", err)
-			}
-			if _, err := a.supervisor.AcceptDesired(clusterID, sessionID, state); err != nil {
-				return fmt.Errorf("accept desired state: %w", err)
-			}
-			if err := send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Acknowledgement{
-				Acknowledgement: &agentv1.DesiredStateAcknowledgement{AgentId: a.cfg.Node.ID, SessionId: sessionID,
-					AuthorityEpoch: state.GetAuthorityEpoch(), ReconciliationCursor: state.GetReconciliationCursor()},
-			}}); err != nil {
-				return err
-			}
-			if err := a.refreshManagedDashboardIdentity(sessionCtx, client, state); err != nil {
+			// Every state message opens or extends a batch; publication waits
+			// for the batch-end marker.
+			batchOpen = true
+			switch payload := result.message.Payload.(type) {
+			case *agentv1.AgentServerMessage_DesiredState:
+				state := payload.DesiredState
+				if state == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptDesired(clusterID, sessionID, state); err != nil {
+					return fmt.Errorf("accept desired state: %w", err)
+				}
+				confirmAuthority(state.GetAuthorityEpoch())
+				if err := sendAck(); err != nil {
+					return err
+				}
+				if err := reconcileAcceptedAllocations(); err != nil {
+					return err
+				}
+				slog.Info("accepted checkpoint", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
+				scheduleReportRepublish()
+			case *agentv1.AgentServerMessage_AllocationDiff:
+				diff := payload.AllocationDiff
+				if diff == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptDiff(clusterID, sessionID, diff); err != nil {
+					return fmt.Errorf("accept allocation diff: %w", err)
+				}
+				confirmAuthority(diff.GetAuthorityEpoch())
+				if err := sendAck(); err != nil {
+					return err
+				}
+				if err := reconcileAcceptedAllocations(); err != nil {
+					return err
+				}
+				slog.Info("accepted diff", "agent_id", a.cfg.Node.ID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
+				scheduleReportRepublish()
+			case *agentv1.AgentServerMessage_NodeConfigUpdate:
+				update := payload.NodeConfigUpdate
+				if update == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptNodeConfig(clusterID, sessionID, update); err != nil {
+					return fmt.Errorf("accept node config: %w", err)
+				}
+				confirmAuthority(update.GetAuthorityEpoch())
+				if err := sendAck(); err != nil {
+					return err
+				}
 				a.supervisor.ReconcileAcceptedDesired()
-				return err
-			}
-			a.supervisor.ReconcileAcceptedDesired()
-			if !authorityConfirmed {
-				a.sessionEstablishedAt = time.Now()
-			}
-			authorityConfirmed = true
-			slog.Info("accepted desired state", "agent_id", a.cfg.Node.ID, "authority_epoch", state.GetAuthorityEpoch(), "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-			// Always publish the current observation after (re)connecting, even when
-			// the accepted desired configuration is unchanged. The control plane ages
-			// observations, so a reconnect that skips this leaves allocations stale
-			// until a runtime change happens to produce a fresh report.
-			if err := sendCurrentReport(); err != nil {
-				return err
+				scheduleReportRepublish()
+			case *agentv1.AgentServerMessage_PullCredentials:
+				creds := payload.PullCredentials
+				if creds == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptCredentials(clusterID, sessionID, creds); err != nil {
+					return fmt.Errorf("accept pull credentials: %w", err)
+				}
+				confirmAuthority(creds.GetAuthorityEpoch())
+				if err := sendAck(); err != nil {
+					return err
+				}
+				// Credentials may unblock image pulls; reconcile to retry.
+				a.supervisor.ReconcileAcceptedDesired()
+				scheduleReportRepublish()
+			case *agentv1.AgentServerMessage_ReplicaEndpoints:
+				replicas := payload.ReplicaEndpoints
+				if replicas == nil {
+					continue
+				}
+				if _, err := a.supervisor.AcceptReplicas(clusterID, sessionID, replicas); err != nil {
+					return fmt.Errorf("accept replica endpoints: %w", err)
+				}
+				confirmAuthority(replicas.GetAuthorityEpoch())
+				if err := sendAck(); err != nil {
+					return err
+				}
+				a.supervisor.ReconcileAcceptedDesired()
+				scheduleReportRepublish()
+			default:
+				continue
 			}
 		}
 	}

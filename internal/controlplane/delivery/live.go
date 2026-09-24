@@ -36,7 +36,15 @@ type AgentSession struct {
 	OfferedCursor  int64
 	AcceptedEpoch  int64
 	AcceptedCursor int64
-	Reconciled     bool
+	// Offered versions accumulate per session: a cumulative ack may lag a
+	// later grant and must still validate against the batch it acknowledges.
+	OfferedNodeConfig   []string
+	AcceptedNodeConfig  string
+	OfferedCredentials  []string
+	AcceptedCredentials string
+	OfferedReplicas     []string
+	AcceptedReplicas    string
+	Reconciled          bool
 }
 
 type liveEval struct {
@@ -161,12 +169,18 @@ func (d *Delivery) BecomeLive(ctx context.Context) error {
 	if d == nil || d.live == nil {
 		return nil
 	}
+	if d.allocSync != nil {
+		d.allocSync.reset()
+	}
 	return d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch)
 }
 
 func (d *Delivery) ResignLive() {
 	if d != nil && d.live != nil {
 		d.live.resign()
+	}
+	if d != nil && d.allocSync != nil {
+		d.allocSync.reset()
 	}
 }
 
@@ -181,13 +195,21 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	}
 	owned := false
 	if !d.live.Serving() {
+		if d.allocSync != nil {
+			d.allocSync.reset()
+		}
 		if err := d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch); err != nil {
 			return err
 		}
 		owned = true
 	}
 	if owned {
-		defer d.live.resign()
+		defer func() {
+			d.live.resign()
+			if d.allocSync != nil {
+				d.allocSync.reset()
+			}
+		}()
 	}
 
 	ticker := time.NewTicker(time.Second)
@@ -381,6 +403,24 @@ func (l *Live) BeginSession(agentID, sessionID string, inventory []string, assig
 	l.resetTimerLocked(agentID)
 	l.touchLiveLocked()
 	return nil
+}
+
+// InitSessionVersions seeds the accepted per-stream versions from hello;
+// offered stays empty until the first grant in this session.
+func (l *Live) InitSessionVersions(agentID, sessionID string, accepted SyncVersions) {
+	if l == nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	session, ok := l.sessions[strings.TrimSpace(agentID)]
+	if !ok || session.SessionID != strings.TrimSpace(sessionID) {
+		return
+	}
+	session.AcceptedCursor = accepted.Cursor
+	session.AcceptedNodeConfig = accepted.NodeConfig
+	session.AcceptedCredentials = accepted.Credentials
+	session.AcceptedReplicas = accepted.Replicas
 }
 
 func inventoryReconciled(assigned, inventory []string) bool {
@@ -651,7 +691,30 @@ func (l *Live) Admitted(agentID string) bool {
 	return exists && session.Reachable && session.Ready && session.Reconciled
 }
 
-func (l *Live) Grant(agentID, sessionID string, epoch uint64, cursor int64) error {
+type SyncVersions struct {
+	Cursor      int64
+	NodeConfig  string
+	Credentials string
+	Replicas    string
+}
+
+// offerHistoryLimit bounds each offered-version history: a cumulative ack can
+// lag several in-flight batches and must still match a version offered in
+// this session; a larger lag fails validation and reconnects.
+const offerHistoryLimit = 64
+
+func appendOffered(history []string, version string) []string {
+	if version == "" {
+		return history
+	}
+	history = append(history, version)
+	if len(history) > offerHistoryLimit {
+		history = history[len(history)-offerHistoryLimit:]
+	}
+	return history
+}
+
+func (l *Live) Grant(agentID, sessionID string, epoch uint64, offered SyncVersions) error {
 	if l == nil {
 		return ErrNotLiveOwner
 	}
@@ -665,11 +728,14 @@ func (l *Live) Grant(agentID, sessionID string, epoch uint64, cursor int64) erro
 		return ErrStaleAgentSession
 	}
 	session.OfferedEpoch = int64(epoch)
-	session.OfferedCursor = cursor
+	session.OfferedCursor = offered.Cursor
+	session.OfferedNodeConfig = appendOffered(session.OfferedNodeConfig, offered.NodeConfig)
+	session.OfferedCredentials = appendOffered(session.OfferedCredentials, offered.Credentials)
+	session.OfferedReplicas = appendOffered(session.OfferedReplicas, offered.Replicas)
 	return nil
 }
 
-func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, cursor int64) error {
+func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, accepted SyncVersions) error {
 	if l == nil {
 		return ErrNotLiveOwner
 	}
@@ -679,14 +745,35 @@ func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, cursor int64
 	if !ok || session.SessionID != sessionID {
 		return ErrStaleAgentSession
 	}
+	cursor := accepted.Cursor
 	if cursor < 0 || session.OfferedEpoch != int64(epoch) || session.OfferedCursor < cursor {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
 	if session.AcceptedEpoch > int64(epoch) || (session.AcceptedEpoch == int64(epoch) && session.AcceptedCursor > cursor) {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
+	// Hash versions are unordered: an ack must match a version offered in
+	// this session or repeat the accepted one (idempotent duplicate).
+	if accepted.NodeConfig != "" && accepted.NodeConfig != session.AcceptedNodeConfig && !slices.Contains(session.OfferedNodeConfig, accepted.NodeConfig) {
+		return fmt.Errorf("stale node-config acknowledgement")
+	}
+	if accepted.Credentials != "" && accepted.Credentials != session.AcceptedCredentials && !slices.Contains(session.OfferedCredentials, accepted.Credentials) {
+		return fmt.Errorf("stale credentials acknowledgement")
+	}
+	if accepted.Replicas != "" && accepted.Replicas != session.AcceptedReplicas && !slices.Contains(session.OfferedReplicas, accepted.Replicas) {
+		return fmt.Errorf("stale replicas acknowledgement")
+	}
 	session.AcceptedEpoch = int64(epoch)
 	session.AcceptedCursor = cursor
+	if accepted.NodeConfig != "" {
+		session.AcceptedNodeConfig = accepted.NodeConfig
+	}
+	if accepted.Credentials != "" {
+		session.AcceptedCredentials = accepted.Credentials
+	}
+	if accepted.Replicas != "" {
+		session.AcceptedReplicas = accepted.Replicas
+	}
 	return nil
 }
 

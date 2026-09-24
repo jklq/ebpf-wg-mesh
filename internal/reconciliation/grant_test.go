@@ -1,10 +1,12 @@
 package reconciliation
 
 import (
-	agentv1 "ebof-wg-mesh/api/proto/agentv1"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"testing"
 	"time"
+
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestPartitionedAgentRejectsFormerAuthorityWithoutSeeingSuccessor(t *testing.T) {
@@ -33,5 +35,66 @@ func TestPartitionedAgentRejectsFormerAuthorityWithoutSeeingSuccessor(t *testing
 	command.AuthorityNotAfter = timestamppb.New(deadline.Add(time.Hour))
 	if err := ValidateCommand(command, "former", issued); err == nil {
 		t.Fatal("unbounded grant accepted")
+	}
+}
+
+func TestHashObservationOverlay(t *testing.T) {
+	t.Parallel()
+	overlayService := func(id, hostname, ipv4 string) *agentv1.DesiredService {
+		return &agentv1.DesiredService{
+			AllocationId: id,
+			InternalHosts: []*agentv1.InternalHost{
+				{Hostname: hostname, Ipv4: ipv4},
+			},
+		}
+	}
+	base := HashObservationOverlay([]*agentv1.DesiredService{
+		overlayService("alloc-a", "web-a.mesh.internal", "10.0.0.1"),
+		overlayService("alloc-b", "web-b.mesh.internal", "10.0.0.2"),
+	})
+	// Desired configuration is a set: service and host order is not semantic.
+	reordered := HashObservationOverlay([]*agentv1.DesiredService{
+		{
+			AllocationId: "alloc-b",
+			InternalHosts: []*agentv1.InternalHost{
+				{Hostname: "web-b.mesh.internal", Ipv6: "fd00::2"},
+				{Hostname: "web-b.mesh.internal", Ipv4: "10.0.0.2"},
+			},
+		},
+		overlayService("alloc-a", "web-a.mesh.internal", "10.0.0.1"),
+	})
+	if base == reordered {
+		t.Fatal("added internal host did not change the overlay version")
+	}
+	same := HashObservationOverlay([]*agentv1.DesiredService{
+		{
+			AllocationId:  "alloc-b",
+			InternalHosts: []*agentv1.InternalHost{{Hostname: "web-b.mesh.internal", Ipv4: "10.0.0.2"}},
+		},
+		overlayService("alloc-a", "web-a.mesh.internal", "10.0.0.1"),
+	})
+	if base != same {
+		t.Fatal("wire order changed the overlay version")
+	}
+	// Health-gated withdrawal of a host is drift.
+	if base == HashObservationOverlay([]*agentv1.DesiredService{
+		overlayService("alloc-a", "web-a.mesh.internal", "10.0.0.1"),
+	}) {
+		t.Fatal("removed service did not change the overlay version")
+	}
+	// Restart observations are part of the overlay.
+	withRestart := HashObservationOverlay([]*agentv1.DesiredService{
+		overlayService("alloc-a", "web-a.mesh.internal", "10.0.0.1"),
+		{
+			AllocationId:       "alloc-b",
+			InternalHosts:      []*agentv1.InternalHost{{Hostname: "web-b.mesh.internal", Ipv4: "10.0.0.2"}},
+			RestartObservation: &platformv1.RestartObservation{RestartCount: 3},
+		},
+	})
+	if base == withRestart {
+		t.Fatal("restart observation did not change the overlay version")
+	}
+	if HashObservationOverlay(nil) != HashObservationOverlay(nil) {
+		t.Fatal("empty overlay is not deterministic")
 	}
 }

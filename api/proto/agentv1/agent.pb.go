@@ -132,18 +132,28 @@ type AgentHello struct {
 	SessionId               string                 `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	// Last durable control-plane position accepted by the agent. These fields
 	// describe local inventory; the connection does not own that state.
-	AcceptedAuthorityEpoch uint64              `protobuf:"varint,11,opt,name=accepted_authority_epoch,json=acceptedAuthorityEpoch,proto3" json:"accepted_authority_epoch,omitempty"`
-	ReconciliationCursor   int64               `protobuf:"varint,12,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
-	RecoveryMode           bool                `protobuf:"varint,13,opt,name=recovery_mode,json=recoveryMode,proto3" json:"recovery_mode,omitempty"`
-	RuntimeResources       []*RuntimeResource  `protobuf:"bytes,14,rep,name=runtime_resources,json=runtimeResources,proto3" json:"runtime_resources,omitempty"`
-	ClusterId              string              `protobuf:"bytes,15,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	LocalStoreId           string              `protobuf:"bytes,16,opt,name=local_store_id,json=localStoreId,proto3" json:"local_store_id,omitempty"`
-	InitializationState    string              `protobuf:"bytes,17,opt,name=initialization_state,json=initializationState,proto3" json:"initialization_state,omitempty"`
-	Allocations            []*ServiceCondition `protobuf:"bytes,18,rep,name=allocations,proto3" json:"allocations,omitempty"`
-	SessionIncarnation     uint64              `protobuf:"varint,19,opt,name=session_incarnation,json=sessionIncarnation,proto3" json:"session_incarnation,omitempty"`
-	WireguardEndpoint      string              `protobuf:"bytes,20,opt,name=wireguard_endpoint,json=wireguardEndpoint,proto3" json:"wireguard_endpoint,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// reconciliation_cursor is the accepted per-node allocation revision
+	// (monotonic). The other accepted_*_version fields are content-hash
+	// versions of accepted content; empty means none accepted. The observation
+	// overlay version covers the observation-derived fields of accepted
+	// services (internal hosts, restart observations), which can drift at the
+	// same reconciliation cursor and are repaired with a checkpoint.
+	AcceptedAuthorityEpoch            uint64              `protobuf:"varint,11,opt,name=accepted_authority_epoch,json=acceptedAuthorityEpoch,proto3" json:"accepted_authority_epoch,omitempty"`
+	ReconciliationCursor              int64               `protobuf:"varint,12,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
+	RecoveryMode                      bool                `protobuf:"varint,13,opt,name=recovery_mode,json=recoveryMode,proto3" json:"recovery_mode,omitempty"`
+	RuntimeResources                  []*RuntimeResource  `protobuf:"bytes,14,rep,name=runtime_resources,json=runtimeResources,proto3" json:"runtime_resources,omitempty"`
+	ClusterId                         string              `protobuf:"bytes,15,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	LocalStoreId                      string              `protobuf:"bytes,16,opt,name=local_store_id,json=localStoreId,proto3" json:"local_store_id,omitempty"`
+	InitializationState               string              `protobuf:"bytes,17,opt,name=initialization_state,json=initializationState,proto3" json:"initialization_state,omitempty"`
+	Allocations                       []*ServiceCondition `protobuf:"bytes,18,rep,name=allocations,proto3" json:"allocations,omitempty"`
+	SessionIncarnation                uint64              `protobuf:"varint,19,opt,name=session_incarnation,json=sessionIncarnation,proto3" json:"session_incarnation,omitempty"`
+	WireguardEndpoint                 string              `protobuf:"bytes,20,opt,name=wireguard_endpoint,json=wireguardEndpoint,proto3" json:"wireguard_endpoint,omitempty"`
+	AcceptedNodeConfigVersion         string              `protobuf:"bytes,21,opt,name=accepted_node_config_version,json=acceptedNodeConfigVersion,proto3" json:"accepted_node_config_version,omitempty"`
+	AcceptedCredentialsVersion        string              `protobuf:"bytes,22,opt,name=accepted_credentials_version,json=acceptedCredentialsVersion,proto3" json:"accepted_credentials_version,omitempty"`
+	AcceptedReplicasVersion           string              `protobuf:"bytes,23,opt,name=accepted_replicas_version,json=acceptedReplicasVersion,proto3" json:"accepted_replicas_version,omitempty"`
+	AcceptedObservationOverlayVersion string              `protobuf:"bytes,24,opt,name=accepted_observation_overlay_version,json=acceptedObservationOverlayVersion,proto3" json:"accepted_observation_overlay_version,omitempty"`
+	unknownFields                     protoimpl.UnknownFields
+	sizeCache                         protoimpl.SizeCache
 }
 
 func (x *AgentHello) Reset() {
@@ -312,6 +322,34 @@ func (x *AgentHello) GetSessionIncarnation() uint64 {
 func (x *AgentHello) GetWireguardEndpoint() string {
 	if x != nil {
 		return x.WireguardEndpoint
+	}
+	return ""
+}
+
+func (x *AgentHello) GetAcceptedNodeConfigVersion() string {
+	if x != nil {
+		return x.AcceptedNodeConfigVersion
+	}
+	return ""
+}
+
+func (x *AgentHello) GetAcceptedCredentialsVersion() string {
+	if x != nil {
+		return x.AcceptedCredentialsVersion
+	}
+	return ""
+}
+
+func (x *AgentHello) GetAcceptedReplicasVersion() string {
+	if x != nil {
+		return x.AcceptedReplicasVersion
+	}
+	return ""
+}
+
+func (x *AgentHello) GetAcceptedObservationOverlayVersion() string {
+	if x != nil {
+		return x.AcceptedObservationOverlayVersion
 	}
 	return ""
 }
@@ -972,18 +1010,21 @@ type DesiredService struct {
 	VolumeId                 string                          `protobuf:"bytes,8,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	DesiredRolloutGeneration int64                           `protobuf:"varint,9,opt,name=desired_rollout_generation,json=desiredRolloutGeneration,proto3" json:"desired_rollout_generation,omitempty"`
 	NetworkIdentity          uint32                          `protobuf:"varint,10,opt,name=network_identity,json=networkIdentity,proto3" json:"network_identity,omitempty"`
-	RegistryUsername         string                          `protobuf:"bytes,11,opt,name=registry_username,json=registryUsername,proto3" json:"registry_username,omitempty"`
-	RegistryPassword         string                          `protobuf:"bytes,12,opt,name=registry_password,json=registryPassword,proto3" json:"registry_password,omitempty"`
-	InternalHostname         string                          `protobuf:"bytes,13,opt,name=internal_hostname,json=internalHostname,proto3" json:"internal_hostname,omitempty"`
-	InternalHosts            []*InternalHost                 `protobuf:"bytes,14,rep,name=internal_hosts,json=internalHosts,proto3" json:"internal_hosts,omitempty"`
-	RestartObservation       *platformv1.RestartObservation  `protobuf:"bytes,15,opt,name=restart_observation,json=restartObservation,proto3" json:"restart_observation,omitempty"`
-	OperatorRestartNonce     int64                           `protobuf:"varint,16,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
-	Intent                   AllocationIntent                `protobuf:"varint,17,opt,name=intent,proto3,enum=agent.v1.AllocationIntent" json:"intent,omitempty"`
-	DrainDeadline            *timestamppb.Timestamp          `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
-	PrivateIpv4              string                          `protobuf:"bytes,19,opt,name=private_ipv4,json=privateIpv4,proto3" json:"private_ipv4,omitempty"`
-	DeploymentId             string                          `protobuf:"bytes,20,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	unknownFields            protoimpl.UnknownFields
-	sizeCache                protoimpl.SizeCache
+	// Runtime-only: the agent merges stored pull credentials here for the
+	// runtime. Wire checkpoints and diffs must leave these empty; credentials
+	// arrive in PullCredentialSet.
+	RegistryUsername     string                         `protobuf:"bytes,11,opt,name=registry_username,json=registryUsername,proto3" json:"registry_username,omitempty"`
+	RegistryPassword     string                         `protobuf:"bytes,12,opt,name=registry_password,json=registryPassword,proto3" json:"registry_password,omitempty"`
+	InternalHostname     string                         `protobuf:"bytes,13,opt,name=internal_hostname,json=internalHostname,proto3" json:"internal_hostname,omitempty"`
+	InternalHosts        []*InternalHost                `protobuf:"bytes,14,rep,name=internal_hosts,json=internalHosts,proto3" json:"internal_hosts,omitempty"`
+	RestartObservation   *platformv1.RestartObservation `protobuf:"bytes,15,opt,name=restart_observation,json=restartObservation,proto3" json:"restart_observation,omitempty"`
+	OperatorRestartNonce int64                          `protobuf:"varint,16,opt,name=operator_restart_nonce,json=operatorRestartNonce,proto3" json:"operator_restart_nonce,omitempty"`
+	Intent               AllocationIntent               `protobuf:"varint,17,opt,name=intent,proto3,enum=agent.v1.AllocationIntent" json:"intent,omitempty"`
+	DrainDeadline        *timestamppb.Timestamp         `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
+	PrivateIpv4          string                         `protobuf:"bytes,19,opt,name=private_ipv4,json=privateIpv4,proto3" json:"private_ipv4,omitempty"`
+	DeploymentId         string                         `protobuf:"bytes,20,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *DesiredService) Reset() {
@@ -1217,7 +1258,10 @@ func (x *InternalHost) GetIpv4() string {
 }
 
 type DesiredNodeState struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Checkpoint: full allocation+volume set plus node config for this agent.
+	// Services must not carry registry credentials on the wire; credentials
+	// arrive in PullCredentialSet. Replica addresses arrive in ReplicaEndpoints.
 	AgentId              string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	ReconciliationCursor int64                  `protobuf:"varint,2,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
 	Volumes              []*DesiredVolume       `protobuf:"bytes,3,rep,name=volumes,proto3" json:"volumes,omitempty"`
@@ -1230,7 +1274,7 @@ type DesiredNodeState struct {
 	SessionId            string                 `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	AuthorityNotAfter    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
 	ClusterId            string                 `protobuf:"bytes,12,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	ReplicaAddresses     []string               `protobuf:"bytes,13,rep,name=replica_addresses,json=replicaAddresses,proto3" json:"replica_addresses,omitempty"`
+	NodeConfigVersion    string                 `protobuf:"bytes,14,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1349,28 +1393,516 @@ func (x *DesiredNodeState) GetClusterId() string {
 	return ""
 }
 
-func (x *DesiredNodeState) GetReplicaAddresses() []string {
+func (x *DesiredNodeState) GetNodeConfigVersion() string {
+	if x != nil {
+		return x.NodeConfigVersion
+	}
+	return ""
+}
+
+// Bounded incremental change from base_revision to target_revision.
+// Omission is not removal; only explicit stops remove. Agent-scoped:
+// agent_id/cluster must match, and authority fields fence acceptance.
+type AllocationDiff struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	AgentId           string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	BaseRevision      int64                  `protobuf:"varint,2,opt,name=base_revision,json=baseRevision,proto3" json:"base_revision,omitempty"`
+	TargetRevision    int64                  `protobuf:"varint,3,opt,name=target_revision,json=targetRevision,proto3" json:"target_revision,omitempty"`
+	Starts            []*DesiredService      `protobuf:"bytes,4,rep,name=starts,proto3" json:"starts,omitempty"`
+	Updates           []*DesiredService      `protobuf:"bytes,5,rep,name=updates,proto3" json:"updates,omitempty"`
+	Stops             []string               `protobuf:"bytes,6,rep,name=stops,proto3" json:"stops,omitempty"`
+	VolumeStarts      []*DesiredVolume       `protobuf:"bytes,7,rep,name=volume_starts,json=volumeStarts,proto3" json:"volume_starts,omitempty"`
+	VolumeStops       []string               `protobuf:"bytes,8,rep,name=volume_stops,json=volumeStops,proto3" json:"volume_stops,omitempty"`
+	GeneratedAt       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
+	AuthorityEpoch    uint64                 `protobuf:"varint,10,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId         string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId         string                 `protobuf:"bytes,13,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *AllocationDiff) Reset() {
+	*x = AllocationDiff{}
+	mi := &file_agent_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AllocationDiff) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AllocationDiff) ProtoMessage() {}
+
+func (x *AllocationDiff) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AllocationDiff.ProtoReflect.Descriptor instead.
+func (*AllocationDiff) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *AllocationDiff) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *AllocationDiff) GetBaseRevision() int64 {
+	if x != nil {
+		return x.BaseRevision
+	}
+	return 0
+}
+
+func (x *AllocationDiff) GetTargetRevision() int64 {
+	if x != nil {
+		return x.TargetRevision
+	}
+	return 0
+}
+
+func (x *AllocationDiff) GetStarts() []*DesiredService {
+	if x != nil {
+		return x.Starts
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetUpdates() []*DesiredService {
+	if x != nil {
+		return x.Updates
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetStops() []string {
+	if x != nil {
+		return x.Stops
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetVolumeStarts() []*DesiredVolume {
+	if x != nil {
+		return x.VolumeStarts
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetVolumeStops() []string {
+	if x != nil {
+		return x.VolumeStops
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetGeneratedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.GeneratedAt
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetAuthorityEpoch() uint64 {
+	if x != nil {
+		return x.AuthorityEpoch
+	}
+	return 0
+}
+
+func (x *AllocationDiff) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *AllocationDiff) GetAuthorityNotAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AuthorityNotAfter
+	}
+	return nil
+}
+
+func (x *AllocationDiff) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+type AllocationCredential struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AllocationId  string                 `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	Username      string                 `protobuf:"bytes,2,opt,name=username,proto3" json:"username,omitempty"`
+	Password      string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AllocationCredential) Reset() {
+	*x = AllocationCredential{}
+	mi := &file_agent_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AllocationCredential) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AllocationCredential) ProtoMessage() {}
+
+func (x *AllocationCredential) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AllocationCredential.ProtoReflect.Descriptor instead.
+func (*AllocationCredential) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *AllocationCredential) GetAllocationId() string {
+	if x != nil {
+		return x.AllocationId
+	}
+	return ""
+}
+
+func (x *AllocationCredential) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *AllocationCredential) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+// Independently versioned pull credentials for this agent's allocations.
+// Version is a content hash; empty credentials means none required.
+type PullCredentialSet struct {
+	state              protoimpl.MessageState  `protogen:"open.v1"`
+	AgentId            string                  `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	CredentialsVersion string                  `protobuf:"bytes,2,opt,name=credentials_version,json=credentialsVersion,proto3" json:"credentials_version,omitempty"`
+	Credentials        []*AllocationCredential `protobuf:"bytes,3,rep,name=credentials,proto3" json:"credentials,omitempty"`
+	AuthorityEpoch     uint64                  `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId          string                  `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter  *timestamppb.Timestamp  `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId          string                  `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *PullCredentialSet) Reset() {
+	*x = PullCredentialSet{}
+	mi := &file_agent_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PullCredentialSet) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PullCredentialSet) ProtoMessage() {}
+
+func (x *PullCredentialSet) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PullCredentialSet.ProtoReflect.Descriptor instead.
+func (*PullCredentialSet) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PullCredentialSet) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *PullCredentialSet) GetCredentialsVersion() string {
+	if x != nil {
+		return x.CredentialsVersion
+	}
+	return ""
+}
+
+func (x *PullCredentialSet) GetCredentials() []*AllocationCredential {
+	if x != nil {
+		return x.Credentials
+	}
+	return nil
+}
+
+func (x *PullCredentialSet) GetAuthorityEpoch() uint64 {
+	if x != nil {
+		return x.AuthorityEpoch
+	}
+	return 0
+}
+
+func (x *PullCredentialSet) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *PullCredentialSet) GetAuthorityNotAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AuthorityNotAfter
+	}
+	return nil
+}
+
+func (x *PullCredentialSet) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+// Independently versioned node config (peers, identities, subnets).
+// 2.11/2.12 will split this further; 2.10 provides the versioned seam.
+type NodeConfigUpdate struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	AgentId           string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	NodeConfigVersion string                 `protobuf:"bytes,2,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
+	NodeConfig        *AssignedNodeConfig    `protobuf:"bytes,3,opt,name=node_config,json=nodeConfig,proto3" json:"node_config,omitempty"`
+	AuthorityEpoch    uint64                 `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId         string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId         string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *NodeConfigUpdate) Reset() {
+	*x = NodeConfigUpdate{}
+	mi := &file_agent_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeConfigUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeConfigUpdate) ProtoMessage() {}
+
+func (x *NodeConfigUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeConfigUpdate.ProtoReflect.Descriptor instead.
+func (*NodeConfigUpdate) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *NodeConfigUpdate) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *NodeConfigUpdate) GetNodeConfigVersion() string {
+	if x != nil {
+		return x.NodeConfigVersion
+	}
+	return ""
+}
+
+func (x *NodeConfigUpdate) GetNodeConfig() *AssignedNodeConfig {
+	if x != nil {
+		return x.NodeConfig
+	}
+	return nil
+}
+
+func (x *NodeConfigUpdate) GetAuthorityEpoch() uint64 {
+	if x != nil {
+		return x.AuthorityEpoch
+	}
+	return 0
+}
+
+func (x *NodeConfigUpdate) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *NodeConfigUpdate) GetAuthorityNotAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AuthorityNotAfter
+	}
+	return nil
+}
+
+func (x *NodeConfigUpdate) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+// Independently versioned control-plane replica discovery.
+type ReplicaEndpoints struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	AgentId           string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	ReplicasVersion   string                 `protobuf:"bytes,2,opt,name=replicas_version,json=replicasVersion,proto3" json:"replicas_version,omitempty"`
+	ReplicaAddresses  []string               `protobuf:"bytes,3,rep,name=replica_addresses,json=replicaAddresses,proto3" json:"replica_addresses,omitempty"`
+	AuthorityEpoch    uint64                 `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId         string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId         string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *ReplicaEndpoints) Reset() {
+	*x = ReplicaEndpoints{}
+	mi := &file_agent_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReplicaEndpoints) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReplicaEndpoints) ProtoMessage() {}
+
+func (x *ReplicaEndpoints) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReplicaEndpoints.ProtoReflect.Descriptor instead.
+func (*ReplicaEndpoints) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ReplicaEndpoints) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ReplicaEndpoints) GetReplicasVersion() string {
+	if x != nil {
+		return x.ReplicasVersion
+	}
+	return ""
+}
+
+func (x *ReplicaEndpoints) GetReplicaAddresses() []string {
 	if x != nil {
 		return x.ReplicaAddresses
 	}
 	return nil
 }
 
-// Sent only after the desired snapshot and its cursor are durably committed.
-// Does not imply runtime success or release of any allocation or volume.
+func (x *ReplicaEndpoints) GetAuthorityEpoch() uint64 {
+	if x != nil {
+		return x.AuthorityEpoch
+	}
+	return 0
+}
+
+func (x *ReplicaEndpoints) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *ReplicaEndpoints) GetAuthorityNotAfter() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AuthorityNotAfter
+	}
+	return nil
+}
+
+func (x *ReplicaEndpoints) GetClusterId() string {
+	if x != nil {
+		return x.ClusterId
+	}
+	return ""
+}
+
+// Sent only after the referenced state and its cursor/versions are durably
+// committed. Does not imply runtime success or release of any allocation
+// or volume. Carries the cumulative accepted position across all streams.
 type DesiredStateAcknowledgement struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	AgentId              string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	SessionId            string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	AuthorityEpoch       uint64                 `protobuf:"varint,3,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
 	ReconciliationCursor int64                  `protobuf:"varint,4,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
+	NodeConfigVersion    string                 `protobuf:"bytes,5,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
+	CredentialsVersion   string                 `protobuf:"bytes,6,opt,name=credentials_version,json=credentialsVersion,proto3" json:"credentials_version,omitempty"`
+	ReplicasVersion      string                 `protobuf:"bytes,7,opt,name=replicas_version,json=replicasVersion,proto3" json:"replicas_version,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
 
 func (x *DesiredStateAcknowledgement) Reset() {
 	*x = DesiredStateAcknowledgement{}
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1382,7 +1914,7 @@ func (x *DesiredStateAcknowledgement) String() string {
 func (*DesiredStateAcknowledgement) ProtoMessage() {}
 
 func (x *DesiredStateAcknowledgement) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1395,7 +1927,7 @@ func (x *DesiredStateAcknowledgement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredStateAcknowledgement.ProtoReflect.Descriptor instead.
 func (*DesiredStateAcknowledgement) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{13}
+	return file_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *DesiredStateAcknowledgement) GetAgentId() string {
@@ -1426,6 +1958,27 @@ func (x *DesiredStateAcknowledgement) GetReconciliationCursor() int64 {
 	return 0
 }
 
+func (x *DesiredStateAcknowledgement) GetNodeConfigVersion() string {
+	if x != nil {
+		return x.NodeConfigVersion
+	}
+	return ""
+}
+
+func (x *DesiredStateAcknowledgement) GetCredentialsVersion() string {
+	if x != nil {
+		return x.CredentialsVersion
+	}
+	return ""
+}
+
+func (x *DesiredStateAcknowledgement) GetReplicasVersion() string {
+	if x != nil {
+		return x.ReplicasVersion
+	}
+	return ""
+}
+
 type VolumeCondition struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      string                 `protobuf:"bytes,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
@@ -1437,7 +1990,7 @@ type VolumeCondition struct {
 
 func (x *VolumeCondition) Reset() {
 	*x = VolumeCondition{}
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1449,7 +2002,7 @@ func (x *VolumeCondition) String() string {
 func (*VolumeCondition) ProtoMessage() {}
 
 func (x *VolumeCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1462,7 +2015,7 @@ func (x *VolumeCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeCondition.ProtoReflect.Descriptor instead.
 func (*VolumeCondition) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{14}
+	return file_agent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *VolumeCondition) GetVolumeId() string {
@@ -1508,7 +2061,7 @@ type ServiceCondition struct {
 
 func (x *ServiceCondition) Reset() {
 	*x = ServiceCondition{}
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1520,7 +2073,7 @@ func (x *ServiceCondition) String() string {
 func (*ServiceCondition) ProtoMessage() {}
 
 func (x *ServiceCondition) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1533,7 +2086,7 @@ func (x *ServiceCondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServiceCondition.ProtoReflect.Descriptor instead.
 func (*ServiceCondition) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{15}
+	return file_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ServiceCondition) GetAllocationId() string {
@@ -1650,7 +2203,7 @@ type StatusReport struct {
 
 func (x *StatusReport) Reset() {
 	*x = StatusReport{}
-	mi := &file_agent_proto_msgTypes[16]
+	mi := &file_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1662,7 +2215,7 @@ func (x *StatusReport) String() string {
 func (*StatusReport) ProtoMessage() {}
 
 func (x *StatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[16]
+	mi := &file_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1675,7 +2228,7 @@ func (x *StatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusReport.ProtoReflect.Descriptor instead.
 func (*StatusReport) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{16}
+	return file_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *StatusReport) GetAgentId() string {
@@ -1753,7 +2306,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_agent_proto_msgTypes[17]
+	mi := &file_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1765,7 +2318,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[17]
+	mi := &file_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1778,7 +2331,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{17}
+	return file_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *LogEntry) GetObservedAt() *timestamppb.Timestamp {
@@ -1868,7 +2421,7 @@ type LogBatch struct {
 
 func (x *LogBatch) Reset() {
 	*x = LogBatch{}
-	mi := &file_agent_proto_msgTypes[18]
+	mi := &file_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1880,7 +2433,7 @@ func (x *LogBatch) String() string {
 func (*LogBatch) ProtoMessage() {}
 
 func (x *LogBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[18]
+	mi := &file_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1893,7 +2446,7 @@ func (x *LogBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
 func (*LogBatch) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{18}
+	return file_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *LogBatch) GetAgentId() string {
@@ -1926,7 +2479,7 @@ type AgentClientMessage struct {
 
 func (x *AgentClientMessage) Reset() {
 	*x = AgentClientMessage{}
-	mi := &file_agent_proto_msgTypes[19]
+	mi := &file_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1938,7 +2491,7 @@ func (x *AgentClientMessage) String() string {
 func (*AgentClientMessage) ProtoMessage() {}
 
 func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[19]
+	mi := &file_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1951,7 +2504,7 @@ func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentClientMessage.ProtoReflect.Descriptor instead.
 func (*AgentClientMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{19}
+	return file_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *AgentClientMessage) GetPayload() isAgentClientMessage_Payload {
@@ -2040,11 +2593,64 @@ func (*AgentClientMessage_LogBatch) isAgentClientMessage_Payload() {}
 
 func (*AgentClientMessage_Acknowledgement) isAgentClientMessage_Payload() {}
 
+// Terminates one server batch on the Sync stream. A batch is applied as a
+// unit: the agent withholds status publication until this marker, so an
+// intermediate inventory is never validated against the batch's final
+// assignments. Carries no state and is not acknowledged.
+type SyncBatchEnd struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SyncBatchEnd) Reset() {
+	*x = SyncBatchEnd{}
+	mi := &file_agent_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncBatchEnd) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncBatchEnd) ProtoMessage() {}
+
+func (x *SyncBatchEnd) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncBatchEnd.ProtoReflect.Descriptor instead.
+func (*SyncBatchEnd) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *SyncBatchEnd) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
 type AgentServerMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
 	//
 	//	*AgentServerMessage_DesiredState
+	//	*AgentServerMessage_AllocationDiff
+	//	*AgentServerMessage_NodeConfigUpdate
+	//	*AgentServerMessage_PullCredentials
+	//	*AgentServerMessage_ReplicaEndpoints
+	//	*AgentServerMessage_BatchEnd
 	Payload       isAgentServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2052,7 +2658,7 @@ type AgentServerMessage struct {
 
 func (x *AgentServerMessage) Reset() {
 	*x = AgentServerMessage{}
-	mi := &file_agent_proto_msgTypes[20]
+	mi := &file_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2064,7 +2670,7 @@ func (x *AgentServerMessage) String() string {
 func (*AgentServerMessage) ProtoMessage() {}
 
 func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[20]
+	mi := &file_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2077,7 +2683,7 @@ func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentServerMessage.ProtoReflect.Descriptor instead.
 func (*AgentServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{20}
+	return file_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *AgentServerMessage) GetPayload() isAgentServerMessage_Payload {
@@ -2096,6 +2702,51 @@ func (x *AgentServerMessage) GetDesiredState() *DesiredNodeState {
 	return nil
 }
 
+func (x *AgentServerMessage) GetAllocationDiff() *AllocationDiff {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_AllocationDiff); ok {
+			return x.AllocationDiff
+		}
+	}
+	return nil
+}
+
+func (x *AgentServerMessage) GetNodeConfigUpdate() *NodeConfigUpdate {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_NodeConfigUpdate); ok {
+			return x.NodeConfigUpdate
+		}
+	}
+	return nil
+}
+
+func (x *AgentServerMessage) GetPullCredentials() *PullCredentialSet {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_PullCredentials); ok {
+			return x.PullCredentials
+		}
+	}
+	return nil
+}
+
+func (x *AgentServerMessage) GetReplicaEndpoints() *ReplicaEndpoints {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_ReplicaEndpoints); ok {
+			return x.ReplicaEndpoints
+		}
+	}
+	return nil
+}
+
+func (x *AgentServerMessage) GetBatchEnd() *SyncBatchEnd {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_BatchEnd); ok {
+			return x.BatchEnd
+		}
+	}
+	return nil
+}
+
 type isAgentServerMessage_Payload interface {
 	isAgentServerMessage_Payload()
 }
@@ -2104,13 +2755,43 @@ type AgentServerMessage_DesiredState struct {
 	DesiredState *DesiredNodeState `protobuf:"bytes,1,opt,name=desired_state,json=desiredState,proto3,oneof"`
 }
 
+type AgentServerMessage_AllocationDiff struct {
+	AllocationDiff *AllocationDiff `protobuf:"bytes,2,opt,name=allocation_diff,json=allocationDiff,proto3,oneof"`
+}
+
+type AgentServerMessage_NodeConfigUpdate struct {
+	NodeConfigUpdate *NodeConfigUpdate `protobuf:"bytes,3,opt,name=node_config_update,json=nodeConfigUpdate,proto3,oneof"`
+}
+
+type AgentServerMessage_PullCredentials struct {
+	PullCredentials *PullCredentialSet `protobuf:"bytes,4,opt,name=pull_credentials,json=pullCredentials,proto3,oneof"`
+}
+
+type AgentServerMessage_ReplicaEndpoints struct {
+	ReplicaEndpoints *ReplicaEndpoints `protobuf:"bytes,5,opt,name=replica_endpoints,json=replicaEndpoints,proto3,oneof"`
+}
+
+type AgentServerMessage_BatchEnd struct {
+	BatchEnd *SyncBatchEnd `protobuf:"bytes,6,opt,name=batch_end,json=batchEnd,proto3,oneof"`
+}
+
 func (*AgentServerMessage_DesiredState) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_AllocationDiff) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_NodeConfigUpdate) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_PullCredentials) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_ReplicaEndpoints) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_BatchEnd) isAgentServerMessage_Payload() {}
 
 var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xa3\a\n" +
+	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xb3\t\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
@@ -2135,7 +2816,11 @@ const file_agent_proto_rawDesc = "" +
 	"\x14initialization_state\x18\x11 \x01(\tR\x13initializationState\x12<\n" +
 	"\vallocations\x18\x12 \x03(\v2\x1a.agent.v1.ServiceConditionR\vallocations\x12/\n" +
 	"\x13session_incarnation\x18\x13 \x01(\x04R\x12sessionIncarnation\x12-\n" +
-	"\x12wireguard_endpoint\x18\x14 \x01(\tR\x11wireguardEndpoint\"r\n" +
+	"\x12wireguard_endpoint\x18\x14 \x01(\tR\x11wireguardEndpoint\x12?\n" +
+	"\x1caccepted_node_config_version\x18\x15 \x01(\tR\x19acceptedNodeConfigVersion\x12@\n" +
+	"\x1caccepted_credentials_version\x18\x16 \x01(\tR\x1aacceptedCredentialsVersion\x12:\n" +
+	"\x19accepted_replicas_version\x18\x17 \x01(\tR\x17acceptedReplicasVersion\x12O\n" +
+	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\"r\n" +
 	"\x0fRuntimeResource\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -2216,7 +2901,7 @@ const file_agent_proto_rawDesc = "" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x12\n" +
-	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xf4\x04\n" +
+	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xf7\x04\n" +
 	"\x10DesiredNodeState\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\x15reconciliation_cursor\x18\x02 \x01(\x03R\x14reconciliationCursor\x121\n" +
@@ -2233,14 +2918,69 @@ const file_agent_proto_rawDesc = "" +
 	" \x01(\tR\tsessionId\x12J\n" +
 	"\x13authority_not_after\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
-	"cluster_id\x18\f \x01(\tR\tclusterId\x12+\n" +
-	"\x11replica_addresses\x18\r \x03(\tR\x10replicaAddresses\"\xb5\x01\n" +
+	"cluster_id\x18\f \x01(\tR\tclusterId\x12.\n" +
+	"\x13node_config_version\x18\x0e \x01(\tR\x11nodeConfigVersion\"\xc8\x04\n" +
+	"\x0eAllocationDiff\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12#\n" +
+	"\rbase_revision\x18\x02 \x01(\x03R\fbaseRevision\x12'\n" +
+	"\x0ftarget_revision\x18\x03 \x01(\x03R\x0etargetRevision\x120\n" +
+	"\x06starts\x18\x04 \x03(\v2\x18.agent.v1.DesiredServiceR\x06starts\x122\n" +
+	"\aupdates\x18\x05 \x03(\v2\x18.agent.v1.DesiredServiceR\aupdates\x12\x14\n" +
+	"\x05stops\x18\x06 \x03(\tR\x05stops\x12<\n" +
+	"\rvolume_starts\x18\a \x03(\v2\x17.agent.v1.DesiredVolumeR\fvolumeStarts\x12!\n" +
+	"\fvolume_stops\x18\b \x03(\tR\vvolumeStops\x12=\n" +
+	"\fgenerated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\vgeneratedAt\x12'\n" +
+	"\x0fauthority_epoch\x18\n" +
+	" \x01(\x04R\x0eauthorityEpoch\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\v \x01(\tR\tsessionId\x12J\n" +
+	"\x13authority_not_after\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\r \x01(\tR\tclusterId\"s\n" +
+	"\x14AllocationCredential\x12#\n" +
+	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1a\n" +
+	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x03 \x01(\tR\bpassword\"\xd4\x02\n" +
+	"\x11PullCredentialSet\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12/\n" +
+	"\x13credentials_version\x18\x02 \x01(\tR\x12credentialsVersion\x12@\n" +
+	"\vcredentials\x18\x03 \x03(\v2\x1e.agent.v1.AllocationCredentialR\vcredentials\x12'\n" +
+	"\x0fauthority_epoch\x18\x04 \x01(\x04R\x0eauthorityEpoch\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12J\n" +
+	"\x13authority_not_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\a \x01(\tR\tclusterId\"\xcf\x02\n" +
+	"\x10NodeConfigUpdate\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12.\n" +
+	"\x13node_config_version\x18\x02 \x01(\tR\x11nodeConfigVersion\x12=\n" +
+	"\vnode_config\x18\x03 \x01(\v2\x1c.agent.v1.AssignedNodeConfigR\n" +
+	"nodeConfig\x12'\n" +
+	"\x0fauthority_epoch\x18\x04 \x01(\x04R\x0eauthorityEpoch\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12J\n" +
+	"\x13authority_not_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\a \x01(\tR\tclusterId\"\xb8\x02\n" +
+	"\x10ReplicaEndpoints\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12)\n" +
+	"\x10replicas_version\x18\x02 \x01(\tR\x0freplicasVersion\x12+\n" +
+	"\x11replica_addresses\x18\x03 \x03(\tR\x10replicaAddresses\x12'\n" +
+	"\x0fauthority_epoch\x18\x04 \x01(\x04R\x0eauthorityEpoch\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x05 \x01(\tR\tsessionId\x12J\n" +
+	"\x13authority_not_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
+	"\n" +
+	"cluster_id\x18\a \x01(\tR\tclusterId\"\xc1\x02\n" +
 	"\x1bDesiredStateAcknowledgement\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12'\n" +
 	"\x0fauthority_epoch\x18\x03 \x01(\x04R\x0eauthorityEpoch\x123\n" +
-	"\x15reconciliation_cursor\x18\x04 \x01(\x03R\x14reconciliationCursor\"^\n" +
+	"\x15reconciliation_cursor\x18\x04 \x01(\x03R\x14reconciliationCursor\x12.\n" +
+	"\x13node_config_version\x18\x05 \x01(\tR\x11nodeConfigVersion\x12/\n" +
+	"\x13credentials_version\x18\x06 \x01(\tR\x12credentialsVersion\x12)\n" +
+	"\x10replicas_version\x18\a \x01(\tR\x0freplicasVersion\"^\n" +
 	"\x0fVolumeCondition\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
@@ -2296,9 +3036,17 @@ const file_agent_proto_rawDesc = "" +
 	"\rstatus_report\x18\x03 \x01(\v2\x16.agent.v1.StatusReportH\x00R\fstatusReport\x121\n" +
 	"\tlog_batch\x18\x04 \x01(\v2\x12.agent.v1.LogBatchH\x00R\blogBatch\x12Q\n" +
 	"\x0facknowledgement\x18\x05 \x01(\v2%.agent.v1.DesiredStateAcknowledgementH\x00R\x0facknowledgementB\t\n" +
-	"\apayload\"b\n" +
+	"\apayload\"-\n" +
+	"\fSyncBatchEnd\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\xbf\x03\n" +
 	"\x12AgentServerMessage\x12A\n" +
-	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredStateB\t\n" +
+	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredState\x12C\n" +
+	"\x0fallocation_diff\x18\x02 \x01(\v2\x18.agent.v1.AllocationDiffH\x00R\x0eallocationDiff\x12J\n" +
+	"\x12node_config_update\x18\x03 \x01(\v2\x1a.agent.v1.NodeConfigUpdateH\x00R\x10nodeConfigUpdate\x12H\n" +
+	"\x10pull_credentials\x18\x04 \x01(\v2\x1b.agent.v1.PullCredentialSetH\x00R\x0fpullCredentials\x12I\n" +
+	"\x11replica_endpoints\x18\x05 \x01(\v2\x1a.agent.v1.ReplicaEndpointsH\x00R\x10replicaEndpoints\x125\n" +
+	"\tbatch_end\x18\x06 \x01(\v2\x16.agent.v1.SyncBatchEndH\x00R\bbatchEndB\t\n" +
 	"\apayload*m\n" +
 	"\x10AllocationIntent\x12!\n" +
 	"\x1dALLOCATION_INTENT_UNSPECIFIED\x10\x00\x12\x19\n" +
@@ -2325,7 +3073,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_agent_proto_goTypes = []any{
 	(AllocationIntent)(0),                      // 0: agent.v1.AllocationIntent
 	(SnapshotScope)(0),                         // 1: agent.v1.SnapshotScope
@@ -2342,59 +3090,80 @@ var file_agent_proto_goTypes = []any{
 	(*DesiredService)(nil),                     // 12: agent.v1.DesiredService
 	(*InternalHost)(nil),                       // 13: agent.v1.InternalHost
 	(*DesiredNodeState)(nil),                   // 14: agent.v1.DesiredNodeState
-	(*DesiredStateAcknowledgement)(nil),        // 15: agent.v1.DesiredStateAcknowledgement
-	(*VolumeCondition)(nil),                    // 16: agent.v1.VolumeCondition
-	(*ServiceCondition)(nil),                   // 17: agent.v1.ServiceCondition
-	(*StatusReport)(nil),                       // 18: agent.v1.StatusReport
-	(*LogEntry)(nil),                           // 19: agent.v1.LogEntry
-	(*LogBatch)(nil),                           // 20: agent.v1.LogBatch
-	(*AgentClientMessage)(nil),                 // 21: agent.v1.AgentClientMessage
-	(*AgentServerMessage)(nil),                 // 22: agent.v1.AgentServerMessage
-	(*timestamppb.Timestamp)(nil),              // 23: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil),     // 24: platform.v1.ResolvedServiceSpec
-	(*platformv1.RestartObservation)(nil),      // 25: platform.v1.RestartObservation
-	(platformv1.ServiceLogType)(0),             // 26: platform.v1.ServiceLogType
+	(*AllocationDiff)(nil),                     // 15: agent.v1.AllocationDiff
+	(*AllocationCredential)(nil),               // 16: agent.v1.AllocationCredential
+	(*PullCredentialSet)(nil),                  // 17: agent.v1.PullCredentialSet
+	(*NodeConfigUpdate)(nil),                   // 18: agent.v1.NodeConfigUpdate
+	(*ReplicaEndpoints)(nil),                   // 19: agent.v1.ReplicaEndpoints
+	(*DesiredStateAcknowledgement)(nil),        // 20: agent.v1.DesiredStateAcknowledgement
+	(*VolumeCondition)(nil),                    // 21: agent.v1.VolumeCondition
+	(*ServiceCondition)(nil),                   // 22: agent.v1.ServiceCondition
+	(*StatusReport)(nil),                       // 23: agent.v1.StatusReport
+	(*LogEntry)(nil),                           // 24: agent.v1.LogEntry
+	(*LogBatch)(nil),                           // 25: agent.v1.LogBatch
+	(*AgentClientMessage)(nil),                 // 26: agent.v1.AgentClientMessage
+	(*SyncBatchEnd)(nil),                       // 27: agent.v1.SyncBatchEnd
+	(*AgentServerMessage)(nil),                 // 28: agent.v1.AgentServerMessage
+	(*timestamppb.Timestamp)(nil),              // 29: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil),     // 30: platform.v1.ResolvedServiceSpec
+	(*platformv1.RestartObservation)(nil),      // 31: platform.v1.RestartObservation
+	(platformv1.ServiceLogType)(0),             // 32: platform.v1.ServiceLogType
 }
 var file_agent_proto_depIdxs = []int32{
 	3,  // 0: agent.v1.AgentHello.runtime_resources:type_name -> agent.v1.RuntimeResource
-	17, // 1: agent.v1.AgentHello.allocations:type_name -> agent.v1.ServiceCondition
-	23, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	22, // 1: agent.v1.AgentHello.allocations:type_name -> agent.v1.ServiceCondition
+	29, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
 	7,  // 3: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
 	9,  // 4: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
-	24, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	30, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
 	13, // 6: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
-	25, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
+	31, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
 	0,  // 8: agent.v1.DesiredService.intent:type_name -> agent.v1.AllocationIntent
-	23, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
+	29, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
 	11, // 10: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
 	12, // 11: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	23, // 12: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	29, // 12: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
 	8,  // 13: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
 	1,  // 14: agent.v1.DesiredNodeState.scope:type_name -> agent.v1.SnapshotScope
-	23, // 15: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
-	25, // 16: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
-	16, // 17: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	17, // 18: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	23, // 19: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	26, // 20: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	19, // 21: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	2,  // 22: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	10, // 23: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	18, // 24: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	20, // 25: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	15, // 26: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
-	14, // 27: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	4,  // 28: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	6,  // 29: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	21, // 30: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	5,  // 31: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	5,  // 32: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	22, // 33: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	31, // [31:34] is the sub-list for method output_type
-	28, // [28:31] is the sub-list for method input_type
-	28, // [28:28] is the sub-list for extension type_name
-	28, // [28:28] is the sub-list for extension extendee
-	0,  // [0:28] is the sub-list for field type_name
+	29, // 15: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
+	12, // 16: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
+	12, // 17: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
+	11, // 18: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
+	29, // 19: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
+	29, // 20: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
+	16, // 21: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
+	29, // 22: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
+	8,  // 23: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
+	29, // 24: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
+	29, // 25: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
+	31, // 26: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	21, // 27: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	22, // 28: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	29, // 29: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	32, // 30: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	24, // 31: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	2,  // 32: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	10, // 33: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	23, // 34: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	25, // 35: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	20, // 36: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
+	14, // 37: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	15, // 38: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
+	18, // 39: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
+	17, // 40: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
+	19, // 41: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
+	27, // 42: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
+	4,  // 43: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	6,  // 44: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	26, // 45: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	5,  // 46: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	5,  // 47: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	28, // 48: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	46, // [46:49] is the sub-list for method output_type
+	43, // [43:46] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -2402,15 +3171,20 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
-	file_agent_proto_msgTypes[19].OneofWrappers = []any{
+	file_agent_proto_msgTypes[24].OneofWrappers = []any{
 		(*AgentClientMessage_Hello)(nil),
 		(*AgentClientMessage_Heartbeat)(nil),
 		(*AgentClientMessage_StatusReport)(nil),
 		(*AgentClientMessage_LogBatch)(nil),
 		(*AgentClientMessage_Acknowledgement)(nil),
 	}
-	file_agent_proto_msgTypes[20].OneofWrappers = []any{
+	file_agent_proto_msgTypes[26].OneofWrappers = []any{
 		(*AgentServerMessage_DesiredState)(nil),
+		(*AgentServerMessage_AllocationDiff)(nil),
+		(*AgentServerMessage_NodeConfigUpdate)(nil),
+		(*AgentServerMessage_PullCredentials)(nil),
+		(*AgentServerMessage_ReplicaEndpoints)(nil),
+		(*AgentServerMessage_BatchEnd)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2418,7 +3192,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   21,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

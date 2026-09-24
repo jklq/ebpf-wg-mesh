@@ -30,10 +30,8 @@ func TestGrantExpiryDuringPersistenceCannotChangeAcceptedState(t *testing.T) {
 			accepted, candidate := testDesiredState(1, 1), testDesiredState(1, 2)
 			if removal {
 				accepted = testDesiredState(1, 1, "allocation")
-				accepted.Services[0].RegistryPassword = "accepted-secret"
 			} else {
 				candidate = testDesiredState(1, 2, "allocation")
-				candidate.Services[0].RegistryPassword = "unaccepted-secret"
 			}
 			if _, err := store.acceptDesired("cluster-a", "test-session", accepted); err != nil {
 				t.Fatal(err)
