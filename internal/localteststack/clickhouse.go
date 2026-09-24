@@ -41,8 +41,10 @@ func StartManagedClickHouse(ctx context.Context, cfg LocalClickHouseConfig, runn
 	if err := removeContainer(context.Background(), runner, cfg.ContainerName); err != nil {
 		return nil, fmt.Errorf("remove existing local clickhouse container %s: %w", cfg.ContainerName, err)
 	}
+	// No --rm: tests simulate backend outages by stopping and restarting
+	// this container; Close removes it explicitly.
 	args := []string{
-		"run", "--detach", "--rm",
+		"run", "--detach",
 		"--name", cfg.ContainerName,
 		"--memory", "768m", "--memory-swap", "768m",
 		"--ulimit", "nofile=262144:262144",
@@ -59,6 +61,24 @@ func StartManagedClickHouse(ctx context.Context, cfg LocalClickHouseConfig, runn
 		return nil, err
 	}
 	return managed, nil
+}
+
+// Stop halts the server without removing the container, simulating a
+// backend outage. Start brings the same container back.
+func (m *ManagedClickHouse) Stop(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	_, err := m.runner.Run(ctx, "stop", m.cfg.ContainerName)
+	return err
+}
+
+func (m *ManagedClickHouse) Start(ctx context.Context) error {
+	if m == nil {
+		return nil
+	}
+	_, err := m.runner.Run(ctx, "start", m.cfg.ContainerName)
+	return err
 }
 
 func (m *ManagedClickHouse) URL() string {
