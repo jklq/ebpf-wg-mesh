@@ -412,6 +412,16 @@ func TestLimiterRecyclesKeysPastTheCap(t *testing.T) {
 	}
 }
 
+func TestLimiterRecyclesEmptyKey(t *testing.T) {
+	l := newLimiter(1, 1, 1, time.Now)
+	if !l.Allow("") || !l.Allow("next") {
+		t.Fatal("a full table with an empty key must accept the next key")
+	}
+	if l.Keys() != 1 {
+		t.Fatalf("tracked %d keys, want 1", l.Keys())
+	}
+}
+
 func TestCursorRoundTrip(t *testing.T) {
 	t.Parallel()
 	ts := time.Date(2026, 9, 1, 12, 30, 0, 123, time.UTC)
@@ -730,9 +740,18 @@ func TestSpoolCompactionKeepsUnshippedRecordsAfterCorruption(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "cursor.json"), []byte(cursor), 0o600); err != nil {
 		t.Fatalf("write cursor: %v", err)
 	}
-	s, err := OpenSpool(SpoolConfig{Dir: dir})
+	s, err := OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true})
 	if err != nil {
 		t.Fatalf("OpenSpool: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close after compaction: %v", err)
+	}
+	// A second recovery must use the remapped durable cursor, even
+	// when no shipping commit followed the first recovery.
+	s, err = OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true})
+	if err != nil {
+		t.Fatalf("second OpenSpool: %v", err)
 	}
 	defer s.Close()
 	recs, _, err := s.Read(10)
@@ -883,6 +902,39 @@ func TestSpoolEvictionCountsSurviveReopen(t *testing.T) {
 	evicted, _ := reopened.DrainDrops()
 	if evicted["alloc"] == 0 {
 		t.Fatalf("eviction counts lost across reopen: %+v", evicted)
+	}
+}
+
+func TestSpoolKeepsRecordsWhenDropCountsCannotBeSaved(t *testing.T) {
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 1024, MaxSegmentBytes: 512})
+	if err := s.Append("alloc", "id", time.Now().UTC(), []byte("pending")); err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	// A directory at the sidecar path makes the atomic rename fail.
+	if err := os.Mkdir(s.dropsPath(), 0o700); err != nil {
+		t.Fatalf("block drops sidecar: %v", err)
+	}
+	s.mu.Lock()
+	evicted := s.evictOneLocked()
+	s.mu.Unlock()
+	if evicted {
+		t.Fatal("evicted a record without durable drop counts")
+	}
+	if stats := s.Stats(); stats.Records != 1 || stats.DroppedRecords != 0 {
+		t.Fatalf("failed eviction changed records or drops: %+v", stats)
+	}
+	if err := os.Remove(s.dropsPath()); err != nil {
+		t.Fatalf("unblock drops sidecar: %v", err)
+	}
+	s.mu.Lock()
+	evicted = s.evictOneLocked()
+	s.mu.Unlock()
+	if !evicted {
+		t.Fatal("eviction did not resume after sidecar recovered")
+	}
+	drops, _ := s.DrainDrops()
+	if drops["alloc"] != 1 {
+		t.Fatalf("eviction counted %v, want one record", drops)
 	}
 }
 
