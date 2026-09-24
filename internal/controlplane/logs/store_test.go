@@ -132,6 +132,10 @@ func TestConvertAgentBatchTrimsOversizedBatches(t *testing.T) {
 	if gaps[0].ServiceID != "svc-1" || gaps[0].AllocationID != "alloc-1" {
 		t.Fatalf("trimmed tail gap lost its attribution: %+v", gaps[0])
 	}
+	_, retryGaps := convertAgentBatch("agent-1", &agentv1.LogBatch{AgentId: "agent-1", Entries: entries})
+	if gaps[0].SummaryID == "" || retryGaps[0].SummaryID != gaps[0].SummaryID {
+		t.Fatalf("trimmed tail gap changed identity on retry: %q vs %q", gaps[0].SummaryID, retryGaps[0].SummaryID)
+	}
 }
 
 func TestConvertAgentBatchTrimmedTailAggregatesPerService(t *testing.T) {
