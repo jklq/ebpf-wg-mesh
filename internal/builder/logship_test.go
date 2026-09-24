@@ -155,13 +155,48 @@ func TestBuildLogReporterOrphansOnLeaseLoss(t *testing.T) {
 	if !reporter.orphaned.Load() {
 		t.Fatal("lease loss must orphan the reporter")
 	}
-	if _, err := os.Stat(spoolDir); !os.IsNotExist(err) {
-		t.Fatalf("orphaned attempt spool must be removed: %v", err)
+	drops, err := logpipeline.LoadDrops(spoolDir)
+	if err != nil {
+		t.Fatalf("LoadDrops: %v", err)
+	}
+	var dropped uint64
+	for _, drop := range drops {
+		dropped += drop.GetDroppedCount()
+	}
+	if dropped == 0 {
+		t.Fatal("orphaned attempt deleted its unshipped lines without a gap")
 	}
 	// Reports after orphaning are no-ops.
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "two"})
 	if got := len(client.ReportRequests()); got != 1 {
 		t.Fatalf("expected no further reports after orphaning, got %d", got)
+	}
+}
+
+func TestBuildLogReporterPersistsRateLimitBeforeFlush(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
+	cfg, dir := testBuildLogShipConfig(t, "build-1")
+	cfg.RatePerSec = 1
+	cfg.Burst = 1
+	cfg.FlushInterval = time.Hour
+	reporter := mustBuildLogReporter(t, client, 1, cfg)
+	defer reporter.Close()
+	now := time.Now().UTC()
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "kept"})
+	reporter.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "denied"})
+
+	drops, err := logpipeline.LoadDrops(dir)
+	if err != nil {
+		t.Fatalf("LoadDrops: %v", err)
+	}
+	var dropped uint64
+	for _, drop := range drops {
+		dropped += drop.GetDroppedCount()
+	}
+	if dropped != 1 {
+		t.Fatalf("rate-limit denial was not durable before flush, got %d", dropped)
 	}
 }
 
@@ -440,8 +475,13 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 	if summary.GetBuildId() != "build-1" || summary.GetServiceId() != "svc-1" {
 		t.Fatalf("coalesced summary misattributed: %+v", summary)
 	}
-	if summary.GetWindowStart().AsTime().After(base) || summary.GetWindowEnd().AsTime().Before(base.Add(19*time.Second)) {
-		t.Fatalf("coalesced window does not span the outage: %+v", summary)
+	// Denials are checkpointed at the line's observed time, so the
+	// coalesced window is that time rather than the later flush.
+	if got := summary.GetWindowStart().AsTime(); !got.Equal(base) {
+		t.Fatalf("window start %v, want %v", got, base)
+	}
+	if got := summary.GetWindowEnd().AsTime(); !got.Equal(base) {
+		t.Fatalf("window end %v, want %v", got, base)
 	}
 
 	// Once the outage ends, one report carries the whole accounting.

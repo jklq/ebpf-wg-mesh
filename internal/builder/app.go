@@ -64,6 +64,20 @@ func (e *buildFailureError) Error() string {
 	return e.kind + ": " + e.err.Error()
 }
 
+// logDeliveryError means the attempt's transcript was not accepted.
+// The build stays non-terminal so the lease can expire and another
+// attempt can deliver the output. Marking it failed would end the
+// revision.
+type logDeliveryError struct {
+	err error
+}
+
+func (e *logDeliveryError) Error() string {
+	return e.err.Error()
+}
+
+func (e *logDeliveryError) Unwrap() error { return e.err }
+
 func (e *buildFailureError) Unwrap() error {
 	if e == nil {
 		return nil
@@ -253,6 +267,14 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	}
 
 	if err != nil {
+		var undelivered *logDeliveryError
+		if errors.As(err, &undelivered) {
+			// The image or the failure is real, but the transcript
+			// never landed. A failed completion is terminal, so leave
+			// the build leased until it expires and another attempt
+			// can deliver the output.
+			return err
+		}
 		_, completeErr := a.client.CompleteBuild(ctx, &platformv1.CompleteBuildRequest{
 			BuilderId:     a.cfg.ID,
 			BuildId:       job.GetBuildId(),
@@ -327,14 +349,14 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 	defer func() { _ = reporter.Close() }()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
-	if err != nil {
-		return "", err
+	// The transcript is part of the build's durable record. A failed
+	// delivery leaves the build non-terminal whether the command
+	// itself failed or the image is already pushed: completing either
+	// outcome without the output would drop the attempt's logs.
+	if closeErr := reporter.Close(); closeErr != nil {
+		return "", &logDeliveryError{err: closeErr}
 	}
-	// The transcript is part of the build's durable record: refuse to
-	// complete successfully with the logs undelivered — the abandoned
-	// spool is garbage-collected and the output would be lost. A
-	// failed build is retried and re-emits its output from scratch.
-	if err := reporter.Close(); err != nil {
+	if err != nil {
 		return "", err
 	}
 	return result.ImageDigestRef, nil
