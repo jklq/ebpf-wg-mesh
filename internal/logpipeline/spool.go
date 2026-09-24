@@ -193,6 +193,7 @@ func (s *Spool) recover() error {
 	if err != nil {
 		return err
 	}
+	s.cursor = cursor
 	for _, id := range ids {
 		cursorOff := int64(-1)
 		if cursor.Segment == id {
@@ -204,6 +205,7 @@ func (s *Spool) recover() error {
 		}
 		if cursorOff >= 0 {
 			cursor.Offset = mapped
+			s.cursor = cursor
 		}
 		s.segments = append(s.segments, segmentInfo{id: id, size: size, records: records, newestObserved: newest})
 		s.records += records
@@ -283,11 +285,44 @@ func (s *Spool) compactSegment(id uint64, cursorOff int64) (int64, int64, time.T
 		mapped = int64(len(kept))
 	}
 	if rewrote {
-		if err := os.WriteFile(path, kept, spoolFileMode); err != nil {
+		// Save the shorter offset first. A crash before the segment
+		// rewrite can replay shipped records, but cannot skip pending ones.
+		if cursorOff >= 0 && mapped != cursorOff {
+			s.cursor.Offset = mapped
+			if err := s.persistCursorLocked(); err != nil {
+				return 0, 0, time.Time{}, 0, err
+			}
+		}
+		if err := s.replaceSegment(path, kept); err != nil {
 			return 0, 0, time.Time{}, 0, fmt.Errorf("compact spool segment %d: %w", id, err)
 		}
 	}
 	return int64(len(kept)), records, newest, mapped, nil
+}
+
+func (s *Spool) replaceSegment(path string, data []byte) error {
+	tmp, err := os.CreateTemp(s.dir, ".segment-*.log")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if s.sync {
+		if err := tmp.Sync(); err != nil {
+			_ = tmp.Close()
+			return err
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	return syncDir(s.dir)
 }
 
 // recordCorruptLocked counts one unreadable record as a loss. The key
@@ -831,6 +866,15 @@ func (s *Spool) evictOneLocked() bool {
 	if len(drops) > 0 {
 		if err := s.persistDropsLocked(); err != nil {
 			slog.Warn("persist log spool drop counts", "error", err)
+			for key, count := range drops {
+				s.evicted[key] -= count
+				if s.evicted[key] == 0 {
+					delete(s.evicted, key)
+				}
+				s.droppedRecords -= count
+			}
+			s.droppedBytes -= dropBytes
+			return false
 		}
 	}
 	s.removeSegmentLocked(oldest)
