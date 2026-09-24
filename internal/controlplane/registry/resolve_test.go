@@ -365,3 +365,36 @@ func TestStaticResolver(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestDialGuardRejectsAllowlistedHostnameOnOtherPorts is the
+// allowlist-port regression: an allowlist entry for one endpoint never
+// waives the dial-time address checks for another port. A DNS answer
+// that flips from public at preflight to private at dial time is refused
+// there; the listed endpoints themselves still dial as configured.
+func TestDialGuardRejectsAllowlistedHostnameOnOtherPorts(t *testing.T) {
+	ctx := context.Background()
+	errSentinel := errors.New("sentinel: passthrough dial")
+	var dialed []string
+	next := func(_ context.Context, _, addr string) (net.Conn, error) {
+		dialed = append(dialed, addr)
+		return nil, errSentinel
+	}
+
+	stubLookup(t, "10.9.8.7") // private at dial time
+	if _, err := dialApprovedAddress(ctx, "tcp", "registry.internal.test:8443", []string{"registry.internal.test"}, next); err == nil || len(dialed) != 0 {
+		t.Fatalf("bare entry waived the checks on an unlisted port: err=%v dialed=%v", err, dialed)
+	}
+	if _, err := dialApprovedAddress(ctx, "tcp", "registry.internal.test:8443", []string{"registry.internal.test:5000"}, next); err == nil || len(dialed) != 0 {
+		t.Fatalf("an entry for one port waived the checks on another: err=%v dialed=%v", err, dialed)
+	}
+
+	if _, err := dialApprovedAddress(ctx, "tcp", "registry.internal.test:443", []string{"registry.internal.test"}, next); err != errSentinel {
+		t.Fatalf("default-port dial for a bare entry = %v, want configured passthrough", err)
+	}
+	if _, err := dialApprovedAddress(ctx, "tcp", "registry.internal.test:8443", []string{"registry.internal.test:8443"}, next); err != errSentinel {
+		t.Fatalf("explicit-port dial = %v, want configured passthrough", err)
+	}
+	if len(dialed) != 2 {
+		t.Fatalf("passthrough dials = %v, want only the listed endpoints", dialed)
+	}
+}
