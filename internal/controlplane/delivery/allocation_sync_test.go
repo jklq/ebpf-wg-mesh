@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -254,5 +255,36 @@ func TestRebaseKeepsNoOpCursorDiffForPeerOnlyBump(t *testing.T) {
 	}
 	if d := diffs[0]; len(d.Starts)+len(d.Updates)+len(d.Stops)+len(d.VolumeStarts)+len(d.VolumeStops) != 0 {
 		t.Fatalf("no-op diff changed allocations: %+v", d)
+	}
+}
+
+func TestTrackedAgentHistoriesAreBoundedAndEvictLeastRecentlyUsed(t *testing.T) {
+	t.Parallel()
+	sync := newAllocSync()
+	total := MaxTrackedAgents + 1
+	for i := 0; i < total; i++ {
+		agent := fmt.Sprintf("agent-%04d", i)
+		sync.recordCurrent(agent, testCheckpoint(1, testService("a", 1, 1)))
+	}
+	if len(sync.history) != MaxTrackedAgents {
+		t.Fatalf("tracked agents = %d, want bound %d", len(sync.history), MaxTrackedAgents)
+	}
+	// Lifetime agent churn (retired or replaced IDs) must not grow the map
+	// without bound: the least-recently used entry is evicted and just falls
+	// back to checkpoint delivery.
+	if _, _, ok := sync.diffsFrom("agent-0000", 1); ok {
+		t.Fatal("evicted agent must fall back to checkpoint delivery")
+	}
+	// A touch refreshes an entry: agent-0001 survives the next insert while
+	// the next-oldest is evicted instead.
+	sync.recordCurrent("agent-0001", testCheckpoint(1, testService("a", 1, 1)))
+	sync.recordCurrent("agent-new", testCheckpoint(1, testService("a", 1, 1)))
+	if _, _, ok := sync.diffsFrom("agent-0002", 1); ok {
+		t.Fatal("next-oldest agent must be evicted after the refresh")
+	}
+	sync.recordCurrent("agent-0001", testCheckpoint(2, testService("a", 1, 1)))
+	diffs, target, ok := sync.diffsFrom("agent-0001", 1)
+	if !ok || target != 2 || len(diffs) != 1 {
+		t.Fatalf("refreshed agent must keep its history: %+v target=%d ok=%v", diffs, target, ok)
 	}
 }

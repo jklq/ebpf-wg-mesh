@@ -34,6 +34,12 @@ const (
 	MaxDiffPayloadBytes = 256 * 1024
 	// MaxDiffAllocationsPerMessage caps allocation changes per diff.
 	MaxDiffAllocationsPerMessage = 100
+	// MaxTrackedAgents bounds how many per-agent histories one live
+	// controller keeps at once. Eviction only makes the evicted agent fall
+	// back to checkpoint delivery — diffs are an optimization, never a
+	// correctness requirement — so the bound trades one checkpoint for a
+	// fleet-wide memory bound across agent churn and retirements.
+	MaxTrackedAgents = 512
 )
 
 // storedDiff is one retained allocation change from base to target.
@@ -56,6 +62,9 @@ type agentSyncHistory struct {
 	// compactedBefore is the lowest retained base; cursors below need a checkpoint.
 	compactedBefore int64
 	initialized     bool
+	// used orders histories for least-recently-used eviction once
+	// MaxTrackedAgents is reached.
+	used uint64
 }
 
 // allocSync tracks per-agent diff history. It resets on live resign/become so
@@ -63,10 +72,35 @@ type agentSyncHistory struct {
 type allocSync struct {
 	mu      sync.Mutex
 	history map[string]*agentSyncHistory
+	use     uint64
 }
 
 func newAllocSync() *allocSync {
 	return &allocSync{history: make(map[string]*agentSyncHistory)}
+}
+
+// historyFor returns agentID's history, creating it with
+// least-recently-used eviction when the tracked-agent bound is reached.
+// Callers hold s.mu.
+func (s *allocSync) historyFor(agentID string) *agentSyncHistory {
+	h := s.history[agentID]
+	if h == nil && len(s.history) >= MaxTrackedAgents {
+		var oldestKey string
+		var oldest *agentSyncHistory
+		for key, candidate := range s.history {
+			if oldest == nil || candidate.used < oldest.used {
+				oldestKey, oldest = key, candidate
+			}
+		}
+		delete(s.history, oldestKey)
+	}
+	if h == nil {
+		h = &agentSyncHistory{}
+	}
+	s.use++
+	h.used = s.use
+	s.history[agentID] = h
+	return h
 }
 
 func (s *allocSync) reset() {
@@ -91,11 +125,7 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 	if s.history == nil {
 		s.history = make(map[string]*agentSyncHistory)
 	}
-	h, exists := s.history[agentID]
-	if !exists {
-		h = &agentSyncHistory{}
-		s.history[agentID] = h
-	}
+	h := s.historyFor(agentID)
 	stripped := stripForDiff(current)
 	target := current.GetReconciliationCursor()
 	if !h.initialized {
@@ -195,11 +225,7 @@ func (s *allocSync) rebase(agentID string, current *agentv1.DesiredNodeState) {
 	if s.history == nil {
 		s.history = make(map[string]*agentSyncHistory)
 	}
-	h := s.history[agentID]
-	if h == nil {
-		h = &agentSyncHistory{}
-		s.history[agentID] = h
-	}
+	h := s.historyFor(agentID)
 	h.lastRevision = current.GetReconciliationCursor()
 	h.lastSnapshot = stripForDiff(current)
 	h.initialized = true
@@ -217,6 +243,8 @@ func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, t
 	if !exists || !h.initialized {
 		return nil, 0, false
 	}
+	s.use++
+	h.used = s.use
 	target = h.lastRevision
 	if base == target {
 		return nil, target, true
