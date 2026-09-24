@@ -1,10 +1,13 @@
 package agent
 
 import (
+	"bytes"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/logpipeline"
 )
 
 type recordingLogSink struct {
@@ -21,6 +24,8 @@ func TestContainerLogWriterSplitsLinesWithMetadata(t *testing.T) {
 	sink := &recordingLogSink{}
 	var seq uint64
 	writer := &containerLogWriter{
+		agentID:           "agent-1",
+		bootID:            "boot-1",
 		environmentID:     "project-1",
 		serviceID:         "service-1",
 		allocationID:      "alloc-1",
@@ -58,14 +63,22 @@ func TestContainerLogWriterSplitsLinesWithMetadata(t *testing.T) {
 	if got := sink.entries[1].GetSequence(); got != 2 {
 		t.Fatalf("unexpected sequence %d", got)
 	}
+	if got := sink.entries[0].GetLineId(); got != "ag:agent-1:boot-1:alloc-1:stdout:1" {
+		t.Fatalf("unexpected line id %q", got)
+	}
+	if sink.entries[0].GetTruncated() || sink.entries[1].GetTruncated() {
+		t.Fatal("short lines must not be truncated")
+	}
 }
 
-func TestContainerLogWriterBoundsPartialLines(t *testing.T) {
+func TestContainerLogWriterTruncatesOversizedLines(t *testing.T) {
 	t.Parallel()
 
 	sink := &recordingLogSink{}
 	var seq uint64
 	writer := &containerLogWriter{
+		agentID:           "agent-1",
+		bootID:            "boot-1",
 		environmentID:     "project-1",
 		serviceID:         "service-1",
 		allocationID:      "alloc-1",
@@ -78,16 +91,52 @@ func TestContainerLogWriterBoundsPartialLines(t *testing.T) {
 		sink: func() LogSink { return sink },
 	}
 
-	if _, err := writer.Write([]byte(strings.Repeat("x", maxContainerLogLine+1))); err != nil {
+	line := strings.Repeat("x", logpipeline.MaxLogLineBytes+100) + "\nnext\n"
+	if _, err := writer.Write([]byte(line)); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if len(sink.entries) != 2 {
+		t.Fatalf("expected 2 emitted lines, got %d", len(sink.entries))
+	}
+	if got := len(sink.entries[0].GetLine()); got != logpipeline.MaxLogLineBytes {
+		t.Fatalf("unexpected truncated length %d", got)
+	}
+	if !sink.entries[0].GetTruncated() {
+		t.Fatal("oversized line must set truncated")
+	}
+	if got := sink.entries[1].GetLine(); got != "next" || sink.entries[1].GetTruncated() {
+		t.Fatalf("following line corrupted: %q truncated=%v", got, sink.entries[1].GetTruncated())
+	}
+}
+
+func TestContainerLogWriterTruncatedLineStaysValidUTF8(t *testing.T) {
+	t.Parallel()
+
+	sink := &recordingLogSink{}
+	var seq uint64
+	writer := &containerLogWriter{
+		allocationID: "alloc-1",
+		stream:       "stdout",
+		nextSequence: func() uint64 {
+			seq++
+			return seq
+		},
+		sink: func() LogSink { return sink },
+	}
+	// A long multibyte line crosses the size cap mid-rune; the
+	// emitted prefix must stay valid UTF-8 or protobuf rejects the
+	// whole line instead of just its tail.
+	line := append([]byte{'x'}, bytes.Repeat([]byte("é"), logpipeline.MaxLogLineBytes)...)
+	if _, err := writer.Write(append(line, '\n')); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
 	if len(sink.entries) != 1 {
-		t.Fatalf("expected one full chunk, got %d", len(sink.entries))
+		t.Fatalf("got %d entries, want 1", len(sink.entries))
 	}
-	if got := len(sink.entries[0].GetLine()); got != maxContainerLogLine {
-		t.Fatalf("unexpected line length %d", got)
+	if got := sink.entries[0].GetLine(); !utf8.ValidString(got) {
+		t.Fatal("truncated line must stay valid UTF-8")
 	}
-	if got := sink.entries[0].GetStream(); got != "stderr" {
-		t.Fatalf("unexpected stream %q", got)
+	if !sink.entries[0].GetTruncated() {
+		t.Fatal("line must be flagged truncated")
 	}
 }
