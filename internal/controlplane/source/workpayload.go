@@ -109,9 +109,14 @@ func ProviderAccessChangedParams(installationID int64) durablework.EnqueueParams
 }
 
 // RevisionObservedParams builds the enqueue params for one observed
-// repository commit. Duplicate deliveries of the same commit converge on
-// one active record; PreviousCommitSHA carries the push payload's
-// "before" so the build can prove its currency against observed history.
+// repository commit. Duplicate deliveries of one push transition
+// converge on one active record; the predecessor is part of the identity
+// because the same commit can arrive again through a force-push with a
+// different "before" — that is a different, valid transition and must
+// never be deduplicated into the older item's stale proof (its failed
+// freshness check would then skip the current head).
+// PreviousCommitSHA carries the push payload's "before" so the build can
+// prove its currency against observed history.
 func RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor string) durablework.EnqueueParams {
 	payload, _ := EncodeWorkPayload(WorkPayload{
 		Provider:                     "github",
@@ -124,8 +129,9 @@ func RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previou
 	})
 	return durablework.EnqueueParams{
 		Kind: SourceWorkKindRevisionObserved,
-		DedupKey: fmt.Sprintf("%s:github:%s:%s:%s", SourceWorkKindRevisionObserved,
-			strings.TrimSpace(repositoryExternalID), strings.TrimSpace(trackedRef), strings.TrimSpace(commitSHA)),
+		DedupKey: fmt.Sprintf("%s:github:%s:%s:%s:%s", SourceWorkKindRevisionObserved,
+			strings.TrimSpace(repositoryExternalID), strings.TrimSpace(trackedRef),
+			strings.TrimSpace(commitSHA), strings.TrimSpace(previousCommitSHA)),
 		ResourceType: "github_repository",
 		ResourceID:   strings.TrimSpace(repositoryExternalID),
 		Payload:      payload,

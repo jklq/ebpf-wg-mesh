@@ -64,8 +64,19 @@ func TestSourceWorkParamBuilders(t *testing.T) {
 		t.Fatalf("access params = %+v", access)
 	}
 	revision := RevisionObservedParams("42", "main", "abc123", "before1", "msg", "author")
-	if revision.DedupKey != "revision_observed:github:42:main:abc123" || revision.ResourceType != "github_repository" || revision.ResourceID != "42" {
+	if revision.DedupKey != "revision_observed:github:42:main:abc123:before1" || revision.ResourceType != "github_repository" || revision.ResourceID != "42" {
 		t.Fatalf("revision params = %+v", revision)
+	}
+	// A force-push back to the same commit carries a different "before";
+	// it is a distinct transition and must not dedup into the older
+	// item's stale proof.
+	forcePush := RevisionObservedParams("42", "main", "abc123", "before2", "msg", "author")
+	if forcePush.DedupKey == revision.DedupKey {
+		t.Fatalf("force-push transition deduplicated by after SHA alone: %q", forcePush.DedupKey)
+	}
+	redelivery := RevisionObservedParams("42", "main", "abc123", "before1", "msg", "author")
+	if redelivery.DedupKey != revision.DedupKey {
+		t.Fatalf("redelivered transition = %q, want dedup with %q", redelivery.DedupKey, revision.DedupKey)
 	}
 	for name, params := range map[string]durablework.EnqueueParams{
 		"spec": spec, "resync": resync, "access": access, "revision": revision,
