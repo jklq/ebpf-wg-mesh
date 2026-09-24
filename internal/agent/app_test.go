@@ -341,6 +341,9 @@ func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
 		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: hello.GetHello().GetSessionId()}}}); err != nil {
 			return err
 		}
+		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_LogBatchAck{LogBatchAck: &agentv1.LogBatchAck{BatchId: 1}}}); err != nil {
+			return err
+		}
 		for {
 			msg, err := stream.Recv()
 			if err != nil {
