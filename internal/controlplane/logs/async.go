@@ -420,16 +420,12 @@ func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
 		payload, err := json.Marshal(record)
 		if err != nil {
 			slog.Error("encode log ingest journal record", "error", err)
-			a.mu.Lock()
-			a.shedFlushLocked(pendingFlush{lines: record.Lines, gaps: record.Gaps})
-			a.mu.Unlock()
+			a.shedRecord(record)
 			continue
 		}
 		err = a.backlog.Append("ingest", "", time.Now().UTC(), payload)
 		if err != nil {
-			a.mu.Lock()
-			a.shedFlushLocked(pendingFlush{lines: record.Lines, gaps: record.Gaps})
-			a.mu.Unlock()
+			a.shedRecord(record)
 			if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
 				slog.Warn("append log ingest journal", "error", err)
 			}
@@ -628,11 +624,45 @@ func (a *AsyncIngester) Stats() IngesterStats {
 	}
 }
 
-// shedFlushLocked converts a queue-overflowed flush into owed gap
-// rows so the loss still surfaces in reads. The admission lock must
-// be held.
-func (a *AsyncIngester) shedFlushLocked(flush pendingFlush) {
+// shedRecord books an unjournaled record's loss as gap rows. The gaps
+// are journaled durably before enqueue reports acceptance — a crash
+// may not erase the accounting of a batch the producer will discard —
+// and fall back to the owed maps only when even a gap record cannot
+// fit, where the flusher's gap pump still surfaces them without
+// unrelated traffic.
+func (a *AsyncIngester) shedRecord(record journalRecord) {
+	gaps := a.shedToGaps(pendingFlush{lines: record.Lines, gaps: record.Gaps})
+	if a.journalGaps(gaps) {
+		return
+	}
+	a.reoweGaps(gaps)
+}
+
+// journalGaps appends one durable gap-only record and reports whether
+// the loss accounting is durable.
+func (a *AsyncIngester) journalGaps(gaps []GapInput) bool {
+	if len(gaps) == 0 {
+		return true
+	}
+	payload, err := json.Marshal(journalRecord{Gaps: gaps})
+	if err != nil {
+		slog.Error("encode log ingest gap record", "error", err)
+		return false
+	}
+	if err := a.backlog.Append("ingest", "", time.Now().UTC(), payload); err != nil {
+		if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
+			slog.Warn("append log ingest gap record", "error", err)
+		}
+		return false
+	}
+	return true
+}
+
+// shedToGaps converts a queue-overflowed flush into gap rows so the
+// loss still surfaces in reads.
+func (a *AsyncIngester) shedToGaps(flush pendingFlush) []GapInput {
 	now := time.Now().UTC()
+	gaps := make([]GapInput, 0, len(flush.gaps)+8)
 	counts := make(map[owedGapKey]uint64)
 	for _, in := range flush.lines {
 		counts[owedGapKey{
@@ -647,13 +677,23 @@ func (a *AsyncIngester) shedFlushLocked(flush pendingFlush) {
 	}
 	for key, count := range counts {
 		a.shedLines.Add(count)
-		a.noteOwedLocked(key, count, now, now)
+		gaps = append(gaps, GapInput{
+			ServiceID:    key.serviceID,
+			AllocationID: key.allocationID,
+			BuildID:      key.buildID,
+			LogType:      LogType(key.logType),
+			Stream:       key.stream,
+			WindowStart:  now,
+			WindowEnd:    now,
+			DroppedCount: count,
+			Reason:       key.reason,
+			Reporter:     key.reporter,
+		})
 	}
-	// Producer gap reports inside a shed flush are owed too; without
-	// them the producer's own drops would vanish silently.
-	for _, gap := range flush.gaps {
-		a.noteGapLocked(gap)
-	}
+	// Producer gap reports inside a shed flush surface as their own
+	// rows; without them the producer's own drops would vanish silently.
+	gaps = append(gaps, flush.gaps...)
+	return gaps
 }
 
 // noteGapLocked re-owes one gap row under its detailed identity.

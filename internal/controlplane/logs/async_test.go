@@ -179,11 +179,8 @@ func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
 		}
 	}
 	stats := ingester.Stats()
-	if stats.ShedLines == 0 || stats.QueuedFlushes == 0 {
+	if stats.ShedLines == 0 || stats.AcceptedLines == 0 {
 		t.Fatalf("journal budget must keep some and shed some: %+v", stats)
-	}
-	if stats.OwedGaps != 1 {
-		t.Fatalf("owed %d gaps, want 1 coalesced", stats.OwedGaps)
 	}
 
 	// Draining the journal flushes the owed gap alongside the lines.
@@ -723,36 +720,37 @@ func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
 	}
 	ingester.EnqueueAgentBatch("agent-1", batch)
 	stats := ingester.Stats()
-	if stats.QueuedFlushes != 0 || stats.QueuedBytes != 0 {
+	if stats.QueuedBytes > 4096 {
 		t.Fatalf("maximum-size lines retained past the budget: %+v", stats)
 	}
 	if stats.ShedLines != 3 {
 		t.Fatalf("shed %d lines, want 3", stats.ShedLines)
 	}
-	if stats.OwedGaps != 1 {
-		t.Fatalf("owed %d gaps, want 1", stats.OwedGaps)
-	}
-
-	// The gap pump surfaces the owed gap even with an empty journal.
+	// The shed loss is durable: its gap rows drain to the store and
+	// reach reads even though the lines themselves were too big.
 	stop := runIngester(t, ingester)
 	defer stop()
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for {
 		store.mu.Lock()
-		done := len(store.gaps) > 0
+		var total uint64
+		for _, gap := range store.gaps {
+			total += gap.DroppedCount
+		}
 		store.mu.Unlock()
-		if done {
+		if total == stats.ShedLines {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("owed gap never flushed")
+			t.Fatalf("shed gaps never reached reads: %d of %d", total, stats.ShedLines)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	if store.gaps[0].DroppedCount != 3 || store.gaps[0].Reason != logpipeline.ReasonIngestOverflow {
-		t.Fatalf("owed gap wrong: %+v", store.gaps)
+		t.Fatalf("shed gap wrong: %+v", store.gaps)
 	}
 }
 
@@ -809,14 +807,27 @@ func TestAsyncIngesterByteBudgetCountsAttributes(t *testing.T) {
 		t.Fatal("enqueue must accept-or-shed, never fail")
 	}
 	stats := ingester.Stats()
-	if stats.QueuedFlushes != 0 {
-		t.Fatalf("queued %d flushes despite oversized attributes", stats.QueuedFlushes)
+	if stats.QueuedBytes > 1024 {
+		t.Fatalf("queued %d bytes despite oversized attributes", stats.QueuedBytes)
 	}
 	if stats.ShedLines != 3 {
 		t.Fatalf("shed %d lines, want 3", stats.ShedLines)
 	}
-	if stats.OwedGaps != 1 {
-		t.Fatalf("owed %d gaps, want 1", stats.OwedGaps)
+	stop := runIngester(t, ingester)
+	defer stop()
+	waitForIngest(t, ingester, 0)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		store.mu.Lock()
+		done := len(store.gaps) > 0
+		store.mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("shed gap never reached reads")
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -889,5 +900,59 @@ func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 	}
 	if stats.OwedGaps != 2 {
 		t.Fatalf("owed %d gap reports, want 2", stats.OwedGaps)
+	}
+}
+
+// A shed batch's loss accounting is durable: gap rows journaled at
+// shed time survive a restart and reach reads instead of dying with
+// the process that dropped the lines.
+func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	spoolDir := t.TempDir()
+	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir, QueueBytes: 4096})
+
+	batch := &agentv1.LogBatch{AgentId: "agent-1"}
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		batch.Entries = append(batch.Entries, &agentv1.LogEntry{
+			ObservedAt:    timestamppb.New(now),
+			EnvironmentId: "env-1",
+			AllocationId:  "alloc-1",
+			ServiceId:     "svc-1",
+			Stream:        "stdout",
+			Sequence:      uint64(i + 1),
+			Line:          strings.Repeat("x", 64<<10),
+			LineId:        logpipeline.AgentLineID("agent-1", "boot-1", "alloc-1", "stdout", uint64(i+1)),
+		})
+	}
+	if !first.EnqueueAgentBatch("agent-1", batch) {
+		t.Fatal("enqueue must accept-or-shed, never fail")
+	}
+	if first.Stats().ShedLines != 3 {
+		t.Fatalf("expected the oversized batch to shed: %+v", first.Stats())
+	}
+
+	// Crash before any flush: the restart must surface the shed
+	// lines as gap rows from the journal.
+	second := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir, QueueBytes: 4096})
+	stop := runIngester(t, second)
+	defer stop()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		store.mu.Lock()
+		var total uint64
+		for _, gap := range store.gaps {
+			total += gap.DroppedCount
+		}
+		store.mu.Unlock()
+		if total == 3 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("shed gaps lost across restart: %d of 3", total)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
