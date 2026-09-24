@@ -650,11 +650,60 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 }
 
 // reuseBuildArtifactTx deploys an already-built image for verified source
-// state without queueing builder work. The deployment captures the
+// state without queueing builder work. The reuse is recorded as the
+// source revision's build: manual release asks whether the revision is
+// built to decide if a sync is needed, so an unrecorded reuse leaves
+// every later release syncing and reusing the same image again. When the
+// service already runs this exact artifact at the current spec revision,
+// no new deployment is created — identical bytes need no rollout, and a
+// refresh sync must not restart one. The deployment captures the
 // service's current spec, so a reused image always runs with current
 // variables rather than the original build's.
 func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, artifact BuildArtifactRecord, actor deploymentActor, now time.Time) (DeploymentRecord, error) {
 	s := d.store
+	recipeJSON, err := source.MarshalBuildRecipe(artifact.BuildRecipe)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	var reuseBuildID string
+	err = tx.QueryRowContext(ctx,
+		`INSERT INTO build_runs(
+			id, service_id, commit_sha, commit_message, commit_author, state,
+			artifact_id, source_revision_id, source_snapshot_digest, build_recipe_json,
+			build_actor_kind, build_actor_id, queued_at, started_at, finished_at
+		)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13
+		 WHERE NOT EXISTS (SELECT 1 FROM build_runs WHERE source_revision_id = $8)
+		 RETURNING id`,
+		uuid.NewString(), service.ID, revision.CommitSHA, revision.CommitMessage, revision.CommitAuthor, BuildStateSucceeded,
+		artifact.ID, revision.ID, artifact.SourceSnapshotDigest, recipeJSON,
+		actor.Kind, actor.ID, now,
+	).Scan(&reuseBuildID)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		// The revision already carries its build record.
+	case err != nil:
+		return DeploymentRecord{}, err
+	default:
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE service_delivery_status
+			    SET latest_build_id = $1,
+			        updated_at = $2
+			  WHERE service_id = $3`,
+			reuseBuildID, now, service.ID,
+		); err != nil {
+			return DeploymentRecord{}, err
+		}
+	}
+	current, ok, err := s.currentDeploymentTx(ctx, tx, service.ID)
+	if err != nil {
+		return DeploymentRecord{}, err
+	}
+	if ok && current.ArtifactID == artifact.ID && current.SpecRevision == service.SpecRevision &&
+		current.State != DeploymentStateFailed && current.State != DeploymentStateCancelled &&
+		current.State != DeploymentStateCrashed && current.State != DeploymentStateRemoved {
+		return current, nil
+	}
 	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateStaged, actor, reasonBuildReused,
 		"Reusing previously built image for commit "+shortSHA(revision.CommitSHA),
 		service.SpecRevision, 0, artifact.BuildID, artifact.ID, "", now)
