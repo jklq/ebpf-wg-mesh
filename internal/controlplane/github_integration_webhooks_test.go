@@ -821,3 +821,96 @@ func TestPushWithUnobservedPredecessorFetchesTrackedHeadInsteadOfPending(t *test
 		t.Fatalf("proven head = %q, %v; the superseded push must not move it", head, err)
 	}
 }
+
+func TestRecreatedBranchSuccessorBuildsViaTrackedHeadSync(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	server := newTestGitHubServer(t, nil)
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
+	ctx := context.Background()
+
+	projectID := bootstrapProjectAndAgent(t, store, ctx)
+	linkTestProjectRepository(t, store, catalog, projectID, "public/hello")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "public/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		processed, err := reconciler.ProcessNext(ctx)
+		if err != nil {
+			t.Fatalf("processNext(%d): %v", i, err)
+		}
+		if !processed {
+			break
+		}
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	// The branch is recreated and advances past its own tip before the
+	// recreate push is processed: the recreate (zero predecessor) is
+	// recorded as history and can never hold the head.
+	const zeroSHA = "0000000000000000000000000000000000000000"
+	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-history-phantom", zeroSHA, "Recreated tip", "Octocat"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision(recreate): %v", err)
+	}
+	if processed, err := reconciler.ProcessNext(ctx); err != nil || !processed {
+		t.Fatalf("processNext(recreate) = %v, %v, want clean completion", processed, err)
+	}
+	if head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID); err != nil || head != "commit-public-main" {
+		t.Fatalf("proven head = %q, %v; a history-only observation must not hold the head", head, err)
+	}
+
+	// The successor push names that recorded-but-never-head commit as its
+	// predecessor, so the chain cannot prove currency — and that is not
+	// proof of staleness. The tracked head must be reconciled now and
+	// the successor builds because it is still current.
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-history-phantom", "Release successor", "Octocat"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision(successor): %v", err)
+	}
+	processed, err := reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(successor push) = %v, %v, want clean completion", processed, err)
+	}
+	processed, err = reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(tracked-head sync) = %v, %v; the successor must not be dropped until the periodic binding refresh", processed, err)
+	}
+	status, _, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
+	if err != nil {
+		t.Fatalf("ServiceStatus: %v", err)
+	}
+	if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != "commit-public-release" {
+		t.Fatalf("expected build for commit-public-release, got %+v", status.LatestBuild)
+	}
+	head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-public-release" {
+		t.Fatalf("proven head = %q, %v; the reconciled tracked head must advance the binding", head, err)
+	}
+	var phantomBuilds int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT count(*) FROM build_runs WHERE service_id = $1 AND commit_sha = 'commit-history-phantom'`, service.ID).Scan(&phantomBuilds); err != nil {
+		t.Fatal(err)
+	}
+	if phantomBuilds != 0 {
+		t.Fatalf("history-only commit built %d times; it never held the tracked head", phantomBuilds)
+	}
+}

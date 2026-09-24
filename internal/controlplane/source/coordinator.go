@@ -417,13 +417,14 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 		return err
 	}
 	if queued.Superseded {
-		if queued.PendingPredecessor {
-			// Early successor whose predecessor this binding has never
-			// observed. Waiting for the predecessor's webhook is a dead end
-			// when it never arrives — an unobserved history, a recreated
-			// ref — and the build would wait for the binding to expire.
-			// Fetch the tracked head now instead: the sync queues the
-			// commit that is still current and nothing else.
+		if queued.ChainUnproven {
+			// A push whose predecessor chains to neither the proven head
+			// nor a fetched one: an unobserved predecessor whose webhook
+			// may never arrive, or one recorded as history by an earlier
+			// recreated-ref push that never held the head. Only a fetch
+			// decides whether the pushed commit is still current, so
+			// reconcile the tracked head now instead of leaving the
+			// service on an older image until the binding expires.
 			if _, err := c.work.Enqueue(ctx, SourceSpecChangedParams(binding.ServiceID, 0, true)); err != nil {
 				return err
 			}

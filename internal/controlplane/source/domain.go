@@ -214,14 +214,15 @@ type QueuedBuild struct {
 	// Reused reports that no builder work was queued: the source already
 	// produced an image and it was scheduled directly.
 	Reused bool
-	// Superseded reports that the revision is not the binding's latest
-	// observed commit and no work was created: an out-of-order or
-	// redelivered revision must never regress the rollout. Superseded
-	// reports that no work was created because the request is not
-	// current. PendingPredecessor refines it: the request's push
-	// transition names a predecessor the binding has not observed yet,
-	// so the request is early rather than stale and should be requeued
-	// until the predecessor advances the head.
-	Superseded         bool
-	PendingPredecessor bool
+	// Superseded reports that no work was created because the request is
+	// not current against the binding's proven head: an out-of-order or
+	// redelivered revision must never regress the rollout. ChainUnproven
+	// refines it: the request is a push whose predecessor chains to
+	// neither the proven head nor a fetched one. Staleness is not
+	// provable from that — a recreated-branch predecessor can be
+	// recorded without ever holding the head — so the tracked head must
+	// be reconciled before the push can be dismissed: the commit still
+	// current builds, and only that.
+	Superseded    bool
+	ChainUnproven bool
 }
