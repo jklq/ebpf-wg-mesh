@@ -20,6 +20,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/meshlabels"
 
 	containerd "github.com/containerd/containerd"
@@ -49,6 +50,7 @@ type containerdEngine struct {
 	logSinkMu               sync.RWMutex
 	logSink                 LogSink
 	logSequence             atomic.Uint64
+	logBootID               string
 	oomMu                   sync.Mutex
 	oom                     map[string]bool
 	workloadCgroupParent    string
@@ -88,7 +90,7 @@ func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("mkdir hosts dir: %w", err)
 	}
-	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin, workloadCgroupParent: workloadCgroupParent}, nil
+	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin, logBootID: logpipeline.NewBootID(), workloadCgroupParent: workloadCgroupParent}, nil
 }
 
 func (e *containerdEngine) Close() error {
@@ -316,6 +318,8 @@ func matchedServiceStatus(svc *agentv1.DesiredService, rec inspectRecord, netnsP
 
 func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator {
 	stdout := &containerLogWriter{
+		agentID:           e.cfg.Node.ID,
+		bootID:            e.logBootID,
 		environmentID:     svc.GetEnvironmentId(),
 		serviceID:         svc.GetServiceId(),
 		allocationID:      svc.GetAllocationId(),
@@ -325,6 +329,8 @@ func (e *containerdEngine) logIOCreator(svc *agentv1.DesiredService) cio.Creator
 		sink:              e.currentLogSink,
 	}
 	stderr := &containerLogWriter{
+		agentID:           e.cfg.Node.ID,
+		bootID:            e.logBootID,
 		environmentID:     svc.GetEnvironmentId(),
 		serviceID:         svc.GetServiceId(),
 		allocationID:      svc.GetAllocationId(),

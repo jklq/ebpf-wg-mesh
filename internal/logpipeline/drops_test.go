@@ -1,6 +1,7 @@
 package logpipeline
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -80,6 +81,50 @@ func TestDropSetTakeRestoreKeepsAccountingExact(t *testing.T) {
 	}
 	if got := summaries[0].GetWindowEnd().AsTime(); !got.Equal(base.Add(time.Minute)) {
 		t.Fatalf("restore lost the later window end, got %v", got)
+	}
+}
+
+func TestDropSetBoundFoldsAllocationChurnWithinAService(t *testing.T) {
+	t.Parallel()
+
+	set := NewDropSet()
+	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 4; i++ {
+		set.Add(DropKey{
+			ServiceID:    "svc-1",
+			AllocationID: fmt.Sprintf("alloc-%d", i),
+			Reason:       ReasonRateLimited,
+		}, uint64(i+1), base.Add(time.Duration(i)*time.Second), base.Add(time.Duration(i)*time.Second))
+	}
+	// A different service stays attributable on its own.
+	set.Add(DropKey{ServiceID: "svc-2", AllocationID: "other", Reason: ReasonRateLimited}, 9, base, base)
+	survivor := ""
+	for _, summary := range set.Summaries() {
+		if summary.GetAllocationId() == "alloc-3" {
+			survivor = summary.GetSummaryId()
+		}
+	}
+	set.Bound(2)
+
+	if set.Len() != 2 {
+		t.Fatalf("bound left %d identities, want 2", set.Len())
+	}
+	var total uint64
+	var sawOther, sawSurvivor bool
+	for _, summary := range set.Summaries() {
+		total += summary.GetDroppedCount()
+		switch summary.GetAllocationId() {
+		case "other":
+			sawOther = summary.GetDroppedCount() == 9 && summary.GetServiceId() == "svc-2"
+		case "alloc-3":
+			sawSurvivor = summary.GetSummaryId() == survivor && summary.GetDroppedCount() == 10
+		}
+	}
+	if total != 19 {
+		t.Fatalf("bound lost counts: %d", total)
+	}
+	if !sawOther || !sawSurvivor {
+		t.Fatalf("bound merged across services or changed the survivor: %+v", set.Summaries())
 	}
 }
 
