@@ -1099,3 +1099,86 @@ func TestDirectImagePinnedInputRecordsNoMutableSourceRef(t *testing.T) {
 		t.Fatalf("digest-pinned input must not be recorded as mutable user input, got %q", artifacts[0].SourceImageRef)
 	}
 }
+
+func TestSourceBuildReuseRecordsRevisionAndSkipsRedundantRollout(t *testing.T) {
+	t.Parallel()
+	store, _, service := newRepoBuildTestService(t)
+	ctx := context.Background()
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	image := testPinnedRef("registry.example.test/platform/web", "6")
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image, ""); err != nil {
+		t.Fatalf("completeBuild: %v", err)
+	}
+	firstDeployment := currentDeploymentForTest(t, store, ctx, service.ID)
+
+	// A later commit with identical source bytes: the built image is the
+	// right image for the new revision too.
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE source_snapshots
+		    SET digest = (SELECT digest FROM source_snapshots s JOIN source_revisions r ON r.id = s.source_revision_id WHERE r.commit_sha = 'commit-1' LIMIT 1)
+		  WHERE source_revision_id = (SELECT id FROM source_revisions WHERE commit_sha = 'commit-2' LIMIT 1)`); err != nil {
+		t.Fatal(err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+	queued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-2", source.SourceSnapshotRecord{}, source.BuildTransition{TrackedHead: true, FetchedFromHead: "commit-2"})
+	if err != nil {
+		t.Fatalf("QueueSourceBuild commit-2: %v", err)
+	}
+	if !queued.Reused || queued.DeploymentID != firstDeployment.ID {
+		t.Fatalf("reused queue = %+v, want the image reused without a rollout beyond %q", queued, firstDeployment.ID)
+	}
+
+	// The reuse must be recorded against the source revision: manual
+	// release asks whether the latest revision is built to decide if a
+	// sync is needed, and an unrecorded reuse keeps it syncing forever.
+	unbuilt, err := store.source.ServiceHasUnbuiltSourceRevisionTx(ctx, store.db, service.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unbuilt {
+		t.Fatal("reused revision is recorded as unbuilt; releases would sync and reuse it again")
+	}
+	var revisionBuilds int
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM build_runs WHERE source_revision_id = (SELECT id FROM source_revisions WHERE commit_sha = 'commit-2' LIMIT 1)`).Scan(&revisionBuilds); err != nil {
+		t.Fatal(err)
+	}
+	if revisionBuilds != 1 {
+		t.Fatalf("build records for the reused revision = %d, want exactly one", revisionBuilds)
+	}
+
+	// A later refresh sync of the same head reuses again and must not
+	// restart the rollout or duplicate the record.
+	again, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-2", source.SourceSnapshotRecord{}, source.BuildTransition{TrackedHead: true, FetchedFromHead: "commit-2"})
+	if err != nil {
+		t.Fatalf("QueueSourceBuild repeat: %v", err)
+	}
+	if !again.Reused || again.DeploymentID != firstDeployment.ID {
+		t.Fatalf("repeated reuse = %+v, want no rollout beyond %q", again, firstDeployment.ID)
+	}
+	current := currentDeploymentForTest(t, store, ctx, service.ID)
+	if current.ID != firstDeployment.ID {
+		t.Fatalf("refresh sync rolled out %q over an unchanged image", current.ID)
+	}
+	var totalBuilds int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&totalBuilds); err != nil {
+		t.Fatal(err)
+	}
+	if totalBuilds != 2 {
+		t.Fatalf("build_runs rows = %d, want 2 (the build and one reuse record)", totalBuilds)
+	}
+}
