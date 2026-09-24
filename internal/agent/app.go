@@ -45,10 +45,8 @@ const (
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 	diskEnforcementInterval = 15 * time.Second
-	// reportRepublishQuietPeriod is the stream-quiet window after which
-	// deferred runtime reports are published. Batches interleave independent
-	// updates before allocation payloads, so eager per-message publication
-	// can emit a report that predates the batch's allocation changes.
+	// reportRepublishQuietPeriod defers report publication to stream-quiet
+	// points; eager publication can emit a report predating the batch.
 	reportRepublishQuietPeriod = 250 * time.Millisecond
 )
 
@@ -217,12 +215,9 @@ func (a *App) runSession(ctx context.Context) error {
 	return fmt.Errorf("no reachable control-plane replica: %w", errors.Join(failures...))
 }
 
-// cumulativeAck builds the cumulative sync acknowledgement. The authority
-// epoch fences the message to the session's confirmed authority rather than
-// to the store's accepted allocation epoch: streams that do not move
-// allocation state (credentials, node config, replicas) are acknowledged
-// before the first checkpoint or diff advances the accepted epoch, and the
-// control plane rejects any ack outside its session authority.
+// cumulativeAck acknowledges the whole accepted position. The authority epoch
+// is the session's confirmed epoch, not the store's: independent streams ack
+// before the first checkpoint or diff advances the accepted epoch.
 func cumulativeAck(agentID, sessionID string, summary localStateSummary, confirmedEpoch uint64) *agentv1.DesiredStateAcknowledgement {
 	return &agentv1.DesiredStateAcknowledgement{
 		AgentId: agentID, SessionId: sessionID,
@@ -283,12 +278,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
 	}
-	// 2.10: an unchanged reconnect sends no server messages. When no batch
-	// arrives within the handshake window, optimistically confirm authority
-	// (same epoch) and publish the current observation. A takeover always
-	// sends a checkpoint promptly, so the optimistic report only runs when
-	// the epoch is unchanged; a stale-epoch report is rejected and the
-	// stream reconnects.
+	// An unchanged reconnect sends no server messages: after the handshake
+	// window, confirm authority optimistically and publish the observation.
 	handshakeTimer := time.NewTimer(replicaRPCTimeout)
 	defer handshakeTimer.Stop()
 	if err := send(&agentv1.AgentClientMessage{
@@ -359,9 +350,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	// Newest authority epoch whose stamped payloads this session confirmed.
 	confirmedEpoch := summary.AuthorityEpoch
 	handshake := true
-	// batchOpen marks a server batch whose batch-end marker has not arrived:
-	// its remaining messages are still in flight and their state is not
-	// accepted yet.
+	// batchOpen marks a server batch whose batch-end marker has not arrived.
 	batchOpen := false
 	sendCurrentReport := func() error {
 		report, err := a.supervisor.CurrentReport()
@@ -372,12 +361,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		if err != nil {
 			return err
 		}
-		// Publish only reports that reflect the accepted allocation position.
-		// Batches apply several diffs in sequence, and the persisted report
-		// trails the accepts until the next reconcile: an intermediate report
-		// is rejected by the control plane against the final assignments and
-		// closes the session. The reconcile notification delivers the
-		// refreshed report once its content catches up.
+		// Publish only reports at the accepted allocation position: mid-batch
+		// the persisted report trails the accepts and would be rejected
+		// against the control plane's final assignments.
 		if report.GetAuthorityEpoch() != summary.AuthorityEpoch || report.GetReconciliationCursor() != summary.ReconciliationCursor {
 			return nil
 		}
@@ -409,11 +395,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		}
 		authorityConfirmed = true
 	}
-	// reconcileAcceptedAllocations runs after a checkpoint or diff is accepted
-	// and acknowledged. The managed dashboard identity must be in place before
-	// reconciliation lets the runtime mount the secrets directory and start
-	// the dashboard, so a diff that introduces or moves that allocation
-	// refreshes the identity first, exactly like a checkpoint.
+	// The managed dashboard identity must be in place before reconciliation
+	// lets the runtime start the dashboard, for diffs as for checkpoints.
 	reconcileAcceptedAllocations := func() error {
 		desired, err := a.stateStore.desiredState()
 		if err != nil {
@@ -426,13 +409,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		a.supervisor.ReconcileAcceptedDesired()
 		return nil
 	}
-	// Reports are published at stream-quiet points and never inside an open
-	// batch: mid-batch the persisted report trails the accepted diffs, and an
-	// intermediate inventory is rejected by the control plane against its
-	// final assignments. Every processed message restarts the quiet window,
-	// and the server's batch-end marker closes the batch and starts the final
-	// window. Repeated scheduling coalesces; the observation-sequence dedupe
-	// collapses repeats.
+	// Reports publish at stream-quiet points, never inside an open batch.
 	reportRepublish := make(chan struct{}, 1)
 	var republishTimer *time.Timer
 	scheduleReportRepublish := func() {
@@ -466,8 +443,6 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if handshake || !authorityConfirmed {
 				continue
 			}
-			// Defer to the quiet point: a batch may still be streaming and is
-			// fully applied before the refreshed report is published.
 			scheduleReportRepublish()
 		case <-credentialTicker.C:
 			if handshake {
@@ -491,8 +466,6 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				continue
 			}
 			if batchOpen {
-				// A batch is still streaming; its batch-end marker
-				// reschedules the republish once the batch is applied.
 				continue
 			}
 			if err := sendCurrentReport(); err != nil {
@@ -528,9 +501,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				scheduleReportRepublish()
 				continue
 			}
-			// Every state message opens or extends a batch; publication
-			// waits for the batch-end marker, so a paused batch can never
-			// publish its intermediate inventory between messages.
+			// Every state message opens or extends a batch; publication waits
+			// for the batch-end marker.
 			batchOpen = true
 			switch payload := result.message.Payload.(type) {
 			case *agentv1.AgentServerMessage_DesiredState:
@@ -593,8 +565,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				if err := sendAck(); err != nil {
 					return err
 				}
-				// Credentials may unblock image pulls for just-accepted
-				// allocations; reconcile to retry.
+				// Credentials may unblock image pulls; reconcile to retry.
 				a.supervisor.ReconcileAcceptedDesired()
 				scheduleReportRepublish()
 			case *agentv1.AgentServerMessage_ReplicaEndpoints:

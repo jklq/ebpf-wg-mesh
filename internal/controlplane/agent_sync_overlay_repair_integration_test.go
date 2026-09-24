@@ -14,14 +14,9 @@ import (
 	"crypto/x509"
 )
 
-// TestAgentSyncRepairsObservationOverlayOnReconnect pins the reconnect repair
-// for observation-derived desired fields. Internal hosts and restart
-// observations rebuild from live control-plane observations without a
-// desired_revision bump, so a ready reconnect that echoes a stale observation
-// overlay version must receive a repair checkpoint even though its cursor,
-// inventory, and every stream version match. The repair applies at the same
-// cursor (the agent treats the overlay as live-derived, like node config). A
-// reconnect echoing the current overlay version still sends nothing.
+// TestAgentSyncRepairsObservationOverlayOnReconnect: a ready reconnect
+// echoing a stale observation overlay version gets a same-cursor repair
+// checkpoint even when cursor, inventory, and stream versions all match.
 func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -92,8 +87,7 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 		t.Fatalf("ClusterIdentity: %v", err)
 	}
 
-	// Session 1: a fresh agent is established with an initialization
-	// checkpoint and learns the current content versions.
+	// Session 1: initialization checkpoint and current content versions.
 	conn, stream := enrollSyncAgent(ctx, t, server.InternalAddr(), roots, agentID, tokenA, agentID, "[fd00:31::20]:51820", "fd00:31::20", "overlay-repair-key", clusterID)
 	defer conn.Close()
 	messages := syncMessageReader(stream)
@@ -107,8 +101,7 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 	drainSyncQuiet(t, messages, time.Second, track)
 	overlayVersion := reconciliation.HashObservationOverlay(initial.GetServices())
 
-	// Reconnects take over the previous session and must present a strictly
-	// newer session incarnation.
+	// Reconnects must present a strictly newer session incarnation.
 	reconnect := func(t *testing.T, overlay string, incarnation uint64) (agentv1.AgentControl_SyncClient, <-chan *agentv1.AgentServerMessage) {
 		t.Helper()
 		stream, err := agentv1.NewAgentControlClient(conn).Sync(ctx)
@@ -129,8 +122,8 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 			SessionId:               sessionID + "-" + overlay,
 			SessionIncarnation:      incarnation,
 			ClusterId:               clusterID,
-			// Same local store as the session-1 hello (enrollSyncAgent); a
-			// differing store id is identity recovery, not a reconnect.
+			// Same local store as session 1; a differing store id is
+			// identity recovery, not a reconnect.
 			LocalStoreId:                      "peer-bump-store-" + agentID,
 			InitializationState:               "ready",
 			AcceptedAuthorityEpoch:            track.epoch,
@@ -145,8 +138,7 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 		return stream, syncMessageReader(stream)
 	}
 
-	// Reconnect echoing the current observation overlay version: nothing is
-	// out of date, so the unchanged reconnect must send nothing.
+	// Reconnect echoing the current overlay version sends nothing.
 	stream2, messages2 := reconnect(t, overlayVersion, 2)
 	defer stream2.CloseSend()
 	select {
@@ -158,9 +150,8 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 	case <-time.After(3 * time.Second):
 	}
 
-	// Reconnect echoing a stale observation overlay version: the cursor,
-	// inventory, and every stream version match, but the overlay must be
-	// repaired with a checkpoint at the same cursor.
+	// Reconnect echoing a stale overlay version gets a same-cursor repair
+	// checkpoint despite matching cursor, inventory, and stream versions.
 	stream3, messages3 := reconnect(t, "stale-observation-overlay", 3)
 	defer stream3.CloseSend()
 	repair := recvSyncMessage(t, messages3, 30*time.Second)

@@ -17,11 +17,8 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// syncPosition tracks the durable position a sync stream has been advanced to
-// and enforces the coverage invariant: an allocation diff may only follow at
-// exactly the accepted cursor. A gap means the control plane advanced its sent
-// cursor without delivering a covering allocation message — the desync that
-// makes the agent reject the next diff on its base revision.
+// syncPosition tracks the durable sync position; a diff may only follow at
+// exactly the accepted cursor, never across a gap.
 type syncPosition struct {
 	epoch       uint64
 	cursor      int64
@@ -71,8 +68,7 @@ func (p *syncPosition) observe(t *testing.T, msg *agentv1.AgentServerMessage) {
 	}
 }
 
-// syncMessageReader pumps the stream so no message is lost between timed
-// receives and quiet-period probes.
+// syncMessageReader pumps the stream so no message is lost between receives.
 func syncMessageReader(stream agentv1.AgentControl_SyncClient) <-chan *agentv1.AgentServerMessage {
 	ch := make(chan *agentv1.AgentServerMessage, 32)
 	go func() {
@@ -102,8 +98,8 @@ func recvSyncMessage(t *testing.T, ch <-chan *agentv1.AgentServerMessage, timeou
 	}
 }
 
-// drainSyncQuiet consumes messages until the stream stays quiet for the given
-// duration, so the next phase observes only its own batches.
+// drainSyncQuiet consumes messages until the stream stays quiet for quiet,
+// so the next phase observes only its own batches.
 func drainSyncQuiet(t *testing.T, ch <-chan *agentv1.AgentServerMessage, quiet time.Duration, track *syncPosition) {
 	t.Helper()
 	for {
@@ -172,14 +168,9 @@ func enrollSyncAgent(ctx context.Context, t *testing.T, address string, roots *x
 	return conn, stream
 }
 
-// TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep pins the sent-cursor
-// contract of checkpoint-plus-diff sync. A peer-only change (another agent's
-// registration) bumps desired_revision without changing allocation content,
-// and the batch must still deliver a cursor-covering allocation message — the
-// empty no-op cursor diff — alongside the node config update. If the control
-// plane advanced its sent cursor without that diff, the follow-up allocation
-// diff would be based on a position the agent never accepted and the agent
-// would reject it, ending the sync session.
+// TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep: a peer-only
+// desired_revision bump must still deliver a cursor-covering no-op diff, or
+// the follow-up diff is based on a cursor the agent never accepted.
 func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -259,9 +250,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	defer connA.Close()
 	connB, _ := enrollSyncAgent(ctx, t, server.InternalAddr(), roots, agentB, tokenB, agentB, "[fd00:31::11]:51820", "fd00:31::11", "peer-bump-key-b", clusterID)
 	defer connB.Close()
-	// Stream B stays idle below: its hello only registers the peer whose
-	// admin rename is the peer-only change under test.
-
+	// Stream B stays idle: its hello only registers the peer.
 	messages := syncMessageReader(streamA)
 	track := &syncPosition{}
 	for {
@@ -291,9 +280,8 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	environmentID := environments.GetEnvironments()[0].GetId()
 
-	// Deterministic placement: each agent serves exactly one region, and the
-	// services under test pin their placement region so both agents hold an
-	// allocation in the shared environment (the peer-change bump fanout).
+	// Each agent serves one pinned region so both hold an allocation in the
+	// shared environment (the peer-change bump fanout).
 	setAgent := func(id, name, region string) {
 		t.Helper()
 		if _, err := opsClient.UpdateAgent(userCtx, &platformv1.UpdateAgentRequest{
@@ -344,9 +332,8 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	drainSyncQuiet(t, messages, time.Second, track)
 
-	// Phase 2: the peer-only change. Renaming agent B changes A's node
-	// config (the peer entry) and bumps A's desired_revision without any
-	// allocation content change.
+	// Phase 2: renaming agent B changes A's node config and bumps its
+	// desired_revision without any allocation content change.
 	deliveredCursor := track.cursor
 	nodeConfigVersion := track.nodeConfig
 	setAgent(agentB, "renamed-"+agentB, "region-b")
@@ -372,8 +359,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	if len(noop.GetStarts())+len(noop.GetUpdates())+len(noop.GetStops())+len(noop.GetVolumeStarts())+len(noop.GetVolumeStops()) != 0 {
 		t.Fatalf("peer-only diff changed allocations: %+v", noop)
 	}
-	// The batch closes with its end marker: status publication is gated on
-	// it, so a paused batch can never publish an intermediate inventory.
+	// The batch closes with its end marker.
 	batchesBefore := track.batches
 	end := recvSyncMessage(t, messages, 30*time.Second)
 	track.observe(t, end)
@@ -382,9 +368,8 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	drainSyncQuiet(t, messages, time.Second, track)
 
-	// Phase 3: the follow-up allocation change must chain from the cursor the
-	// no-op diff delivered. A skipped base is the rejection that would end
-	// the sync session against a real agent.
+	// Phase 3: the follow-up allocation change must chain from the cursor
+	// the no-op diff delivered.
 	webA2 := newService("web-a2", "example.test/e2e:2", "region-a")
 	release()
 	sawAllocationA2 := false

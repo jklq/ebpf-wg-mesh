@@ -44,7 +44,6 @@ func (p *Policy) Enabled() bool {
 }
 
 // PullCredentialLifetime is how long a minted pull capability remains valid.
-// Callers that reuse minted credentials must not outlive it.
 func (p *Policy) PullCredentialLifetime() time.Duration {
 	if p == nil {
 		return 0

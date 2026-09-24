@@ -6,43 +6,25 @@ import (
 	"sync"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
-	"ebof-wg-mesh/internal/reconciliation"
 
 	"google.golang.org/protobuf/proto"
 )
 
-// Incremental per-node allocation sync (2.10): checkpoint-plus-diff.
-//
-// The control plane remains authoritative for placement. The per-node
-// allocation revision is the durable desired_revision (monotonic). Steady
-// state sends bounded start/update/stop diffs ordered by that revision.
-// Checkpoints (full DesiredNodeState) establish or repair the desired set on
-// initialization, recovery, compaction, or cursor mismatch, but an unchanged
-// reconnect sends nothing.
-//
-// Node config (peers, identities, subnets for now; 2.11/2.12 split further),
-// pull credentials, and replica discovery are independently versioned content
-// hashes, not allocation changes. They are sent only when their hash differs.
+// Incremental per-node allocation sync: checkpoint-plus-diff over the
+// monotonic per-node allocation revision. Diffs are an optimization, never a
+// correctness requirement: any gap, compaction, or regression falls back to
+// a full checkpoint.
 
 const (
-	// MaxDiffEntriesPerAgent bounds retained diff history per node.
-	MaxDiffEntriesPerAgent = 32
-	// MaxDiffHistoryBytesPerAgent bounds retained history size per node.
+	MaxDiffEntriesPerAgent      = 32
 	MaxDiffHistoryBytesPerAgent = 1024 * 1024
-	// MaxDiffPayloadBytes caps a single diff payload; larger changes fall
-	// back to a checkpoint.
-	MaxDiffPayloadBytes = 256 * 1024
-	// MaxDiffAllocationsPerMessage caps allocation changes per diff.
+	// A diff above these caps falls back to a checkpoint.
+	MaxDiffPayloadBytes          = 256 * 1024
 	MaxDiffAllocationsPerMessage = 100
-	// MaxTrackedAgents bounds how many per-agent histories one live
-	// controller keeps at once. Eviction only makes the evicted agent fall
-	// back to checkpoint delivery — diffs are an optimization, never a
-	// correctness requirement — so the bound trades one checkpoint for a
-	// fleet-wide memory bound across agent churn and retirements.
+	// Evicting an agent only costs it one checkpoint delivery.
 	MaxTrackedAgents = 512
 )
 
-// storedDiff is one retained allocation change from base to target.
 type storedDiff struct {
 	Base         int64
 	Target       int64
@@ -62,13 +44,11 @@ type agentSyncHistory struct {
 	// compactedBefore is the lowest retained base; cursors below need a checkpoint.
 	compactedBefore int64
 	initialized     bool
-	// used orders histories for least-recently-used eviction once
-	// MaxTrackedAgents is reached.
-	used uint64
+	used            uint64 // LRU order for MaxTrackedAgents eviction
 }
 
-// allocSync tracks per-agent diff history. It resets on live resign/become so
-// a new live owner falls back to checkpoints rather than replaying lost diffs.
+// allocSync resets on live resign/become so a new live owner falls back to
+// checkpoints rather than replaying diffs it never saw.
 type allocSync struct {
 	mu      sync.Mutex
 	history map[string]*agentSyncHistory
@@ -79,9 +59,7 @@ func newAllocSync() *allocSync {
 	return &allocSync{history: make(map[string]*agentSyncHistory)}
 }
 
-// historyFor returns agentID's history, creating it with
-// least-recently-used eviction when the tracked-agent bound is reached.
-// Callers hold s.mu.
+// historyFor creates agentID's history with LRU eviction. Callers hold s.mu.
 func (s *allocSync) historyFor(agentID string) *agentSyncHistory {
 	h := s.history[agentID]
 	if h == nil && len(s.history) >= MaxTrackedAgents {
@@ -112,19 +90,15 @@ func (s *allocSync) reset() {
 	s.history = make(map[string]*agentSyncHistory)
 }
 
-// recordAndDiff records current (post-sealed, final wire content without
-// credentials) and returns diffs from base to current if available.
-// It returns ok=false when a checkpoint is required (uninitialized base,
-// compacted history, or gap).
+// recordAndDiff records current and returns diffs from base to it.
+// ok=false when a checkpoint is required (uninitialized base, compacted
+// history, or gap).
 func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeState, base int64) (diffs []storedDiff, ok bool) {
 	if s == nil || current == nil {
 		return nil, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.history == nil {
-		s.history = make(map[string]*agentSyncHistory)
-	}
 	h := s.historyFor(agentID)
 	stripped := stripForDiff(current)
 	target := current.GetReconciliationCursor()
@@ -139,7 +113,7 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 		return nil, false
 	}
 	if target < h.lastRevision {
-		// Durable revision regressed; safest is a checkpoint and rebase.
+		// Durable revision regressed; rebase and require a checkpoint.
 		h.lastRevision = target
 		h.lastSnapshot = stripped
 		h.diffs = nil
@@ -153,7 +127,6 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 		h.historyBytes += diff.SizeBytes
 		h.lastRevision = target
 		h.lastSnapshot = stripped
-		// Compact oldest until within caps.
 		for len(h.diffs) > 0 && (len(h.diffs) > MaxDiffEntriesPerAgent || h.historyBytes > MaxDiffHistoryBytesPerAgent) {
 			h.historyBytes -= h.diffs[0].SizeBytes
 			h.diffs = h.diffs[1:]
@@ -164,13 +137,19 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 			h.compactedBefore = h.lastRevision
 		}
 	}
-	if base == target {
+	return h.diffsFromBase(base)
+}
+
+// diffsFromBase collects the contiguous retained chain from base to the
+// latest revision, within the per-payload caps. ok=false when a checkpoint
+// is required.
+func (h *agentSyncHistory) diffsFromBase(base int64) (diffs []storedDiff, ok bool) {
+	if base == h.lastRevision {
 		return nil, true
 	}
-	if base < h.compactedBefore || base > target {
+	if base < h.compactedBefore || base > h.lastRevision {
 		return nil, false
 	}
-	// Collect contiguous diffs from base to target.
 	var out []storedDiff
 	cursor := base
 	for _, d := range h.diffs {
@@ -182,14 +161,13 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 		}
 		out = append(out, d)
 		cursor = d.Target
-		if cursor == target {
+		if cursor == h.lastRevision {
 			break
 		}
 	}
-	if cursor != target {
+	if cursor != h.lastRevision {
 		return nil, false
 	}
-	// Enforce per-payload caps; oversized diffs fall back to checkpoint.
 	for _, d := range out {
 		if d.SizeBytes > MaxDiffPayloadBytes || len(d.Starts)+len(d.Updates)+len(d.Stops) > MaxDiffAllocationsPerMessage {
 			return nil, false
@@ -198,9 +176,8 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 	return out, true
 }
 
-// recordCurrent records current as the latest for agentID. It is called on
-// every DesiredStateForAgent load so history tracks durable bumps even when
-// no agent is connected to observe intermediate revisions.
+// recordCurrent tracks durable revisions even when no agent is connected to
+// observe the intermediate bumps.
 func (s *allocSync) recordCurrent(agentID string, current *agentv1.DesiredNodeState) {
 	if s == nil || current == nil {
 		return
@@ -208,31 +185,22 @@ func (s *allocSync) recordCurrent(agentID string, current *agentv1.DesiredNodeSt
 	_, _ = s.recordAndDiff(agentID, current, current.GetReconciliationCursor())
 }
 
-// rebase moves the diff baseline to current after a checkpoint delivered full
-// content to the agent. Checkpoints travel outside the retained diff chain, so
-// without rebasing the next diff would compare against a stale baseline and
-// could silently skip observation overlay fields the checkpoint changed:
-// the covering diff would not carry them and the connected agent would keep
-// stale hosts or restart observations at an advanced cursor. Retained entries
-// are self-contained and stay replayable from older bases; a replay that
-// cannot bridge the rebased baseline falls back to a checkpoint.
+// rebase moves the diff baseline to current after a checkpoint, which
+// travels outside the retained diff chain. Without this the next diff would
+// compare against a stale baseline and silently skip fields the checkpoint
+// changed.
 func (s *allocSync) rebase(agentID string, current *agentv1.DesiredNodeState) {
 	if s == nil || current == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.history == nil {
-		s.history = make(map[string]*agentSyncHistory)
-	}
 	h := s.historyFor(agentID)
 	h.lastRevision = current.GetReconciliationCursor()
 	h.lastSnapshot = stripForDiff(current)
 	h.initialized = true
 }
 
-// diffsFrom returns retained diffs from base to the latest recorded revision.
-// It returns ok=false when a checkpoint is required.
 func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, target int64, ok bool) {
 	if s == nil {
 		return nil, 0, false
@@ -245,41 +213,12 @@ func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, t
 	}
 	s.use++
 	h.used = s.use
-	target = h.lastRevision
-	if base == target {
-		return nil, target, true
-	}
-	if base < h.compactedBefore || base > target {
-		return nil, target, false
-	}
-	var out []storedDiff
-	cursor := base
-	for _, d := range h.diffs {
-		if d.Target <= cursor {
-			continue
-		}
-		if d.Base != cursor {
-			return nil, target, false
-		}
-		out = append(out, d)
-		cursor = d.Target
-		if cursor == target {
-			break
-		}
-	}
-	if cursor != target {
-		return nil, target, false
-	}
-	for _, d := range out {
-		if d.SizeBytes > MaxDiffPayloadBytes || len(d.Starts)+len(d.Updates)+len(d.Stops) > MaxDiffAllocationsPerMessage {
-			return nil, target, false
-		}
-	}
-	return out, target, true
+	out, ok := h.diffsFromBase(base)
+	return out, h.lastRevision, ok
 }
 
-// stripForDiff returns allocations+volumes without credentials, node config,
-// or transport metadata for diff comparison.
+// stripForDiff keeps allocations+volumes only; credentials, node config, and
+// transport metadata are excluded from diff comparison.
 func stripForDiff(state *agentv1.DesiredNodeState) *agentv1.DesiredNodeState {
 	if state == nil {
 		return &agentv1.DesiredNodeState{}
@@ -408,23 +347,9 @@ func diffPayloadSize(d *storedDiff) int {
 	return size
 }
 
-// Hash wrappers delegate to the shared reconciliation versions so control
-// plane and agent compute identical content hashes.
-func HashNodeConfig(config *agentv1.AssignedNodeConfig) string {
-	return reconciliation.HashNodeConfig(config)
-}
-
-func HashCredentials(creds []*agentv1.AllocationCredential) string {
-	return reconciliation.HashCredentials(creds)
-}
-
-func HashReplicas(addresses []string) string {
-	return reconciliation.HashReplicas(addresses)
-}
-
 // InventoriesMatch checks hello allocations cover current desired IDs with
-// matching desired generations, ignoring stopped extras. Unowned runtime
-// containers are handled by runtime prune, not by allocation sync.
+// matching generations, ignoring stopped extras. Unowned runtime containers
+// are handled by runtime prune, not allocation sync.
 func InventoriesMatch(hello []*agentv1.ServiceCondition, current []*agentv1.DesiredService) bool {
 	desired := make(map[string]*agentv1.DesiredService, len(current))
 	for _, svc := range current {
@@ -436,7 +361,6 @@ func InventoriesMatch(hello []*agentv1.ServiceCondition, current []*agentv1.Desi
 		if id == "" {
 			continue
 		}
-		// Last wins; hello carries one entry per allocation.
 		seen[id] = cond
 	}
 	for id, svc := range desired {
@@ -456,15 +380,14 @@ func InventoriesMatch(hello []*agentv1.ServiceCondition, current []*agentv1.Desi
 		if strings.EqualFold(strings.TrimSpace(cond.GetPhase()), "Stopped") {
 			continue
 		}
-		// Non-stopped extra: could be a missed stop that did not bump the
-		// cursor (should not happen) or a genuinely unowned durable entry.
-		// Repair via checkpoint rather than silently ignoring.
+		// A non-stopped extra repairs via checkpoint rather than silently
+		// ignoring a possible missed stop.
 		return false
 	}
 	return true
 }
 
-// ToProto converts stored diffs to wire messages (authority fields stamped by caller).
+// ToProto converts to the wire message; authority fields are stamped by the caller.
 func (d storedDiff) ToProto(agentID string) *agentv1.AllocationDiff {
 	out := &agentv1.AllocationDiff{
 		AgentId: agentID, BaseRevision: d.Base, TargetRevision: d.Target,

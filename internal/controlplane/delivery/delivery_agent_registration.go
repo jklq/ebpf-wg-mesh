@@ -225,7 +225,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 	if err := d.live.BeginSession(hello.GetAgentId(), hello.GetSessionId(), inventory, assigned, !hello.GetRecoveryMode()); err != nil {
 		return false, err
 	}
-	_ = d.live.InitSessionVersions(hello.GetAgentId(), hello.GetSessionId(), SyncVersions{
+	d.live.InitSessionVersions(hello.GetAgentId(), hello.GetSessionId(), SyncVersions{
 		Cursor:      hello.GetReconciliationCursor(),
 		NodeConfig:  hello.GetAcceptedNodeConfigVersion(),
 		Credentials: hello.GetAcceptedCredentialsVersion(),

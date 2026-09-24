@@ -285,9 +285,8 @@ func TestPullCredentialCacheReusesOnlyWhileValidThroughNextSession(t *testing.T)
 	if reused.GetCredentials()[0].GetPassword() != first.GetCredentials()[0].GetPassword() {
 		t.Fatal("fresh cached pull credential was not reused")
 	}
-	// Once the credential would expire before the next session rotation it
-	// must be re-minted now: a renewed session holding the cached token
-	// would otherwise fail to pull a private image after it expires.
+	// A token that would expire before the next session rotation must be
+	// re-minted now, not reused from the cache.
 	now = now.Add(20 * time.Second)
 	renewed, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
 	if err != nil {

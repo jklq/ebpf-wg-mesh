@@ -605,10 +605,8 @@ func TestOpenLocalStateMigratesFormat2StoresInPlace(t *testing.T) {
 	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(4, 12, "alloc-1", "alloc-2")); err != nil {
 		t.Fatal(err)
 	}
-	// Rewrite the store the way the previous release wrote it: map-iteration
-	// service order in the accepted state, no per-channel version fields or
-	// keys, and the old format marker. Reopening must migrate instead of
-	// rejecting the store and killing workload supervision on upgrade.
+	// Rewrite the store the way the previous release wrote it; reopening must
+	// migrate instead of rejecting it and killing workload supervision.
 	if err := store.db.Update(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)
 		if err := putUint64(meta, formatVersionKey, 2); err != nil {
@@ -681,10 +679,8 @@ func TestOpenLocalStateMigratesFormat2StoresInPlace(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The migrated state must satisfy the current same-cursor contract: a
-	// repair checkpoint whose services arrive in a different order (and with
-	// the latest node configuration at the unchanged cursor) is accepted
-	// instead of tripping the configuration equality check.
+	// A differently ordered same-cursor repair checkpoint with the latest
+	// node config must be accepted instead of tripping equality.
 	repair := testDesiredState(4, 12, "alloc-2", "alloc-1")
 	repair.NodeConfig.WorkloadIpv4Subnet = "10.9.0.0/24"
 	repair.NodeConfigVersion = reconciliation.HashNodeConfig(repair.GetNodeConfig())

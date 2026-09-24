@@ -202,8 +202,8 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 				return err
 			}
 		}
-		// Staged candidates have no acceptance decision. A crash must never
-		// promote them, even if the grant was valid when persistence started.
+		// Staged candidates have no acceptance decision; a crash must never
+		// promote them.
 		for _, key := range [][]byte{stagedDesiredStateKey, stagedDiffKey, stagedNodeConfigKey} {
 			if err := tx.Bucket(localDesiredBucket).Delete(key); err != nil {
 				return err
@@ -217,8 +217,7 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 		case 0, localStateFormatVersion:
 			// Fresh or current store.
 		case 2:
-			// Flat migration of the previous release's format. Older or
-			// unknown formats are rejected rather than guessed at.
+			// Flat migration of the previous release's format.
 			if err := migrateLocalStateV2ToV3(tx); err != nil {
 				return err
 			}
@@ -251,15 +250,9 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 }
 
 // migrateLocalStateV2ToV3 rewrites a previous-release store to the current
-// format in place: a flat migration, one direction, no compatibility mode.
-// Format 3 canonicalizes the accepted desired state — stable allocation and
-// volume order — so same-cursor repair checkpoints compare equal regardless
-// of wire ordering, and versions node configuration, pull credentials, and
-// replica delivery independently of the reconciliation cursor. Format-2
-// records carry none of those versions; the migration stamps the truthful
+// format in place: flat, one direction, no compatibility mode. It stamps the
 // content hash of the accepted node configuration and leaves the other
-// channels absent, which reads as "accepted at unknown version" and forces
-// one full update on the next batch.
+// channel versions absent, which forces one full update on the next batch.
 func migrateLocalStateV2ToV3(tx *bbolt.Tx) error {
 	desired := tx.Bucket(localDesiredBucket)
 	raw := desired.Get(desiredStateKey)
@@ -316,7 +309,7 @@ func (s *localStateStore) validateRecords() error {
 			return errors.New("local reconciliation position exists without desired state")
 		}
 		// Credentials are independently versioned and may arrive before their
-		// checkpoint; they are not validated against current desired here.
+		// checkpoint.
 		if err := tx.Bucket(localCredentialsBucket).ForEach(func(key, value []byte) error {
 			if err := validateRuntimeID("allocation ID", string(key)); err != nil {
 				return err
@@ -639,7 +632,7 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 	if err := proto.Unmarshal(staged, incoming); err != nil {
 		return false, fmt.Errorf("decode desired candidate: %w", err)
 	}
-	clean, _ := splitDesiredCredentials(incoming)
+	clean := stripWireCredentials(incoming)
 	canonicalizeDesiredState(clean)
 	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(clean)
 	if err != nil {
@@ -683,11 +676,8 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 			if !desiredConfigurationEqual(&previousState, clean) {
 				return fmt.Errorf("desired state changed without advancing reconciliation cursor %d", acceptedCursor)
 			}
-			// Node configuration is independently versioned: a same-cursor
-			// repair checkpoint carries the latest node configuration and
-			// applies it below. The observation overlay (internal hosts,
-			// restart observations) derives from live control-plane state the
-			// same way and is repaired by the same checkpoint.
+			// A same-cursor repair checkpoint may carry new node config or
+			// observation overlay; both are versioned outside the cursor.
 			changed = previousState.GetNodeConfigVersion() != clean.GetNodeConfigVersion() ||
 				reconciliation.HashObservationOverlay(previousState.GetServices()) != reconciliation.HashObservationOverlay(clean.GetServices())
 		} else {
@@ -702,8 +692,7 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 		if err := putInt64(meta, cursorKey, incoming.GetReconciliationCursor()); err != nil {
 			return err
 		}
-		// 2.10: checkpoints carry node config but never credentials;
-		// credentials arrive in PullCredentialSet and are left untouched.
+		// Checkpoints carry node config but never credentials.
 		if err := meta.Put(nodeConfigVersionKey, []byte(incoming.GetNodeConfigVersion())); err != nil {
 			return err
 		}
@@ -881,9 +870,9 @@ func (s *localStateStore) acceptStagedDiff(clusterID, sessionID string, staged [
 	return changed && err == nil, err
 }
 
-// applyDiffToState merges starts/updates/stops into previous. Starts and
-// updates upsert; stops delete idempotently. Node config and version are
-// preserved; only the allocation cursor/epoch advance.
+// applyDiffToState merges starts/updates/stops into previous: upserts and
+// idempotent deletes. Node config and versions are preserved; only the
+// allocation cursor/epoch advance.
 func applyDiffToState(previous *agentv1.DesiredNodeState, diff *agentv1.AllocationDiff) (*agentv1.DesiredNodeState, error) {
 	if previous == nil {
 		return nil, errors.New("previous desired state is nil")
@@ -1476,11 +1465,9 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 	return result, err
 }
 
-// canonicalizeDesiredState orders service and volume lists by their stable
-// IDs. Desired configuration is a set; wire order is not semantic. Checkpoints
-// arrive in control-plane assignment order while diff application merges via
-// maps, so every stored and compared form is canonicalized to keep equality
-// and repair comparisons order-independent.
+// canonicalizeDesiredState orders services and volumes by their stable IDs:
+// desired configuration is a set, and every stored and compared form must be
+// canonical so equality is order-independent.
 func canonicalizeDesiredState(state *agentv1.DesiredNodeState) {
 	sort.Slice(state.GetServices(), func(i, j int) bool {
 		return state.GetServices()[i].GetAllocationId() < state.GetServices()[j].GetAllocationId()
@@ -1490,17 +1477,13 @@ func canonicalizeDesiredState(state *agentv1.DesiredNodeState) {
 	})
 }
 
-func splitDesiredCredentials(state *agentv1.DesiredNodeState) (*agentv1.DesiredNodeState, map[string]pullCredential) {
+func stripWireCredentials(state *agentv1.DesiredNodeState) *agentv1.DesiredNodeState {
 	clean := proto.Clone(state).(*agentv1.DesiredNodeState)
-	credentials := make(map[string]pullCredential)
 	for _, service := range clean.GetServices() {
-		if service.GetRegistryUsername() != "" || service.GetRegistryPassword() != "" {
-			credentials[service.GetAllocationId()] = pullCredential{Username: service.GetRegistryUsername(), Password: service.GetRegistryPassword()}
-		}
 		service.RegistryUsername = ""
 		service.RegistryPassword = ""
 	}
-	return clean, credentials
+	return clean
 }
 
 func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
@@ -1512,26 +1495,18 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left.GeneratedAt, right.GeneratedAt = nil, nil
 	left.SessionId, right.SessionId = "", ""
 	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
-	// Node configuration is an independently versioned stream, not part of
-	// the cursor-versioned allocation configuration: it may legitimately
-	// change at the same reconciliation cursor (a repair checkpoint delivers
-	// the latest). Its integrity is bound by the content-hash version checked
-	// in validateDesiredState, not by the allocation cursor.
+	// Node config is an independently versioned stream that may change at
+	// the same cursor; its integrity is bound by its content-hash version.
 	left.NodeConfig, right.NodeConfig = nil, nil
 	left.NodeConfigVersion, right.NodeConfigVersion = "", ""
-	// The observation overlay (internal hosts, restart observations) derives
-	// from live control-plane observations and may likewise change at the same
-	// cursor. Its integrity rides the fenced allocation payloads; reconnect
-	// drift is detected via the observation overlay version in the hello and
-	// repaired with a same-cursor checkpoint.
+	// The observation overlay derives from live observations and may also
+	// change at the same cursor; drift is repaired with a checkpoint.
 	for _, svc := range left.GetServices() {
 		svc.InternalHosts, svc.RestartObservation = nil, nil
 	}
 	for _, svc := range right.GetServices() {
 		svc.InternalHosts, svc.RestartObservation = nil, nil
 	}
-	// Configuration is a set of allocations and volumes; wire order is not
-	// semantic (checkpoints follow assignment order, diff merges do not).
 	canonicalizeDesiredState(left)
 	canonicalizeDesiredState(right)
 	return proto.Equal(left, right)

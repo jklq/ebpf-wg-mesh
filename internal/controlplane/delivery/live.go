@@ -26,22 +26,18 @@ type liveObsKey struct {
 }
 
 type AgentSession struct {
-	AgentID      string
-	SessionID    string
-	Sequence     uint64
-	LastContact  time.Time
-	Ready        bool
-	Reachable    bool
-	OfferedEpoch int64
-	// Allocation cursor (monotonic per-node revision).
+	AgentID        string
+	SessionID      string
+	Sequence       uint64
+	LastContact    time.Time
+	Ready          bool
+	Reachable      bool
+	OfferedEpoch   int64
 	OfferedCursor  int64
 	AcceptedEpoch  int64
 	AcceptedCursor int64
-	// Independently versioned streams (content hashes, empty when none).
-	// Offered versions accumulate over the session: batches can be granted
-	// back to back, and a cumulative acknowledgement may lag a later grant,
-	// so it must validate against the batch it acknowledges, not only the
-	// newest offer.
+	// Offered versions accumulate per session: a cumulative ack may lag a
+	// later grant and must still validate against the batch it acknowledges.
 	OfferedNodeConfig   []string
 	AcceptedNodeConfig  string
 	OfferedCredentials  []string
@@ -409,24 +405,22 @@ func (l *Live) BeginSession(agentID, sessionID string, inventory []string, assig
 	return nil
 }
 
-// InitSessionVersions seeds the accepted per-stream versions from hello so
-// cumulative acks for unchanged streams validate. Offered stays empty until
-// the first grant in this session.
-func (l *Live) InitSessionVersions(agentID, sessionID string, accepted SyncVersions) error {
+// InitSessionVersions seeds the accepted per-stream versions from hello;
+// offered stays empty until the first grant in this session.
+func (l *Live) InitSessionVersions(agentID, sessionID string, accepted SyncVersions) {
 	if l == nil {
-		return ErrNotLiveOwner
+		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	session, ok := l.sessions[strings.TrimSpace(agentID)]
 	if !ok || session.SessionID != strings.TrimSpace(sessionID) {
-		return ErrStaleAgentSession
+		return
 	}
 	session.AcceptedCursor = accepted.Cursor
 	session.AcceptedNodeConfig = accepted.NodeConfig
 	session.AcceptedCredentials = accepted.Credentials
 	session.AcceptedReplicas = accepted.Replicas
-	return nil
 }
 
 func inventoryReconciled(assigned, inventory []string) bool {
@@ -697,9 +691,6 @@ func (l *Live) Admitted(agentID string) bool {
 	return exists && session.Reachable && session.Ready && session.Reconciled
 }
 
-// SyncVersions carries the per-stream offered/accepted positions for one
-// agent session: monotonic allocation cursor plus content-hash versions for
-// the independently delivered streams.
 type SyncVersions struct {
 	Cursor      int64
 	NodeConfig  string
@@ -707,12 +698,9 @@ type SyncVersions struct {
 	Replicas    string
 }
 
-// offerHistoryLimit bounds each per-stream offered-version history. A
-// cumulative acknowledgement can lag several batches behind the sent
-// position (built and in flight while newer batches are granted), so
-// validation retains the most recent offers. An acknowledgement lagging
-// further than this window fails validation and the session reconnects; it
-// can never accept wrong state.
+// offerHistoryLimit bounds each offered-version history: a cumulative ack can
+// lag several in-flight batches and must still match a version offered in
+// this session; a larger lag fails validation and reconnects.
 const offerHistoryLimit = 64
 
 func appendOffered(history []string, version string) []string {
@@ -764,10 +752,8 @@ func (l *Live) Acknowledge(agentID, sessionID string, epoch uint64, accepted Syn
 	if session.AcceptedEpoch > int64(epoch) || (session.AcceptedEpoch == int64(epoch) && session.AcceptedCursor > cursor) {
 		return fmt.Errorf("stale desired-state acknowledgement")
 	}
-	// Hash versions are not ordered; an ack must match a version offered in
-	// this session (in-flight acks may lag the newest grant, bounded by the
-	// offer history window) or repeat a previously accepted version
-	// (idempotent duplicate).
+	// Hash versions are unordered: an ack must match a version offered in
+	// this session or repeat the accepted one (idempotent duplicate).
 	if accepted.NodeConfig != "" && accepted.NodeConfig != session.AcceptedNodeConfig && !slices.Contains(session.OfferedNodeConfig, accepted.NodeConfig) {
 		return fmt.Errorf("stale node-config acknowledgement")
 	}

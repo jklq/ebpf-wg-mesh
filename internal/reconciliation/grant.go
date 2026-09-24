@@ -23,9 +23,8 @@ const (
 	MaxClockSkew = time.Second
 )
 
-// FencedCommand is any agent-scoped control-plane message carrying session
-// and authority-expiry fencing: checkpoints, diffs, and the independently
-// versioned node-config, credential, and replica messages.
+// FencedCommand is any agent-scoped message carrying session and
+// authority-expiry fencing.
 type FencedCommand interface {
 	GetSessionId() string
 	GetAuthorityNotAfter() *timestamppb.Timestamp
@@ -52,7 +51,6 @@ func CanTakeOver(now, outstandingNotAfter time.Time) bool {
 }
 
 // HashNodeConfig versions node config content for independent delivery.
-// Shared by control plane and agent so both compute the same version.
 func HashNodeConfig(config *agentv1.AssignedNodeConfig) string {
 	if config == nil {
 		return hashBytes([]byte("node-config:nil"))
@@ -64,7 +62,6 @@ func HashNodeConfig(config *agentv1.AssignedNodeConfig) string {
 	return hashBytes(raw)
 }
 
-// HashCredentials versions pull credentials content.
 func HashCredentials(creds []*agentv1.AllocationCredential) string {
 	ordered := append([]*agentv1.AllocationCredential(nil), creds...)
 	slices.SortFunc(ordered, func(a, b *agentv1.AllocationCredential) int {
@@ -82,7 +79,6 @@ func HashCredentials(creds []*agentv1.AllocationCredential) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// HashReplicas versions replica discovery content.
 func HashReplicas(addresses []string) string {
 	ordered := append([]string(nil), addresses...)
 	slices.Sort(ordered)
@@ -99,12 +95,9 @@ func HashReplicas(addresses []string) string {
 }
 
 // HashObservationOverlay versions the observation-derived overlay of desired
-// services: internal hosts and restart observations rebuild from live control
-// plane observations (health, sessions) and may change at the same
-// reconciliation cursor. Both peers compute it from DesiredService content, so
+// services (internal hosts, restart observations), which can drift at a fixed
+// reconciliation cursor. Both peers compute it from DesiredService content so
 // a reconnect can detect drift and repair it with a same-cursor checkpoint.
-// It covers exactly the fields excluded from the cursor-versioned allocation
-// comparison on the agent.
 func HashObservationOverlay(services []*agentv1.DesiredService) string {
 	ordered := append([]*agentv1.DesiredService(nil), services...)
 	slices.SortFunc(ordered, func(a, b *agentv1.DesiredService) int {

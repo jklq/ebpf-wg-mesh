@@ -7,6 +7,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/reconciliation"
 )
 
 func testService(id string, revision, generation int64) *agentv1.DesiredService {
@@ -123,8 +124,7 @@ func TestFailoverLosesHistoryAndFallsBackToCheckpoint(t *testing.T) {
 	if _, ok := fresh.recordAndDiff("agent-1", cur, 1); ok {
 		t.Fatal("failover with lost history should require checkpoint")
 	}
-	// Unchanged reconnect after failover still sends nothing once the
-	// checkpoint baseline is established.
+	// Unchanged reconnect after failover sends nothing once baseline exists.
 	if _, ok := fresh.recordAndDiff("agent-1", cur, 2); !ok {
 		t.Fatal("established cursor should send nothing")
 	}
@@ -174,18 +174,18 @@ func TestIndependentVersionsChangeSeparately(t *testing.T) {
 	t.Parallel()
 	nodeA := &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24"}
 	nodeB := &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.1.0/24"}
-	if HashNodeConfig(nodeA) == "" || HashNodeConfig(nodeA) == HashNodeConfig(nodeB) {
+	if reconciliation.HashNodeConfig(nodeA) == "" || reconciliation.HashNodeConfig(nodeA) == reconciliation.HashNodeConfig(nodeB) {
 		t.Fatal("node config versions should differ on content change")
 	}
 	credsA := []*agentv1.AllocationCredential{{AllocationId: "a", Username: "u", Password: "p1"}}
 	credsB := []*agentv1.AllocationCredential{{AllocationId: "a", Username: "u", Password: "p2"}}
-	if HashCredentials(credsA) == HashCredentials(credsB) {
+	if reconciliation.HashCredentials(credsA) == reconciliation.HashCredentials(credsB) {
 		t.Fatal("credential rotation should change version")
 	}
-	if HashReplicas([]string{"b:1", "a:1"}) != HashReplicas([]string{"a:1", "b:1"}) {
+	if reconciliation.HashReplicas([]string{"b:1", "a:1"}) != reconciliation.HashReplicas([]string{"a:1", "b:1"}) {
 		t.Fatal("replica version should be order-independent")
 	}
-	if HashReplicas([]string{"a:1"}) == HashReplicas([]string{"a:1", "b:1"}) {
+	if reconciliation.HashReplicas([]string{"a:1"}) == reconciliation.HashReplicas([]string{"a:1", "b:1"}) {
 		t.Fatal("replica change should change version")
 	}
 }
@@ -194,11 +194,8 @@ func TestZeroContentRevisionBumpReturnsNoOpCursorDiff(t *testing.T) {
 	t.Parallel()
 	sync := newAllocSync()
 	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A peer-only change bumps desired_revision with identical allocation
-	// content. The bump must surface as an empty no-op diff so the send path
-	// advances the agent's accepted cursor in lockstep; an empty ok result
-	// would let the server advance its sent cursor alone, and the next diff
-	// would be rejected on its base revision.
+	// A peer-only bump must surface as an empty no-op diff so the accepted
+	// cursor advances in lockstep with the sent position.
 	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
 	diffs, target, ok := sync.diffsFrom("agent-1", 1)
 	if !ok || target != 2 || len(diffs) != 1 {
@@ -217,15 +214,12 @@ func TestRebaseAfterCheckpointDiffsCarryRestoredOverlay(t *testing.T) {
 	t.Parallel()
 	sync := newAllocSync()
 	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A same-cursor repair checkpoint delivered hosts the recorded baseline
-	// predates. Without rebasing, the next diff would compare against the
-	// pre-repair snapshot and silently skip the overlay fields.
+	// A same-cursor repair checkpoint changes the baseline; without rebasing,
+	// the next diff would compare against the pre-repair snapshot.
 	repaired := testService("a", 1, 1)
 	repaired.InternalHosts = []*agentv1.InternalHost{{Hostname: "a.mesh.internal", Ipv4: "10.0.0.1"}}
 	sync.rebase("agent-1", testCheckpoint(1, repaired))
-	// The observation drifts back while a revision bump advances the cursor:
-	// the covering diff must carry the host change instead of skipping it,
-	// leaving the connected agent with stale hosts at an advanced cursor.
+	// The covering diff must carry the reverted overlay instead of skipping it.
 	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
 	diffs, target, ok := sync.diffsFrom("agent-1", 1)
 	if !ok || target != 2 || len(diffs) != 1 {
@@ -245,9 +239,7 @@ func TestRebaseKeepsNoOpCursorDiffForPeerOnlyBump(t *testing.T) {
 	sync := newAllocSync()
 	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
 	sync.rebase("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A peer-only bump after a rebased baseline still surfaces as the empty
-	// no-op cursor diff: content is unchanged relative to what the agent
-	// accepted, so the cursor must advance in lockstep without entries.
+	// A peer-only bump after a rebased baseline is still an empty no-op diff.
 	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
 	diffs, target, ok := sync.diffsFrom("agent-1", 1)
 	if !ok || target != 2 || len(diffs) != 1 {
@@ -269,14 +261,11 @@ func TestTrackedAgentHistoriesAreBoundedAndEvictLeastRecentlyUsed(t *testing.T) 
 	if len(sync.history) != MaxTrackedAgents {
 		t.Fatalf("tracked agents = %d, want bound %d", len(sync.history), MaxTrackedAgents)
 	}
-	// Lifetime agent churn (retired or replaced IDs) must not grow the map
-	// without bound: the least-recently used entry is evicted and just falls
-	// back to checkpoint delivery.
+	// The least-recently used entry is evicted and falls back to checkpoints.
 	if _, _, ok := sync.diffsFrom("agent-0000", 1); ok {
 		t.Fatal("evicted agent must fall back to checkpoint delivery")
 	}
-	// A touch refreshes an entry: agent-0001 survives the next insert while
-	// the next-oldest is evicted instead.
+	// A touch refreshes an entry's eviction order.
 	sync.recordCurrent("agent-0001", testCheckpoint(1, testService("a", 1, 1)))
 	sync.recordCurrent("agent-new", testCheckpoint(1, testService("a", 1, 1)))
 	if _, _, ok := sync.diffsFrom("agent-0002", 1); ok {

@@ -118,11 +118,8 @@ func TestApplyNodeConfigKeepsPreviousAssignmentWhenUpdateFails(t *testing.T) {
 func TestCumulativeAckFencesToConfirmedSessionEpoch(t *testing.T) {
 	t.Parallel()
 
-	// Fresh agent: pull credentials arrive before the first checkpoint, so
-	// the store's accepted allocation epoch is still zero while the session
-	// runs under the confirmed authority epoch. The cumulative ack must echo
-	// the confirmed epoch or the control plane rejects it as outside the
-	// session authority and initial sync cannot complete.
+	// A fresh agent acks credentials before its first checkpoint; the ack
+	// must echo the confirmed session epoch, not the store's zero epoch.
 	summary := localStateSummary{ReconciliationCursor: 0, CredentialsVersion: "creds-v1"}
 	ack := cumulativeAck("node-1", "session-1", summary, 7)
 	if ack.GetAuthorityEpoch() != 7 {
@@ -242,10 +239,8 @@ func startSyncServerIssuing(t *testing.T, authority *identity.TLSAuthority, hand
 	return ln.Addr().String()
 }
 
-// newSyncSessionApp builds an App enrolled against the test authority whose
-// store already accepted a checkpoint at epoch 1, cursor 5 with one running
-// allocation. A session under test receives independent and allocation
-// updates against that baseline.
+// newSyncSessionApp builds an App whose store accepted a checkpoint at epoch
+// 1, cursor 5 with one running allocation.
 func newSyncSessionApp(t *testing.T, authority *identity.TLSAuthority) (*App, credentials.TransportCredentials, time.Time, string) {
 	t.Helper()
 	enrollAddr := startEnrollServer(t, authority, func(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
@@ -292,8 +287,7 @@ func newSyncSessionApp(t *testing.T, authority *identity.TLSAuthority) (*App, cr
 	}
 	app.stateStore = store
 	app.supervisor = supervisor
-	// Settle the start-up reconcile and drain its report notification so the
-	// session tests observe only batch-driven publications.
+	// Drain the start-up reconcile so tests observe batch-driven publications only.
 	settleDeadline := time.Now().Add(5 * time.Second)
 	for {
 		if report, err := app.supervisor.CurrentReport(); err == nil && report != nil {
@@ -318,11 +312,8 @@ func newSyncSessionApp(t *testing.T, authority *identity.TLSAuthority) (*App, cr
 func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
 	t.Parallel()
 
-	// A reconnect whose batch carries only an independent-stream update
-	// (node config, credentials, or replicas) must still republish the
-	// agent's runtime report: the live view drops the previous session's
-	// observations when the session is replaced, and heartbeats alone leave
-	// allocations pending until runtime happens to emit another report.
+	// An independent-stream-only batch must still republish the runtime
+	// report; heartbeats alone leave allocations pending.
 	authority := newTestTLSAuthority(t)
 	messages := make(chan *agentv1.AgentClientMessage, 16)
 	var clusterIdentity string
@@ -397,12 +388,8 @@ func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
 func TestSyncSessionDefersReportUntilBatchApplied(t *testing.T) {
 	t.Parallel()
 
-	// Batches interleave independent updates before allocation payloads.
-	// Publishing the runtime report eagerly after the credentials update
-	// emits the pre-batch inventory, which the control plane rejects for a
-	// removed allocation and closes the stream. The report must arrive only
-	// after the whole batch (here: credentials plus the stopping diff) has
-	// been acknowledged.
+	// The report must not publish mid-batch: the pre-batch inventory is
+	// rejected by the control plane and closes the stream.
 	authority := newTestTLSAuthority(t)
 	messages := make(chan *agentv1.AgentClientMessage, 16)
 	var clusterIdentity string
@@ -485,14 +472,8 @@ func TestSyncSessionDefersReportUntilBatchApplied(t *testing.T) {
 func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
 	t.Parallel()
 
-	// The server replays several retained diffs as one batch. The agent must
-	// publish the runtime report only once the whole batch is applied and
-	// acknowledged: a report for the intermediate state — after the earlier
-	// diff but before the stop — is rejected by the control plane against the
-	// final assignments and closes the stream. The second diff follows just
-	// after the first acknowledgement so the reconcile notification reaches
-	// the session loop mid-batch; the batch-end marker is the only
-	// publication gate.
+	// Several diffs replayed as one batch: publication must wait for the
+	// batch-end marker; an intermediate report closes the stream.
 	authority := newTestTLSAuthority(t)
 	messages := make(chan *agentv1.AgentClientMessage, 16)
 	var clusterIdentity string
@@ -580,13 +561,8 @@ func TestSyncSessionReplaysDiffsBeforeReporting(t *testing.T) {
 func TestSyncSessionHoldsReportThroughMidBatchPause(t *testing.T) {
 	t.Parallel()
 
-	// A batch that pauses mid-stream must not publish. The quiet window is
-	// measured from each processed message, so when delivery stalls between
-	// the credentials update and the allocation diff the deferred republish
-	// fires with the diff still in flight: publishing there emits the
-	// pre-diff inventory, which the control plane rejects for a removed
-	// allocation and closes the stream. Publication must wait for the
-	// batch-end marker that follows the diff.
+	// A batch paused past the quiet window must not publish: the report
+	// waits for the batch-end marker.
 	authority := newTestTLSAuthority(t)
 	messages := make(chan *agentv1.AgentClientMessage, 16)
 	var clusterIdentity string
@@ -609,8 +585,7 @@ func TestSyncSessionHoldsReportThroughMidBatchPause(t *testing.T) {
 		if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds}}); err != nil {
 			return err
 		}
-		// Pause past the quiet window with the batch's allocation diff still
-		// in flight: the deferred republish fires inside this gap.
+		// Pause past the quiet window with the diff still in flight.
 		time.Sleep(2*reportRepublishQuietPeriod + 100*time.Millisecond)
 		diff := &agentv1.AllocationDiff{
 			AgentId: "node-1", ClusterId: clusterIdentity,
@@ -672,12 +647,8 @@ func TestSyncSessionHoldsReportThroughMidBatchPause(t *testing.T) {
 func TestSyncSessionDiffEnsuresDashboardIdentityBeforeReconcile(t *testing.T) {
 	t.Parallel()
 
-	// A diff can introduce the managed dashboard allocation. The runtime
-	// mounts the secrets directory when it starts the dashboard, so the
-	// managed dashboard identity must be refreshed before reconciliation
-	// runs. The checkpoint path already did this; the diff path queued
-	// reconciliation directly and let the dashboard start without its
-	// certificate until the periodic renewal path ran.
+	// A diff can introduce the managed dashboard allocation, so the identity
+	// must be refreshed before reconciliation lets the runtime start it.
 	authority := newTestTLSAuthority(t)
 	messages := make(chan *agentv1.AgentClientMessage, 16)
 	issued := make(chan struct{}, 4)
@@ -745,9 +716,7 @@ func TestSyncSessionDiffEnsuresDashboardIdentityBeforeReconcile(t *testing.T) {
 	sessionDone := make(chan error, 1)
 	go func() { sessionDone <- app.runSessionAt(sessionCtx, creds, certNotAfter, clusterIdentity, syncAddr) }()
 
-	// The post-batch status report follows the diff's reconcile, so by the
-	// time it arrives the dashboard allocation has been reconciled at least
-	// once.
+	// The post-batch report follows the diff's reconcile.
 	sawReport := false
 	deadline := time.After(10 * time.Second)
 	for !sawReport {

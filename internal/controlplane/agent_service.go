@@ -42,11 +42,10 @@ type AgentService struct {
 	liveOwner               LiveOwner
 
 	credMu    sync.Mutex
-	credCache map[string]cachedPullCredential
+	credCache map[string]map[string]cachedPullCredential // agentID -> allocationID -> credential
 	credNow   func() time.Time
 	// credReuseHorizon is the interval until the next guaranteed credential
-	// refresh: agent sessions rotate at least every client-certificate
-	// lifetime and re-deliver credentials there.
+	// refresh (session rotation), so cached tokens must outlive it.
 	credReuseHorizon time.Duration
 }
 
@@ -393,13 +392,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
-// syncSent is the position delivered on the session's sync stream: the
-// monotonic allocation cursor plus content versions for the independently
-// delivered streams and the observation overlay. The overlay versions the
-// observation-derived fields of accepted services (internal hosts, restart
-// observations); it drifts at a fixed cursor, so it is tracked alongside the
-// streams and drives same-cursor repair checkpoints whenever it moves past
-// the last delivered position.
+// syncSent is the position delivered on this session's sync stream: the
+// allocation cursor plus the content versions of the independently
+// delivered streams and the observation overlay.
 type syncSent struct {
 	alloc       int64
 	nodeConfig  string
@@ -409,7 +404,7 @@ type syncSent struct {
 }
 
 func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
-	// 2.10: initialize from hello so an unchanged reconnect sends nothing.
+	// Initialize from hello so an unchanged reconnect sends nothing.
 	sent := syncSent{
 		alloc:       hello.GetReconciliationCursor(),
 		nodeConfig:  hello.GetAcceptedNodeConfigVersion(),
@@ -449,10 +444,9 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 	}
 }
 
-// sendSyncBatch loads current state, reconciles inventory on first send, and
-// emits a single fenced batch — node config, credentials, allocations
-// (checkpoint or ordered diffs), then replicas — terminated by a batch-end
-// marker. It returns the new sent position (unchanged when nothing was sent).
+// sendSyncBatch emits one fenced batch — node config, credentials,
+// allocations (checkpoint or ordered diffs), then replicas — terminated by a
+// batch-end marker. It returns the new sent position.
 func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
@@ -469,7 +463,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		Cursor:      state.GetReconciliationCursor(),
 		NodeConfig:  state.GetNodeConfigVersion(),
 		Credentials: creds.GetCredentialsVersion(),
-		Replicas:    deliverycore.HashReplicas(s.replicaAddresses),
+		Replicas:    reconciliation.HashReplicas(s.replicaAddresses),
 	}
 	currentOverlay := reconciliation.HashObservationOverlay(state.GetServices())
 	if current.Cursor < sent.alloc {
@@ -478,23 +472,16 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	needCheckpoint := false
 	var diffs []*agentv1.AllocationDiff
 	if first && helloInit != "ready" {
-		// Initialization or recovery establishes the desired set with a
-		// checkpoint, even when the cursor matches. Diffs require a prior
-		// checkpoint baseline.
+		// Diffs require a prior checkpoint baseline.
 		slog.Info("establishing desired set with checkpoint", "agent_id", agentID, "init", helloInit)
 		needCheckpoint = true
 	} else if first && helloEpoch != epoch {
-		// Takeover advances the epoch; the checkpoint carries the new
-		// authority even when allocation content is unchanged.
+		// Takeover must carry the new authority even without content changes.
 		slog.Info("authority epoch changed; sending checkpoint", "agent_id", agentID, "hello_epoch", helloEpoch, "epoch", epoch)
 		needCheckpoint = true
 	} else if first && sent.overlay != currentOverlay {
-		// Observation-derived fields (internal hosts, restart observations)
-		// drift without a desired_revision bump. A ready reconnect echoes the
-		// accepted observation overlay version and gets a repair checkpoint
-		// when it trails; the checkpoint covers the overlay in full even when
-		// the cursor also advanced and retained diffs would reach only their
-		// changed services.
+		// Observation-derived fields drift without a desired_revision bump;
+		// only a checkpoint covers them in full.
 		slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID)
 		needCheckpoint = true
 	} else if current.Cursor == sent.alloc {
@@ -502,25 +489,15 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			slog.Info("allocation inventory mismatch; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
 			needCheckpoint = true
 		} else if sent.overlay != currentOverlay {
-			// Observation-derived fields drift at a fixed cursor: a live
-			// health change adds or removes internal host entries without a
-			// desired_revision bump, so no diff covers it. The sent position
-			// tracks the overlay delivered on this session, and a connected
-			// agent gets a same-cursor repair checkpoint whenever live
-			// observations move the overlay past it — not only on reconnect.
+			// Live observations can move the overlay at a fixed cursor, so
+			// connected agents get the same repair as reconnects.
 			slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
 			needCheckpoint = true
 		}
 	} else {
-		// Cursor advanced; the batch must carry allocation coverage from
-		// last delivered cursor to current.Cursor. A revision that changes no allocation
-		// content (e.g., a peer-only bump still moves desired_revision) is
-		// retained and sent as an empty no-op diff that advances the agent's
-		// accepted cursor in lockstep. Returning the advanced cursor without
-		// delivering a covering allocation message would leave the agent on
-		// its old accepted cursor and the next diff would be rejected on its
-		// base revision. Anything the retained chain cannot cover falls back
-		// to a checkpoint.
+		// The retained chain must cover base->current: a revision with no
+		// allocation content (e.g. a peer-only bump) still sends an empty
+		// no-op diff so the accepted cursor advances in lockstep.
 		if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, sent.alloc); ok && target == current.Cursor && len(stored) > 0 {
 			diffs = stored
 		} else {
@@ -573,9 +550,6 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		}); err != nil {
 			return sent, err
 		}
-		// The checkpoint traveled outside the retained diff chain; move the
-		// chain's baseline to the delivered content so a later diff can never
-		// silently skip fields the checkpoint changed.
 		s.delivery.RebaseAllocationDiffs(agentID, state)
 	} else {
 		for _, diff := range diffs {
@@ -602,19 +576,13 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			return sent, err
 		}
 	}
-	// Close the batch: the agent withholds status publication until this
-	// marker, so a batch that pauses mid-stream can never surface an
-	// intermediate inventory between its messages.
+	// The agent withholds status publication until this marker.
 	if err := stream.Send(&agentv1.AgentServerMessage{
 		Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}},
 	}); err != nil {
 		return sent, err
 	}
-	// Every stream that differed was delivered, and overlay drift is covered
-	// by the checkpoint same-cursor repair forces or by the sent diffs —
-	// whose entries carry the observed fields of every service changed since
-	// the previous recorded snapshot — so the whole current position is now
-	// accepted by the agent.
+	// Overlay drift is covered by the repair checkpoint or by the sent diffs.
 	return syncSent{
 		alloc:       current.Cursor,
 		nodeConfig:  current.NodeConfig,
@@ -734,52 +702,48 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 }
 
 // pullCredentialCacheTTL reuses minted pull credentials across syncs so the
-// credentials version stays stable. It is well within the 48h pull TTL.
+// credentials version stays stable (well within the 48h pull TTL).
 const pullCredentialCacheTTL = time.Hour
 
-func (s *AgentService) credTime() time.Time {
-	if s != nil && s.credNow != nil {
-		return s.credNow().UTC()
-	}
-	return time.Now().UTC()
-}
-
 // pullCredentialsForAgent mints (with cache) the independently versioned pull
-// credentials for this agent's current desired services. Only platform images
-// receive entries; external images need no credentials.
+// credentials for this agent's desired services. Only platform images need
+// entries.
 func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) (*agentv1.PullCredentialSet, error) {
 	out := &agentv1.PullCredentialSet{AgentId: agentID}
 	if s == nil || s.registry == nil || !s.registry.Enabled() || state == nil {
-		out.CredentialsVersion = deliverycore.HashCredentials(nil)
+		out.CredentialsVersion = reconciliation.HashCredentials(nil)
 		return out, nil
 	}
-	now := s.credTime()
+	now := time.Now().UTC()
+	if s.credNow != nil {
+		now = s.credNow().UTC()
+	}
 	current := make(map[string]string, len(state.GetServices()))
 	for _, svc := range state.GetServices() {
 		current[svc.GetAllocationId()] = svc.GetSpec().GetImage()
 	}
 	s.credMu.Lock()
 	if s.credCache == nil {
-		s.credCache = make(map[string]cachedPullCredential)
+		s.credCache = make(map[string]map[string]cachedPullCredential)
 	}
-	// Prune removed allocations for this agent and bound total size.
-	for key, entry := range s.credCache {
-		agent, alloc, _, ok := splitCredCacheKey(key)
-		if !ok {
-			delete(s.credCache, key)
-			continue
-		}
-		if agent != agentID {
-			continue
-		}
+	cache := s.credCache[agentID]
+	if cache == nil {
+		cache = make(map[string]cachedPullCredential)
+		s.credCache[agentID] = cache
+	}
+	for alloc := range cache {
 		if _, ok := current[alloc]; !ok {
-			delete(s.credCache, key)
-			continue
+			delete(cache, alloc)
 		}
-		_ = entry
 	}
-	if len(s.credCache) > 10000 {
-		s.credCache = make(map[string]cachedPullCredential)
+	total := 0
+	for _, perAgent := range s.credCache {
+		total += len(perAgent)
+	}
+	if total > 10000 {
+		s.credCache = make(map[string]map[string]cachedPullCredential)
+		cache = make(map[string]cachedPullCredential)
+		s.credCache[agentID] = cache
 	}
 	s.credMu.Unlock()
 
@@ -788,15 +752,11 @@ func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID stri
 		if image == "" {
 			continue
 		}
-		key := credCacheKey(agentID, svc.GetAllocationId(), image)
 		s.credMu.Lock()
-		cached, ok := s.credCache[key]
+		cached, ok := cache[svc.GetAllocationId()]
 		s.credMu.Unlock()
-		// Reuse a minted credential only while it stays valid through the
-		// next session. Sessions rotate at least every client-certificate
-		// lifetime and refresh credentials there; a token that would expire
-		// before then must be re-minted now, or a private-image restart
-		// during the renewed session fails to pull with the stale token.
+		// Reuse only while the token stays valid through the next session
+		// rotation (credReuseHorizon), which refreshes credentials anyway.
 		if ok && cached.image == image && now.Sub(cached.mintedAt) < pullCredentialCacheTTL && cached.expiresAt.After(now.Add(s.credReuseHorizon)) {
 			if cached.username != "" || cached.password != "" {
 				out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{
@@ -811,7 +771,7 @@ func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID stri
 			return nil, fmt.Errorf("mint pull credential for service %s: %w", svc.GetServiceId(), err)
 		}
 		s.credMu.Lock()
-		s.credCache[key] = cachedPullCredential{username: username, password: password, mintedAt: now, expiresAt: now.Add(s.registry.PullCredentialLifetime()), image: image}
+		cache[svc.GetAllocationId()] = cachedPullCredential{username: username, password: password, mintedAt: now, expiresAt: now.Add(s.registry.PullCredentialLifetime()), image: image}
 		s.credMu.Unlock()
 		if username != "" || password != "" {
 			out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{
@@ -819,18 +779,6 @@ func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID stri
 			})
 		}
 	}
-	out.CredentialsVersion = deliverycore.HashCredentials(out.GetCredentials())
+	out.CredentialsVersion = reconciliation.HashCredentials(out.GetCredentials())
 	return out, nil
-}
-
-func credCacheKey(agentID, allocationID, image string) string {
-	return agentID + "\x00" + allocationID + "\x00" + image
-}
-
-func splitCredCacheKey(key string) (agentID, allocationID, image string, ok bool) {
-	parts := strings.SplitN(key, "\x00", 3)
-	if len(parts) != 3 {
-		return "", "", "", false
-	}
-	return parts[0], parts[1], parts[2], true
 }

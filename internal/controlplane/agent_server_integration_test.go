@@ -290,9 +290,8 @@ func mustDecodePEMBlock(t *testing.T, raw, blockType string) []byte {
 
 func recvDesiredState(t *testing.T, stream agentv1.AgentControl_SyncClient) *agentv1.DesiredNodeState {
 	t.Helper()
-	// 2.10: batches may interleave node config, credentials, and replicas
-	// around allocation checkpoints and diffs. Skip non-allocation payloads
-	// and synthesize a checkpoint view from diff starts/updates for assertions.
+	// Batches may interleave independent streams around allocation payloads;
+	// assertions synthesize a checkpoint view from diff starts/updates.
 	deadline := time.After(10 * time.Second)
 	for {
 		type result struct {
@@ -317,8 +316,8 @@ func recvDesiredState(t *testing.T, stream agentv1.AgentControl_SyncClient) *age
 					AgentId:              diff.GetAgentId(),
 					AuthorityEpoch:       diff.GetAuthorityEpoch(),
 					ReconciliationCursor: diff.GetTargetRevision(),
-					// Identity and fencing fields echo exactly as on the wire so
-					// assertions cover the diff path, not just checkpoints.
+					// Identity and fencing fields echo as on the wire so
+					// assertions cover the diff path too.
 					ClusterId:   diff.GetClusterId(),
 					GeneratedAt: diff.GetGeneratedAt(),
 				}

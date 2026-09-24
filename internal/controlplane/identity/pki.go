@@ -113,8 +113,7 @@ func removeLegacyCAFiles(pkiDir string) {
 	}
 }
 
-// ClientCertificateTTL is the lifetime of issued client certificates. Agent
-// sessions rotate at least this often and refresh their credentials there.
+// ClientCertificateTTL is the lifetime of issued client certificates.
 func (a *TLSAuthority) ClientCertificateTTL() time.Duration {
 	if a == nil {
 		return 0

@@ -129,9 +129,7 @@ func TestAcceptDiffRejectsGapAndStaleEpoch(t *testing.T) {
 
 func TestDesiredConfigurationEqualIgnoresListOrder(t *testing.T) {
 	t.Parallel()
-	// Checkpoints arrive in control-plane assignment order while diff
-	// application merges through maps; equality must treat the desired
-	// configuration as a set of allocations and volumes.
+	// Desired configuration is a set; wire order must not affect equality.
 	left := testDesiredState(1, 5, "alloc-b", "alloc-a")
 	right := testDesiredState(1, 5, "alloc-a", "alloc-b")
 	if !desiredConfigurationEqual(left, right) {
@@ -192,10 +190,7 @@ func TestRepairCheckpointAfterDiffsAcceptsAnyWireOrder(t *testing.T) {
 	if _, err := store.acceptAllocationDiff("cluster-a", "test-session", diff); err != nil {
 		t.Fatal(err)
 	}
-	// A repair checkpoint at the same epoch and cursor carries the equivalent
-	// configuration in control-plane assignment order. It must be accepted
-	// idempotently instead of tripping the same-cursor mutation guard and
-	// closing the sync session.
+	// An equivalent same-cursor repair checkpoint must be idempotent.
 	repair := testDesiredState(1, 6, "alloc-d", "alloc-c", "alloc-b")
 	changed, err := store.acceptDesired("cluster-a", "test-session", repair)
 	if err != nil {
@@ -349,11 +344,8 @@ func TestAcceptNoOpDiffAdvancesCursorBeforeNextDiff(t *testing.T) {
 	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 1, "keep")); err != nil {
 		t.Fatal(err)
 	}
-	// A revision that changes no allocation content (e.g., a peer-only bump
-	// of desired_revision) arrives as an empty diff. It must advance the
-	// accepted cursor without touching allocations so the next real diff,
-	// based on the advanced cursor, is accepted instead of rejected for a
-	// base mismatch.
+	// An empty no-op diff advances the accepted cursor so the next diff's
+	// base matches.
 	changed, err := store.acceptAllocationDiff("cluster-a", "test-session", testDiff(1, 2, nil, nil, nil))
 	if err != nil || !changed {
 		t.Fatalf("accept no-op diff: changed=%v err=%v", changed, err)
@@ -388,10 +380,8 @@ func TestAcceptSameCursorCheckpointUpdatesNodeConfiguration(t *testing.T) {
 	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 4, "keep")); err != nil {
 		t.Fatal(err)
 	}
-	// Node configuration is an independently versioned stream: a same-cursor
-	// recovery or inventory repair checkpoint carries the latest node
-	// configuration and must apply it instead of rejecting the repair as a
-	// same-cursor mutation and closing the session in a reconnect loop.
+	// A same-cursor repair checkpoint applies new node config instead of
+	// tripping the mutation guard and closing the session.
 	updated := testDesiredState(1, 4, "keep")
 	updated.NodeConfig = &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24", WireguardListenPort: 51821}
 	updated.NodeConfigVersion = reconciliation.HashNodeConfig(updated.GetNodeConfig())
@@ -417,7 +407,7 @@ func TestAcceptSameCursorCheckpointUpdatesNodeConfiguration(t *testing.T) {
 		t.Fatalf("duplicate checkpoint should be idempotent: changed=%v err=%v", changed, err)
 	}
 	// The allocation guard still holds: cursor-versioned content may not
-	// change without advancing the cursor.
+	// change at the same cursor.
 	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 4, "keep", "extra")); err == nil {
 		t.Fatal("same-cursor mutation of allocations accepted")
 	}
@@ -431,9 +421,8 @@ func TestAcceptSameCursorCheckpointUpdatesNodeConfiguration(t *testing.T) {
 
 func TestDesiredConfigurationEqualIgnoresNodeConfig(t *testing.T) {
 	t.Parallel()
-	// The cursor versions allocations and volumes; node configuration is
-	// independently versioned by content hash and must not make an otherwise
-	// identical same-cursor checkpoint compare unequal.
+	// Node config is independently versioned and must not affect same-cursor
+	// equality.
 	left := testDesiredState(1, 5, "alloc-a")
 	right := testDesiredState(1, 5, "alloc-a")
 	right.NodeConfig = &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.9.0/24", WireguardListenPort: 51821}
@@ -449,10 +438,8 @@ func TestDesiredConfigurationEqualIgnoresNodeConfig(t *testing.T) {
 
 func TestDesiredConfigurationEqualIgnoresObservationOverlay(t *testing.T) {
 	t.Parallel()
-	// The observation overlay (internal hosts, restart observations) derives
-	// from live control-plane observations and may change at the same
-	// reconciliation cursor; a repair checkpoint must not compare unequal
-	// because of it.
+	// The observation overlay may change at the same cursor; it must not make
+	// a repair checkpoint compare unequal.
 	left := testDesiredState(1, 5, "alloc-a")
 	right := testDesiredState(1, 5, "alloc-a")
 	right.Services[0].InternalHosts = []*agentv1.InternalHost{{Hostname: "alloc-a.mesh.internal", Ipv4: "10.0.0.7"}}
@@ -480,10 +467,8 @@ func TestAcceptSameCursorCheckpointUpdatesObservationOverlay(t *testing.T) {
 	if summary, err := store.summary(); err != nil || summary.ObservationOverlayVersion != baselineOverlay {
 		t.Fatalf("summary overlay = %q want %q: %v", summary.ObservationOverlayVersion, baselineOverlay, err)
 	}
-	// Observation-derived fields drift without a revision bump (a health
-	// change altered internal hosts); a reconnect repair checkpoint carries
-	// the refreshed overlay at the same cursor and must apply it instead of
-	// rejecting the repair as a same-cursor mutation.
+	// Observation overlay drift at the same cursor must apply via repair
+	// checkpoint instead of tripping the mutation guard.
 	updated := testDesiredState(1, 4, "keep")
 	updated.Services[0].InternalHosts = []*agentv1.InternalHost{{Hostname: "keep.mesh.internal", Ipv4: "10.0.0.9"}}
 	changed, err := store.acceptDesired("cluster-a", "test-session", updated)
@@ -509,7 +494,7 @@ func TestAcceptSameCursorCheckpointUpdatesObservationOverlay(t *testing.T) {
 		t.Fatalf("duplicate checkpoint should be idempotent: changed=%v err=%v", changed, err)
 	}
 	// The allocation guard still holds: cursor-versioned content may not
-	// change without advancing the cursor.
+	// change at the same cursor.
 	if _, err := store.acceptDesired("cluster-a", "test-session", testDesiredState(1, 4, "keep", "extra")); err == nil {
 		t.Fatal("same-cursor mutation of allocations accepted")
 	}

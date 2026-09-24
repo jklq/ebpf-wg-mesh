@@ -8,6 +8,7 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/reconciliation"
 )
 
 func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
@@ -23,21 +24,21 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	if err := d.resolveSealedEnv(ctx, state); err != nil {
 		return nil, err
 	}
-	// 2.10: credentials travel in PullCredentialSet, never in allocation
-	// checkpoints or diffs. Node config carries its independent version.
+	// Credentials travel in PullCredentialSet; checkpoints and diffs must
+	// never carry them.
 	for _, svc := range state.GetServices() {
 		svc.RegistryUsername = ""
 		svc.RegistryPassword = ""
 	}
-	state.NodeConfigVersion = HashNodeConfig(state.GetNodeConfig())
+	state.NodeConfigVersion = reconciliation.HashNodeConfig(state.GetNodeConfig())
 	if d.allocSync != nil {
 		d.allocSync.recordCurrent(agentID, state)
 	}
 	return state, nil
 }
 
-// AllocationDiffsFrom returns retained incremental diffs from base to the
-// latest recorded revision for agentID. ok=false means send a checkpoint.
+// AllocationDiffsFrom returns retained diffs from base to the latest recorded
+// revision. ok=false means send a checkpoint.
 func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*agentv1.AllocationDiff, target int64, ok bool) {
 	if d == nil || d.allocSync == nil {
 		return nil, 0, false
@@ -53,8 +54,7 @@ func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*age
 }
 
 // RebaseAllocationDiffs moves the retained diff baseline to state after a
-// checkpoint delivered it to the agent, so subsequent diffs compare against
-// the content the agent actually accepted.
+// checkpoint delivered it to the agent.
 func (d *Delivery) RebaseAllocationDiffs(agentID string, state *agentv1.DesiredNodeState) {
 	if d == nil || d.allocSync == nil {
 		return
