@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // MaxLogLineBytes is the documented per-line size limit. Lines longer
@@ -33,12 +34,18 @@ const (
 )
 
 // TruncateLine enforces MaxLogLineBytes, returning the stored line and
-// whether truncation happened.
+// whether truncation happened. The cut lands on a rune boundary so a
+// truncated line stays valid UTF-8 — protobuf string fields reject
+// invalid UTF-8, and a mid-rune cut would silently drop the line.
 func TruncateLine(line string) (string, bool) {
 	if len(line) <= MaxLogLineBytes {
 		return line, false
 	}
-	return line[:MaxLogLineBytes], true
+	cut := MaxLogLineBytes
+	for cut > 0 && !utf8.RuneStart(line[cut]) {
+		cut--
+	}
+	return line[:cut], true
 }
 
 // NewBootID returns a random per-process boot identifier. Agent line
