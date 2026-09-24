@@ -420,12 +420,21 @@ func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
 		payload, err := json.Marshal(record)
 		if err != nil {
 			slog.Error("encode log ingest journal record", "error", err)
-			a.shedRecord(record)
+			if !a.shedRecord(record) {
+				return false
+			}
 			continue
 		}
 		err = a.backlog.Append("ingest", "", time.Now().UTC(), payload)
 		if err != nil {
-			a.shedRecord(record)
+			if !a.shedRecord(record) {
+				// The loss accounting cannot be made durable. Do not
+				// accept the batch: an acknowledged gap may never live
+				// only in memory, and the producer's copy still carries
+				// the lines (already-journaled pieces deduplicate on
+				// retry by line ID).
+				return false
+			}
 			if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
 				slog.Warn("append log ingest journal", "error", err)
 			}
@@ -624,18 +633,18 @@ func (a *AsyncIngester) Stats() IngesterStats {
 	}
 }
 
-// shedRecord books an unjournaled record's loss as gap rows. The gaps
-// are journaled durably before enqueue reports acceptance — a crash
-// may not erase the accounting of a batch the producer will discard —
-// and fall back to the owed maps only when even a gap record cannot
-// fit, where the flusher's gap pump still surfaces them without
-// unrelated traffic.
-func (a *AsyncIngester) shedRecord(record journalRecord) {
+// shedRecord books an unjournaled record's loss as durable gap rows
+// journaled before enqueue reports acceptance. False means the loss
+// accounting itself could not be made durable — no gap may surface
+// from memory alone — and the caller must reject the batch so the
+// producer's copy still carries it.
+func (a *AsyncIngester) shedRecord(record journalRecord) bool {
 	gaps := a.shedToGaps(pendingFlush{lines: record.Lines, gaps: record.Gaps})
-	if a.journalGaps(gaps) {
-		return
+	if !a.journalGaps(gaps) {
+		return false
 	}
-	a.reoweGaps(gaps)
+	a.shedLines.Add(uint64(len(record.Lines)))
+	return true
 }
 
 // journalGaps appends one durable gap-only record and reports whether
@@ -676,7 +685,6 @@ func (a *AsyncIngester) shedToGaps(flush pendingFlush) []GapInput {
 		}]++
 	}
 	for key, count := range counts {
-		a.shedLines.Add(count)
 		gaps = append(gaps, GapInput{
 			ServiceID:    key.serviceID,
 			AllocationID: key.allocationID,

@@ -314,9 +314,13 @@ func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
 	for _, gap := range store.gaps {
 		total += gap.DroppedCount
 	}
-	if total+stats.GapsLost != stats.ShedLines {
-		t.Fatalf("flushed %d gap lines + %d lost != %d shed: folds must preserve every count",
-			total, stats.GapsLost, stats.ShedLines)
+	// Every fed line is accounted exactly once: stored, shed into
+	// durable gap rows, or counted lost when not even the gap
+	// accounting could be journaled (those batches are rejected and
+	// retried by their producer, never silently dropped).
+	if stats.AcceptedLines+total+stats.GapsLost != uint64(2*totalKeys) {
+		t.Fatalf("%d accepted + %d gap lines + %d lost != %d fed: every count must be accounted",
+			stats.AcceptedLines, total, stats.GapsLost, 2*totalKeys)
 	}
 }
 
