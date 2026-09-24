@@ -12,15 +12,16 @@ import (
 )
 
 const (
-	defaultIngestQueueFlushes  = 512
-	defaultIngestQueueBytes    = 64 << 20
-	ingestRowOverheadBytes     = 256
-	defaultIngestRatePerSec    = 2000.0
-	defaultIngestBurst         = 10000
-	maxIngestOwedGaps          = 4096
-	maxIngestCoalescedLines    = 5000
-	defaultIngestShutdownGrace = 15 * time.Second
-	reporterControlPlane       = "controlplane"
+	defaultIngestQueueFlushes    = 512
+	defaultIngestQueueBytes      = 64 << 20
+	ingestRowOverheadBytes       = 256
+	ingestAttributeOverheadBytes = 48
+	defaultIngestRatePerSec      = 2000.0
+	defaultIngestBurst           = 10000
+	maxIngestOwedGaps            = 4096
+	maxIngestCoalescedLines      = 5000
+	defaultIngestShutdownGrace   = 15 * time.Second
+	reporterControlPlane         = "controlplane"
 )
 
 // AsyncIngesterConfig bounds the control-plane log ingest path.
@@ -126,13 +127,27 @@ type owedGap struct {
 
 // add folds one shed window into the entry.
 func (o *owedGap) add(count uint64, start, end time.Time) {
-	if o.droppedCount == 0 {
-		o.windowStart, o.windowEnd = start, end
+	o.widen(start, end)
+	o.droppedCount += count
+}
+
+// replay records a re-reported window under a stable summary
+// identity: the report replaces the count instead of double-counting
+// the same loss, while the covered window still widens.
+func (o *owedGap) replay(count uint64, start, end time.Time) {
+	o.widen(start, end)
+	o.droppedCount = count
+}
+
+func (o *owedGap) widen(start, end time.Time) {
+	if o.droppedCount == 0 && o.windowStart.IsZero() && o.windowEnd.IsZero() {
+		o.windowStart = start
 		if o.windowStart.IsZero() {
 			o.windowStart = end
 		}
+		o.windowEnd = end
+		return
 	}
-	o.droppedCount += count
 	if !start.IsZero() && start.Before(o.windowStart) {
 		o.windowStart = start
 	}
@@ -149,7 +164,11 @@ func (o *owedGap) add(count uint64, start, end time.Time) {
 // stay in the GapsLost counter.
 func (a *AsyncIngester) noteOwedLocked(key owedGapKey, count uint64, start, end time.Time) {
 	if owed, ok := a.owed[key]; ok {
-		owed.add(count, start, end)
+		if key.summaryID != "" {
+			owed.replay(count, start, end)
+		} else {
+			owed.add(count, start, end)
+		}
 		return
 	}
 	if len(a.owed) < maxIngestOwedGaps {
@@ -210,17 +229,29 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 	}
 }
 
-// flushEstimateBytes approximates one flush's retained size: line
-// text plus a fixed per-row allowance for decoded structure
-// overhead. It bounds the queue's memory footprint, not the wire
-// size (which producers cap at logpipeline.MaxBatchBytes).
+// flushEstimateBytes approximates one flush's retained size: every
+// retained string and attribute plus a fixed per-row allowance for
+// decoded structure overhead. It bounds the queue's memory
+// footprint, not the wire size (which producers cap at
+// logpipeline.MaxBatchBytes).
 func flushEstimateBytes(flush pendingFlush) int64 {
 	size := int64(0)
 	for _, in := range flush.lines {
-		size += int64(len(in.Line)) + ingestRowOverheadBytes
+		row := int64(len(in.Line)) + ingestRowOverheadBytes
+		row += int64(len(in.ID) + len(in.ProjectID) + len(in.EnvironmentID) +
+			len(in.ServiceID) + len(in.AllocationID) + len(in.AgentID) +
+			len(in.Stream) + len(in.BuildID) + len(in.Stage) + len(in.Event))
+		for k, v := range in.Attributes {
+			row += int64(len(k)+len(v)) + ingestAttributeOverheadBytes
+		}
+		size += row
 	}
-	for range flush.gaps {
-		size += ingestRowOverheadBytes
+	for _, gap := range flush.gaps {
+		row := int64(ingestRowOverheadBytes)
+		row += int64(len(gap.ProjectID) + len(gap.ServiceID) + len(gap.AllocationID) +
+			len(gap.BuildID) + len(gap.Stream) + len(gap.Reason) +
+			len(gap.Reporter) + len(gap.SummaryID))
+		size += row
 	}
 	return size
 }

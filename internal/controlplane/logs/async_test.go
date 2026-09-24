@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -725,5 +726,84 @@ func TestAsyncIngesterCoalesceStaysWithinByteBudget(t *testing.T) {
 	}
 	if got := ingester.queueBytes.Load(); got != 1560 {
 		t.Fatalf("queued budget is %d bytes after coalesce, want 1560", got)
+	}
+}
+
+func TestAsyncIngesterByteBudgetCountsAttributes(t *testing.T) {
+	t.Parallel()
+
+	// Retained attribute maps count against the byte budget: tiny
+	// lines with fat attributes must not slip past the bound.
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 512, QueueBytes: 2000})
+
+	batch := &agentv1.LogBatch{AgentId: "agent-1"}
+	now := time.Now().UTC()
+	for i := 0; i < 3; i++ {
+		batch.Entries = append(batch.Entries, &agentv1.LogEntry{
+			ObservedAt:    timestamppb.New(now),
+			EnvironmentId: "env-1",
+			AllocationId:  "alloc-1",
+			ServiceId:     "svc-1",
+			Stream:        "stdout",
+			Sequence:      uint64(i + 1),
+			Line:          "x",
+			LineId:        logpipeline.AgentLineID("agent-1", "boot-1", "alloc-1", "stdout", uint64(i+1)),
+			Attributes:    map[string]string{"k": strings.Repeat("v", 1024)},
+		})
+	}
+	if ingester.EnqueueAgentBatch("agent-1", batch) != true {
+		t.Fatal("enqueue must accept-or-shed, never fail")
+	}
+	stats := ingester.Stats()
+	if stats.QueuedFlushes != 0 {
+		t.Fatalf("queued %d flushes despite oversized attributes", stats.QueuedFlushes)
+	}
+	if stats.ShedLines != 3 {
+		t.Fatalf("shed %d lines, want 3", stats.ShedLines)
+	}
+	if stats.OwedGaps != 1 {
+		t.Fatalf("owed %d gaps, want 1", stats.OwedGaps)
+	}
+}
+
+func TestAsyncIngesterReplayedProducerGapsDoNotInflate(t *testing.T) {
+	t.Parallel()
+
+	// A producer re-reporting the same drop summary after a failed
+	// send must not double-count its loss when the batch sheds.
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 1})
+	summary := func() *agentv1.LogBatch {
+		return &agentv1.LogBatch{AgentId: "agent-1", Drops: []*platformv1.LogDropSummary{{
+			ServiceId:    "svc-1",
+			AllocationId: "alloc-1",
+			DroppedCount: 5,
+			Reason:       logpipeline.ReasonSpoolOverflow,
+			WindowStart:  timestamppb.New(time.Now().UTC()),
+			WindowEnd:    timestamppb.New(time.Now().UTC()),
+			SummaryId:    "sum-1",
+		}}}
+	}
+	ingester.EnqueueAgentBatch("agent-1", summary()) // queued
+	ingester.EnqueueAgentBatch("agent-1", summary()) // shed -> owed
+	ingester.EnqueueAgentBatch("agent-1", summary()) // replayed while shed
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = ingester.Run(ctx) }()
+	deadline := time.Now().Add(10 * time.Second)
+	for ingester.Stats().FlushedLines < 0 || ingester.Stats().OwedGaps > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("owed gap never flushed: %+v", ingester.Stats())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for _, gap := range store.gaps {
+		if gap.SummaryID == "sum-1" && gap.DroppedCount != 5 {
+			t.Fatalf("replayed summary inflated to %d: %+v", gap.DroppedCount, store.gaps)
+		}
 	}
 }
