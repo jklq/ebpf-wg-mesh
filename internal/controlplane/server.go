@@ -559,9 +559,7 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 func (s *Server) deletionGC(ctx context.Context) error {
 	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
 	if s.logStore != nil {
-		gc.SetLogPurgeHook(func(ctx context.Context, projectID string) error {
-			return s.logStore.PurgeProjectLogs(ctx, projectID)
-		})
+		gc.SetLogPurgeHook(s.logStore.PurgeProjectLogs)
 	}
 	return gc.Run(ctx)
 }
