@@ -87,12 +87,20 @@ func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 		!strings.Contains(err.Error(), "prohibited private destination") {
 		t.Fatalf("tokenRealmURL accepted unlisted private sibling: %v", err)
 	}
-	realm, err := tokenRealmURL(ctx, "https://auth.internal.test/token", "registry.internal.test:5000", []string{"registry.internal.test:5000"})
+	// The registry's own allowlist entry must not approve sibling
+	// services as token authorities: a compromised registry could aim
+	// the token fetch at any same-site private host and read a "token"
+	// field out of the response.
+	if _, err := tokenRealmURL(ctx, "https://auth.internal.test/token", "registry.internal.test:5000", []string{"registry.internal.test:5000"}); err == nil ||
+		!strings.Contains(err.Error(), "prohibited private destination") {
+		t.Fatalf("tokenRealmURL approved a private sibling realm on the registry's entry alone: %v", err)
+	}
+	realm, err := tokenRealmURL(ctx, "https://auth.internal.test/token", "registry.internal.test:5000", []string{"registry.internal.test:5000", "auth.internal.test"})
 	if err != nil {
-		t.Fatalf("tokenRealmURL rejected allowlisted private sibling: %v", err)
+		t.Fatalf("tokenRealmURL rejected explicitly approved private sibling realm: %v", err)
 	}
 	if !realm.trustedAuthority {
-		t.Fatal("allowlisted private sibling realm is not marked trusted for dialing")
+		t.Fatal("explicitly approved private sibling realm is not marked trusted for dialing")
 	}
 	stubLookup(t, "93.184.216.34")
 	untrusted, err := tokenRealmURL(ctx, "https://auth.ghcr.io/token", "ghcr.io", nil)
@@ -147,9 +155,10 @@ func TestProhibitedIPRejectsNonPublicSpecialPurposeRanges(t *testing.T) {
 
 // TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm is the
 // request-level regression for the dial guard rejecting what the realm
-// check accepts: an allowlisted internal registry whose Bearer realm
-// lives on a private sibling host must resolve end to end, while the
-// same registry without the allowlist entry never sees a request.
+// check accepts: an internal registry whose Bearer realm lives on a
+// private sibling host resolves end to end when the operator approved
+// both endpoints, and without the realm's own entry the private sibling
+// is never contacted — the registry's entry alone must not open it.
 func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
 	stubLookup(t, "10.1.2.3")
 	digest := "sha256:" + strings.Repeat("7a", 32)
@@ -190,7 +199,7 @@ func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
 	}}
 	ref := "registry.internal.test:" + registryPort + "/demo/echo:latest"
 
-	resolver := NewHTTPResolver(client, []string{"registry.internal.test:" + registryPort})
+	resolver := NewHTTPResolver(client, []string{"registry.internal.test:" + registryPort, "auth.internal.test:" + tokenPort})
 	got, err := resolver.Resolve(context.Background(), ref)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
@@ -203,12 +212,24 @@ func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
 		t.Fatalf("manifest hits = %d, token hits = %d, want the sibling realm fetched", manifestHits, tokenHits)
 	}
 
+	// The registry's entry alone must not open the private sibling: a
+	// compromised registry naming it as the Bearer realm must not have
+	// the control plane probe it or echo its response as a token.
+	realmUnapproved := NewHTTPResolver(client, []string{"registry.internal.test:" + registryPort})
+	if _, err := realmUnapproved.Resolve(context.Background(), ref); err == nil ||
+		!strings.Contains(err.Error(), "prohibited private destination") {
+		t.Fatalf("Resolve without the realm entry = %v, want prohibited private destination", err)
+	}
+	if manifestHits != 3 || tokenHits != 1 {
+		t.Fatalf("manifest hits = %d, token hits = %d, want the unapproved private realm never contacted", manifestHits, tokenHits)
+	}
+
 	unlisted := NewHTTPResolver(client, nil)
 	if _, err := unlisted.Resolve(context.Background(), ref); err == nil ||
 		!strings.Contains(err.Error(), "prohibited private destination") {
 		t.Fatalf("Resolve without allowlist = %v, want prohibited private destination", err)
 	}
-	if manifestHits != 2 || tokenHits != 1 {
+	if manifestHits != 3 || tokenHits != 1 {
 		t.Fatalf("manifest hits = %d, token hits = %d, want no traffic without the allowlist entry", manifestHits, tokenHits)
 	}
 }

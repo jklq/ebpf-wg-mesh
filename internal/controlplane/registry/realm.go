@@ -13,10 +13,12 @@ import (
 // tokenRealm is a Bearer challenge's token endpoint that passed
 // tokenRealmURL. trustedAuthority reports whether the realm's authority
 // may be dialed as DNS declares it — private destinations included —
-// because the operator allowlisted the challenging registry as an
-// internal registry the control plane may reach, and the realm is a
-// same-site authority of that registry (its auth sibling). Everything
-// else keeps the dial guard's re-validation and address pinning.
+// because the operator approved that authority in its own right as an
+// internal endpoint the control plane may reach. The challenging
+// registry's allowlist entry covers only the registry's own endpoints:
+// a compromised registry must not be able to aim the token fetch at
+// unlisted same-site services. Everything else keeps the dial guard's
+// re-validation and address pinning.
 type tokenRealm struct {
 	url              *url.URL
 	trustedAuthority bool
@@ -27,8 +29,9 @@ type tokenRealm struct {
 // The realm is attacker-controlled input — anyone can pick the registry
 // host in an image reference — so it is confined to the registry's own
 // site and may not reach loopback or private destinations unless the
-// registry itself lives there (or the operator has allowlisted it as an
-// internal registry the control plane may reach). Without this, a
+// registry itself lives there (or the operator has allowlisted the
+// realm's own authority as an internal endpoint the control plane may
+// reach). Without this, a
 // malicious registry could make the control plane probe internal services
 // and echo any response back as a "token".
 func tokenRealmURL(ctx context.Context, realm, registryHost string, allowedPrivateHosts []string) (*tokenRealm, error) {
@@ -53,7 +56,11 @@ func tokenRealmURL(ctx context.Context, realm, registryHost string, allowedPriva
 	if !sameRegistrySite(realmHost, endpointHost) && !sameRegistrySite(realmHost, repositoryHost) {
 		return nil, fmt.Errorf("registry auth realm %q is outside the registry's site", realm)
 	}
-	trusted := registryHostAllowed(registryHost, allowedPrivateHosts) || registryHostAllowed(endpoint, allowedPrivateHosts)
+	// A private destination is reachable only on the realm's own
+	// allowlist entry: the registry's entry covers the registry's
+	// endpoints, not every same-site service a compromised registry
+	// might name as its Bearer realm.
+	trusted := registryHostAllowed(tokenURL.Host, allowedPrivateHosts)
 	if !strings.EqualFold(realmHost, endpointHost) && !strings.EqualFold(realmHost, repositoryHost) && !trusted {
 		prohibited, err := prohibitedDestination(ctx, realmHost)
 		if err != nil {
