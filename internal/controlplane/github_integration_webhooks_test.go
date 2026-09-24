@@ -599,3 +599,100 @@ func TestGitHubWebhookHandlerRejectsInvalidSignatureAndAcceptsValidSignature(t *
 		t.Fatalf("expected 202, got %d", resp.Code)
 	}
 }
+
+// TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain is the branch
+// recreation regression: GitHub sends an all-zero "before" when a tracked
+// ref is created or recreated while the binding still stores the
+// pre-deletion tip. That predecessor can never be observed, so the push
+// must prove currency by fetching the tracked head instead of pending as
+// an early successor until its retries run out — and when the fetch shows
+// a newer head than the pushed commit, the delivery is stale and must not
+// build at all.
+func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
+	t.Parallel()
+
+	store := openTestStore(t)
+	server := newTestGitHubServer(t, nil)
+	client, err := NewGitHubClient(server.config())
+	if err != nil {
+		t.Fatalf("NewGitHubClient: %v", err)
+	}
+	catalog := NewGitHubCatalog(store.source, client)
+	coordinator := NewGitHubCoordinator(store.source, store.source.Work(), testDelivery(store).Delivery, catalog, client, 5*time.Minute)
+	reconciler := NewGitHubReconciler(store.source, coordinator, time.Minute)
+	ctx := context.Background()
+
+	projectID := bootstrapProjectAndAgent(t, store, ctx)
+	linkTestProjectRepository(t, store, catalog, projectID, "public/hello")
+	service, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projectID), "web", repositoryServiceSpec(
+		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})},
+		&platformv1.ServiceSourceSpec{
+			Provider:           "github",
+			RepositorySelector: "public/hello",
+			TrackedRef:         "main",
+			BuildRecipe:        &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, DockerfilePath: "Dockerfile", ContextDir: "."},
+		},
+	), "node-1")
+	if err != nil {
+		t.Fatalf("createService: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		processed, err := reconciler.ProcessNext(ctx)
+		if err != nil {
+			t.Fatalf("processNext(%d): %v", i, err)
+		}
+		if !processed {
+			break
+		}
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+	// The binding holds the pre-deletion tip (commit-public-main) as its
+	// proven head. The branch is deleted and recreated at another commit;
+	// GitHub reports the recreate push with an all-zero before SHA.
+	const zeroSHA = "0000000000000000000000000000000000000000"
+	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", zeroSHA, "Public release commit", "Octocat Release"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision: %v", err)
+	}
+	processed, err := reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(recreate push) = %v, %v; the zero predecessor must not pend the push until its retries run out", processed, err)
+	}
+	status, _, err := store.reads.ServiceStatus(ctx, testUser("user-1"), service.ID)
+	if err != nil {
+		t.Fatalf("ServiceStatus: %v", err)
+	}
+	if status.LatestBuild == nil || status.LatestBuild.GetCommitSha() != "commit-public-release" {
+		t.Fatalf("expected recreated-ref build for commit-public-release, got %+v", status.LatestBuild)
+	}
+	head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-public-release" {
+		t.Fatalf("proven head = %q, %v; the recreated ref head must advance the binding", head, err)
+	}
+
+	// A recreate push whose commit is no longer the tracked head is
+	// stale: a newer push already moved the ref on, so it must complete
+	// without building and without moving the head.
+	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-stale-recreate", zeroSHA, "Stale recreate", "Octocat"); err != nil {
+		t.Fatalf("ObserveRepositoryRevision(stale): %v", err)
+	}
+	processed, err = reconciler.ProcessNext(ctx)
+	if err != nil || !processed {
+		t.Fatalf("processNext(stale recreate) = %v, %v, want clean completion", processed, err)
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM build_runs WHERE service_id = $1`, service.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("build_runs rows = %d, want 2 (the stale recreate push must not build)", count)
+	}
+	head, err = store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-public-release" {
+		t.Fatalf("proven head = %q, %v; the stale recreate push must not move it", head, err)
+	}
+}

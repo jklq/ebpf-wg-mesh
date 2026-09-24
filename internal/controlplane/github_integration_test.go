@@ -151,6 +151,7 @@ type testGitHubServer struct {
 	installationRepos []map[string]any
 	installationID    int64
 	privateRepoStatus int
+	branchHeads       map[string]string
 
 	mu   sync.Mutex
 	hits map[string]int
@@ -165,7 +166,12 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 		installationRepos: installationRepos,
 		installationID:    7,
 		privateRepoStatus: http.StatusNotFound,
-		hits:              make(map[string]int),
+		branchHeads: map[string]string{
+			"/repos/public/hello/git/ref/heads/main":    "commit-public-main",
+			"/repos/public/hello/git/ref/heads/release": "commit-public-release",
+			"/repos/private/secret/git/ref/heads/main":  "commit-private-main",
+		},
+		hits: make(map[string]int),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/app/installations/7/access_tokens", func(w http.ResponseWriter, r *http.Request) {
@@ -231,7 +237,7 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 	mux.HandleFunc("/repos/public/hello/git/ref/heads/main", func(w http.ResponseWriter, r *http.Request) {
 		server.recordHit(r.URL.Path)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"object": map[string]any{"sha": "commit-public-main"},
+			"object": map[string]any{"sha": server.branchHead(r.URL.Path)},
 		})
 	})
 	mux.HandleFunc("/repos/public/hello/commits/commit-public-main", func(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +253,7 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 	mux.HandleFunc("/repos/public/hello/git/ref/heads/release", func(w http.ResponseWriter, r *http.Request) {
 		server.recordHit(r.URL.Path)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"object": map[string]any{"sha": "commit-public-release"},
+			"object": map[string]any{"sha": server.branchHead(r.URL.Path)},
 		})
 	})
 	mux.HandleFunc("/repos/public/hello/commits/commit-public-release", func(w http.ResponseWriter, r *http.Request) {
@@ -320,7 +326,7 @@ func newTestGitHubServer(t *testing.T, installationRepos []map[string]any) *test
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"object": map[string]any{"sha": "commit-private-main"},
+			"object": map[string]any{"sha": server.branchHead(r.URL.Path)},
 		})
 	})
 	mux.HandleFunc("/repos/private/secret/commits/commit-private-main", func(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +390,20 @@ func (s *testGitHubServer) pathHits(path string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.hits[path]
+}
+
+func (s *testGitHubServer) branchHead(path string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.branchHeads[path]
+}
+
+// setBranchHead moves a tracked ref head, e.g. to model a branch that was
+// deleted and recreated at a different commit.
+func (s *testGitHubServer) setBranchHead(path, sha string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.branchHeads[path] = sha
 }
 
 func (s *testGitHubServer) branchHeadHits() int {

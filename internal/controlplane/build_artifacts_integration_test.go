@@ -613,6 +613,51 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 	}
 }
 
+// TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync is the
+// delayed-sync regression: a tracked-head sync that fetched before a
+// newer push landed carries a stale fetch basis. It must neither move the
+// proven head backward nor retire the newer revision's work — while a
+// sync whose fetch basis is the current head still advances it.
+func TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync(t *testing.T) {
+	ctx := context.Background()
+	store, _, service := newRepoBuildTestService(t)
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
+	if err != nil {
+		t.Fatalf("SourceBindingByServiceID: %v", err)
+	}
+
+	// The sync fetched commit-1 over no established head, and commit-2's
+	// push advanced the binding before the sync applied. Its observation
+	// is history only: it must not roll the head back or supersede work.
+	stale := source.BuildTransition{TrackedHead: true}
+	superseded, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, stale)
+	if err != nil || !superseded.Superseded || superseded.PendingPredecessor {
+		t.Fatalf("stale tracked-head sync = %+v, %v, want superseded no-op", superseded, err)
+	}
+	head, err := store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-2" {
+		t.Fatalf("proven head = %q, %v; the stale sync must not move it backward", head, err)
+	}
+
+	// A sync whose fetch started over the current head is the real thing:
+	// it advances the head to the fetched commit.
+	fresh := source.BuildTransition{TrackedHead: true, FetchedFromHead: "commit-2"}
+	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-3", "", "", fresh); err != nil {
+		t.Fatalf("seedReadySourceState commit-3: %v", err)
+	}
+	head, err = store.source.SourceBindingHeadCommit(ctx, binding.ID)
+	if err != nil || head != "commit-3" {
+		t.Fatalf("proven head = %q, %v; a sync over the current head must advance it", head, err)
+	}
+}
+
 // TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild is the
 // late-webhook regression without a reusable image: a redelivered older
 // revision whose build never produced an artifact must not retire the
