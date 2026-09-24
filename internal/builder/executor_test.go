@@ -15,6 +15,30 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
+func TestDestroyExecutionWorkspaceDoesNotChmodSymlinkTarget(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "target")
+	if err := os.WriteFile(target, []byte("host data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := destroyExecutionWorkspace(root); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("symlink target mode = %o, want 600", got)
+	}
+}
+
 func testExecutionSpec(t *testing.T, buildID string, archive []byte, recipe *platformv1.BuildRecipe) ExecutionSpec {
 	t.Helper()
 
@@ -24,14 +48,9 @@ func testExecutionSpec(t *testing.T, buildID string, archive []byte, recipe *pla
 	}
 	sum := sha256.Sum256(archive)
 	return ExecutionSpec{
-		BuildID:       buildID,
-		ServiceID:     "service-1",
-		ProjectID:     "project-1",
-		EnvironmentID: "env-1",
-		CommitSHA:     "deadbeef",
+		BuildID: buildID,
 
 		SnapshotArchivePath: archivePath,
-		SnapshotID:          "snapshot-1",
 		SnapshotDigest:      "sha256:" + hex.EncodeToString(sum[:]),
 
 		Recipe: recipe,
@@ -86,18 +105,6 @@ func writeMetadataForTest(t *testing.T, req commandRequest, digest string) {
 	}
 	if err := os.WriteFile(metadata, []byte(`{"containerimage.digest":"`+digest+`"}`), 0o644); err != nil {
 		t.Fatalf("WriteFile(metadata): %v", err)
-	}
-}
-
-func TestDevelopmentExecutorIdentity(t *testing.T) {
-	t.Parallel()
-
-	executor := newDevelopmentExecutor(t.TempDir(), &scriptedCommandRunner{}, "/usr/bin:/bin")
-	if executor.Name() != ExecutorDevelopment {
-		t.Fatalf("unexpected executor name %q", executor.Name())
-	}
-	if executor.Isolating() {
-		t.Fatal("development executor must report itself non-isolating")
 	}
 }
 
@@ -156,7 +163,7 @@ func TestExecuteMarksWorkspaceOwnedDuringRun(t *testing.T) {
 			if err := json.Unmarshal(data, &owner); err != nil {
 				return nil, err
 			}
-			if owner.Executor != ExecutorDevelopment || owner.BuildID != "build-1" || owner.PID != os.Getpid() {
+			if owner.BuildID != "build-1" || owner.PID != os.Getpid() {
 				return nil, errors.New("unexpected owner marker content")
 			}
 			writeMetadataForTest(t, req, "sha256:abc")
@@ -372,16 +379,40 @@ func TestExecuteCancellationDestroysWorkspace(t *testing.T) {
 // blockingCommandRunner blocks until the context ends, like a build
 // step that never finishes on its own.
 type blockingCommandRunner struct {
-	started chan commandRequest
+	started       chan commandRequest
+	fillWorkspace bool
 }
 
 func (r *blockingCommandRunner) Run(ctx context.Context, req commandRequest, _ func(commandOutputLine)) ([]byte, error) {
+	if r.fillWorkspace {
+		path := filepath.Join(filepath.Dir(metadataFilePath(req.Args)), "scratch", "bulk.dat")
+		if err := os.WriteFile(path, make([]byte, 1<<20), 0o644); err != nil {
+			return nil, err
+		}
+	}
 	select {
 	case r.started <- req:
 	default:
 	}
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+func TestExecuteStopsBuildWhenWorkspaceFills(t *testing.T) {
+	runner := &blockingCommandRunner{started: make(chan commandRequest, 1), fillWorkspace: true}
+	spec := testExecutionSpec(t, "build-disk", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
+	spec.Limits.MaxWorkspaceBytes = 512 << 10
+	workDir := t.TempDir()
+	executor := newDevelopmentExecutor(workDir, runner, "/usr/bin:/bin")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := executor.Execute(ctx, spec)
+	if err == nil || !strings.Contains(err.Error(), "exceeding") {
+		t.Fatalf("expected running build to stop at workspace limit, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(workDir, "build-disk")); !os.IsNotExist(err) {
+		t.Fatalf("workspace remains after disk limit: %v", err)
+	}
 }
 
 func TestExecuteEnforcesWorkspaceDiskLimit(t *testing.T) {
@@ -419,7 +450,7 @@ func TestRecoverStaleWorkspaces(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(deadRoot, "repo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	deadMarker, err := json.Marshal(executorOwner{Executor: ExecutorDevelopment, PID: 1 << 30, BuildID: "build-dead", StartedAt: time.Now().UTC()})
+	deadMarker, err := json.Marshal(executorOwner{PID: 1 << 30, BuildID: "build-dead"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +465,7 @@ func TestRecoverStaleWorkspaces(t *testing.T) {
 	if err := os.MkdirAll(liveRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	liveMarker, err := json.Marshal(executorOwner{Executor: ExecutorDevelopment, PID: os.Getpid(), BuildID: "build-live", StartedAt: time.Now().UTC()})
+	liveMarker, err := json.Marshal(executorOwner{PID: os.Getpid(), BuildID: "build-live"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,9 +1,12 @@
 package delivery
 
-import "time"
+import (
+	"time"
 
-// BuildSchedulerConfig tunes the durable lease-based build scheduler (2.5).
-// Zero values select Defaults via WithDefaults.
+	"ebof-wg-mesh/internal/config"
+)
+
+// BuildSchedulerConfig tunes build leases and queue limits.
 type BuildSchedulerConfig struct {
 	// LeaseTTL is how long a claimed build stays owned without a heartbeat.
 	LeaseTTL time.Duration
@@ -11,8 +14,7 @@ type BuildSchedulerConfig struct {
 	AttemptLimit int64
 	// MaxConcurrentGlobal caps running builds cluster-wide.
 	MaxConcurrentGlobal int
-	// MaxConcurrentPerProject caps running builds per project. Projects are
-	// the workspace proxy until 3.1 introduces workspaces.
+	// MaxConcurrentPerProject caps running builds per project.
 	MaxConcurrentPerProject int
 	// BuildTimeout bounds one claim from claim to completion.
 	BuildTimeout time.Duration
@@ -20,16 +22,16 @@ type BuildSchedulerConfig struct {
 	MaxQueueAge time.Duration
 }
 
-// DefaultBuildSchedulerConfig is the production floor. Fairness (3.19) and
-// quotas (3.3) layer on top; removing them degrades to these flat caps.
+// DefaultBuildSchedulerConfig returns the default limits.
 func DefaultBuildSchedulerConfig() BuildSchedulerConfig {
+	defaults := config.DefaultControlPlaneBuilderConfig()
 	return BuildSchedulerConfig{
-		LeaseTTL:                120 * time.Second,
-		AttemptLimit:            3,
-		MaxConcurrentGlobal:     20,
-		MaxConcurrentPerProject: 5,
-		BuildTimeout:            30 * time.Minute,
-		MaxQueueAge:             2 * time.Hour,
+		LeaseTTL:                time.Duration(defaults.LeaseTTLSeconds) * time.Second,
+		AttemptLimit:            int64(defaults.MaxAttempts),
+		MaxConcurrentGlobal:     defaults.MaxConcurrentGlobal,
+		MaxConcurrentPerProject: defaults.MaxConcurrentPerProject,
+		BuildTimeout:            time.Duration(defaults.BuildTimeoutSeconds) * time.Second,
+		MaxQueueAge:             time.Duration(defaults.MaxQueueAgeSeconds) * time.Second,
 	}
 }
 

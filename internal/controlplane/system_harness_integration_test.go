@@ -298,7 +298,10 @@ func dockerfileMarkerArchive(marker string) []byte {
 		"repo/marker.txt": marker + "\n",
 	}
 	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
+	gz, err := gzip.NewWriterLevel(&buf, gzip.NoCompression)
+	if err != nil {
+		panic(err)
+	}
 	tw := tar.NewWriter(gz)
 	for name, body := range files {
 		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
@@ -320,7 +323,7 @@ func dockerfileMarkerArchive(marker string) []byte {
 func seedDockerfileSourceState(t *testing.T, store *persistence, service deliverycore.ServiceRecord, commitSHA, marker string) {
 	t.Helper()
 	archive := dockerfileMarkerArchive(marker)
-	digest, objectKey, err := store.source.StoreSourceArchive(context.Background(), archive)
+	digest, objectKey, err := storeTestArchive(context.Background(), store, archive)
 	if err != nil {
 		t.Fatalf("storeSourceArchive: %v", err)
 	}

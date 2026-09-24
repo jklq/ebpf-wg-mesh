@@ -184,6 +184,7 @@ type fakePlatformStore struct {
 	createProjectFn                   func(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
 	listProjectsFn                    func(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
 	projectByIDFn                     func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
+	updateProjectLogRetentionFn       func(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	serviceByIDFn                     func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
 	listServicesFn                    func(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolumeFn           func(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
@@ -326,6 +327,13 @@ func (f *fakePlatformStore) projectByID(ctx context.Context, user authz.User, pr
 		return f.projectByIDFn(ctx, user, projectID)
 	}
 	return deliverycore.ProjectRecord{ID: projectID}, nil
+}
+
+func (f *fakePlatformStore) updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error) {
+	if f.updateProjectLogRetentionFn != nil {
+		return f.updateProjectLogRetentionFn(ctx, user, projectID, retentionDays)
+	}
+	return deliverycore.ProjectRecord{ID: projectID, LogRetentionDays: retentionDays}, nil
 }
 
 func (f *fakePlatformStore) ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error) {

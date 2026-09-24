@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -147,7 +148,7 @@ func (s *catalogPersistence) listProjects(ctx context.Context, user authz.User, 
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days
 		   FROM projects p
 		   JOIN project_memberships m ON m.project_id = p.id
 		  WHERE m.user_id = $1
@@ -185,7 +186,7 @@ func (s *catalogPersistence) projectByScopeQuerier(ctx context.Context, q delive
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days
 		   FROM projects p
 		  WHERE p.id = $1 AND p.kind = $2`,
 		scope.ID(),
@@ -198,7 +199,7 @@ func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q de
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
-		        deleted_at, deleted_by_user_id, delete_expires_at
+		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days
 		   FROM projects
 		  WHERE system_key = $1`,
 		systemKey,
@@ -218,7 +219,7 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
-		        deleted_at, deleted_by_user_id, delete_expires_at
+		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days
 		   FROM projects
 		  WHERE owner_user_id = $1 AND name = $2 AND kind = $3`,
 		userID,
@@ -236,11 +237,41 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 	}
 }
 
+var errInvalidLogRetention = errors.New("log retention must be 0 (platform default) or 1..90 days")
+
+func (s *catalogPersistence) updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error) {
+	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
+	if err != nil {
+		return deliverycore.ProjectRecord{}, err
+	}
+	if retentionDays < 0 || retentionDays > 90 {
+		return deliverycore.ProjectRecord{}, errInvalidLogRetention
+	}
+	var rec deliverycore.ProjectRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.projectByScopeQuerier(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if current.Deletion != nil {
+			return deliverycore.ErrProjectDeleted
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET log_retention_days = $1 WHERE id = $2`, retentionDays, current.ID); err != nil {
+			return err
+		}
+		journal.RecordProject(ctx, current.ID)
+		current.LogRetentionDays = retentionDays
+		rec = current
+		return nil
+	})
+	return rec, err
+}
+
 func (s *catalogPersistence) projectByIDInternalQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.ProjectRecord, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
-		        deleted_at, deleted_by_user_id, delete_expires_at
+		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days
 		   FROM projects
 		  WHERE id = $1`,
 		projectID,

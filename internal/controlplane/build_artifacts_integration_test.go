@@ -1163,6 +1163,20 @@ func TestSourceBuildReuseRecordsRevisionAndSkipsRedundantRollout(t *testing.T) {
 	if revisionBuilds != 1 {
 		t.Fatalf("build records for the reused revision = %d, want exactly one", revisionBuilds)
 	}
+	var latestBuildID, reuseRunID string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT latest_build_id FROM service_delivery_status WHERE service_id = $1`, service.ID,
+	).Scan(&latestBuildID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT id FROM build_runs WHERE source_revision_id = (SELECT id FROM source_revisions WHERE commit_sha = 'commit-2' LIMIT 1)`,
+	).Scan(&reuseRunID); err != nil {
+		t.Fatal(err)
+	}
+	if latestBuildID != reuseRunID {
+		t.Fatalf("latest_build_id = %q, want reuse run %q", latestBuildID, reuseRunID)
+	}
 
 	// A later refresh sync of the same head reuses again and must not
 	// restart the rollout or duplicate the record.

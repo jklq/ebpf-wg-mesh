@@ -112,6 +112,17 @@ func TestGuestWorkspacePath(t *testing.T) {
 	}
 }
 
+func TestGuestWorkspacePathRejectsSymlinkEscape(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guestWorkspacePath(root, filepath.Join(root, "escape", "future-file")); err == nil {
+		t.Fatal("expected symlinked parent outside workspace to be rejected")
+	}
+}
+
 func TestSandboxContainerID(t *testing.T) {
 	t.Parallel()
 

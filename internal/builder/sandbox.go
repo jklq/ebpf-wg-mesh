@@ -169,8 +169,25 @@ func validateSandboxMounts(mounts []SandboxMount) error {
 // to its guest path inside the sandbox. Paths outside the root are
 // rejected: the sandbox only ever sees the workspace.
 func guestWorkspacePath(workspaceRoot, hostPath string) (string, error) {
-	root := filepath.Clean(workspaceRoot)
-	target := filepath.Clean(hostPath)
+	root, err := filepath.EvalSymlinks(workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	target := ""
+	for prefix := filepath.Clean(hostPath); ; prefix = filepath.Dir(prefix) {
+		resolved, resolveErr := filepath.EvalSymlinks(prefix)
+		if resolveErr == nil {
+			suffix, relErr := filepath.Rel(prefix, hostPath)
+			if relErr != nil {
+				return "", relErr
+			}
+			target = filepath.Join(resolved, suffix)
+			break
+		}
+		if !errors.Is(resolveErr, os.ErrNotExist) || prefix == filepath.Dir(prefix) {
+			return "", resolveErr
+		}
+	}
 	rel, err := filepath.Rel(root, target)
 	if err != nil {
 		return "", err

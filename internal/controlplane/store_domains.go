@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/routing"
@@ -334,7 +335,10 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 				return routing.ErrPlatformDomainInUse
 			}
 		}
-		now := time.Now().UTC()
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
 		tombstoned, err := s.tombstoneDomainBindingTx(ctx, tx, binding.Hostname, user.ID(), now)
 		if err != nil {
 			return err
@@ -397,8 +401,7 @@ func (s *routingPersistence) RestoreDomainBindingRecord(ctx context.Context, use
 			return err
 		}
 		if !cleared {
-			restored, err = s.domainBindingByScopeQuerier(ctx, tx, scope)
-			return err
+			return deliverycore.ErrDeletionExpired
 		}
 		journal.RecordDomain(ctx, binding.Hostname, binding.ServiceID)
 		if !binding.PlatformGenerated {
@@ -471,7 +474,7 @@ func (s *routingPersistence) clearDomainBindingTombstoneTx(ctx context.Context, 
 		    SET deleted_at = NULL,
 		        deleted_by_user_id = '',
 		        delete_expires_at = NULL
-		  WHERE hostname = $1 AND deleted_at IS NOT NULL`,
+		  WHERE hostname = $1 AND deleted_at IS NOT NULL AND delete_expires_at > statement_timestamp()`,
 		hostname,
 	)
 	if err != nil {

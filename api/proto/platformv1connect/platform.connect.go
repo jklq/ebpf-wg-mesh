@@ -53,6 +53,9 @@ const (
 	// PlatformServiceRestoreProjectProcedure is the fully-qualified name of the PlatformService's
 	// RestoreProject RPC.
 	PlatformServiceRestoreProjectProcedure = "/platform.v1.PlatformService/RestoreProject"
+	// PlatformServiceUpdateProjectLogRetentionProcedure is the fully-qualified name of the
+	// PlatformService's UpdateProjectLogRetention RPC.
+	PlatformServiceUpdateProjectLogRetentionProcedure = "/platform.v1.PlatformService/UpdateProjectLogRetention"
 	// PlatformServicePreviewProjectDeletionProcedure is the fully-qualified name of the
 	// PlatformService's PreviewProjectDeletion RPC.
 	PlatformServicePreviewProjectDeletionProcedure = "/platform.v1.PlatformService/PreviewProjectDeletion"
@@ -226,6 +229,7 @@ type PlatformServiceClient interface {
 	GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error)
 	DeleteProject(context.Context, *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error)
 	RestoreProject(context.Context, *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error)
+	UpdateProjectLogRetention(context.Context, *connect.Request[platformv1.UpdateProjectLogRetentionRequest]) (*connect.Response[platformv1.Project], error)
 	PreviewProjectDeletion(context.Context, *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListEnvironments(context.Context, *connect.Request[platformv1.ListEnvironmentsRequest]) (*connect.Response[platformv1.ListEnvironmentsResponse], error)
 	GetEnvironment(context.Context, *connect.Request[platformv1.GetEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
@@ -309,6 +313,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			httpClient,
 			baseURL+PlatformServiceRestoreProjectProcedure,
 			connect.WithSchema(platformServiceMethods.ByName("RestoreProject")),
+			connect.WithClientOptions(opts...),
+		),
+		updateProjectLogRetention: connect.NewClient[platformv1.UpdateProjectLogRetentionRequest, platformv1.Project](
+			httpClient,
+			baseURL+PlatformServiceUpdateProjectLogRetentionProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("UpdateProjectLogRetention")),
 			connect.WithClientOptions(opts...),
 		),
 		previewProjectDeletion: connect.NewClient[platformv1.PreviewProjectDeletionRequest, platformv1.DeletionPreview](
@@ -573,6 +583,7 @@ type platformServiceClient struct {
 	getProject                  *connect.Client[platformv1.GetProjectRequest, platformv1.Project]
 	deleteProject               *connect.Client[platformv1.DeleteProjectRequest, emptypb.Empty]
 	restoreProject              *connect.Client[platformv1.RestoreProjectRequest, platformv1.Project]
+	updateProjectLogRetention   *connect.Client[platformv1.UpdateProjectLogRetentionRequest, platformv1.Project]
 	previewProjectDeletion      *connect.Client[platformv1.PreviewProjectDeletionRequest, platformv1.DeletionPreview]
 	listEnvironments            *connect.Client[platformv1.ListEnvironmentsRequest, platformv1.ListEnvironmentsResponse]
 	getEnvironment              *connect.Client[platformv1.GetEnvironmentRequest, platformv1.Environment]
@@ -640,6 +651,11 @@ func (c *platformServiceClient) DeleteProject(ctx context.Context, req *connect.
 // RestoreProject calls platform.v1.PlatformService.RestoreProject.
 func (c *platformServiceClient) RestoreProject(ctx context.Context, req *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return c.restoreProject.CallUnary(ctx, req)
+}
+
+// UpdateProjectLogRetention calls platform.v1.PlatformService.UpdateProjectLogRetention.
+func (c *platformServiceClient) UpdateProjectLogRetention(ctx context.Context, req *connect.Request[platformv1.UpdateProjectLogRetentionRequest]) (*connect.Response[platformv1.Project], error) {
+	return c.updateProjectLogRetention.CallUnary(ctx, req)
 }
 
 // PreviewProjectDeletion calls platform.v1.PlatformService.PreviewProjectDeletion.
@@ -859,6 +875,7 @@ type PlatformServiceHandler interface {
 	GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error)
 	DeleteProject(context.Context, *connect.Request[platformv1.DeleteProjectRequest]) (*connect.Response[emptypb.Empty], error)
 	RestoreProject(context.Context, *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error)
+	UpdateProjectLogRetention(context.Context, *connect.Request[platformv1.UpdateProjectLogRetentionRequest]) (*connect.Response[platformv1.Project], error)
 	PreviewProjectDeletion(context.Context, *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListEnvironments(context.Context, *connect.Request[platformv1.ListEnvironmentsRequest]) (*connect.Response[platformv1.ListEnvironmentsResponse], error)
 	GetEnvironment(context.Context, *connect.Request[platformv1.GetEnvironmentRequest]) (*connect.Response[platformv1.Environment], error)
@@ -938,6 +955,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		PlatformServiceRestoreProjectProcedure,
 		svc.RestoreProject,
 		connect.WithSchema(platformServiceMethods.ByName("RestoreProject")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceUpdateProjectLogRetentionHandler := connect.NewUnaryHandler(
+		PlatformServiceUpdateProjectLogRetentionProcedure,
+		svc.UpdateProjectLogRetention,
+		connect.WithSchema(platformServiceMethods.ByName("UpdateProjectLogRetention")),
 		connect.WithHandlerOptions(opts...),
 	)
 	platformServicePreviewProjectDeletionHandler := connect.NewUnaryHandler(
@@ -1204,6 +1227,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceDeleteProjectHandler.ServeHTTP(w, r)
 		case PlatformServiceRestoreProjectProcedure:
 			platformServiceRestoreProjectHandler.ServeHTTP(w, r)
+		case PlatformServiceUpdateProjectLogRetentionProcedure:
+			platformServiceUpdateProjectLogRetentionHandler.ServeHTTP(w, r)
 		case PlatformServicePreviewProjectDeletionProcedure:
 			platformServicePreviewProjectDeletionHandler.ServeHTTP(w, r)
 		case PlatformServiceListEnvironmentsProcedure:
@@ -1315,6 +1340,10 @@ func (UnimplementedPlatformServiceHandler) DeleteProject(context.Context, *conne
 
 func (UnimplementedPlatformServiceHandler) RestoreProject(context.Context, *connect.Request[platformv1.RestoreProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RestoreProject is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) UpdateProjectLogRetention(context.Context, *connect.Request[platformv1.UpdateProjectLogRetentionRequest]) (*connect.Response[platformv1.Project], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.UpdateProjectLogRetention is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) PreviewProjectDeletion(context.Context, *connect.Request[platformv1.PreviewProjectDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error) {

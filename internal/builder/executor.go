@@ -1,18 +1,5 @@
-// Package builder executes customer builds behind the BuildExecutor
-// boundary (2.4a).
-//
-// Every build goes through a BuildExecutor. Each execution receives its
-// inputs explicitly: a verified source snapshot archive, an isolated
-// writable workspace, a BuildKit endpoint, push credentials scoped to
-// exactly one repository, resource limits, and a network policy. The
-// executor owns its workspace lifecycle and verifies cleanup on
-// completion, cancellation, and worker death (via RecoverStaleWorkspaces
-// on the next start).
-//
-// The development executor establishes the seam, the limits, and the
-// credential scoping that the hardened backend enforces; it does not
-// isolate hostile code and is labeled non-isolating in the builder
-// startup contract. The hardened executor is the production backend.
+// Package builder executes builds with isolated production and local
+// development executors.
 package builder
 
 import (
@@ -26,6 +13,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
 )
 
 // ExecutorDevelopment runs builds as host child processes. It does not
@@ -66,17 +54,10 @@ type BuildExecutor interface {
 // Nothing about the source, credentials, endpoint, limits, or policy
 // may be read from ambient host state.
 type ExecutionSpec struct {
-	BuildID       string
-	ServiceID     string
-	ProjectID     string
-	EnvironmentID string
-	CommitSHA     string
+	BuildID string
 
-	// SnapshotArchivePath is a verified compressed snapshot archive
-	// (see 2.2) staged by the caller. The executor extracts it into a
-	// read-only snapshot directory and never writes into that directory.
+	// SnapshotArchivePath is a compressed snapshot archive staged by the caller.
 	SnapshotArchivePath string
-	SnapshotID          string
 	SnapshotDigest      string
 
 	Recipe *platformv1.BuildRecipe
@@ -163,13 +144,14 @@ type ResourceLimits struct {
 // DefaultResourceLimits returns the effective defaults used when the
 // operator configures no explicit limits.
 func DefaultResourceLimits() ResourceLimits {
+	limits := config.DefaultBuilderLimits()
 	return ResourceLimits{
-		Timeout:           30 * time.Minute,
-		MemoryBytes:       8 << 30,
-		CPUSeconds:        3600,
-		MaxFileBytes:      10 << 30,
-		MaxProcesses:      4096,
-		MaxWorkspaceBytes: 20 << 30,
+		Timeout:           time.Duration(limits.TimeoutSeconds) * time.Second,
+		MemoryBytes:       limits.MemoryBytes,
+		CPUSeconds:        limits.CPUSeconds,
+		MaxFileBytes:      limits.MaxFileBytes,
+		MaxProcesses:      limits.MaxProcesses,
+		MaxWorkspaceBytes: limits.MaxWorkspaceBytes,
 	}
 }
 
@@ -229,17 +211,11 @@ type NetworkPolicy struct {
 	DeniedCIDRs        []string
 }
 
-// DefaultRestrictedNetworkPolicy denies the platform's own surface
-// (cloud metadata endpoints) while allowing general egress for
-// dependency fetches during the build.
+// DefaultRestrictedNetworkPolicy blocks cloud metadata endpoints.
 func DefaultRestrictedNetworkPolicy() NetworkPolicy {
 	return NetworkPolicy{
 		AllowGeneralEgress: true,
-		DeniedCIDRs: []string{
-			"169.254.169.254/32",
-			"100.100.100.200/32",
-			"fd00:ec2::254/128",
-		},
+		DeniedCIDRs:        config.DefaultBuilderDeniedCIDRs(),
 	}
 }
 

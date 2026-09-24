@@ -3,13 +3,14 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"errors"
 	"fmt"
-	"github.com/google/uuid"
 	"time"
 
+	"github.com/google/uuid"
+
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -116,6 +117,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			changed = true
 			completed.State = targetState
 			completed.FailureReason = reason
+			completed.FinishedAt = sql.NullTime{Time: now, Valid: true}
 			return nil
 		}
 		now := time.Now().UTC()
@@ -130,11 +132,11 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		default:
 			return errors.New("invalid terminal build state")
 		}
-		// Every successful build records its immutable artifact before the
-		// build row goes terminal, so the artifact exists even when a
-		// newer build supersedes this image before it rolls out.
 		var artifact BuildArtifactRecord
 		if stateValue == BuildStateSucceeded {
+			if build.SourceRevisionID == "" || build.SourceSnapshotID == "" || build.SourceSnapshotDigest == "" {
+				return errSourceStateNotReady
+			}
 			repository, manifestDigest, err := registry.SplitPinnedReference(imageDigest)
 			if err != nil {
 				return fmt.Errorf("builder reported an invalid image reference: %w", err)
@@ -155,6 +157,18 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			})
 			if err != nil {
 				return err
+			}
+			var newerCount int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT count(*) FROM build_runs
+				  WHERE service_id = $1 AND queued_at > $2 AND state IN ($3, $4, $5)`,
+				build.ServiceID, build.QueuedAt, BuildStateQueued, BuildStateRunning, BuildStateSucceeded,
+			).Scan(&newerCount); err != nil {
+				return err
+			}
+			if newerCount > 0 {
+				stateValue = BuildStateSuperseded
+				failureReason = "superseded by newer build"
 			}
 		}
 		result, err := tx.ExecContext(ctx,
@@ -187,6 +201,7 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			completed.Artifact = &artifactCopy
 		}
 		completed.FailureReason = failureReason
+		completed.FinishedAt = sql.NullTime{Time: now, Valid: true}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE builder_workers
 			    SET current_build_id = '',
@@ -225,38 +240,6 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 				Actor:            deploymentActor{Kind: DeploymentCauseBuilder, ID: builderID},
 				ReasonCode:       reasonCode,
 				Detail:           detail,
-				IgnoreIfTerminal: true,
-			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			return nil
-		}
-		if build.SourceRevisionID == "" || build.SourceSnapshotID == "" || build.SourceSnapshotDigest == "" {
-			return errSourceStateNotReady
-		}
-		var newerCount int
-		if err := tx.QueryRowContext(ctx,
-			`SELECT count(*)
-			   FROM build_runs
-			  WHERE service_id = $1
-			    AND queued_at > $2
-			    AND state IN ($3, $4, $5)`,
-			build.ServiceID, build.QueuedAt, BuildStateQueued, BuildStateRunning, BuildStateSucceeded,
-		).Scan(&newerCount); err != nil {
-			return err
-		}
-		if newerCount > 0 {
-			// The image never rolled out: leave its artifact off the
-			// superseded deployment so retention can age it out like any
-			// other undeployed build output. Pinning it here would make it
-			// rollback material forever — deployments only become rollback
-			// material when they actually carry an image to roll back to.
-			// The immutable artifact stays discoverable through the build.
-			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-				ToState:          DeploymentStateSuperseded,
-				Actor:            deploymentActor{Kind: DeploymentCauseBuilder, ID: builderID},
-				ReasonCode:       reasonBuildSuperseded,
-				Detail:           "A newer build superseded this image",
 				IgnoreIfTerminal: true,
 			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
@@ -429,7 +412,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 		&rec.AttemptCount,
 		&rec.AttemptLimit,
 		&rec.CancelRequestedAt,
-		&rec.CancelRequestedBy,
 		&rec.DeadlineAt,
 		&rec.LastHeartbeatAt,
 		&rec.ArtifactID,
@@ -459,8 +441,6 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptRecord, error) {
 	var rec BuildAttemptRecord
 	err := scanner.Scan(
-		&rec.ID,
-		&rec.BuildID,
 		&rec.AttemptNumber,
 		&rec.BuilderID,
 		&rec.OwnerEpoch,
@@ -678,19 +658,23 @@ func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service
 	).Scan(&reuseBuildID)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		// The revision already carries its build record.
-	case err != nil:
-		return DeploymentRecord{}, err
-	default:
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE service_delivery_status
-			    SET latest_build_id = $1,
-			        updated_at = $2
-			  WHERE service_id = $3`,
-			reuseBuildID, now, service.ID,
-		); err != nil {
+		if err := tx.QueryRowContext(ctx,
+			`SELECT id FROM build_runs WHERE source_revision_id = $1`,
+			revision.ID,
+		).Scan(&reuseBuildID); err != nil {
 			return DeploymentRecord{}, err
 		}
+	case err != nil:
+		return DeploymentRecord{}, err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE service_delivery_status
+		    SET latest_build_id = $1,
+		        updated_at = $2
+		  WHERE service_id = $3`,
+		reuseBuildID, now, service.ID,
+	); err != nil {
+		return DeploymentRecord{}, err
 	}
 	current, ok, err := s.currentDeploymentTx(ctx, tx, service.ID)
 	if err != nil {
@@ -699,15 +683,16 @@ func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service
 	if ok && current.ArtifactID == artifact.ID && current.SpecRevision == service.SpecRevision &&
 		current.State != DeploymentStateFailed && current.State != DeploymentStateCancelled &&
 		current.State != DeploymentStateCrashed && current.State != DeploymentStateRemoved {
+		journal.RecordService(ctx, service.ID)
 		return current, nil
 	}
 	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateStaged, actor, reasonBuildReused,
 		"Reusing previously built image for commit "+shortSHA(revision.CommitSHA),
-		service.SpecRevision, 0, artifact.BuildID, artifact.ID, "", now)
+		service.SpecRevision, 0, reuseBuildID, artifact.ID, "", now)
 	if err != nil {
 		return DeploymentRecord{}, err
 	}
-	updated, _, err := d.scheduleSucceededArtifactTx(ctx, tx, service, artifact, revision.CommitSHA, artifact.BuildID, dep.ID,
+	updated, _, err := d.scheduleSucceededArtifactTx(ctx, tx, service, artifact, revision.CommitSHA, reuseBuildID, dep.ID,
 		actor, reasonBuildReused, "Reusing previously built image for commit "+shortSHA(revision.CommitSHA), now)
 	if err != nil {
 		return DeploymentRecord{}, err
@@ -845,22 +830,6 @@ func (d *Delivery) tryClaimBuildTx(ctx context.Context, tx *sql.Tx, buildID, bui
 		return BuildRunRecord{}, false, err
 	}
 	if build.State != BuildStateQueued {
-		return BuildRunRecord{}, false, nil
-	}
-	if build.AttemptCount >= build.AttemptLimit {
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3 WHERE id = $4 AND state = $5`,
-			BuildStateFailed, "attempt limit exhausted before claim", now, buildID, BuildStateQueued,
-		); err != nil {
-			return BuildRunRecord{}, false, err
-		}
-		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
-			ToState: DeploymentStateFailed, Actor: deploymentActor{Kind: DeploymentCauseSystem},
-			ReasonCode: reasonBuildFailed, Detail: "Build retry budget exhausted",
-			IgnoreIfTerminal: true,
-		}); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return BuildRunRecord{}, false, err
-		}
 		return BuildRunRecord{}, false, nil
 	}
 	if deletion, err := s.serviceDeletionQuerier(ctx, tx, build.ServiceID); err != nil {
@@ -1048,7 +1017,7 @@ func (d *Delivery) expireQueuedBuildsTx(ctx context.Context, tx *sql.Tx, now tim
 func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now time.Time) error {
 	s := d.store
 	rows, err := tx.QueryContext(ctx,
-		`SELECT id, service_id, attempt_count FROM build_runs
+		`SELECT id, service_id, attempt_count, cancel_requested_at IS NOT NULL FROM build_runs
 		  WHERE state = $1 AND deadline_at IS NOT NULL AND deadline_at <= $2
 		  ORDER BY deadline_at ASC, id ASC LIMIT 100`,
 		BuildStateRunning, now,
@@ -1061,11 +1030,12 @@ func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now t
 		ID           string
 		ServiceID    string
 		AttemptCount int64
+		Cancelled    bool
 	}
 	var expired []timedOut
 	for rows.Next() {
 		var rec timedOut
-		if err := rows.Scan(&rec.ID, &rec.ServiceID, &rec.AttemptCount); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.ServiceID, &rec.AttemptCount, &rec.Cancelled); err != nil {
 			return err
 		}
 		expired = append(expired, rec)
@@ -1074,23 +1044,29 @@ func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now t
 		return err
 	}
 	for _, rec := range expired {
+		state, reason, outcome := BuildStateFailed, "build timeout exceeded", BuildAttemptTimedOut
+		toState, reasonCode, detail := DeploymentStateFailed, reasonBuildFailed, "Build timeout exceeded"
+		if rec.Cancelled {
+			state, reason, outcome = BuildStateCancelled, "cancelled by user", BuildAttemptCancelled
+			toState, reasonCode, detail = DeploymentStateCancelled, reasonUserCancel, "Build cancelled by user"
+		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3, lease_expires_at = NULL
 			  WHERE id = $4 AND state = $5`,
-			BuildStateFailed, "build timeout exceeded", now, rec.ID, BuildStateRunning,
+			state, reason, now, rec.ID, BuildStateRunning,
 		); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE build_attempts SET finished_at = $1, outcome = $2, detail = $3
 			  WHERE build_id = $4 AND attempt_number = $5`,
-			now, BuildAttemptTimedOut, "build timeout exceeded", rec.ID, rec.AttemptCount,
+			now, outcome, reason, rec.ID, rec.AttemptCount,
 		); err != nil {
 			return err
 		}
 		if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, rec.ServiceID, rec.ID, deploymentTransitionInput{
-			ToState: DeploymentStateFailed, Actor: deploymentActor{Kind: DeploymentCauseSystem},
-			ReasonCode: reasonBuildFailed, Detail: "Build timeout exceeded",
+			ToState: toState, Actor: deploymentActor{Kind: DeploymentCauseSystem},
+			ReasonCode: reasonCode, Detail: detail,
 			IgnoreIfTerminal: true,
 		}); err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errDeploymentTerminal) && !errors.Is(err, errIllegalDeploymentTransition) {
 			return err

@@ -16,17 +16,14 @@ import (
 // developmentExecutor is the in-process BuildExecutor: it runs the
 // railpack and buildctl/docker build steps as host child processes
 // with explicit environments, process limits, and a scoped docker
-// config. It establishes the execution seam but does not isolate
-// hostile code: the BuildKit daemon is shared host state, build
-// network policy is validated but not enforced on the data plane, and
-// process limits bound only the executor's direct children. The
-// hardened executor (2.4b) is the production backend; production
-// refuses this executor.
+// config. It does not isolate hostile code: the BuildKit daemon is
+// shared host state, network policy is not enforced on the data plane,
+// and process limits bound only direct children. Production uses the
+// hardened executor.
 type developmentExecutor struct {
 	workDir string
 	runner  commandRunner
 	pathEnv string
-	now     func() time.Time
 }
 
 func newDevelopmentExecutor(workDir string, runner commandRunner, pathEnv string) *developmentExecutor {
@@ -34,7 +31,6 @@ func newDevelopmentExecutor(workDir string, runner commandRunner, pathEnv string
 		workDir: workDir,
 		runner:  runner,
 		pathEnv: pathEnv,
-		now:     time.Now,
 	}
 }
 
@@ -50,7 +46,7 @@ func (e *developmentExecutor) Execute(ctx context.Context, spec ExecutionSpec) (
 	execCtx, cancel := context.WithTimeout(ctx, spec.Limits.Timeout)
 	defer cancel()
 
-	workspace, err := prepareExecutionWorkspace(e.workDir, spec.BuildID, ExecutorDevelopment, e.now)
+	workspace, err := prepareExecutionWorkspace(e.workDir, spec.BuildID)
 	if err != nil {
 		return ExecutionResult{}, &buildFailureError{kind: failureKindBuild, err: err}
 	}
@@ -83,7 +79,30 @@ func (e *developmentExecutor) Execute(ctx context.Context, spec ExecutionSpec) (
 			spec.OnLog(line)
 		}
 	}
-	ref, err := e.invokeBuild(execCtx, spec, workspace, report, limits)
+	buildCtx, stopBuild := context.WithCancel(execCtx)
+	monitorDone := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(250 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-buildCtx.Done():
+				monitorDone <- nil
+				return
+			case <-ticker.C:
+				if err := enforceWorkspaceDiskLimit(workspace.root, spec.Limits.MaxWorkspaceBytes); err != nil {
+					monitorDone <- err
+					stopBuild()
+					return
+				}
+			}
+		}
+	}()
+	ref, err := e.invokeBuild(buildCtx, spec, workspace, report, limits)
+	stopBuild()
+	if limitErr := <-monitorDone; limitErr != nil {
+		return ExecutionResult{}, &buildFailureError{kind: failureKindBuild, err: limitErr}
+	}
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, err)
 	}

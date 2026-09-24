@@ -477,10 +477,10 @@ func adversarialDiskExhaustion(t *testing.T, backend probeBackend) {
 	result := backend.runProbe(ctx, t, env, probeSpec{
 		Script: `
 			mkdir -p "/tmp/probe-$PROBE_ID"
-			dd if=/dev/zero of="$TMPDIR/fill" bs=1M count=256 2>/dev/null
-			echo "tmp_wrote=$(stat -c%s "$TMPDIR/fill" 2>/dev/null || echo 0)"
-			dd if=/dev/zero of="/tmp/probe-$PROBE_ID/fill" bs=1M count=256 2>/dev/null
-			echo "slash_tmp_wrote=$(stat -c%s "/tmp/probe-$PROBE_ID/fill" 2>/dev/null || echo 0)"
+			dd if=/dev/zero of="$TMPDIR/fill" bs=1048576 count=256 2>/dev/null
+			echo "tmp_wrote=$(wc -c < "$TMPDIR/fill" 2>/dev/null | tr -d ' ' || echo 0)"
+			dd if=/dev/zero of="/tmp/probe-$PROBE_ID/fill" bs=1048576 count=256 2>/dev/null
+			echo "slash_tmp_wrote=$(wc -c < "/tmp/probe-$PROBE_ID/fill" 2>/dev/null | tr -d ' ' || echo 0)"
 			[ "$slash_tmp_wrote" != "" ]
 		`,
 		Limits:  limits,

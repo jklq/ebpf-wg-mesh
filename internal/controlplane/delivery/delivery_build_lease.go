@@ -76,7 +76,7 @@ func (d *Delivery) BuildAttempts(ctx context.Context, user authz.User, serviceID
 		return nil, sql.ErrNoRows
 	}
 	rows, err := d.store.db.QueryContext(ctx,
-		`SELECT id, build_id, attempt_number, builder_id, owner_epoch, started_at, finished_at, outcome, detail
+		`SELECT attempt_number, builder_id, owner_epoch, started_at, finished_at, outcome, detail
 		   FROM build_attempts WHERE build_id = $1 ORDER BY attempt_number ASC, id ASC`, buildID,
 	)
 	if err != nil {

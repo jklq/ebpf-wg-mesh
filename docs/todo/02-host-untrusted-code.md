@@ -161,10 +161,14 @@ Turn domain bindings into an explicit verification and certificate lifecycle. Pe
 ## 2.9 Durable bounded logs
 
 Was: 3.3
-Status: open
+Status: in review
 Depends on: none
 
 Design-partner minimum. This item is the pipeline; console search surfaces are 3.6.
+
+Implemented: the shared `internal/logpipeline` primitives (documented 64 KiB byte-exact line limit with truncation flag, stable `ag:`/`bd:`/`sy:` line identities, `(observed_at, line_id)` ordering with server-side retry dedup, bounded disk-backed segment spool with crash recovery and per-key drop accounting, per-key token-bucket limiting, cursor pagination, jittered backoff) and both producer pipelines: agents spool container output under the runtime data dir and replay everything unshipped plus a bounded recent window on reconnect; builders spool per-attempt output and garbage-collect leftovers. Neither path blocks workload reconciliation or build execution. The control-plane ingest is an async bounded queue with a per-allocation ingest guard and unbounded retry across ClickHouse outages; the Sync loop never waits on the backend. Every shed point (rate limiting, spool overflow, ingest overflow, corrupt spool) persists explicit `service_log_gaps` rows that reads return alongside lines; gap attribution derives from the allocation or build owner (never producer claims), and shutdown drains drop counters into pending summaries persisted next to the spool. `service_logs` is a `ReplacingMergeTree(ingested_at)` keyed on `(service_id, observed_at, line_id)` so at-least-once resends collapse; the legacy table is dropped on cutover. Structured attributes and event names (`build.started`, `build.finished`, `deploy.started`, `allocation.crash_loop`) exist only on platform-emitted lines; customer output is never parsed. Tenant retention is `projects.log_retention_days` (1..90, 0 = platform default) applied as per-row TTL on lines and gaps with an `UpdateProjectLogRetention` RPC; deletion GC purges project logs after grace with TTL expiry as backstop. Reads are authorized time-range queries with opaque-cursor pagination. The pipeline contract lives in [docs/durable-logs.md](../durable-logs.md).
+
+Remaining: console log viewer pagination, gap markers, truncation and event affordances, and the retention control are deferred to [frontend-handoff/2.9.md](../frontend-handoff/2.9.md); log search surfaces stay 3.6.
 
 Prompt:
 

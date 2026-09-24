@@ -20,6 +20,7 @@ import (
 
 type Delivery struct {
 	schedulerMu    sync.Mutex
+	configMu       sync.RWMutex
 	store          *persistence
 	live           *Live
 	notifier       PlatformNotifier
@@ -37,6 +38,8 @@ func (d *Delivery) BuildSchedulerConfig() BuildSchedulerConfig {
 	if d == nil {
 		return DefaultBuildSchedulerConfig()
 	}
+	d.configMu.RLock()
+	defer d.configMu.RUnlock()
 	return d.buildScheduler.WithDefaults()
 }
 
@@ -44,6 +47,8 @@ func (d *Delivery) SetBuildSchedulerConfigForTest(cfg BuildSchedulerConfig) {
 	if d == nil {
 		return
 	}
+	d.configMu.Lock()
+	defer d.configMu.Unlock()
 	d.buildScheduler = cfg.WithDefaults()
 }
 

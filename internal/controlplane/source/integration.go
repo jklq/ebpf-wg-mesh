@@ -37,7 +37,6 @@ type Store interface {
 	SourceBindingHeadCommit(context.Context, string) (string, error)
 	ObserveSourceRevision(context.Context, SourceRevisionRecord, BuildTransition) (SourceRevisionRecord, error)
 	SourceSnapshotByRevisionID(context.Context, string) (SourceSnapshotRecord, error)
-	StoreSourceArchive(context.Context, []byte) (string, string, error)
 	StoreSourceArchiveFromReader(context.Context, io.Reader, int64) (string, string, int64, error)
 }
 

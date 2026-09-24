@@ -25,6 +25,7 @@ const (
 	PlatformService_GetProject_FullMethodName                  = "/platform.v1.PlatformService/GetProject"
 	PlatformService_DeleteProject_FullMethodName               = "/platform.v1.PlatformService/DeleteProject"
 	PlatformService_RestoreProject_FullMethodName              = "/platform.v1.PlatformService/RestoreProject"
+	PlatformService_UpdateProjectLogRetention_FullMethodName   = "/platform.v1.PlatformService/UpdateProjectLogRetention"
 	PlatformService_PreviewProjectDeletion_FullMethodName      = "/platform.v1.PlatformService/PreviewProjectDeletion"
 	PlatformService_ListEnvironments_FullMethodName            = "/platform.v1.PlatformService/ListEnvironments"
 	PlatformService_GetEnvironment_FullMethodName              = "/platform.v1.PlatformService/GetEnvironment"
@@ -78,6 +79,7 @@ type PlatformServiceClient interface {
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	DeleteProject(ctx context.Context, in *DeleteProjectRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	RestoreProject(ctx context.Context, in *RestoreProjectRequest, opts ...grpc.CallOption) (*Project, error)
+	UpdateProjectLogRetention(ctx context.Context, in *UpdateProjectLogRetentionRequest, opts ...grpc.CallOption) (*Project, error)
 	PreviewProjectDeletion(ctx context.Context, in *PreviewProjectDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error)
 	ListEnvironments(ctx context.Context, in *ListEnvironmentsRequest, opts ...grpc.CallOption) (*ListEnvironmentsResponse, error)
 	GetEnvironment(ctx context.Context, in *GetEnvironmentRequest, opts ...grpc.CallOption) (*Environment, error)
@@ -174,6 +176,16 @@ func (c *platformServiceClient) RestoreProject(ctx context.Context, in *RestoreP
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Project)
 	err := c.cc.Invoke(ctx, PlatformService_RestoreProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) UpdateProjectLogRetention(ctx context.Context, in *UpdateProjectLogRetentionRequest, opts ...grpc.CallOption) (*Project, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Project)
+	err := c.cc.Invoke(ctx, PlatformService_UpdateProjectLogRetention_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -609,6 +621,7 @@ type PlatformServiceServer interface {
 	GetProject(context.Context, *GetProjectRequest) (*Project, error)
 	DeleteProject(context.Context, *DeleteProjectRequest) (*emptypb.Empty, error)
 	RestoreProject(context.Context, *RestoreProjectRequest) (*Project, error)
+	UpdateProjectLogRetention(context.Context, *UpdateProjectLogRetentionRequest) (*Project, error)
 	PreviewProjectDeletion(context.Context, *PreviewProjectDeletionRequest) (*DeletionPreview, error)
 	ListEnvironments(context.Context, *ListEnvironmentsRequest) (*ListEnvironmentsResponse, error)
 	GetEnvironment(context.Context, *GetEnvironmentRequest) (*Environment, error)
@@ -675,6 +688,9 @@ func (UnimplementedPlatformServiceServer) DeleteProject(context.Context, *Delete
 }
 func (UnimplementedPlatformServiceServer) RestoreProject(context.Context, *RestoreProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestoreProject not implemented")
+}
+func (UnimplementedPlatformServiceServer) UpdateProjectLogRetention(context.Context, *UpdateProjectLogRetentionRequest) (*Project, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateProjectLogRetention not implemented")
 }
 func (UnimplementedPlatformServiceServer) PreviewProjectDeletion(context.Context, *PreviewProjectDeletionRequest) (*DeletionPreview, error) {
 	return nil, status.Error(codes.Unimplemented, "method PreviewProjectDeletion not implemented")
@@ -909,6 +925,24 @@ func _PlatformService_RestoreProject_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).RestoreProject(ctx, req.(*RestoreProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_UpdateProjectLogRetention_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateProjectLogRetentionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).UpdateProjectLogRetention(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_UpdateProjectLogRetention_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).UpdateProjectLogRetention(ctx, req.(*UpdateProjectLogRetentionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1695,6 +1729,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RestoreProject",
 			Handler:    _PlatformService_RestoreProject_Handler,
+		},
+		{
+			MethodName: "UpdateProjectLogRetention",
+			Handler:    _PlatformService_UpdateProjectLogRetention_Handler,
 		},
 		{
 			MethodName: "PreviewProjectDeletion",

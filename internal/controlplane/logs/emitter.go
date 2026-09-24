@@ -4,10 +4,23 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/logpipeline"
+)
+
+// Platform event names for structured control-plane log lines.
+// Customer output lines never carry these: the pipeline does not
+// parse customer output to derive events or attributes.
+const (
+	EventBuildStarted  = "build.started"
+	EventBuildFinished = "build.finished"
+	EventDeployStarted = "deploy.started"
+	EventCrashLoop     = "allocation.crash_loop"
 )
 
 type ServiceScope struct {
@@ -15,19 +28,40 @@ type ServiceScope struct {
 	ServiceID         string
 	RolloutGeneration int64
 	AgentID           string
+	AllocationID      string
 }
 
 type LogEmitter struct {
 	store Writer
+	// async queues synthetic lines for durable write with retry and
+	// shutdown drain; nil writes synchronously.
+	async *AsyncIngester
 }
 
 type Writer interface {
 	Enabled() bool
 	WriteLogLines(context.Context, []LogLineInput) error
+	WriteGaps(context.Context, []GapInput) error
 }
 
-func NewLogEmitter(store Writer) *LogEmitter {
-	return &LogEmitter{store: store}
+// EmitBuildDrops persists builder drop reports as explicit read gaps.
+// Service, build, and type come from the resolved scope, not the
+// producer's claim.
+func (e *LogEmitter) EmitBuildDrops(ctx context.Context, scope ServiceScope, buildID, builderID string, drops []*platformv1.LogDropSummary) error {
+	if !e.Enabled() || len(drops) == 0 {
+		return nil
+	}
+	gaps := DropSummariesToGaps(drops, builderID)
+	for i := range gaps {
+		gaps[i].ServiceID = scope.ServiceID
+		gaps[i].BuildID = buildID
+		gaps[i].LogType = LogTypeBuild
+	}
+	return e.store.WriteGaps(ctx, gaps)
+}
+
+func NewLogEmitter(store Writer, async *AsyncIngester) *LogEmitter {
+	return &LogEmitter{store: store, async: async}
 }
 
 func (e *LogEmitter) Enabled() bool {
@@ -36,6 +70,7 @@ func (e *LogEmitter) Enabled() bool {
 
 func (e *LogEmitter) EmitBuild(ctx context.Context, scope ServiceScope, buildID, stage, line string) {
 	e.emit(ctx, LogLineInput{
+		ID:                logpipeline.SyntheticLineID(),
 		ObservedAt:        time.Now().UTC(),
 		EnvironmentID:     scope.EnvironmentID,
 		ServiceID:         scope.ServiceID,
@@ -53,6 +88,45 @@ func (e *LogEmitter) EmitBuild(ctx context.Context, scope ServiceScope, buildID,
 
 func (e *LogEmitter) EmitBuildf(ctx context.Context, scope ServiceScope, buildID, stage, format string, args ...any) {
 	e.EmitBuild(ctx, scope, buildID, stage, fmt.Sprintf(format, args...))
+}
+
+// EmitEvent writes one structured platform-event line. Identity and
+// observed_at derive from the caller's content-stable facts — event
+// name, build, lease attempt, and the recorded event time — so a
+// retried claim or report collapses into one event row instead of
+// duplicating (the log table keys on service, observed_at, and
+// line_id). Wall-clock report times must not be among the facts.
+// Attributes describe the known event; the human-readable line stays
+// exact. The pipeline never derives events or attributes from
+// customer output.
+func (e *LogEmitter) EmitEvent(ctx context.Context, scope ServiceScope, logType LogType, buildID string, leaseEpoch int64, at time.Time, event, line string, attrs map[string]string) {
+	stage := StageDeploy
+	if logType == LogTypeBuild {
+		stage = StageBuild
+	}
+	at = at.UTC()
+	e.emit(ctx, LogLineInput{
+		ID: logpipeline.StableEventID(
+			event,
+			buildID,
+			strconv.FormatInt(leaseEpoch, 10),
+			at.Format(time.RFC3339Nano),
+		),
+		ObservedAt:        at,
+		EnvironmentID:     scope.EnvironmentID,
+		ServiceID:         scope.ServiceID,
+		AllocationID:      scope.AllocationID,
+		AgentID:           scope.AgentID,
+		Stream:            "combined",
+		LogType:           logType,
+		BuildID:           buildID,
+		Stage:             stage,
+		Event:             event,
+		Attributes:        attrs,
+		RolloutGeneration: scope.RolloutGeneration,
+		Sequence:          NextSequence(),
+		Line:              strings.TrimRight(line, "\n"),
+	})
 }
 
 func (e *LogEmitter) EmitBuildLines(ctx context.Context, scope ServiceScope, buildID, builderID string, lines []*platformv1.BuildLogLine) error {
@@ -74,6 +148,7 @@ func (e *LogEmitter) EmitBuildLines(ctx context.Context, scope ServiceScope, bui
 			observedAt = now
 		}
 		inputs = append(inputs, LogLineInput{
+			ID:                strings.TrimSpace(line.GetLineId()),
 			ObservedAt:        observedAt,
 			EnvironmentID:     scope.EnvironmentID,
 			ServiceID:         scope.ServiceID,
@@ -83,6 +158,7 @@ func (e *LogEmitter) EmitBuildLines(ctx context.Context, scope ServiceScope, bui
 			LogType:           LogTypeBuild,
 			BuildID:           buildID,
 			Stage:             StageBuild,
+			Truncated:         line.GetTruncated(),
 			RolloutGeneration: scope.RolloutGeneration,
 			Sequence:          line.GetSequence(),
 			Line:              text,
@@ -96,6 +172,7 @@ func (e *LogEmitter) EmitBuildLines(ctx context.Context, scope ServiceScope, bui
 
 func (e *LogEmitter) EmitDeploy(ctx context.Context, scope ServiceScope, allocationID, buildID, stage, line string) {
 	e.emit(ctx, LogLineInput{
+		ID:                logpipeline.SyntheticLineID(),
 		ObservedAt:        time.Now().UTC(),
 		EnvironmentID:     scope.EnvironmentID,
 		ServiceID:         scope.ServiceID,
@@ -115,12 +192,29 @@ func (e *LogEmitter) EmitDeployf(ctx context.Context, scope ServiceScope, alloca
 	e.EmitDeploy(ctx, scope, allocationID, buildID, stage, fmt.Sprintf(format, args...))
 }
 
-func (e *LogEmitter) emit(ctx context.Context, in LogLineInput) {
+func (e *LogEmitter) emit(_ context.Context, in LogLineInput) {
 	if !e.Enabled() {
 		return
 	}
-	if err := e.store.WriteLogLines(ctx, []LogLineInput{in}); err != nil {
-		slog.WarnContext(ctx, "write synthetic log line",
+	if e.async != nil {
+		switch e.async.EnqueueLines([]LogLineInput{in}) {
+		case AdmitAccepted:
+			// Queue the event like an agent batch: retry across backend
+			// outages, shed with gap accounting past the queue cap, and
+			// drain at shutdown instead of dying with the request.
+			return
+		case AdmitRetry:
+			slog.Warn("synthetic log line not journaled",
+				"service_id", in.ServiceID,
+				"log_type", string(in.LogType),
+				"stage", in.Stage,
+			)
+			return
+		case AdmitClosed:
+		}
+	}
+	if err := e.store.WriteLogLines(context.Background(), []LogLineInput{in}); err != nil {
+		slog.Warn("write synthetic log line",
 			"error", err,
 			"service_id", in.ServiceID,
 			"log_type", string(in.LogType),
@@ -136,9 +230,8 @@ const (
 	StagePostDeploy     = "post-deploy"
 )
 
-var synthSequenceCounter uint64
+var synthSequenceCounter atomic.Uint64
 
 func NextSequence() uint64 {
-	synthSequenceCounter++
-	return synthSequenceCounter
+	return synthSequenceCounter.Add(1)
 }

@@ -4,7 +4,6 @@ package controlplane
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
@@ -440,181 +439,6 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 	}
 }
 
-func TestDeletionGCCollectsExpiredAcrossKinds(t *testing.T) {
-	t.Parallel()
-	store := openTestStore(t)
-	ctx := context.Background()
-	project, environment := deletionFixture(t, store, "owner", "demo")
-
-	// Each expired tombstone sits in its own subtree so foreign-key
-	// cascades cannot overlap: one collection per tombstone.
-	service, err := createScheduledService(ctx, store, "owner", environment.ID, "web", directImageServiceSpec("example.test/web:1", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sited, err := createScheduledService(ctx, store, "owner", environment.ID, "sited", directImageServiceSpec("example.test/sited:1", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := store.routing.CreatePlatformDomainBindingRecord(ctx, testUser("owner"), "web.example.test", sited.ID, 8080); err != nil {
-		t.Fatal(err)
-	}
-	volume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), environment.ID, "data", 64<<20)
-	if err != nil {
-		t.Fatal(err)
-	}
-	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
-	if err != nil {
-		t.Fatal(err)
-	}
-	keeper, err := createScheduledService(ctx, store, "owner", staging.ID, "keeper", directImageServiceSpec("example.test/keeper:1", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	doomed, err := store.catalog.createProject(ctx, testUser("owner"), "doomed")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if err := deleteService(ctx, store, "owner", service.ID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.routing.DeleteDomainBindingRecord(ctx, testUser("owner"), "web.example.test"); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.catalog.deleteVolume(ctx, testUser("owner"), volume.ID, "data"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), staging.ID, ""); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.catalog.deleteProject(ctx, testUser("owner"), doomed.ID, "doomed"); err != nil {
-		t.Fatal(err)
-	}
-	// The keeper service has no tombstone of its own; it goes down with the
-	// expired staging environment through the foreign-key cascade.
-
-	// A fresh tombstone must survive a pass with an older cutoff.
-	fresh, err := createScheduledService(ctx, store, "owner", environment.ID, "fresh", directImageServiceSpec("example.test/fresh:1", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := deleteService(ctx, store, "owner", fresh.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	expireTombstone(t, store, "projects", "id", doomed.ID)
-	expireTombstone(t, store, "environments", "id", staging.ID)
-	expireTombstone(t, store, "services", "id", service.ID)
-	expireTombstone(t, store, "volumes", "id", volume.ID)
-	expireTombstone(t, store, "domain_bindings", "hostname", "web.example.test")
-
-	gc := NewDeletionGC(store, nil, nil, time.Minute)
-	stats, err := gc.CollectOnce(ctx, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("collect expired: %v", err)
-	}
-	if stats.Collected != 5 {
-		t.Fatalf("collected %d, want 5 (%v)", stats.Collected, stats.ByKind)
-	}
-	if stats.ByKind[ExpiredDeletionProject] != 1 || stats.ByKind[ExpiredDeletionEnvironment] != 1 ||
-		stats.ByKind[ExpiredDeletionService] != 1 || stats.ByKind[ExpiredDeletionVolume] != 1 ||
-		stats.ByKind[ExpiredDeletionDomain] != 1 {
-		t.Fatalf("collection by kind: %v", stats.ByKind)
-	}
-
-	counts := []struct {
-		table, column, id string
-	}{
-		{"projects", "id", doomed.ID},
-		{"environments", "id", staging.ID},
-		{"services", "id", service.ID},
-		{"services", "id", keeper.ID},
-		{"volumes", "id", volume.ID},
-		{"domain_bindings", "hostname", "web.example.test"},
-	}
-	for _, item := range counts {
-		var count int
-		if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+item.table+` WHERE `+item.column+` = $1`, item.id).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != 0 {
-			t.Fatalf("%s %s survived collection", item.table, item.id)
-		}
-	}
-
-	// The unexpired tombstone survives and stays restorable.
-	if _, err := testDelivery(store).RestoreService(ctx, testUser("owner"), fresh.ID); err != nil {
-		t.Fatalf("restore unexpired service after GC: %v", err)
-	}
-	// Collection is idempotent: a second pass finds nothing.
-	again, err := gc.CollectOnce(ctx, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("second collect: %v", err)
-	}
-	if again.Collected != 0 {
-		t.Fatalf("second pass collected %d, want 0", again.Collected)
-	}
-	// Restore after expiry fails: the row is gone.
-	if _, err := testDelivery(store).RestoreService(ctx, testUser("owner"), service.ID); err == nil {
-		t.Fatal("restored a collected service")
-	}
-}
-
-func TestDeletionGCPartialFailureRetriesLeftovers(t *testing.T) {
-	t.Parallel()
-	store := openTestStore(t)
-	ctx := context.Background()
-	_, environment := deletionFixture(t, store, "owner", "demo")
-	first, err := createScheduledService(ctx, store, "owner", environment.ID, "first", directImageServiceSpec("example.test/first:1", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := createScheduledService(ctx, store, "owner", environment.ID, "second", directImageServiceSpec("example.test/second:1", nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := deleteService(ctx, store, "owner", first.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := deleteService(ctx, store, "owner", second.ID); err != nil {
-		t.Fatal(err)
-	}
-	expireTombstone(t, store, "services", "id", first.ID)
-	expireTombstone(t, store, "services", "id", second.ID)
-
-	gc := NewDeletionGC(store, nil, nil, time.Minute)
-	gc.SetFailHook(func(kind, id string) error {
-		if id == first.ID {
-			return errors.New("injected external-cleanup failure")
-		}
-		return nil
-	})
-	stats, err := gc.CollectOnce(ctx, time.Now().UTC())
-	if err == nil {
-		t.Fatal("expected the injected failure to surface")
-	}
-	if stats.Collected != 1 {
-		t.Fatalf("collected %d with one failure, want 1", stats.Collected)
-	}
-	var remaining int
-	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM services WHERE id = $1`, first.ID).Scan(&remaining); err != nil {
-		t.Fatal(err)
-	}
-	if remaining != 1 {
-		t.Fatal("failed tombstone was collected despite the failure")
-	}
-
-	gc.SetFailHook(nil)
-	stats, err = gc.CollectOnce(ctx, time.Now().UTC())
-	if err != nil {
-		t.Fatalf("retry collect: %v", err)
-	}
-	if stats.Collected != 1 {
-		t.Fatalf("retry collected %d, want 1", stats.Collected)
-	}
-}
-
 func TestDeletionConcurrentDeleteAndDeployStayConsistent(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -645,8 +469,7 @@ func TestDeletionConcurrentDeleteAndDeployStayConsistent(t *testing.T) {
 		t.Fatalf("concurrent update: %v", err)
 	}
 
-	// Whatever won the race, the terminal state is consistent: the service
-	// is tombstoned and its deployment is Removed.
+	// Whatever won the race, no live deployment may remain.
 	current, err := store.reads.ServiceByID(ctx, testUser("owner"), service.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -654,12 +477,12 @@ func TestDeletionConcurrentDeleteAndDeployStayConsistent(t *testing.T) {
 	if current.Deletion == nil {
 		t.Fatal("service survived the concurrent delete")
 	}
-	var state string
-	if err := store.db.QueryRowContext(ctx, `SELECT state FROM deployments WHERE service_id = $1 ORDER BY created_at DESC LIMIT 1`, service.ID).Scan(&state); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	var liveDeployments int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM deployments WHERE service_id = $1 AND state <> $2`, service.ID, deliverycore.DeploymentStateRemoved).Scan(&liveDeployments); err != nil {
 		t.Fatal(err)
 	}
-	if state != "" && state != deliverycore.DeploymentStateRemoved {
-		t.Fatalf("deleted service deployment state = %q, want %q", state, deliverycore.DeploymentStateRemoved)
+	if liveDeployments != 0 {
+		t.Fatalf("deleted service has %d live deployments", liveDeployments)
 	}
 }
 

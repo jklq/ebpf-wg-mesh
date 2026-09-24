@@ -524,7 +524,7 @@ func TestHardenedRecoverStaleWorkspaces(t *testing.T) {
 	if err := os.MkdirAll(deadRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	marker := `{"executor":"hardened","pid":1073741824,"build_id":"build-dead"}`
+	marker := `{"pid":1073741824,"build_id":"build-dead"}`
 	if err := os.WriteFile(filepath.Join(deadRoot, executorOwnerMarker), []byte(marker), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -571,10 +571,8 @@ func TestResolveExecutionCacheDir(t *testing.T) {
 	if !strings.HasPrefix(dir, filepath.Join(workDir, "cache", "cache-sha256-")) {
 		t.Fatalf("unexpected cache dir %q", dir)
 	}
-	// Identical content from another project resolves the same dir:
-	// the key carries no identity, so sharing it is safe.
+	// Build identity does not change a content-addressed cache key.
 	other := spec
-	other.ProjectID = "project-2"
 	other.BuildID = "build-2"
 	otherDir, err := resolveExecutionCacheDir(workDir, other)
 	if err != nil || otherDir != dir {

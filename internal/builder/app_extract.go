@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"ebof-wg-mesh/internal/config"
@@ -44,9 +45,31 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 	tr := tar.NewReader(gzr)
 	var totalBytes int64
 	var entries int
+	var archiveRoot string
+	type archiveLink struct {
+		path, linkname string
+		hard           bool
+	}
+	var links []archiveLink
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
+			for _, link := range links {
+				if err := os.MkdirAll(filepath.Dir(link.path), 0o755); err != nil {
+					return fmt.Errorf("mkdir snapshot link parent: %w", err)
+				}
+				if link.hard {
+					info, err := os.Lstat(link.linkname)
+					if err != nil || !info.Mode().IsRegular() {
+						return fmt.Errorf("snapshot hardlink target is not a regular file: %q", link.linkname)
+					}
+					if err := os.Link(link.linkname, link.path); err != nil {
+						return fmt.Errorf("create snapshot hardlink: %w", err)
+					}
+				} else if err := os.Symlink(link.linkname, link.path); err != nil {
+					return fmt.Errorf("create snapshot symlink: %w", err)
+				}
+			}
 			return nil
 		}
 		if err != nil {
@@ -66,6 +89,19 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 		name := strings.TrimSpace(hdr.Name)
 		if name == "" {
 			continue
+		}
+		if filepath.IsAbs(name) || slices.Contains(strings.Split(filepath.ToSlash(name), "/"), "..") {
+			return fmt.Errorf("snapshot entry %q escapes repository", name)
+		}
+		cleanName := filepath.ToSlash(filepath.Clean(name))
+		if cleanName == "." {
+			continue
+		}
+		root := strings.Split(cleanName, "/")[0]
+		if archiveRoot == "" {
+			archiveRoot = root
+		} else if root != archiveRoot {
+			return fmt.Errorf("snapshot archive has multiple roots: %q and %q", archiveRoot, root)
 		}
 		rel, ok := stripArchiveRoot(name)
 		if !ok || rel == "" {
@@ -95,6 +131,29 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 			if err := file.Close(); err != nil {
 				return fmt.Errorf("close snapshot file: %w", err)
 			}
+		case tar.TypeSymlink:
+			if filepath.IsAbs(hdr.Linkname) {
+				return fmt.Errorf("snapshot symlink %q has absolute target", name)
+			}
+			resolved := filepath.Join(filepath.Dir(rel), hdr.Linkname)
+			if _, err := safeArchivePath(repoDir, resolved); err != nil {
+				return fmt.Errorf("snapshot symlink %q escapes repository: %w", name, err)
+			}
+			links = append(links, archiveLink{path: target, linkname: hdr.Linkname})
+		case tar.TypeLink:
+			linkRoot := strings.Split(filepath.ToSlash(filepath.Clean(hdr.Linkname)), "/")[0]
+			if filepath.IsAbs(hdr.Linkname) || linkRoot != archiveRoot {
+				return fmt.Errorf("snapshot hardlink %q escapes archive root", name)
+			}
+			linkRel, ok := stripArchiveRoot(hdr.Linkname)
+			if !ok || linkRel == "" {
+				return fmt.Errorf("snapshot hardlink %q has invalid target", name)
+			}
+			linkTarget, err := safeArchivePath(repoDir, linkRel)
+			if err != nil {
+				return err
+			}
+			links = append(links, archiveLink{path: target, linkname: linkTarget, hard: true})
 		default:
 			return fmt.Errorf("unsupported snapshot entry type %d", hdr.Typeflag)
 		}

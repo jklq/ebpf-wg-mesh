@@ -13,7 +13,7 @@ import (
 // shared key registry, per-environment DEKs, and sealed versions behind one
 // handle.
 type Service struct {
-	provider Provider
+	provider *Keyring
 	registry *Registry
 	deks     *DEKStore
 	sealed   *SealedStore
@@ -62,9 +62,8 @@ func Open(ctx context.Context, db *sql.DB, cfg config.SecretKeysConfig, opts Opt
 	return svc, nil
 }
 
-// New assembles a Service over an existing provider. Tests use it to
-// substitute providers; production uses Open.
-func New(db *sql.DB, provider Provider) *Service {
+// New assembles a Service over an existing keyring.
+func New(db *sql.DB, provider *Keyring) *Service {
 	registry := NewRegistry(db, provider)
 	deks := NewDEKStore(db, registry)
 	return &Service{provider: provider, registry: registry, deks: deks, sealed: NewSealedStore(db, deks)}
@@ -75,6 +74,13 @@ func (s *Service) Close() error {
 	if s == nil || s.provider == nil {
 		return nil
 	}
+	s.deks.mu.Lock()
+	for id, dek := range s.deks.byID {
+		clear(dek[:])
+		delete(s.deks.byID, id)
+	}
+	clear(s.deks.byScope)
+	s.deks.mu.Unlock()
 	return s.provider.Close()
 }
 
@@ -88,7 +94,7 @@ func (s *Service) ProviderName() string {
 
 // Provider exposes the wrap/unwrap backend, e.g. so tests can build a
 // second replica handle over shared provider state.
-func (s *Service) Provider() Provider {
+func (s *Service) Provider() *Keyring {
 	if s == nil {
 		return nil
 	}
@@ -120,6 +126,6 @@ func (s *Service) Ready(ctx context.Context) bool {
 // OpenProvider builds the configured wrap/unwrap backend without touching
 // key state. The operator CLI uses it to compose commands that must not
 // provision keys as a side effect.
-func OpenProvider(cfg config.SecretKeysConfig, opts Options) (Provider, error) {
+func OpenProvider(cfg config.SecretKeysConfig, opts Options) (*Keyring, error) {
 	return NewKeyring(cfg.KeyringPath, KeyringOptions{AllowGenerate: opts.AllowGenerate})
 }

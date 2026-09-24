@@ -124,7 +124,9 @@ func openTestStore(t *testing.T) *persistence {
 	if err != nil {
 		t.Fatalf("create source archive store: %v", err)
 	}
-	store.source.ConfigureSourceArchives(archiveStore)
+	if err := store.source.ConfigureSourceArchives(archiveStore, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
 	// Each test gets an isolated development keyring; the active key is
 	// bootstrapped after the reset wipes the shared database.
 	provider, err := secretkeys.NewKeyring(filepath.Join(t.TempDir(), "keys.json"), secretkeys.KeyringOptions{AllowGenerate: true})

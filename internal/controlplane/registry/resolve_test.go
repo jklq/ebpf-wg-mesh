@@ -132,6 +132,9 @@ func TestManifestURLForRoutesDockerHubToDistributionEndpoint(t *testing.T) {
 		{"index.docker.io/library/nginx", "latest", "https://registry-1.docker.io/v2/library/nginx/manifests/latest"},
 		{"example.test/web", "v1", "https://example.test/v2/web/manifests/v1"},
 		{"localhost:5000/web", "v1", "http://localhost:5000/v2/web/manifests/v1"},
+		{"127.0.0.1:5000/web", "v1", "http://127.0.0.1:5000/v2/web/manifests/v1"},
+		{"[::1]:5000/web", "v1", "http://[::1]:5000/v2/web/manifests/v1"},
+		{"::1/web", "v1", "http://::1/v2/web/manifests/v1"},
 	} {
 		if got := manifestURLFor(tc.repository, tc.reference); got != tc.want {
 			t.Fatalf("manifestURLFor(%q, %q) = %q, want %q", tc.repository, tc.reference, got, tc.want)

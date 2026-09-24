@@ -23,7 +23,6 @@ type ObjectMetadata struct {
 
 type ArchiveStore interface {
 	Put(ctx context.Context, key string, body io.Reader, size int64, digest string) error
-	Open(ctx context.Context, key string) (io.ReadCloser, ObjectMetadata, error)
 	ReadRange(ctx context.Context, key string, offset int64, limit int) ([]byte, error)
 	Stat(ctx context.Context, key string) (ObjectMetadata, error)
 	Delete(ctx context.Context, key string) error
@@ -175,28 +174,6 @@ func (s *FileArchiveStore) Put(ctx context.Context, key string, body io.Reader, 
 		return err
 	}
 	return nil
-}
-
-func (s *FileArchiveStore) Open(ctx context.Context, key string) (io.ReadCloser, ObjectMetadata, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, ObjectMetadata{}, err
-	}
-	meta, err := s.Stat(ctx, key)
-	if err != nil {
-		return nil, ObjectMetadata{}, err
-	}
-	path, err := s.path(key)
-	if err != nil {
-		return nil, ObjectMetadata{}, err
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, ObjectMetadata{}, fmt.Errorf("%w: %s: %w", ErrArchiveNotFound, key, os.ErrNotExist)
-		}
-		return nil, ObjectMetadata{}, err
-	}
-	return file, meta, nil
 }
 
 func (s *FileArchiveStore) Stat(ctx context.Context, key string) (ObjectMetadata, error) {

@@ -65,7 +65,8 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL,
 			deleted_at TIMESTAMPTZ NULL,
 			deleted_by_user_id STRING NOT NULL DEFAULT '',
-			delete_expires_at TIMESTAMPTZ NULL
+			delete_expires_at TIMESTAMPTZ NULL,
+			log_retention_days INT NOT NULL DEFAULT 0
 		)`,
 	`CREATE INDEX idx_projects_delete_expires ON projects(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE UNIQUE INDEX idx_projects_owner_name
@@ -207,6 +208,11 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_services_delete_expires ON services(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE INDEX idx_services_environment_created ON services(environment_id, created_at, id)`,
+	`CREATE VIEW live_services AS
+		 SELECT s.* FROM services s
+		 JOIN environments e ON e.id = s.environment_id
+		 JOIN projects p ON p.id = e.project_id
+		 WHERE s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`,
 	`CREATE TABLE service_revisions (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			spec_revision INT8 NOT NULL,

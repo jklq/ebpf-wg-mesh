@@ -113,6 +113,7 @@ func TestCrashEvidenceSurvivesContainerRemoval(t *testing.T) {
 				LastExitCode:             137,
 				Message:                  "crash loop after OOM kill (5 restarts, policy on-failure)",
 				AppliedRolloutGeneration: target.GetDesiredRolloutGeneration(),
+				WindowStartedAt:          timestamppb.New(time.Date(2026, 9, 22, 1, 2, 3, 0, time.UTC)),
 			},
 		}
 	}
@@ -185,5 +186,48 @@ func TestCrashEvidenceSurvivesContainerRemoval(t *testing.T) {
 		return true, nil
 	}); err != nil {
 		t.Fatalf("crash log tail did not survive container removal: %v (tail %q)", err, tail)
+	}
+
+	// Both reports carried the same crash-loop observation. The
+	// platform event must collapse into one row instead of
+	// accumulating per report.
+	var events int
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 15 * time.Second, Interval: 200 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+		resp, err := cp.dashboard.ListServiceLogs(userA, &platformv1.ListServiceLogsRequest{
+			ServiceId: service.GetId(),
+			Limit:     100,
+			LogType:   platformv1.ServiceLogType_SERVICE_LOG_TYPE_DEPLOY,
+		})
+		if err != nil {
+			return false, err
+		}
+		events = 0
+		for _, line := range resp.GetLines() {
+			if line.GetEvent() == "allocation.crash_loop" {
+				events++
+			}
+		}
+		return events >= 1, nil
+	}); err != nil {
+		t.Fatalf("crash-loop event was not emitted: %v", err)
+	}
+	// Let any duplicate from the second report settle, then re-count.
+	time.Sleep(3 * time.Second)
+	resp, err := cp.dashboard.ListServiceLogs(userA, &platformv1.ListServiceLogsRequest{
+		ServiceId: service.GetId(),
+		Limit:     100,
+		LogType:   platformv1.ServiceLogType_SERVICE_LOG_TYPE_DEPLOY,
+	})
+	if err != nil {
+		t.Fatalf("ListServiceLogs (deploy): %v", err)
+	}
+	events = 0
+	for _, line := range resp.GetLines() {
+		if line.GetEvent() == "allocation.crash_loop" {
+			events++
+		}
+	}
+	if events != 1 {
+		t.Fatalf("resent crash-loop observation produced %d event rows, want 1", events)
 	}
 }

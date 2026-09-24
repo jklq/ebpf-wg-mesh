@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -13,6 +14,31 @@ import (
 
 	"golang.org/x/sys/unix"
 )
+
+func TestOSCommandRunnerCancellationClosesEscapedPipes(t *testing.T) {
+	setsid, err := exec.LookPath("setsid")
+	if err != nil {
+		t.Skip("setsid is unavailable")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := time.Now()
+	_, err = (osCommandRunner{}).Run(ctx, commandRequest{
+		Binary: "/bin/sh",
+		Args:   []string{"-c", "setsid sleep 5 & echo started; wait"},
+		Env:    []string{"PATH=" + filepath.Dir(setsid) + ":/usr/bin:/bin"},
+	}, func(line commandOutputLine) {
+		if line.Line == "started" {
+			cancel()
+		}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled command error = %v", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 4*time.Second {
+		t.Fatalf("cancellation waited for escaped descendant: %s", elapsed)
+	}
+}
 
 // limitHelperRequest builds a helper invocation carrying extra
 // environment alongside the standard helper variables.
