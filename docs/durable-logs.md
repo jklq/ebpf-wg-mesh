@@ -91,7 +91,9 @@ recovery.
 
 Every shed line is counted and reported with the next batch as a drop
 summary, keyed per allocation (or stream for builders), and persisted
-as an explicit gap row. Shutdown drains the counters into pending
+as an explicit gap row. Summary sets ride their own byte-bounded
+messages, so an accumulated set can never oversize a retry and block
+line delivery. Shutdown drains the counters into pending
 drop summaries persisted next to the spool (file and directory synced
 before the snapshot counts as durable), so they report after the
 restart, and every flush collects and persists them even while

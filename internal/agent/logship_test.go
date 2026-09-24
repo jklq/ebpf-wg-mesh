@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -630,4 +631,62 @@ func TestLogShipperAttachRewindSurvivesInflightFlush(t *testing.T) {
 		}
 	}
 	t.Fatal("in-flight flush committed past the attach rewind; replay window swallowed")
+}
+
+func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
+	t.Parallel()
+
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      t.TempDir(),
+		RatePerSec:    100000,
+		Burst:         100000,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	// A long outage across allocation churn can accumulate more drop
+	// summaries than one message may carry; they must split instead
+	// of oversizing every retry and blocking all line delivery.
+	now := time.Now().UTC()
+	for i := 0; i < 30000; i++ {
+		shipper.pending.Add(logpipeline.DropKey{
+			ServiceID:    "svc-1",
+			AllocationID: fmt.Sprintf("alloc-%d", i),
+			LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
+			Stream:       "stdout",
+			Reason:       logpipeline.ReasonRateLimited,
+		}, 1, now, now)
+	}
+	sender := &recordingSender{}
+	shipper.Attach(sender.send)
+	shipper.flush()
+
+	sender.mu.Lock()
+	batches := append([]*agentv1.LogBatch(nil), sender.batches...)
+	sender.mu.Unlock()
+	if len(batches) < 2 {
+		t.Fatalf("oversized drop set must split across messages, got %d", len(batches))
+	}
+	var dropped uint64
+	for _, batch := range batches {
+		if proto.Size(batch) >= 4<<20 {
+			t.Fatalf("drop message %d exceeds the transport limit", proto.Size(batch))
+		}
+		for _, drop := range batch.GetDrops() {
+			dropped += drop.GetDroppedCount()
+		}
+	}
+	if dropped != 30000 {
+		t.Fatalf("split lost drop accounting: %d of 30000", dropped)
+	}
+
+	// Everything was sent and committed: nothing re-sends.
+	shipper.flush()
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.batches) != len(batches) {
+		t.Fatalf("sent summaries re-sent: %d batches after reflush", len(sender.batches))
+	}
 }

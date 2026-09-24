@@ -307,19 +307,29 @@ func (s *logShipper) flush() {
 	}
 	// Every message stays within the wire budget: a batch of
 	// maximum-size lines must never exceed the transport's receive
-	// limit, which would wedge delivery permanently.
-	chunks := logpipeline.ChunkByBytes(entries, func(e *agentv1.LogEntry) int { return proto.Size(e) }, logpipeline.MaxBatchBytes)
-	if len(chunks) == 0 {
-		chunks = [][]*agentv1.LogEntry{nil}
-	}
-	for i, chunk := range chunks {
-		batch := &agentv1.LogBatch{AgentId: s.agentID, Entries: chunk}
+	// limit, which would wedge delivery permanently. Drop summaries
+	// ride their own bounded messages — an accumulated set can
+	// exceed the budget too and must never block line delivery.
+	dropChunks := logpipeline.ChunkByBytes(taken, func(d *platformv1.LogDropSummary) int { return proto.Size(d) }, logpipeline.MaxBatchBytes)
+	entryChunks := logpipeline.ChunkByBytes(entries, func(e *agentv1.LogEntry) int { return proto.Size(e) }, logpipeline.MaxBatchBytes)
+	for i, chunk := range dropChunks {
+		batch := &agentv1.LogBatch{AgentId: s.agentID, Drops: chunk}
 		if i == 0 {
 			batch.DroppedLines = dropped
-			batch.Drops = taken
 		}
 		err = send(&agentv1.AgentClientMessage{
 			Payload: &agentv1.AgentClientMessage_LogBatch{LogBatch: batch},
+		})
+		if err != nil {
+			slog.Warn("send container log batch failed", "agent_id", s.agentID, "error", err)
+			s.restorePending(taken)
+			s.spool.Release()
+			return
+		}
+	}
+	for _, chunk := range entryChunks {
+		err = send(&agentv1.AgentClientMessage{
+			Payload: &agentv1.AgentClientMessage_LogBatch{LogBatch: &agentv1.LogBatch{AgentId: s.agentID, Entries: chunk}},
 		})
 		if err != nil {
 			slog.Warn("send container log batch failed", "agent_id", s.agentID, "error", err)
