@@ -370,27 +370,39 @@ func (r *buildLogReporter) flush() {
 	for _, summary := range taken {
 		dropped += summary.GetDroppedCount()
 	}
-	reportCtx, cancel := context.WithTimeout(r.ctx, r.reportTimeout)
-	defer cancel()
-	_, err = r.client.ReportBuildLogs(reportCtx, &platformv1.ReportBuildLogsRequest{
-		BuilderId:    r.builderID,
-		BuildId:      r.buildID,
-		Lines:        lines,
-		LeaseEpoch:   r.leaseEpoch,
-		DroppedLines: dropped,
-		Drops:        taken,
-	})
-	if err != nil {
-		r.restorePending(taken)
-		r.spool.Release()
-		if status.Code(err) == codes.PermissionDenied {
-			r.orphaned.Store(true)
-			slog.Warn("build log reporter orphaned by lease loss", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+	// Every request stays within the wire budget: a batch of
+	// maximum-size lines must never exceed the transport's receive
+	// limit, which would wedge delivery and fail the build.
+	chunks := logpipeline.ChunkByBytes(lines, func(l *platformv1.BuildLogLine) int { return proto.Size(l) }, logpipeline.MaxBatchBytes)
+	if len(chunks) == 0 {
+		chunks = [][]*platformv1.BuildLogLine{nil}
+	}
+	for i, chunk := range chunks {
+		req := &platformv1.ReportBuildLogsRequest{
+			BuilderId:  r.builderID,
+			BuildId:    r.buildID,
+			Lines:      chunk,
+			LeaseEpoch: r.leaseEpoch,
+		}
+		if i == 0 {
+			req.DroppedLines = dropped
+			req.Drops = taken
+		}
+		reportCtx, cancel := context.WithTimeout(r.ctx, r.reportTimeout)
+		_, err = r.client.ReportBuildLogs(reportCtx, req)
+		cancel()
+		if err != nil {
+			r.restorePending(taken)
+			r.spool.Release()
+			if status.Code(err) == codes.PermissionDenied {
+				r.orphaned.Store(true)
+				slog.Warn("build log reporter orphaned by lease loss", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+				return
+			}
+			slog.Warn("report build logs",
+				"builder_id", r.builderID, "build_id", r.buildID, "line_count", len(chunk), "error", err)
 			return
 		}
-		slog.WarnContext(reportCtx, "report build logs",
-			"builder_id", r.builderID, "build_id", r.buildID, "line_count", len(lines), "error", err)
-		return
 	}
 	if err := r.spool.Commit(cursor); err != nil {
 		slog.Warn("commit build log spool", "builder_id", r.builderID, "build_id", r.buildID, "error", err)

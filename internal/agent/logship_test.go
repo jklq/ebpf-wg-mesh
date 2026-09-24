@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/logpipeline"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -468,5 +470,61 @@ func TestLogShipperCoalescesPendingDropSummariesAcrossOutage(t *testing.T) {
 	}
 	if got := sender.batches[0].GetDroppedLines(); got != 100 {
 		t.Fatalf("recovered batch dropped %d lines, want 100", got)
+	}
+}
+
+func TestLogShipperCapsBatchBytes(t *testing.T) {
+	t.Parallel()
+
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      t.TempDir(),
+		RatePerSec:    100000,
+		Burst:         100000,
+		BatchSize:     100,
+		FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	// A batch of permitted maximum-size lines must split at the wire
+	// budget instead of exceeding the transport's receive limit.
+	big := strings.Repeat("x", logpipeline.MaxLogLineBytes)
+	for i := uint64(1); i <= 40; i++ {
+		shipper.AppendLog(testEntry("alloc-1", "svc-1", big, i))
+	}
+	sender := &recordingSender{}
+	shipper.Attach(sender.send)
+	shipper.flush()
+
+	sender.mu.Lock()
+	batches := append([]*agentv1.LogBatch(nil), sender.batches...)
+	sender.mu.Unlock()
+	if len(batches) < 2 {
+		t.Fatalf("40 max-size lines must split across batches, got %d", len(batches))
+	}
+	var total int
+	for _, batch := range batches {
+		var size int
+		for _, entry := range batch.GetEntries() {
+			size += proto.Size(entry)
+			total++
+		}
+		if size > logpipeline.MaxBatchBytes {
+			t.Fatalf("batch line payload %d exceeds the wire budget %d", size, logpipeline.MaxBatchBytes)
+		}
+		if proto.Size(batch) >= 4<<20 {
+			t.Fatalf("batch message %d exceeds the gRPC receive limit", proto.Size(batch))
+		}
+	}
+	if total != 40 {
+		t.Fatalf("chunking lost lines: shipped %d of 40", total)
+	}
+
+	// Every chunk committed: nothing is re-sent.
+	shipper.flush()
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.batches) != len(batches) {
+		t.Fatalf("committed chunks re-sent: %d batches after reflush", len(sender.batches))
 	}
 }

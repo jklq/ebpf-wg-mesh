@@ -62,7 +62,10 @@ Container output funnels through a per-allocation token bucket
 spool (agent default 256 MiB under the runtime data dir; builders use a
 per-attempt spool under the work dir, default 64 MiB). A ship loop
 forwards batches with retry and exponential backoff; the spool cursor
-commits only after acceptance. A read batch pins its segments against
+commits only after acceptance. Every shipped message is capped by
+marshaled bytes as well as line count, so batches of maximum-size
+lines stay under the transport's receive limit instead of wedging
+delivery. A read batch pins its segments against
 overflow eviction until it commits or is released: a delivered batch
 is never evicted mid-send, which would report a false gap and fail the
 commit. Committed sealed segments stay for

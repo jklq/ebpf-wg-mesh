@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -599,5 +600,46 @@ func TestBuildLogReporterInheritsPriorAttemptDropSummaries(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.PendingDropsFile)); !os.IsNotExist(err) {
 		t.Fatalf("taken-over summaries must be consumed: %v", err)
+	}
+}
+
+func TestBuildLogReporterCapsBatchBytes(t *testing.T) {
+	t.Parallel()
+
+	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 64)}
+	cfg, _ := testBuildLogShipConfig(t, "build-1")
+	cfg.SpoolMaxBytes = 8 << 20
+	cfg.BatchSize = 100
+	cfg.FlushInterval = time.Hour // Close must drain without waiting for a tick.
+	reporter, err := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", "svc-1", 1, cfg)
+	if err != nil {
+		t.Fatalf("new build log reporter: %v", err)
+	}
+	// A report of permitted maximum-size lines must split at the wire
+	// budget instead of exceeding the transport's receive limit,
+	// which would wedge delivery and fail the build.
+	big := strings.Repeat("x", logpipeline.MaxLogLineBytes)
+	for i := 0; i < 40; i++ {
+		reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: big})
+	}
+	reporter.Close()
+
+	requests := client.ReportRequests()
+	if len(requests) < 2 {
+		t.Fatalf("40 max-size lines must split across requests, got %d", len(requests))
+	}
+	var total int
+	for _, req := range requests {
+		var size int
+		for _, line := range req.GetLines() {
+			size += proto.Size(line)
+			total++
+		}
+		if size > logpipeline.MaxBatchBytes {
+			t.Fatalf("request line payload %d exceeds the wire budget %d", size, logpipeline.MaxBatchBytes)
+		}
+	}
+	if total != 40 {
+		t.Fatalf("chunking lost lines: reported %d of 40", total)
 	}
 }
