@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"strings"
 
@@ -12,42 +13,122 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
+// scopeAgentLogBatch resolves the authoritative owner of every
+// allocation referenced by one agent log batch and scopes the batch
+// onto it. Claimed service and environment IDs must match the
+// allocation owner when present; empty claims (drop summaries whose
+// producer metadata is gone after a restart) are filled from the
+// owner, so a compromised or buggy agent cannot attribute output or
+// loss to another tenant. Agent-supplied event metadata is cleared
+// the same way: structured platform events are server-generated
+// only. Lines referencing an allocation this agent
+// does not own — including a stale one removed while its lines sat in
+// the durable spool — or claiming a mismatched owner are excluded
+// individually with a warning: one bad line must never reject the
+// whole durable batch and wedge delivery behind it, and an
+// unverifiable line cannot carry a gap row either.
+// Entries and drop summaries without an allocation cannot be
+// attributed and are removed.
+func (s *fleetPersistence) scopeAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
+	for _, entry := range batch.GetEntries() {
+		// Event and attributes are claims about structured platform
+		// events, which only the control plane may synthesize.
+		entry.Event = ""
+		entry.Attributes = nil
+	}
+	wanted := make(map[string]struct{}, len(batch.GetEntries())+len(batch.GetDrops()))
+	for _, entry := range batch.GetEntries() {
+		if id := entry.GetAllocationId(); id != "" {
+			wanted[id] = struct{}{}
+		}
+	}
+	for _, drop := range batch.GetDrops() {
+		if id := drop.GetAllocationId(); id != "" {
+			wanted[id] = struct{}{}
+		}
+	}
+	if len(wanted) == 0 {
+		batch.Entries = nil
+		batch.Drops = nil
+		return nil
+	}
+	ids := make([]string, 0, len(wanted))
+	placeholders := make([]string, 0, len(wanted))
+	args := make([]any, 0, len(wanted)+1)
+	args = append(args, agentID)
+	for id := range wanted {
+		ids = append(ids, id)
+		args = append(args, id)
+		placeholders = append(placeholders, fmt.Sprintf("$%d", len(args)))
+	}
 	type logOwner struct {
-		allocationID  string
 		environmentID string
 		serviceID     string
 	}
-	seen := make(map[logOwner]struct{}, len(batch.GetEntries()))
-	for _, entry := range batch.GetEntries() {
-		allocationID := entry.GetAllocationId()
-		if allocationID == "" {
-			continue
-		}
-		owner := logOwner{
-			allocationID:  allocationID,
-			environmentID: entry.GetEnvironmentId(),
-			serviceID:     entry.GetServiceId(),
-		}
-		if _, ok := seen[owner]; ok {
-			continue
-		}
-		seen[owner] = struct{}{}
-		var one int
-		err := s.db.QueryRowContext(ctx,
-			`SELECT 1
-			   FROM allocations
-			  JOIN services s ON s.id = allocations.service_id
-			 WHERE allocations.id = $1 AND allocations.agent_id = $2
-			   AND s.environment_id = $3 AND allocations.service_id = $4`,
-			allocationID, agentID, entry.GetEnvironmentId(), entry.GetServiceId(),
-		).Scan(&one)
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("allocation %q is not assigned to agent", allocationID)
-		}
-		if err != nil {
+	owners := make(map[string]logOwner, len(ids))
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT allocations.id, allocations.service_id, s.environment_id
+		   FROM allocations
+		   JOIN services s ON s.id = allocations.service_id
+		  WHERE allocations.agent_id = $1
+		    AND allocations.id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, serviceID, environmentID string
+		if err := rows.Scan(&id, &serviceID, &environmentID); err != nil {
 			return err
 		}
+		owners[id] = logOwner{environmentID: environmentID, serviceID: serviceID}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	keptEntries := batch.Entries[:0]
+	excluded := 0
+	for _, entry := range batch.Entries {
+		owner, ok := owners[entry.GetAllocationId()]
+		if !ok {
+			excluded++
+			continue
+		}
+		if claimed := strings.TrimSpace(entry.GetServiceId()); claimed != "" && claimed != owner.serviceID {
+			excluded++
+			slog.Warn("dropped agent log line with mismatched service claim", "agent_id", agentID, "allocation_id", entry.GetAllocationId(), "claimed_service_id", claimed)
+			continue
+		}
+		if claimed := strings.TrimSpace(entry.GetEnvironmentId()); claimed != "" && claimed != owner.environmentID {
+			excluded++
+			slog.Warn("dropped agent log line with mismatched environment claim", "agent_id", agentID, "allocation_id", entry.GetAllocationId(), "claimed_environment_id", claimed)
+			continue
+		}
+		entry.ServiceId = owner.serviceID
+		entry.EnvironmentId = owner.environmentID
+		keptEntries = append(keptEntries, entry)
+	}
+	batch.Entries = keptEntries
+	keptDrops := batch.Drops[:0]
+	for _, drop := range batch.Drops {
+		owner, ok := owners[drop.GetAllocationId()]
+		if !ok {
+			excluded++
+			continue
+		}
+		if claimed := strings.TrimSpace(drop.GetServiceId()); claimed != "" && claimed != owner.serviceID {
+			excluded++
+			slog.Warn("dropped agent drop summary with mismatched service claim", "agent_id", agentID, "allocation_id", drop.GetAllocationId(), "claimed_service_id", claimed)
+			continue
+		}
+		drop.ServiceId = owner.serviceID
+		keptDrops = append(keptDrops, drop)
+	}
+	batch.Drops = keptDrops
+	if excluded > 0 {
+		slog.Warn("excluded unattributable agent log lines", "agent_id", agentID, "count", excluded)
 	}
 	return nil
 }
