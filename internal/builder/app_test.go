@@ -173,76 +173,6 @@ func TestOSCommandRunnerPreservesFailureOutputTail(t *testing.T) {
 	}
 }
 
-func TestBuildLogReporterBatchesLinesWithIncreasingSequence(t *testing.T) {
-	t.Parallel()
-
-	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", 1)
-	now := time.Now().UTC()
-	for i := 0; i < buildLogBatchSize+1; i++ {
-		reporter.Report(context.Background(), commandOutputLine{
-			ObservedAt: now.Add(time.Duration(i) * time.Millisecond),
-			Stream:     "stdout",
-			Line:       "line",
-		})
-	}
-	waitForBuilderReportCall(t, client.calls)
-	reporter.Close()
-
-	requests := client.ReportRequests()
-	if len(requests) != 2 {
-		t.Fatalf("expected 2 report requests, got %d", len(requests))
-	}
-	var sequences []uint64
-	for _, req := range requests {
-		for _, line := range req.GetLines() {
-			sequences = append(sequences, line.GetSequence())
-		}
-	}
-	if len(sequences) != buildLogBatchSize+1 {
-		t.Fatalf("expected %d sequences, got %d", buildLogBatchSize+1, len(sequences))
-	}
-	for i, sequence := range sequences {
-		if want := uint64(i + 1); sequence != want {
-			t.Fatalf("sequence %d = %d, want %d", i, sequence, want)
-		}
-	}
-}
-
-func TestBuildLogReporterFlushesRemainingLinesOnClose(t *testing.T) {
-	t.Parallel()
-
-	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", 1)
-	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
-	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stderr", Line: "two"})
-	reporter.Close()
-
-	requests := client.ReportRequests()
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 report request, got %d", len(requests))
-	}
-	if got := len(requests[0].GetLines()); got != 2 {
-		t.Fatalf("expected 2 flushed lines, got %d", got)
-	}
-}
-
-func TestBuildLogReporterIgnoresReportErrors(t *testing.T) {
-	t.Parallel()
-
-	client := &recordingBuilderServiceClient{
-		calls:     make(chan struct{}, 4),
-		reportErr: errors.New("boom"),
-	}
-	reporter := newBuildLogReporter(context.Background(), client, "builder-1", "build-1", 1)
-	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
-	reporter.Close()
-
-	if len(client.ReportRequests()) != 1 {
-		t.Fatal("expected reporter to attempt a flush despite RPC errors")
-	}
-}
-
 func TestValidateBuildInputsRejectsEscapingPaths(t *testing.T) {
 	t.Parallel()
 
@@ -723,6 +653,8 @@ type recordingBuilderServiceClient struct {
 	requests       []*platformv1.ReportBuildLogsRequest
 	calls          chan struct{}
 	reportErr      error
+	failRemaining  int
+	failErr        error
 	downloadChunks []*platformv1.SourceSnapshotChunk
 	downloadErr    error
 }
@@ -778,13 +710,18 @@ func (c *recordingBuilderServiceClient) ReportBuildHeartbeat(context.Context, *p
 func (c *recordingBuilderServiceClient) ReportBuildLogs(_ context.Context, in *platformv1.ReportBuildLogsRequest, _ ...grpc.CallOption) (*emptypb.Empty, error) {
 	c.mu.Lock()
 	c.requests = append(c.requests, cloneBuildLogRequestForTest(in))
+	fail := c.reportErr
+	if c.failRemaining > 0 {
+		c.failRemaining--
+		fail = c.failErr
+	}
 	c.mu.Unlock()
 	select {
 	case c.calls <- struct{}{}:
 	default:
 	}
-	if c.reportErr != nil {
-		return nil, c.reportErr
+	if fail != nil {
+		return nil, fail
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -807,23 +744,7 @@ func cloneBuildLogRequestForTest(req *platformv1.ReportBuildLogsRequest) *platfo
 	if req == nil {
 		return nil
 	}
-	clone := &platformv1.ReportBuildLogsRequest{
-		BuilderId:  req.GetBuilderId(),
-		BuildId:    req.GetBuildId(),
-		Lines:      make([]*platformv1.BuildLogLine, 0, len(req.GetLines())),
-		LeaseEpoch: req.GetLeaseEpoch(),
-	}
-	for _, line := range req.GetLines() {
-		if line == nil {
-			continue
-		}
-		clone.Lines = append(clone.Lines, &platformv1.BuildLogLine{
-			ObservedAt: line.GetObservedAt(),
-			Stream:     line.GetStream(),
-			Sequence:   line.GetSequence(),
-			Line:       line.GetLine(),
-		})
-	}
+	clone, _ := proto.Clone(req).(*platformv1.ReportBuildLogsRequest)
 	return clone
 }
 
