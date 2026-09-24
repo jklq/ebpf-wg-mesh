@@ -51,7 +51,9 @@ so a reconnect or a retry can resend lines. `service_logs` is a
 line_id)` and reads use `FINAL`, so resends collapse into one row
 instead of duplicating. On session attach an agent rewinds a bounded
 recent window (default 5 minutes) to re-send records the backend may
-not have durably ingested; records after the durable cursor were
+not have durably ingested; the rewind is serialized against in-flight
+flushes, so a batch read before it cannot commit past it and swallow
+the replay window. Records after the durable cursor were
 never accepted and always replay, however old. Retried lines
 deduplicate by identity.
 
@@ -92,7 +94,9 @@ summary, keyed per allocation (or stream for builders), and persisted
 as an explicit gap row. Shutdown drains the counters into pending
 drop summaries persisted next to the spool (file and directory synced
 before the snapshot counts as durable), so they report after the
-restart. Builders persist theirs next to the attempt spool and a
+restart, and every flush collects and persists them even while
+detached, so counted losses survive a crash without a session or
+clean shutdown. Builders persist theirs next to the attempt spool and a
 retried attempt takes them over: it re-emits its own output from
 scratch but can never recreate the lines a dead attempt dropped, so
 their gap accounting survives across the retry. Pending summaries coalesce by identity — counts sum and the

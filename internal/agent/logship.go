@@ -73,6 +73,12 @@ type logShipper struct {
 	flushInterval time.Duration
 	replayWindow  time.Duration
 
+	// shipMu serializes flush cycles with attach rewinds: a batch
+	// read before the rewind must not commit past it and swallow the
+	// replay window. It never guards AppendLog, so logging never
+	// blocks on the network.
+	shipMu sync.Mutex
+
 	mu       sync.Mutex
 	send     func(*agentv1.AgentClientMessage) error
 	meta     map[string]allocMeta
@@ -183,11 +189,15 @@ func (s *logShipper) countOverflow(key string, count uint64) {
 
 // Attach connects the ship loop to a session's send function and
 // replays the recent window plus everything unshipped for
-// at-least-once delivery across reconnects.
+// at-least-once delivery across reconnects. The rewind is serialized
+// against in-flight flushes and takes effect before the next batch
+// is read, so no batch can commit past it.
 func (s *logShipper) Attach(send func(*agentv1.AgentClientMessage) error) {
 	if s == nil {
 		return
 	}
+	s.shipMu.Lock()
+	defer s.shipMu.Unlock()
 	s.mu.Lock()
 	s.send = send
 	s.mu.Unlock()
@@ -259,12 +269,17 @@ func (s *logShipper) currentSend() func(*agentv1.AgentClientMessage) error {
 }
 
 func (s *logShipper) flush() {
+	s.shipMu.Lock()
+	defer s.shipMu.Unlock()
+	now := time.Now().UTC()
+	// Drop accounting is collected and persisted even while detached:
+	// a crash before the next attach must not lose counted losses that
+	// never reached a summary.
+	s.collectDrops(now)
 	send := s.currentSend()
 	if send == nil {
 		return
 	}
-	now := time.Now().UTC()
-	s.collectDrops(now)
 	records, cursor, err := s.spool.Read(s.batchSize)
 	if err != nil {
 		slog.Warn("read log spool", "agent_id", s.agentID, "error", err)

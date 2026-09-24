@@ -528,3 +528,106 @@ func TestLogShipperCapsBatchBytes(t *testing.T) {
 		t.Fatalf("committed chunks re-sent: %d batches after reflush", len(sender.batches))
 	}
 }
+
+func TestLogShipperPersistsDropsWhileDetached(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      dir,
+		RatePerSec:    1,
+		Burst:         2,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	for i := uint64(1); i <= 10; i++ {
+		shipper.AppendLog(testEntry("alloc-1", "svc-1", "flood", i))
+	}
+	// Never attached and never closed: a flush while detached must
+	// still persist the rate-limited losses, so a crash cannot lose
+	// them without a gap.
+	shipper.flush()
+
+	drops, err := logpipeline.LoadDrops(dir)
+	if err != nil {
+		t.Fatalf("LoadDrops after detached flush: %v", err)
+	}
+	var dropped uint64
+	for _, drop := range drops {
+		dropped += drop.GetDroppedCount()
+	}
+	if dropped != 8 {
+		t.Fatalf("detached flush persisted %d dropped lines, want 8", dropped)
+	}
+}
+
+func TestLogShipperAttachRewindSurvivesInflightFlush(t *testing.T) {
+	t.Parallel()
+
+	shipper, err := newLogShipper("agent-1", logShipConfig{
+		SpoolDir:      t.TempDir(),
+		RatePerSec:    100000,
+		Burst:         100000,
+		BatchSize:     10,
+		FlushInterval: time.Hour,
+		ReplayWindow:  time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("newLogShipper: %v", err)
+	}
+	for i := uint64(1); i <= 10; i++ {
+		shipper.AppendLog(testEntry("alloc-1", "svc-1", "line", i))
+	}
+	first := &recordingSender{}
+	shipper.Attach(first.send)
+	shipper.flush() // Acknowledged: cursor committed past recs 1..10.
+	shipper.Detach()
+	shipper.AppendLog(testEntry("alloc-1", "svc-1", "line", 11))
+
+	// A flush holding a batch read from the old cursor races the
+	// reconnect: its commit must not swallow Attach's replay rewind.
+	var enteredOnce sync.Once
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	blocking := func(*agentv1.AgentClientMessage) error {
+		enteredOnce.Do(func() { close(entered) })
+		<-release
+		return nil
+	}
+	shipper.mu.Lock()
+	shipper.send = blocking
+	shipper.mu.Unlock()
+
+	flushDone := make(chan struct{})
+	go func() {
+		shipper.flush()
+		close(flushDone)
+	}()
+	<-entered
+
+	replayed := &recordingSender{}
+	attachDone := make(chan struct{})
+	go func() {
+		shipper.Attach(replayed.send)
+		close(attachDone)
+	}()
+	time.Sleep(50 * time.Millisecond) // Let an unsynchronized Attach rewind mid-flight.
+	close(release)
+	<-flushDone
+	<-attachDone
+
+	shipper.flush()
+	replayed.mu.Lock()
+	defer replayed.mu.Unlock()
+	for _, batch := range replayed.batches {
+		for _, entry := range batch.GetEntries() {
+			if entry.GetSequence() == 1 {
+				return
+			}
+		}
+	}
+	t.Fatal("in-flight flush committed past the attach rewind; replay window swallowed")
+}
