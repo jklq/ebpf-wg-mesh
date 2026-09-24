@@ -38,6 +38,8 @@ message Project {
   ProjectKind kind = 4;
   string system_key = 5;
   DeletionState deletion = 6;
+  // Log retention in days. Zero means the platform default.
+  int32 log_retention_days = 7;
 }
 
 // DeletionState marks a tombstoned resource. It is absent while the resource
@@ -543,6 +545,12 @@ message GetProjectRequest {
   string project_id = 1;
 }
 
+message UpdateProjectLogRetentionRequest {
+  string project_id = 1;
+  // Log retention in days, 1..90. Zero resets to the platform default.
+  int32 log_retention_days = 2;
+}
+
 message DeleteProjectRequest {
   string project_id = 1;
   // Must exactly match the project's current name.
@@ -868,6 +876,12 @@ message ListServiceLogsRequest {
   ServiceLogType log_type = 6;
   string build_id = 7;
   string search = 8;
+  // Opaque older-page cursor from a previous ListServiceLogsResponse.
+  // Empty starts with the newest lines in the requested time range.
+  string page_token = 9;
+  // Opaque older-page cursor from ListServiceLogsResponse.next_gap_page_token.
+  // Empty starts with the newest gaps in the requested time range.
+  string gap_page_token = 10;
 }
 
 message ServiceLogLine {
@@ -883,10 +897,57 @@ message ServiceLogLine {
   ServiceLogType log_type = 10;
   string build_id = 11;
   string stage = 12;
+  // Structured attributes for known platform events. Customer output
+  // lines carry no attributes: the pipeline never parses them.
+  map<string, string> attributes = 13;
+  // True when line was truncated to the documented size limit.
+  bool truncated = 14;
+  // Platform event name for structured events. Empty for plain lines.
+  string event = 15;
+  // Stable line identity used for ordering and deduplication.
+  string line_id = 16;
+}
+
+// ServiceLogGap marks a window where lines were dropped (rate limiting,
+// spool overflow, ingest shedding) instead of silently closing it.
+message ServiceLogGap {
+  string allocation_id = 1;
+  string build_id = 2;
+  ServiceLogType log_type = 3;
+  string stream = 4;
+  uint64 dropped_count = 5;
+  string reason = 6;
+  google.protobuf.Timestamp window_start = 7;
+  google.protobuf.Timestamp window_end = 8;
 }
 
 message ListServiceLogsResponse {
   repeated ServiceLogLine lines = 1;
+  // Opaque cursor for the next page. Empty when the range is exhausted.
+  string next_page_token = 2;
+  repeated ServiceLogGap gaps = 3;
+  // Opaque cursor for the next gap page. Empty when the gap range is
+  // exhausted. Gaps and lines paginate independently.
+  string next_gap_page_token = 4;
+}
+
+// LogDropSummary reports lines a producer dropped before delivery so the
+// control plane can persist them as explicit read gaps.
+message LogDropSummary {
+  string service_id = 1;
+  string allocation_id = 2;
+  string build_id = 3;
+  ServiceLogType log_type = 4;
+  string stream = 5;
+  uint64 dropped_count = 6;
+  string reason = 7;
+  google.protobuf.Timestamp window_start = 8;
+  google.protobuf.Timestamp window_end = 9;
+  // Stable identity of this coalesced drop lineage, minted by the
+  // producer and preserved across retries and count/window growth,
+  // so at-least-once reports replace their gap row instead of
+  // double-counting.
+  string summary_id = 10;
 }
 
 message ListServiceDeploymentsRequest {
@@ -1018,6 +1079,10 @@ message ReportBuildLogsRequest {
   string build_id = 2;
   repeated BuildLogLine lines = 3;
   int64 lease_epoch = 4;
+  // Lines dropped by the builder before this report (rate limiting,
+  // spool overflow). Persisted as explicit read gaps.
+  uint64 dropped_lines = 5;
+  repeated LogDropSummary drops = 6;
 }
 
 message BuildLogLine {
@@ -1025,6 +1090,10 @@ message BuildLogLine {
   string stream = 2;
   uint64 sequence = 3;
   string line = 4;
+  // True when line was truncated to the documented size limit.
+  bool truncated = 5;
+  // Stable producer-assigned identity for retry deduplication.
+  string line_id = 6;
 }
 
 message CompleteBuildRequest {
@@ -1058,6 +1127,7 @@ service PlatformService {
   rpc GetProject(GetProjectRequest) returns (Project);
   rpc DeleteProject(DeleteProjectRequest) returns (google.protobuf.Empty);
   rpc RestoreProject(RestoreProjectRequest) returns (Project);
+  rpc UpdateProjectLogRetention(UpdateProjectLogRetentionRequest) returns (Project);
   rpc PreviewProjectDeletion(PreviewProjectDeletionRequest) returns (DeletionPreview);
   rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);
   rpc GetEnvironment(GetEnvironmentRequest) returns (Environment);

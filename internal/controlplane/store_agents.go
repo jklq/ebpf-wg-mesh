@@ -49,6 +49,36 @@ func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID st
 			return err
 		}
 	}
+	owners := make(map[string]string)
+	for _, drop := range batch.GetDrops() {
+		if drop == nil || drop.GetDroppedCount() == 0 {
+			continue
+		}
+		allocationID := drop.GetAllocationId()
+		if allocationID == "" {
+			return errors.New("agent log drop has no allocation")
+		}
+		serviceID, ok := owners[allocationID]
+		if !ok {
+			err := s.db.QueryRowContext(ctx,
+				`SELECT service_id FROM allocations WHERE id = $1 AND agent_id = $2`,
+				allocationID, agentID,
+			).Scan(&serviceID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return fmt.Errorf("allocation %q is not assigned to agent", allocationID)
+			}
+			if err != nil {
+				return err
+			}
+			owners[allocationID] = serviceID
+		}
+		if claimed := drop.GetServiceId(); claimed != "" && claimed != serviceID {
+			return fmt.Errorf("allocation %q does not belong to service %q", allocationID, claimed)
+		}
+		// Metadata can be absent after an agent restart. The
+		// allocation is the authority for gap attribution.
+		drop.ServiceId = serviceID
+	}
 	return nil
 }
 

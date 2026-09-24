@@ -79,6 +79,9 @@ type ProjectRecord struct {
 	SystemKey string
 	CreatedAt time.Time
 	Deletion  *DeletionInfo
+	// LogRetentionDays overrides the platform log-retention default.
+	// Zero means the platform default.
+	LogRetentionDays int32
 }
 
 type EnvironmentKind string

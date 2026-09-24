@@ -161,6 +161,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
+	logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	logEmitter := logs.NewLogEmitter(logStore)
 	notifier := NewNotifier(store.notifications)
 	platformEvents := NewPlatformEvents(store.events, 0)
@@ -512,6 +513,7 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 
 func (s *Server) deletionGC(ctx context.Context) error {
 	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
+	gc.SetLogPurgeHook(s.logStore.PurgeProjectLogs)
 	return gc.Run(ctx)
 }
 
