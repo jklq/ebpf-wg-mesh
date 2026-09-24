@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/crc32"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -162,6 +163,9 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		corruptDrops: make(map[string]uint64),
 		inflight:     make(map[uint64]struct{}),
 	}
+	// Load before recovery: recovery may record its own corruption
+	// losses durably, and the maps must not count any loss twice.
+	s.loadDrops()
 	if err := s.recover(); err != nil {
 		return nil, err
 	}
@@ -294,6 +298,9 @@ func (s *Spool) recordCorruptLocked(raw []byte, off int64) {
 	s.corrupt++
 	s.droppedRecords++
 	s.corruptDrops[bestEffortRecordKey(raw, off)]++
+	if err := s.persistDropsLocked(); err != nil {
+		slog.Warn("persist log spool drop counts", "error", err)
+	}
 }
 
 // bestEffortRecordKey extracts the record key from a damaged frame
@@ -355,9 +362,14 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 		return errors.New("log spool has no writable segment")
 	}
 	if s.rejectOnFull {
-		// Evict what may be evicted (fully shipped segments), then
-		// reject rather than drop unshipped records.
-		s.evictLocked()
+		// Reclaim fully shipped segments sized for the incoming
+		// record first: capacity belongs to unshipped data, and a
+		// shipped segment must never leave room-worthy space idle.
+		for s.bytes+int64(len(encoded)) > s.maxBytes && len(s.segments) > 1 {
+			if !s.evictOneLocked() {
+				break
+			}
+		}
 		if s.bytes+int64(len(encoded)) > s.maxBytes {
 			return ErrSpoolFull
 		}
@@ -644,6 +656,14 @@ func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 		corrupt = s.corruptDrops
 		s.corruptDrops = make(map[string]uint64)
 	}
+	if evicted != nil || corrupt != nil {
+		// The caller now owns these counts (its pending drop
+		// snapshot persists them synchronously); the durable copy
+		// clears with the handoff.
+		if err := s.persistDropsLocked(); err != nil {
+			slog.Warn("clear log spool drop counts", "error", err)
+		}
+	}
 	return evicted, corrupt
 }
 
@@ -707,41 +727,122 @@ func (s *Spool) fullyShippedLocked(seg segmentInfo) bool {
 	return seg.id == s.cursor.Segment && seg.size <= s.cursor.Offset
 }
 
+type spoolDropsJSON struct {
+	Evicted map[string]uint64 `json:"evicted"`
+	Corrupt map[string]uint64 `json:"corrupt"`
+}
+
+// dropsPath holds the durable copy of eviction and corruption drop
+// counts between the eviction that created them and the DrainDrops
+// that hands them to the caller.
+func (s *Spool) dropsPath() string {
+	return filepath.Join(s.dir, "drops.json")
+}
+
+// persistDropsLocked durably records the drop counts before their
+// records are deleted, so a crash can never erase a counted loss.
+func (s *Spool) persistDropsLocked() error {
+	raw, err := json.Marshal(spoolDropsJSON{Evicted: s.evicted, Corrupt: s.corruptDrops})
+	if err != nil {
+		return fmt.Errorf("encode spool drops: %w", err)
+	}
+	tmp, err := os.CreateTemp(s.dir, ".drops-*.json")
+	if err != nil {
+		return fmt.Errorf("write spool drops: %w", err)
+	}
+	tmpName := tmp.Name()
+	if _, err := tmp.Write(raw); err != nil {
+		_ = tmp.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write spool drops: %w", err)
+	}
+	if s.sync {
+		if err := tmp.Sync(); err != nil {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+			return fmt.Errorf("sync spool drops: %w", err)
+		}
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("write spool drops: %w", err)
+	}
+	if err := os.Rename(tmpName, s.dropsPath()); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("commit spool drops: %w", err)
+	}
+	return syncDir(s.dir)
+}
+
+// loadDrops recovers drop counts recorded before an unclean stop.
+func (s *Spool) loadDrops() {
+	raw, err := os.ReadFile(s.dropsPath())
+	if err != nil {
+		return
+	}
+	var drops spoolDropsJSON
+	if err := json.Unmarshal(raw, &drops); err != nil {
+		return
+	}
+	for key, count := range drops.Evicted {
+		s.evicted[key] += count
+	}
+	for key, count := range drops.Corrupt {
+		s.corruptDrops[key] += count
+	}
+}
+
+// evictOneLocked evicts the oldest evictable segment and counts its
+// unshipped records as drops, durably. It reports false when nothing
+// can be evicted (all pinned, or — in RejectOnFull mode — only
+// unshipped segments remain).
+func (s *Spool) evictOneLocked() bool {
+	idx := -1
+	for i, seg := range s.segments {
+		if seg.pins != 0 {
+			continue
+		}
+		if s.rejectOnFull && !s.fullyShippedLocked(seg) {
+			continue
+		}
+		idx = i
+		break
+	}
+	if idx < 0 {
+		return false
+	}
+	oldest := s.segments[idx]
+	if oldest.id == s.activeID {
+		// Single-segment overflow: seal it so the writer keeps
+		// a live active segment, then evict the sealed data.
+		if err := s.rotateLocked(); err != nil {
+			return false
+		}
+		oldest = s.segments[idx]
+	}
+	drops, dropBytes := s.unshippedCountsLocked(oldest)
+	for key, count := range drops {
+		s.evicted[key] += count
+		s.droppedRecords += count
+	}
+	s.droppedBytes += dropBytes
+	if len(drops) > 0 {
+		if err := s.persistDropsLocked(); err != nil {
+			slog.Warn("persist log spool drop counts", "error", err)
+		}
+	}
+	s.removeSegmentLocked(oldest)
+	return true
+}
+
 func (s *Spool) evictLocked() {
 	for s.bytes > s.maxBytes && len(s.segments) > 1 {
-		idx := -1
-		for i, seg := range s.segments {
-			if seg.pins != 0 {
-				continue
-			}
-			if s.rejectOnFull && !s.fullyShippedLocked(seg) {
-				continue
-			}
-			idx = i
-			break
-		}
-		if idx < 0 {
+		if !s.evictOneLocked() {
 			// Every segment is pinned by the in-flight batch. Hold
 			// eviction until it commits or releases; the overshoot
 			// is bounded by one batch.
 			return
 		}
-		oldest := s.segments[idx]
-		if oldest.id == s.activeID {
-			// Single-segment overflow: seal it so the writer keeps
-			// a live active segment, then evict the sealed data.
-			if err := s.rotateLocked(); err != nil {
-				return
-			}
-			oldest = s.segments[idx]
-		}
-		drops, dropBytes := s.unshippedCountsLocked(oldest)
-		for key, count := range drops {
-			s.evicted[key] += count
-			s.droppedRecords += count
-		}
-		s.droppedBytes += dropBytes
-		s.removeSegmentLocked(oldest)
 	}
 }
 

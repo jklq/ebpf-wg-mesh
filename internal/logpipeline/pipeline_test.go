@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func openTestSpool(t *testing.T, cfg SpoolConfig) *Spool {
@@ -833,5 +835,86 @@ func TestSpoolRejectOnFullKeepsUnshippedRecords(t *testing.T) {
 	// Shipped segments are evictable again: appends resume.
 	if err := s.Append("a", "after", time.Now().UTC(), payload); err != nil {
 		t.Fatalf("Append after commit: %v", err)
+	}
+}
+
+func TestTruncateLineKeepsValidUTF8(t *testing.T) {
+	t.Parallel()
+	// A cut mid-rune would produce invalid UTF-8, which protobuf
+	// string fields reject — the line would be silently dropped
+	// instead of truncated.
+	line := strings.Repeat("é", MaxLogLineBytes)
+	got, truncated := TruncateLine(line)
+	if !truncated {
+		t.Fatal("oversized line must truncate")
+	}
+	if !utf8.ValidString(got) {
+		t.Fatal("truncated line must stay valid UTF-8")
+	}
+	if len(got) > MaxLogLineBytes {
+		t.Fatalf("truncated line grew past the cap: %d", len(got))
+	}
+}
+
+func TestSpoolEvictionCountsSurviveReopen(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	s, err := OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true, MaxBytes: 2400, MaxSegmentBytes: 800})
+	if err != nil {
+		t.Fatalf("OpenSpool: %v", err)
+	}
+	payload := make([]byte, 500)
+	for i := 0; i < 10; i++ {
+		if err := s.Append("alloc", fmt.Sprintf("id-%d", i), time.Now().UTC(), payload); err != nil {
+			t.Fatalf("Append: %v", err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// A crash before the producer's next ship tick: the counts must
+	// survive with the spool, not only in the evicted map.
+	reopened, err := OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true, MaxBytes: 2400, MaxSegmentBytes: 800})
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer reopened.Close()
+	evicted, _ := reopened.DrainDrops()
+	if evicted["alloc"] == 0 {
+		t.Fatalf("eviction counts lost across reopen: %+v", evicted)
+	}
+}
+
+func TestSpoolRejectOnFullReclaimsShippedSegments(t *testing.T) {
+	t.Parallel()
+	s := openTestSpool(t, SpoolConfig{MaxBytes: 700, MaxSegmentBytes: 400, RejectOnFull: true})
+	payload := make([]byte, 300)
+	now := time.Now().UTC()
+	for _, id := range []string{"a", "b"} {
+		if err := s.Append("alloc", id, now, payload); err != nil {
+			t.Fatalf("Append %s: %v", id, err)
+		}
+	}
+	recs, cursor, err := s.Read(10)
+	if err != nil || len(recs) != 2 {
+		t.Fatalf("Read: %v %d", err, len(recs))
+	}
+	if err := s.Commit(cursor); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Fully shipped segments must be reclaimed for the incoming
+	// record — capacity belongs to unshipped data, so a shipped
+	// segment must never trigger a premature reject.
+	if err := s.Append("alloc", "c", now, payload); err != nil {
+		t.Fatalf("shipped capacity not reclaimed: %v", err)
+	}
+	recs, _, err = s.Read(10)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(recs) == 0 || string(recs[len(recs)-1].ID) != "c" {
+		t.Fatalf("appended record missing: %+v", recs)
 	}
 }
