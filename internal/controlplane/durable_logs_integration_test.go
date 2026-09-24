@@ -649,7 +649,7 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 	}
 
 	// A drop summary claiming another tenant's service on this
-	// agent's allocation is rejected, never written anywhere.
+	// agent's allocation is excluded, never written anywhere.
 	spoof := &agentv1.LogBatch{
 		AgentId: agentID,
 		Drops: []*platformv1.LogDropSummary{{
@@ -661,15 +661,26 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 			WindowEnd:    timestamppb.New(now),
 		}},
 	}
-	if err := store.fleet.validateAgentLogBatch(ctx, agentID, spoof); err == nil {
-		t.Fatal("mismatched drop claim must reject the batch")
+	if err := store.fleet.scopeAgentLogBatch(ctx, agentID, spoof); err != nil {
+		t.Fatalf("scopeAgentLogBatch: %v", err)
+	}
+	if len(spoof.GetDrops()) != 0 {
+		t.Fatalf("mismatched drop claim survived scoping: %+v", spoof.GetDrops())
 	}
 
-	// A batch referencing an allocation this agent does not own is
-	// rejected outright.
+	// A stale or foreign allocation must not reject the batch: its
+	// summaries are excluded individually so durable delivery keeps
+	// moving alongside the valid rows.
 	foreign := &agentv1.LogBatch{
 		AgentId: agentID,
 		Drops: []*platformv1.LogDropSummary{{
+			ServiceId:    svcA.ID,
+			AllocationId: allocA,
+			DroppedCount: 5,
+			Reason:       logpipeline.ReasonRateLimited,
+			WindowStart:  timestamppb.New(now),
+			WindowEnd:    timestamppb.New(now),
+		}, {
 			ServiceId:    svcA.ID,
 			AllocationId: "alloc-never-assigned",
 			DroppedCount: 3,
@@ -678,8 +689,11 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 			WindowEnd:    timestamppb.New(now),
 		}},
 	}
-	if err := store.fleet.validateAgentLogBatch(ctx, agentID, foreign); err == nil {
-		t.Fatal("foreign allocation must reject the batch")
+	if err := store.fleet.scopeAgentLogBatch(ctx, agentID, foreign); err != nil {
+		t.Fatalf("scopeAgentLogBatch: %v", err)
+	}
+	if len(foreign.GetDrops()) != 1 || foreign.GetDrops()[0].GetDroppedCount() != 5 {
+		t.Fatalf("stale allocation summary must not reject the batch: %+v", foreign.GetDrops())
 	}
 
 	// Drop reports without an allocation cannot be attributed and
@@ -694,7 +708,7 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 			WindowEnd:    timestamppb.New(now),
 		}},
 	}
-	if err := store.fleet.validateAgentLogBatch(ctx, agentID, unattributable); err != nil {
+	if err := store.fleet.scopeAgentLogBatch(ctx, agentID, unattributable); err != nil {
 		t.Fatalf("unattributable drops must scope away, not error: %v", err)
 	}
 	if len(unattributable.GetDrops()) != 0 {

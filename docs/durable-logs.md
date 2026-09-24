@@ -136,9 +136,16 @@ its output from scratch.
 ## Control-plane ingest
 
 Batches enter a bounded in-memory queue (default 512 batches and
-64 MiB of retained payload; both caps bind independently) behind a
+64 MiB of retained payload — line text, retained IDs, and attribute
+maps all count; both caps bind independently) behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
-buggy or hostile agent cannot starve ClickHouse. The flush loop retries
+buggy or hostile agent cannot starve ClickHouse. Batches are scoped
+line by line to the allocations the agent owns: a line for a stale
+allocation — one removed while its lines sat in the durable spool —
+or carrying a mismatched claim is excluded with a warning instead of
+rejecting the whole batch, so one bad line can never wedge durable
+delivery behind it (excluded lines carry no verifiable tenant and
+therefore no gap row). The flush loop retries
 with backoff across a backend outage and coalesces queued batches
 into the retried flush up to the same line and byte budgets. Queue overflow
 sheds whole batches with owed gap rows so the loss still surfaces in
@@ -176,7 +183,9 @@ keys on the producer's stable summary ID when the gap carries one:
 retried reports of the same coalesced drop lineage collapse onto one
 row even after their totals or window grew, so retries never double
 count. Internally derived gaps are immutable per event and key on
-their full content. Reads return the gaps overlapping the queried range
+their full content. The same identity keeps shed reports honest:
+when a re-sent summary sheds again before its write, it replaces its
+owed window instead of adding to it. Reads return the gaps overlapping the queried range
 alongside lines, paginated with their own opaque cursor
 (`gap_page_token`/`next_gap_page_token`, oldest first by window) so a
 range with more rows than one response may carry keeps every gap

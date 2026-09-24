@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"strings"
 
@@ -12,17 +13,21 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-// validateAgentLogBatch resolves the authoritative owner of every
+// scopeAgentLogBatch resolves the authoritative owner of every
 // allocation referenced by one agent log batch and scopes the batch
 // onto it. Claimed service and environment IDs must match the
 // allocation owner when present; empty claims (drop summaries whose
 // producer metadata is gone after a restart) are filled from the
 // owner, so a compromised or buggy agent cannot attribute output or
-// loss to another tenant. A batch referencing an allocation this
-// agent does not own, or claiming a mismatched owner, is rejected.
+// loss to another tenant. Lines referencing an allocation this agent
+// does not own — including a stale one removed while its lines sat in
+// the durable spool — or claiming a mismatched owner are excluded
+// individually with a warning: one bad line must never reject the
+// whole durable batch and wedge delivery behind it, and an
+// unverifiable line cannot carry a gap row either.
 // Entries and drop summaries without an allocation cannot be
 // attributed and are removed.
-func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
+func (s *fleetPersistence) scopeAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	wanted := make(map[string]struct{}, len(batch.GetEntries())+len(batch.GetDrops()))
 	for _, entry := range batch.GetEntries() {
 		if id := entry.GetAllocationId(); id != "" {
@@ -75,22 +80,23 @@ func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID st
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	for id := range wanted {
-		if _, ok := owners[id]; !ok {
-			return fmt.Errorf("allocation %q is not assigned to agent", id)
-		}
-	}
 	keptEntries := batch.Entries[:0]
+	excluded := 0
 	for _, entry := range batch.Entries {
 		owner, ok := owners[entry.GetAllocationId()]
 		if !ok {
+			excluded++
 			continue
 		}
 		if claimed := strings.TrimSpace(entry.GetServiceId()); claimed != "" && claimed != owner.serviceID {
-			return fmt.Errorf("entry service %q does not own allocation %q", claimed, entry.GetAllocationId())
+			excluded++
+			slog.Warn("dropped agent log line with mismatched service claim", "agent_id", agentID, "allocation_id", entry.GetAllocationId(), "claimed_service_id", claimed)
+			continue
 		}
 		if claimed := strings.TrimSpace(entry.GetEnvironmentId()); claimed != "" && claimed != owner.environmentID {
-			return fmt.Errorf("entry environment %q does not own allocation %q", claimed, entry.GetAllocationId())
+			excluded++
+			slog.Warn("dropped agent log line with mismatched environment claim", "agent_id", agentID, "allocation_id", entry.GetAllocationId(), "claimed_environment_id", claimed)
+			continue
 		}
 		entry.ServiceId = owner.serviceID
 		entry.EnvironmentId = owner.environmentID
@@ -101,15 +107,21 @@ func (s *fleetPersistence) validateAgentLogBatch(ctx context.Context, agentID st
 	for _, drop := range batch.Drops {
 		owner, ok := owners[drop.GetAllocationId()]
 		if !ok {
+			excluded++
 			continue
 		}
 		if claimed := strings.TrimSpace(drop.GetServiceId()); claimed != "" && claimed != owner.serviceID {
-			return fmt.Errorf("drop summary service %q does not own allocation %q", claimed, drop.GetAllocationId())
+			excluded++
+			slog.Warn("dropped agent drop summary with mismatched service claim", "agent_id", agentID, "allocation_id", drop.GetAllocationId(), "claimed_service_id", claimed)
+			continue
 		}
 		drop.ServiceId = owner.serviceID
 		keptDrops = append(keptDrops, drop)
 	}
 	batch.Drops = keptDrops
+	if excluded > 0 {
+		slog.Warn("excluded unattributable agent log lines", "agent_id", agentID, "count", excluded)
+	}
 	return nil
 }
 

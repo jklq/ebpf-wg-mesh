@@ -394,8 +394,8 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			if batch.GetAgentId() != hello.GetAgentId() {
 				return status.Error(codes.PermissionDenied, "log batch agent_id does not match session")
 			}
-			if err := s.store.validateAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
-				return status.Errorf(codes.PermissionDenied, "log batch ownership: %v", err)
+			if err := s.store.scopeAgentLogBatch(ctx, hello.GetAgentId(), batch); err != nil {
+				return status.Errorf(codes.Internal, "log batch ownership: %v", err)
 			}
 			if s.logIngester == nil || !s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch) {
 				// No queue, or the shutdown drain already sealed it:
