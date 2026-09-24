@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -425,7 +428,7 @@ func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
 			}
 			continue
 		}
-		err = a.backlog.Append("ingest", "", time.Now().UTC(), payload)
+		err = a.backlog.Append(journalRecordKey(record), "", time.Now().UTC(), payload)
 		if err != nil {
 			if !a.shedRecord(record) {
 				// The loss accounting cannot be made durable. Do not
@@ -537,7 +540,90 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 // into a single store write. Every read is paired with a commit or a
 // release, so unprocessed records stay queued and pinned against
 // eviction in between.
+// maxIngestAttributionKeyBytes bounds the per-service attribution
+// recorded in one journal record's key.
+const maxIngestAttributionKeyBytes = 512
+
+// journalRecordKey attributes a journal record to the services it
+// carries, so a corrupted record surfaces as per-service gap rows
+// instead of vanishing. The attribution is bounded; services past
+// the cap stay in stats only.
+func journalRecordKey(record journalRecord) string {
+	counts := make(map[string]uint64)
+	for _, in := range record.Lines {
+		counts[in.ServiceID]++
+	}
+	for _, gap := range record.Gaps {
+		counts[gap.ServiceID] += gap.DroppedCount
+	}
+	services := make([]string, 0, len(counts))
+	for service := range counts {
+		services = append(services, service)
+	}
+	sort.Strings(services)
+	var b strings.Builder
+	b.WriteString("ingest")
+	for _, service := range services {
+		part := fmt.Sprintf("|%s:%d", service, counts[service])
+		if b.Len()+len(part) > maxIngestAttributionKeyBytes {
+			break
+		}
+		b.WriteString(part)
+	}
+	return b.String()
+}
+
+// parseIngestKeyCounts reads the per-service attribution back out of
+// a journal record key.
+func parseIngestKeyCounts(key string) map[string]uint64 {
+	counts := make(map[string]uint64)
+	for _, part := range strings.Split(strings.TrimPrefix(key, "ingest"), "|") {
+		if part == "" {
+			continue
+		}
+		service, raw, ok := strings.Cut(part, ":")
+		if !ok || service == "" {
+			continue
+		}
+		n, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			continue
+		}
+		counts[service] += n
+	}
+	return counts
+}
+
+// spoolDropsToGaps converts corrupted journal records into gap rows:
+// accepted batches lost to corruption must surface in reads with
+// their service attribution.
+func (a *AsyncIngester) spoolDropsToGaps() []GapInput {
+	_, corrupt := a.backlog.DrainDrops()
+	if len(corrupt) == 0 {
+		return nil
+	}
+	now := time.Now().UTC()
+	var gaps []GapInput
+	for key, records := range corrupt {
+		for service, count := range parseIngestKeyCounts(key) {
+			gaps = append(gaps, GapInput{
+				ServiceID:    service,
+				LogType:      normalizeLogType(""),
+				WindowStart:  now,
+				WindowEnd:    now,
+				DroppedCount: count * records,
+				Reason:       logpipeline.ReasonCorruptSpool,
+				Reporter:     reporterControlPlane,
+			})
+		}
+	}
+	return gaps
+}
+
 func (a *AsyncIngester) nextFlush(ctx context.Context) (pendingFlush, logpipeline.Cursor, bool, error) {
+	// Corrupted journal records surface as gap rows before anything
+	// else ships.
+	drops := a.spoolDropsToGaps()
 	records, cursor, err := a.backlog.Read(ingestFlushRecords)
 	if err != nil {
 		return pendingFlush{}, cursor, false, err
@@ -548,17 +634,17 @@ func (a *AsyncIngester) nextFlush(ctx context.Context) (pendingFlush, logpipelin
 		a.mu.Lock()
 		hasOwed := len(a.owed) > 0 || len(a.owedFold) > 0
 		a.mu.Unlock()
-		if !hasOwed {
+		if !hasOwed && len(drops) == 0 {
 			return pendingFlush{}, cursor, false, nil
 		}
-		owed := pendingFlush{}
+		owed := pendingFlush{gaps: drops}
 		a.attachOwed(&owed)
 		if len(owed.gaps) == 0 {
 			return pendingFlush{}, cursor, false, nil
 		}
 		return owed, cursor, true, nil
 	}
-	flush := pendingFlush{}
+	flush := pendingFlush{gaps: drops}
 	for _, record := range records {
 		var decoded journalRecord
 		if err := json.Unmarshal(record.Payload, &decoded); err != nil {
@@ -658,7 +744,7 @@ func (a *AsyncIngester) journalGaps(gaps []GapInput) bool {
 		slog.Error("encode log ingest gap record", "error", err)
 		return false
 	}
-	if err := a.backlog.Append("ingest", "", time.Now().UTC(), payload); err != nil {
+	if err := a.backlog.Append(journalRecordKey(journalRecord{Gaps: gaps}), "", time.Now().UTC(), payload); err != nil {
 		if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
 			slog.Warn("append log ingest gap record", "error", err)
 		}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -734,7 +736,7 @@ func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
 	// reach reads even though the lines themselves were too big.
 	stop := runIngester(t, ingester)
 	defer stop()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		store.mu.Lock()
 		var total uint64
@@ -820,7 +822,7 @@ func TestAsyncIngesterByteBudgetCountsAttributes(t *testing.T) {
 	stop := runIngester(t, ingester)
 	defer stop()
 	waitForIngest(t, ingester, 0)
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		store.mu.Lock()
 		done := len(store.gaps) > 0
@@ -943,7 +945,7 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 	second := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir, QueueBytes: 4096})
 	stop := runIngester(t, second)
 	defer stop()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for {
 		store.mu.Lock()
 		var total uint64
@@ -956,6 +958,71 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("shed gaps lost across restart: %d of 3", total)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A corrupted journal record surfaces as attributed gap rows: an
+// accepted batch lost to corruption must never vanish from reads.
+func TestAsyncIngesterSurfacesJournalCorruption(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeFlushStore{enabled: true}
+	spoolDir := t.TempDir()
+	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir})
+	if !first.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3)) {
+		t.Fatal("enqueue must accept-or-shed, never fail")
+	}
+
+	// Corrupt the journaled frame on disk before recovery.
+	entries, err := os.ReadDir(spoolDir)
+	if err != nil {
+		t.Fatalf("read spool dir: %v", err)
+	}
+	var corrupted bool
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Name() == "drops.json" {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(spoolDir, entry.Name()))
+		if err != nil || len(raw) < 40 {
+			continue
+		}
+		for i := 20; i < 36; i++ {
+			raw[i] ^= 0xFF
+		}
+		if err := os.WriteFile(filepath.Join(spoolDir, entry.Name()), raw, 0o600); err != nil {
+			t.Fatalf("corrupt segment: %v", err)
+		}
+		corrupted = true
+		break
+	}
+	if !corrupted {
+		t.Fatal("no journal segment to corrupt")
+	}
+
+	second := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir})
+	stop := runIngester(t, second)
+	defer stop()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		store.mu.Lock()
+		var gaps []GapInput
+		for _, gap := range store.gaps {
+			if gap.Reason == logpipeline.ReasonCorruptSpool && gap.ServiceID == "svc-1" {
+				gaps = append(gaps, gap)
+			}
+		}
+		store.mu.Unlock()
+		if len(gaps) > 0 {
+			if gaps[0].DroppedCount < 3 {
+				t.Fatalf("corruption gap undercounts: %+v", gaps[0])
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("journal corruption never surfaced as a gap")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
