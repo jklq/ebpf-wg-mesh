@@ -130,7 +130,8 @@ its output from scratch.
 
 ## Control-plane ingest
 
-Batches enter a bounded in-memory queue (default 512 batches) behind a
+Batches enter a bounded in-memory queue (default 512 batches and
+64 MiB of retained payload; both caps bind independently) behind a
 per-allocation ingest guard (default 2000 lines/s, burst 10000) so a
 buggy or hostile agent cannot starve ClickHouse. The flush loop retries
 with backoff across a backend outage. Queue overflow
@@ -211,6 +212,7 @@ querying, so tenant isolation follows the existing project membership.
 | control plane | `logs-clickhouse-url` / `CONTROLPLANE_LOGS_CLICKHOUSE_URL` | unset (log storage disabled) |
 | control plane | `logs-retention-days` / `CONTROLPLANE_LOGS_RETENTION_DAYS` | 14 |
 | control plane | `logs-ingest-queue-flushes` / `CONTROLPLANE_LOGS_INGEST_QUEUE_FLUSHES` | 512 |
+| control plane | `logs-ingest-queue-bytes` / `CONTROLPLANE_LOGS_INGEST_QUEUE_BYTES` | 64 MiB |
 | control plane | `logs-ingest-rate-per-sec`, `logs-ingest-burst` / `CONTROLPLANE_LOGS_INGEST_RATE_PER_SEC`, `CONTROLPLANE_LOGS_INGEST_BURST` | 2000/s, 10000 |
 
 A non-positive producer rate disables producer-side limiting (the

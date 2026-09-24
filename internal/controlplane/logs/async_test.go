@@ -659,3 +659,41 @@ func TestDrainShutdownAccountsOwedShedDuringDrain(t *testing.T) {
 		t.Fatalf("grace expiry must account the full backlog, got %+v", stats)
 	}
 }
+
+func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
+	t.Parallel()
+
+	// No Run loop: the queue fills and stays full. The byte budget
+	// binds before the flush-count cap, so maximum-size batches can
+	// never retain a memory-limited control plane hostage.
+	store := &fakeFlushStore{enabled: true}
+	ingester := NewAsyncIngester(store, AsyncIngesterConfig{QueueFlushes: 512, QueueBytes: 2000})
+
+	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3))
+	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3))
+	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3))
+	stats := ingester.Stats()
+	if stats.QueuedFlushes != 2 {
+		t.Fatalf("queued %d flushes, want 2", stats.QueuedFlushes)
+	}
+	if stats.QueuedBytes > 2000 {
+		t.Fatalf("queued %d bytes, want <= 2000", stats.QueuedBytes)
+	}
+	if stats.ShedLines != 3 {
+		t.Fatalf("shed %d lines, want 3", stats.ShedLines)
+	}
+	if stats.OwedGaps != 1 {
+		t.Fatalf("owed %d gaps, want 1", stats.OwedGaps)
+	}
+
+	// Draining the queue flushes the owed gap alongside the lines.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = ingester.Run(ctx) }()
+	waitForIngest(t, ingester, 6)
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.gaps) != 1 || store.gaps[0].DroppedCount != 3 || store.gaps[0].Reason != logpipeline.ReasonIngestOverflow {
+		t.Fatalf("owed gap not flushed: %+v", store.gaps)
+	}
+}

@@ -167,6 +167,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	logIngester := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
 		QueueFlushes: cfg.Logs.IngestQueueFlushes,
+		QueueBytes:   int64(cfg.Logs.IngestQueueBytes),
 		RatePerSec:   float64(cfg.Logs.IngestRatePerSec),
 		Burst:        cfg.Logs.IngestBurst,
 	})

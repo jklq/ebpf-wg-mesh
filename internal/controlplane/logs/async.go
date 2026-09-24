@@ -13,6 +13,8 @@ import (
 
 const (
 	defaultIngestQueueFlushes  = 512
+	defaultIngestQueueBytes    = 64 << 20
+	ingestRowOverheadBytes     = 256
 	defaultIngestRatePerSec    = 2000.0
 	defaultIngestBurst         = 10000
 	maxIngestOwedGaps          = 4096
@@ -26,6 +28,11 @@ type AsyncIngesterConfig struct {
 	// QueueFlushes caps queued agent batches. Past the cap whole
 	// batches shed with owed gap rows. Defaults to 512.
 	QueueFlushes int
+	// QueueBytes caps the retained size of queued batches, so many
+	// maximum-size batches can never hold a memory-limited control
+	// plane hostage during a backend outage. Past the budget whole
+	// batches shed with owed gap rows. Defaults to 64 MiB.
+	QueueBytes int64
 	// RatePerSec and Burst bound the per-allocation ingest guard,
 	// which sits above agent-side limits and protects ClickHouse
 	// from abusive or buggy agents. Defaults to 2000/s and 10000.
@@ -39,6 +46,7 @@ type AsyncIngesterConfig struct {
 // IngesterStats reports ingest health and lifetime counters.
 type IngesterStats struct {
 	QueuedFlushes int
+	QueuedBytes   int64
 	AcceptedLines uint64
 	ShedLines     uint64
 	OwedGaps      int
@@ -64,10 +72,12 @@ type flushStore interface {
 // accounting past the queue cap. The Run loop flushes with unbounded
 // retry, so queued lines wait out an outage instead of dropping.
 type AsyncIngester struct {
-	store   flushStore
-	queue   chan pendingFlush
-	limiter *logpipeline.Limiter
-	backoff *logpipeline.Backoff
+	store          flushStore
+	queue          chan pendingFlush
+	queueBytes     atomic.Int64
+	queueByteLimit int64
+	limiter        *logpipeline.Limiter
+	backoff        *logpipeline.Backoff
 
 	acceptedLines atomic.Uint64
 	shedLines     atomic.Uint64
@@ -88,6 +98,9 @@ type AsyncIngester struct {
 type pendingFlush struct {
 	lines []LogLineInput
 	gaps  []GapInput
+	// bytes is the admitted retained size, subtracted from the
+	// queue budget when the flush is pulled.
+	bytes int64
 }
 
 type owedGapKey struct {
@@ -169,6 +182,10 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 	if queueFlushes <= 0 {
 		queueFlushes = defaultIngestQueueFlushes
 	}
+	queueBytes := cfg.QueueBytes
+	if queueBytes <= 0 {
+		queueBytes = defaultIngestQueueBytes
+	}
 	rate := cfg.RatePerSec
 	if rate <= 0 {
 		rate = defaultIngestRatePerSec
@@ -182,14 +199,30 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) *AsyncIngester 
 		grace = defaultIngestShutdownGrace
 	}
 	return &AsyncIngester{
-		store:         store,
-		queue:         make(chan pendingFlush, queueFlushes),
-		limiter:       logpipeline.NewLimiter(rate, burst),
-		backoff:       &logpipeline.Backoff{},
-		owed:          make(map[owedGapKey]*owedGap),
-		owedFold:      make(map[owedGapKey]*owedGap),
-		shutdownGrace: grace,
+		store:          store,
+		queue:          make(chan pendingFlush, queueFlushes),
+		queueByteLimit: queueBytes,
+		limiter:        logpipeline.NewLimiter(rate, burst),
+		backoff:        &logpipeline.Backoff{},
+		owed:           make(map[owedGapKey]*owedGap),
+		owedFold:       make(map[owedGapKey]*owedGap),
+		shutdownGrace:  grace,
 	}
+}
+
+// flushEstimateBytes approximates one flush's retained size: line
+// text plus a fixed per-row allowance for decoded structure
+// overhead. It bounds the queue's memory footprint, not the wire
+// size (which producers cap at logpipeline.MaxBatchBytes).
+func flushEstimateBytes(flush pendingFlush) int64 {
+	size := int64(0)
+	for _, in := range flush.lines {
+		size += int64(len(in.Line)) + ingestRowOverheadBytes
+	}
+	for range flush.gaps {
+		size += ingestRowOverheadBytes
+	}
+	return size
 }
 
 // EnqueueAgentBatch converts one validated batch and queues it for
@@ -294,8 +327,14 @@ func (a *AsyncIngester) enqueue(flush pendingFlush) bool {
 	if a.drainDone {
 		return false
 	}
+	flush.bytes = flushEstimateBytes(flush)
+	if a.queueBytes.Load()+flush.bytes > a.queueByteLimit {
+		a.shedFlushLocked(flush)
+		return true
+	}
 	select {
 	case a.queue <- flush:
+		a.queueBytes.Add(flush.bytes)
 	default:
 		a.shedFlushLocked(flush)
 	}
@@ -315,6 +354,7 @@ func (a *AsyncIngester) sealAdmission() []pendingFlush {
 	for {
 		select {
 		case next := <-a.queue:
+			a.queueBytes.Add(-next.bytes)
 			rest = append(rest, next)
 		default:
 			return rest
@@ -342,6 +382,7 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 			a.drainShutdown(ctx, pendingFlush{})
 			return nil
 		case flush := <-a.queue:
+			a.queueBytes.Add(-flush.bytes)
 			a.coalesce(&flush)
 			a.attachOwed(&flush)
 			if len(flush.lines) == 0 && len(flush.gaps) == 0 {
@@ -439,6 +480,7 @@ func (a *AsyncIngester) Stats() IngesterStats {
 	defer a.mu.Unlock()
 	return IngesterStats{
 		QueuedFlushes: len(a.queue),
+		QueuedBytes:   a.queueBytes.Load(),
 		AcceptedLines: a.acceptedLines.Load(),
 		ShedLines:     a.shedLines.Load(),
 		OwedGaps:      len(a.owed) + len(a.owedFold),

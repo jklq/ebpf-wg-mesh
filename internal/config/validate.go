@@ -35,6 +35,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Logs.IngestQueueFlushes < 0 {
 		return errors.New("controlplane.logs.ingestQueueFlushes must be non-negative")
 	}
+	if cfg.Logs.IngestQueueBytes < 0 {
+		return errors.New("controlplane.logs.ingestQueueBytes must be non-negative")
+	}
 	if cfg.Logs.IngestRatePerSec < 0 {
 		return errors.New("controlplane.logs.ingestRatePerSec must be non-negative")
 	}
