@@ -189,7 +189,11 @@ func (s *logShipper) countOverflow(key string, count uint64) {
 
 // Attach connects the ship loop to a session's send function and
 // replays the recent window plus everything unshipped for
-// at-least-once delivery across reconnects. The rewind is serialized
+// at-least-once delivery across reconnects. The send function
+// delivers one batch and returns once the server accepted it — the
+// session waits for the server's per-batch acceptance ack — so the
+// spool commit can never outrun acceptance; on error the batch stays
+// unshipped and retries. The rewind is serialized
 // against in-flight flushes and takes effect before the next batch
 // is read, so no batch can commit past it.
 func (s *logShipper) Attach(send func(*agentv1.AgentClientMessage) error) {

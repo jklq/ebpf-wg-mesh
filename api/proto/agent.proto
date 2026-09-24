@@ -310,6 +310,14 @@ message LogBatch {
   // overflow). The control plane persists these as explicit read gaps.
   uint64 dropped_lines = 3;
   repeated platform.v1.LogDropSummary drops = 4;
+  // Correlates the server's acceptance of this batch. The agent keeps
+  // the batch uncommitted until LogBatchAck for the same id arrives,
+  // so a batch lost before acceptance can never be skipped.
+  uint64 batch_id = 5;
+}
+
+message LogBatchAck {
+  uint64 batch_id = 1;
 }
 
 message AgentClientMessage {
@@ -338,6 +346,10 @@ message AgentServerMessage {
     PullCredentialSet pull_credentials = 4;
     ReplicaEndpoints replica_endpoints = 5;
     SyncBatchEnd batch_end = 6;
+    // Sent once a log batch is accepted (queued for durable ingest or
+    // durably written). The replay window still covers crash gaps
+    // between acceptance and durable ingest.
+    LogBatchAck log_batch_ack = 7;
   }
 }
 

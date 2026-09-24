@@ -309,8 +309,9 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	defer stop()
 
 	sendErr := make(chan error, 1)
+	var streamSendMu sync.Mutex
 	go func() {
-		sendErr <- s.sendLoop(ctx, stream, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, hello, notifyCh, ownerChanged)
+		sendErr <- s.sendLoop(ctx, stream, &streamSendMu, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, hello, notifyCh, ownerChanged)
 	}()
 	s.notifier.Notify(hello.AgentId)
 
@@ -407,8 +408,29 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 					}
 				}
 			}
+			// Acceptance ack: the agent keeps its spool batch
+			// uncommitted until this arrives, so a batch lost
+			// before acceptance is always retried instead of being
+			// skipped past the replay window.
+			streamSendMu.Lock()
+			err := stream.Send(&agentv1.AgentServerMessage{
+				Payload: &agentv1.AgentServerMessage_LogBatchAck{LogBatchAck: &agentv1.LogBatchAck{BatchId: batch.GetBatchId()}},
+			})
+			streamSendMu.Unlock()
+			if err != nil {
+				return status.Errorf(codes.Internal, "log batch ack: %v", err)
+			}
 		}
 	}
+}
+
+
+// sendLocked serializes stream writes with the log-batch
+// acknowledgements sent from the message handler.
+func sendLocked(mu *sync.Mutex, stream agentv1.AgentControl_SyncServer, msg *agentv1.AgentServerMessage) error {
+	mu.Lock()
+	defer mu.Unlock()
+	return stream.Send(msg)
 }
 
 // syncSent is the position delivered on this session's sync stream: the
@@ -422,7 +444,7 @@ type syncSent struct {
 	overlay     string
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
+func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
 	// Initialize from hello so an unchanged reconnect sends nothing.
 	sent := syncSent{
 		alloc:       hello.GetReconciliationCursor(),
@@ -437,7 +459,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 	first := true
 	for {
 		slog.Info("checking desired state", "agent_id", agentID)
-		next, err := s.sendSyncBatch(ctx, stream, agentID, sessionID, clusterID, epoch, sent, helloInventory, helloInit, helloEpoch, first)
+		next, err := s.sendSyncBatch(ctx, stream, sendMu, agentID, sessionID, clusterID, epoch, sent, helloInventory, helloInit, helloEpoch, first)
 		if err != nil {
 			return err
 		}
@@ -466,7 +488,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 // sendSyncBatch emits one fenced batch — node config, credentials,
 // allocations (checkpoint or ordered diffs), then replicas — terminated by a
 // batch-end marker. It returns the new sent position.
-func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
+func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
 		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
@@ -545,7 +567,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			NodeConfig: state.GetNodeConfig(), ClusterId: clusterID,
 		}
 		stampNodeConfigUpdate(update, sessionID, epoch, deadline)
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update},
 		}); err != nil {
 			return sent, err
@@ -554,7 +576,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	if needCreds {
 		creds.ClusterId = clusterID
 		stampPullCredentials(creds, sessionID, epoch, deadline)
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds},
 		}); err != nil {
 			return sent, err
@@ -564,7 +586,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		stampAgentCommand(state, sessionID, epoch, deadline)
 		state.ClusterId = clusterID
 		slog.Info("sending checkpoint", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_DesiredState{DesiredState: state},
 		}); err != nil {
 			return sent, err
@@ -575,7 +597,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			diff.ClusterId = clusterID
 			stampAllocationDiff(diff, sessionID, epoch, deadline)
 			slog.Info("sending diff", "agent_id", agentID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
-			if err := stream.Send(&agentv1.AgentServerMessage{
+			if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 				Payload: &agentv1.AgentServerMessage_AllocationDiff{AllocationDiff: diff},
 			}); err != nil {
 				return sent, err
@@ -589,14 +611,14 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			ClusterId:        clusterID,
 		}
 		stampReplicaEndpoints(replicas, sessionID, epoch, deadline)
-		if err := stream.Send(&agentv1.AgentServerMessage{
+		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_ReplicaEndpoints{ReplicaEndpoints: replicas},
 		}); err != nil {
 			return sent, err
 		}
 	}
 	// The agent withholds status publication until this marker.
-	if err := stream.Send(&agentv1.AgentServerMessage{
+	if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 		Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}},
 	}); err != nil {
 		return sent, err

@@ -72,9 +72,12 @@ overflow eviction until it commits or is released: a delivered batch
 is never evicted mid-send, which would report a false gap and fail the
 commit. Committed sealed segments stay for
 the replay window after their newest record: acknowledgement is
-queue admission on the control plane, so the retained copy is what
-reconnect replay re-sends when the backend acknowledged but did not
-durably ingest (server-side dedup collapses the overlap). Builders
+queue admission on the control plane — one acceptance ack per batch
+(`LogBatchAck`), and the agent commits its spool cursor only after it
+arrives, so a batch lost before acceptance always retries — so the
+retained copy is what reconnect replay re-sends when the backend
+acknowledged but did not durably ingest (server-side dedup collapses
+the overlap). Builders
 need no retention: their report RPC writes durably before it
 returns. Nothing on this path blocks workload
 reconciliation: agent log shipping failure costs only log
