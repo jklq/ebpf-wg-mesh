@@ -213,7 +213,16 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 		if len(rawVersion) != 0 && len(rawVersion) != 8 {
 			return fmt.Errorf("%w: invalid format version encoding", errLocalStateCorrupt)
 		}
-		if version := readUint64(rawVersion); version != 0 && version != localStateFormatVersion {
+		switch version := readUint64(rawVersion); version {
+		case 0, localStateFormatVersion:
+			// Fresh or current store.
+		case 2:
+			// Flat migration of the previous release's format. Older or
+			// unknown formats are rejected rather than guessed at.
+			if err := migrateLocalStateV2ToV3(tx); err != nil {
+				return err
+			}
+		default:
 			return fmt.Errorf("unsupported local state format %d (expected %d)", version, localStateFormatVersion)
 		}
 		if existing := string(meta.Get(agentIdentityKey)); existing != "" && existing != agentID {
@@ -239,6 +248,38 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 		}
 		return nil
 	})
+}
+
+// migrateLocalStateV2ToV3 rewrites a previous-release store to the current
+// format in place: a flat migration, one direction, no compatibility mode.
+// Format 3 canonicalizes the accepted desired state — stable allocation and
+// volume order — so same-cursor repair checkpoints compare equal regardless
+// of wire ordering, and versions node configuration, pull credentials, and
+// replica delivery independently of the reconciliation cursor. Format-2
+// records carry none of those versions; the migration stamps the truthful
+// content hash of the accepted node configuration and leaves the other
+// channels absent, which reads as "accepted at unknown version" and forces
+// one full update on the next batch.
+func migrateLocalStateV2ToV3(tx *bbolt.Tx) error {
+	desired := tx.Bucket(localDesiredBucket)
+	raw := desired.Get(desiredStateKey)
+	if len(raw) == 0 {
+		return nil
+	}
+	var state agentv1.DesiredNodeState
+	if err := proto.Unmarshal(raw, &state); err != nil {
+		return fmt.Errorf("%w: decode accepted desired state during migration", errLocalStateCorrupt)
+	}
+	canonicalizeDesiredState(&state)
+	state.NodeConfigVersion = reconciliation.HashNodeConfig(state.GetNodeConfig())
+	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(&state)
+	if err != nil {
+		return fmt.Errorf("encode accepted desired state during migration: %w", err)
+	}
+	if err := desired.Put(desiredStateKey, encoded); err != nil {
+		return err
+	}
+	return tx.Bucket(localMetaBucket).Put(nodeConfigVersionKey, []byte(state.GetNodeConfigVersion()))
 }
 
 func (s *localStateStore) validateRecords() error {
