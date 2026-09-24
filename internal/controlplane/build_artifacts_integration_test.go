@@ -1058,3 +1058,44 @@ func TestRepeatedBuildsOfSameImageKeepOwnProvenance(t *testing.T) {
 		t.Fatalf("second build artifact = %q, want its own artifact %q (not the earlier %q)", completed.ArtifactID, second.ID, first.ID)
 	}
 }
+
+// TestDirectImagePinnedInputRecordsNoMutableSourceRef pins the proto
+// contract for source_image_ref: it keeps the user's original input only
+// when that input was not digest-pinned. An already-pinned reference must
+// not round-trip to clients as mutable user input.
+func TestDirectImagePinnedInputRecordsNoMutableSourceRef(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
+		Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	if err != nil || len(projects) != 1 {
+		t.Fatalf("listProjects: %v", err)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	pinned := testPinnedRef("example.test/web", "b")
+	delivery := newTestDelivery(store, nil, nil, nil)
+	service, err := delivery.CreateService(ctx, testUser("user-1"), productionEnvironmentID(t, store, projects[0].ID), "web",
+		directImageServiceSpec(pinned, &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080})}), "node-1")
+	if err != nil {
+		t.Fatalf("CreateService: %v", err)
+	}
+
+	artifacts, err := delivery.ListServiceArtifacts(ctx, testUser("user-1"), service.ID, 10)
+	if err != nil || len(artifacts) != 1 {
+		t.Fatalf("artifacts after create = %v, %v", artifacts, err)
+	}
+	if artifacts[0].Kind != deliverycore.BuildArtifactDirectImage || artifacts[0].ImageRef != pinned {
+		t.Fatalf("direct-image artifact = %+v", artifacts[0])
+	}
+	if artifacts[0].SourceImageRef != "" {
+		t.Fatalf("digest-pinned input must not be recorded as mutable user input, got %q", artifacts[0].SourceImageRef)
+	}
+}
