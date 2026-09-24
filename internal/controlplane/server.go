@@ -166,8 +166,16 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if logStore != nil {
 		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	}
+	// Each replica journals into its own directory: replicas share the
+	// state volume but never the spool files, so failover can never
+	// race two drainers over one journal. The replica identity is its
+	// advertise address (the field that already separates replicas).
+	replicaID := strings.NewReplacer(":", "_", "/", "_").Replace(cfg.AdvertiseAddr)
+	if replicaID == "" {
+		replicaID = "default"
+	}
 	logIngester, err := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
-		SpoolDir:   filepath.Join(cfg.StateDir, "log-ingest"),
+		SpoolDir:   filepath.Join(cfg.StateDir, "log-ingest", replicaID),
 		QueueBytes: int64(cfg.Logs.IngestQueueBytes),
 		RatePerSec: float64(cfg.Logs.IngestRatePerSec),
 		Burst:      cfg.Logs.IngestBurst,
