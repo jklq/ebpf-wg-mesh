@@ -854,6 +854,85 @@ func seedArtifactForRetentionTest(t *testing.T, store *persistence, ctx context.
 	}
 }
 
+// TestSupersededBuildArtifactAgesOutWithRetention proves a build that
+// finishes after newer work was queued does not pin its never-deployed
+// image as rollback material: the superseded deployment keeps its
+// history, but retention may age the undeployed artifact out.
+func TestSupersededBuildArtifactAgesOutWithRetention(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, _, service := newRepoBuildTestService(t)
+
+	if err := seedReadySourceState(t, store, service, "commit-1"); err != nil {
+		t.Fatalf("seedReadySourceState commit-1: %v", err)
+	}
+	build1, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-1")
+	if err != nil {
+		t.Fatalf("enqueueBuildForTest commit-1: %v", err)
+	}
+	claimBuildForTest(t, store, ctx, "builder-1", build1.ID)
+	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
+		t.Fatalf("seedReadySourceState commit-2: %v", err)
+	}
+	if _, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2"); err != nil {
+		t.Fatalf("enqueueBuildForTest commit-2: %v", err)
+	}
+	// Stand in for the in-flight window the finding describes: the older
+	// build's deployment is still the current one when its late completion
+	// lands after newer work was queued.
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE deployments SET is_current = FALSE WHERE service_id = $1 AND build_id <> $2`, service.ID, build1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE deployments SET is_current = TRUE, state = 'queued_build' WHERE build_id = $1`, build1.ID); err != nil {
+		t.Fatal(err)
+	}
+	image1 := testPinnedRef("registry.example.test/platform/web", "1")
+	if err := completeBuildForTest(ctx, store, "builder-1", build1.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-1", image1, ""); err != nil {
+		t.Fatalf("completeBuild commit-1: %v", err)
+	}
+
+	var artifactID string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COALESCE((SELECT artifact_id FROM build_runs WHERE id = $1), '')`, build1.ID).Scan(&artifactID); err != nil {
+		t.Fatal(err)
+	}
+	if artifactID == "" {
+		t.Fatal("completed build recorded no artifact")
+	}
+	var pinned string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COALESCE((SELECT COALESCE(artifact_id, '') FROM deployments WHERE build_id = $1 LIMIT 1), 'missing')`, build1.ID).Scan(&pinned); err != nil {
+		t.Fatal(err)
+	}
+	if pinned != "" {
+		t.Fatalf("superseded deployment pinned artifact %q; never-deployed images are not rollback material", pinned)
+	}
+	var depState string
+	if err := store.db.QueryRowContext(ctx,
+		`SELECT COALESCE((SELECT state FROM deployments WHERE build_id = $1 LIMIT 1), '')`, build1.ID).Scan(&depState); err != nil {
+		t.Fatal(err)
+	}
+	if depState != "superseded" {
+		t.Fatalf("build1 deployment state = %q, want the doomed build's history entry kept as superseded", depState)
+	}
+	deleted, err := testDelivery(store).PruneBuildArtifacts(ctx, time.Now().UTC().Add(time.Hour), 0)
+	if err != nil {
+		t.Fatalf("PruneBuildArtifacts: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("pruned %d artifacts, want the superseded build's undeployed image to age out", deleted)
+	}
+	var count int
+	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM build_artifacts WHERE id = $1`, artifactID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatal("a never-deployed artifact evaded retention by pinning itself to its superseded deployment")
+	}
+}
+
 // TestPruneBuildArtifactsKeepsRollbackMaterial proves retention: artifacts
 // any deployment, transition, rollout, or current pointer references
 // survive any age, recent artifacts are kept, and only aged-out

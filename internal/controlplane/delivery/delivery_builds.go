@@ -246,13 +246,17 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 			return err
 		}
 		if newerCount > 0 {
+			// The image never rolled out: leave its artifact off the
+			// superseded deployment so retention can age it out like any
+			// other undeployed build output. Pinning it here would make it
+			// rollback material forever — deployments only become rollback
+			// material when they actually carry an image to roll back to.
+			// The immutable artifact stays discoverable through the build.
 			if _, err := s.applyDeploymentTransitionByBuildTx(ctx, tx, build.ServiceID, build.ID, deploymentTransitionInput{
 				ToState:          DeploymentStateSuperseded,
 				Actor:            deploymentActor{Kind: DeploymentCauseBuilder, ID: builderID},
 				ReasonCode:       reasonBuildSuperseded,
 				Detail:           "A newer build superseded this image",
-				ArtifactID:       artifact.ID,
-				HasArtifactID:    true,
 				IgnoreIfTerminal: true,
 			}); err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
