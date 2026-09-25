@@ -347,6 +347,21 @@ type DeploymentRecord struct {
 	Actions          []DeploymentActionRecord
 }
 
+// BuildReused reports whether the deployment reused an image built for an
+// earlier deployment instead of running a build. The creating transitions
+// carry BUILD_REUSED; later transitions overwrite the current reason code.
+func (d DeploymentRecord) BuildReused() bool {
+	if d.ReasonCode == reasonBuildReused {
+		return true
+	}
+	for _, transition := range d.Transitions {
+		if transition.ReasonCode == reasonBuildReused {
+			return true
+		}
+	}
+	return false
+}
+
 type DeploymentActionRecord struct {
 	ID                 string
 	ServiceID          string

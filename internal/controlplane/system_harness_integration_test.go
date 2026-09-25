@@ -216,6 +216,10 @@ func startTestBuilder(t *testing.T, server *Server, builderID string) *builder.A
 	if err := exec.Command(buildBinary, "buildx", "version").Run(); err != nil {
 		t.Skipf("docker buildx is required to run the real builder: %v", err)
 	}
+	dockerEndpoint, err := localteststack.DockerEndpoint(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := config.BuilderConfig{
 		Profile: config.ProfileDevelopment,
 		ID:      builderID,
@@ -233,7 +237,7 @@ func startTestBuilder(t *testing.T, server *Server, builderID string) *builder.A
 		PollIntervalSeconds:      1,
 		HeartbeatIntervalSeconds: 5,
 		BuildctlBinary:           buildBinary,
-		BuildkitAddress:          "docker-buildx",
+		BuildkitAddress:          dockerEndpoint,
 		CleanupWorkDir:           true,
 	}
 	if err := config.FinalizeBuilder(&cfg); err != nil {

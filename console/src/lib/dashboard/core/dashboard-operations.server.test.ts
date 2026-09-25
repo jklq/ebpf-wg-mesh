@@ -633,7 +633,7 @@ describe("dashboard operations", () => {
 			search: "initializing",
 		});
 
-		expect(logs).toHaveLength(1);
+		expect(logs.lines).toHaveLength(1);
 		expect(harness.platform.listServiceLogsCalls[0]).toMatchObject({
 			serviceId: "service-1",
 			limit: 500,

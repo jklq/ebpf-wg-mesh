@@ -325,6 +325,10 @@ message DeploymentStatus {
   int64 spec_revision = 8;
   string image_digest = 9;
   int64 rollout_generation = 10;
+  // True when the deployment reused an image built for an earlier deployment
+  // of the same commit instead of running a build (reason BUILD_REUSED).
+  // reason_code only carries that reason until the rollout moves on.
+  bool build_reused = 11;
 }
 
 message DeploymentStage {

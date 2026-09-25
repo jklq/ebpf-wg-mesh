@@ -168,12 +168,8 @@ function CrashLogTail({
 					logType: "SERVICE_LOG_TYPE_RUNTIME",
 				},
 			});
-			if (!Array.isArray(next)) {
-				setLines([]);
-				return;
-			}
 			setLines(
-				next.map(hydrateServiceLogLine).sort((left, right) => {
+				next.lines.map(hydrateServiceLogLine).sort((left, right) => {
 					const leftTime = left.observedAt?.getTime() ?? 0;
 					const rightTime = right.observedAt?.getTime() ?? 0;
 					return leftTime - rightTime || left.sequence - right.sequence;

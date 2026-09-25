@@ -42,11 +42,12 @@ func StartManagedClickHouse(ctx context.Context, cfg LocalClickHouseConfig, runn
 		return nil, fmt.Errorf("remove existing local clickhouse container %s: %w", cfg.ContainerName, err)
 	}
 	// No --rm: tests simulate backend outages by stopping and restarting
-	// this container; Close removes it explicitly.
+	// this container; Close removes it explicitly. Leave enough memory for
+	// background merges while the console ingests and queries logs.
 	args := []string{
 		"run", "--detach",
 		"--name", cfg.ContainerName,
-		"--memory", "768m", "--memory-swap", "768m",
+		"--memory", "2g", "--memory-swap", "2g",
 		"--ulimit", "nofile=262144:262144",
 		"--env", "CLICKHOUSE_SKIP_USER_SETUP=1",
 		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.NativePort, defaultLocalClickHouseNativePort),

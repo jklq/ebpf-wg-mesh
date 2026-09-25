@@ -1,7 +1,9 @@
 import type {
 	DashboardAgentEnrollment,
 	DashboardAgentLifecycleState,
+	DashboardBuildAttempt,
 	DashboardBuilderKind,
+	DashboardDeletionPreview,
 	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardDomainBinding,
@@ -15,13 +17,15 @@ import type {
 	DashboardRepositoryInspection,
 	DashboardRestartSpec,
 	DashboardRollingStrategy,
-	DashboardServiceLogLine,
+	DashboardServiceLogPage,
 	DashboardServiceLogType,
 	DashboardServicePosition,
 	DashboardServiceRecord,
+	DashboardServiceSecret,
 	DashboardServiceSpec,
 	DashboardServiceStatus,
 	DashboardUser,
+	DashboardVolume,
 	FleetAgentInput,
 	GitHubUserRepository,
 	StoredDashboardGitHubAccount,
@@ -121,11 +125,32 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { agentId: string; lifecycleState: DashboardAgentLifecycleState },
 	): Promise<DashboardFleetAgent>;
-	listProjects(user: DashboardUser): Promise<Array<DashboardProject>>;
+	listProjects(
+		user: DashboardUser,
+		options?: { includeDeleted?: boolean },
+	): Promise<Array<DashboardProject>>;
+	getProject(user: DashboardUser, projectId: string): Promise<DashboardProject>;
 	createProject(user: DashboardUser, name: string): Promise<DashboardProject>;
+	updateProjectLogRetention(
+		user: DashboardUser,
+		input: { projectId: string; logRetentionDays: number },
+	): Promise<DashboardProject>;
+	previewProjectDeletion(
+		user: DashboardUser,
+		projectId: string,
+	): Promise<DashboardDeletionPreview>;
+	deleteProject(
+		user: DashboardUser,
+		input: { projectId: string; confirmationName: string },
+	): Promise<void>;
+	restoreProject(
+		user: DashboardUser,
+		projectId: string,
+	): Promise<DashboardProject>;
 	listEnvironments(
 		user: DashboardUser,
 		projectId: string,
+		options?: { includeDeleted?: boolean },
 	): Promise<Array<DashboardEnvironment>>;
 	getEnvironment(
 		user: DashboardUser,
@@ -151,7 +176,18 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { environmentId: string; autoDeploy: boolean },
 	): Promise<DashboardEnvironment>;
-	deleteEnvironment(user: DashboardUser, environmentId: string): Promise<void>;
+	previewEnvironmentDeletion(
+		user: DashboardUser,
+		environmentId: string,
+	): Promise<DashboardDeletionPreview>;
+	deleteEnvironment(
+		user: DashboardUser,
+		input: { environmentId: string; confirmationName?: string },
+	): Promise<void>;
+	restoreEnvironment(
+		user: DashboardUser,
+		environmentId: string,
+	): Promise<DashboardEnvironment>;
 	releaseEnvironment(
 		user: DashboardUser,
 		environmentId: string,
@@ -159,6 +195,7 @@ export interface PlatformGateway {
 	listServices(
 		user: DashboardUser,
 		environmentId: string,
+		options?: { includeDeleted?: boolean },
 	): Promise<DashboardIndexedServices>;
 	waitForServices(
 		user: DashboardUser,
@@ -230,6 +267,35 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { serviceId: string },
 	): Promise<void>;
+	restoreService(
+		user: DashboardUser,
+		serviceId: string,
+	): Promise<DashboardServiceRecord>;
+	listServiceSecrets(
+		user: DashboardUser,
+		serviceId: string,
+	): Promise<Array<DashboardServiceSecret>>;
+	sealServiceSecret(
+		user: DashboardUser,
+		input: { serviceId: string; name: string; value: string },
+	): Promise<DashboardServiceSecret>;
+	deleteServiceSecret(
+		user: DashboardUser,
+		input: { serviceId: string; name: string },
+	): Promise<void>;
+	listVolumes(
+		user: DashboardUser,
+		environmentId: string,
+		options?: { includeDeleted?: boolean },
+	): Promise<Array<DashboardVolume>>;
+	previewVolumeDeletion(
+		user: DashboardUser,
+		volumeId: string,
+	): Promise<DashboardDeletionPreview>;
+	deleteVolume(
+		user: DashboardUser,
+		input: { volumeId: string; confirmationName: string },
+	): Promise<void>;
 	getService(
 		user: DashboardUser,
 		input: { serviceId: string },
@@ -257,15 +323,21 @@ export interface PlatformGateway {
 			search?: string;
 			startTime?: Date;
 			endTime?: Date;
+			pageToken?: string;
+			gapPageToken?: string;
 		},
-	): Promise<Array<DashboardServiceLogLine>>;
+	): Promise<DashboardServiceLogPage>;
 	listServiceDeployments(
 		user: DashboardUser,
 		input: { serviceId: string; limit?: number },
 	): Promise<Array<DashboardDeploymentRecord>>;
+	listBuildAttempts(
+		user: DashboardUser,
+		input: { serviceId: string; buildId: string },
+	): Promise<Array<DashboardBuildAttempt>>;
 	listDomainBindings(
 		user: DashboardUser,
-		input: { serviceId: string },
+		input: { serviceId: string; includeDeleted?: boolean },
 	): Promise<Array<DashboardDomainBinding>>;
 	generateDomainBinding(
 		user: DashboardUser,
@@ -291,6 +363,10 @@ export interface PlatformGateway {
 		user: DashboardUser,
 		input: { hostname: string },
 	): Promise<void>;
+	restoreDomainBinding(
+		user: DashboardUser,
+		hostname: string,
+	): Promise<DashboardDomainBinding>;
 }
 
 export interface GitHubAppUserToken {

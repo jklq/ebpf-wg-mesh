@@ -67,7 +67,7 @@ func TestBuildCommandUsesDockerBuildxWhenDockerBinarySelected(t *testing.T) {
 
 	req := buildCommand(
 		"docker",
-		"docker-buildx",
+		"unix:///run/docker.sock",
 		"/workspace/context",
 		"/workspace/repo",
 		"deploy/Dockerfile",
@@ -77,7 +77,7 @@ func TestBuildCommandUsesDockerBuildxWhenDockerBinarySelected(t *testing.T) {
 	)
 
 	wantArgs := []string{
-		"buildx", "build",
+		"--host", "unix:///run/docker.sock", "buildx", "build",
 		"--progress=plain",
 		"--add-host", "host.docker.internal:host-gateway",
 		"--file", "/workspace/repo/deploy/Dockerfile",
@@ -351,6 +351,39 @@ func TestExtractSourceSnapshotStripsArchiveRoot(t *testing.T) {
 	}
 }
 
+func TestExtractSourceSnapshotSkipsPAXGlobalHeader(t *testing.T) {
+	var archive bytes.Buffer
+	gzw := gzip.NewWriter(&archive)
+	tw := tar.NewWriter(gzw)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:       "pax_global_header",
+		Typeflag:   tar.TypeXGlobalHeader,
+		PAXRecords: map[string]string{"comment": "source archive"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: "repo-root/Dockerfile", Mode: 0o644, Size: 13}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tw.Write([]byte("FROM scratch\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gzw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	repoDir := t.TempDir()
+	if err := extractSourceSnapshot(repoDir, archive.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(repoDir, "Dockerfile"))
+	if err != nil || string(data) != "FROM scratch\n" {
+		t.Fatalf("Dockerfile = %q, %v", data, err)
+	}
+}
+
 func TestExtractSourceSnapshotRejectsMultipleRoots(t *testing.T) {
 	archive := makeSnapshotArchive(t, map[string]string{
 		"first/app.txt":  "first",
@@ -553,7 +586,7 @@ func TestClassifyBuildctlFailureIgnoresCommandText(t *testing.T) {
 		},
 		{
 			name:   "docker push flag with empty output stays a build failure",
-			req:    commandRequest{Binary: "docker", Args: []string{"buildx", "build", "--push", "."}},
+			req:    commandRequest{Binary: "docker", Args: []string{"--host", "unix:///run/docker.sock", "buildx", "build", "--push", "."}},
 			runErr: errors.New("exit status 1"),
 			want:   failureKindBuild,
 		},

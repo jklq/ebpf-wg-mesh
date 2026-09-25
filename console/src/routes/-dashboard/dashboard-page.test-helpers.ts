@@ -66,6 +66,8 @@ export function dashboardState(
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
 		},
+		projects: [],
+
 		environments: [
 			{
 				id: "environment-1",

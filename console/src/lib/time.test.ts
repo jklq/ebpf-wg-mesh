@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
 	cleanDate,
 	formatRelativeTime,
+	formatTimeUntil,
 	protoTimestampToDate,
 } from "#/lib/time";
 
@@ -150,5 +151,25 @@ describe("formatRelativeTime", () => {
 		expect(formatRelativeTime(new Date(nowMs - 2 * 86_400_000), nowMs)).toBe(
 			"2 days ago",
 		);
+	});
+});
+
+describe("formatTimeUntil", () => {
+	const now = Date.UTC(2026, 0, 1);
+
+	it("counts down to a future moment in the coarsest useful unit", () => {
+		expect(formatTimeUntil(new Date(now + 6 * 86_400_000), now)).toBe(
+			"in 6 days",
+		);
+		expect(formatTimeUntil(new Date(now + 5 * 3_600_000), now)).toBe(
+			"in 5 hours",
+		);
+		expect(formatTimeUntil(new Date(now + 12 * 60_000), now)).toBe(
+			"in 12 minutes",
+		);
+	});
+
+	it("reports a due moment instead of a negative distance", () => {
+		expect(formatTimeUntil(new Date(now - 1_000), now)).toBe("any moment now");
 	});
 });

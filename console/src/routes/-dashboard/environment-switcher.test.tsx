@@ -24,8 +24,14 @@ const {
 }));
 
 vi.mock("./server-fns", () => ({
+	fetchDeletionPreview: vi.fn().mockResolvedValue({
+		environments: [],
+		services: [],
+		domains: [],
+		volumes: [],
+	}),
 	doRenameEnvironment: doRenameEnvironmentMock,
-	doDeleteEnvironment: doDeleteEnvironmentMock,
+	doDeleteResource: doDeleteEnvironmentMock,
 	doUpdateEnvironmentAutoDeploy: doUpdateEnvironmentAutoDeployMock,
 }));
 
@@ -70,7 +76,7 @@ describe("EnvironmentSwitcher", () => {
 		expect(onChanged).toHaveBeenCalled();
 	});
 
-	it("requires typing the environment name before deleting", async () => {
+	it("deletes a non-production environment after confirmation", async () => {
 		render(
 			<EnvironmentSwitcher
 				state={state()}
@@ -86,21 +92,19 @@ describe("EnvironmentSwitcher", () => {
 		);
 		fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
 
-		expect(document.activeElement).toBe(
-			screen.getByLabelText("Type staging to confirm"),
-		);
 		const confirm = screen.getByRole("button", { name: "Delete" });
-		expect((confirm as HTMLButtonElement).disabled).toBe(true);
-
-		fireEvent.change(screen.getByLabelText("Type staging to confirm"), {
-			target: { value: "staging" },
-		});
-		expect((confirm as HTMLButtonElement).disabled).toBe(false);
+		await waitFor(() =>
+			expect((confirm as HTMLButtonElement).disabled).toBe(false),
+		);
 		fireEvent.click(confirm);
 
 		await waitFor(() =>
 			expect(doDeleteEnvironmentMock).toHaveBeenCalledWith({
-				data: { environmentId: "environment-2" },
+				data: {
+					kind: "environment",
+					id: "environment-2",
+					confirmationName: "",
+				},
 			}),
 		);
 	});
@@ -130,7 +134,7 @@ describe("EnvironmentSwitcher", () => {
 		).toBeNull();
 	});
 
-	it("does not offer deleting the production environment", () => {
+	it("offers deletion for production with a separate confirmation", () => {
 		render(
 			<EnvironmentSwitcher
 				state={state()}
@@ -150,7 +154,7 @@ describe("EnvironmentSwitcher", () => {
 		expect(
 			(screen.getByRole("menuitem", { name: "Delete" }) as HTMLButtonElement)
 				.disabled,
-		).toBe(true);
+		).toBe(false);
 	});
 
 	it("toggles auto-deploy from the row menu", async () => {
@@ -219,6 +223,8 @@ function state(): DashboardHomeState {
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
 		},
+		projects: [],
+
 		environments: [production, staging],
 		environment: production,
 		onboarding: {

@@ -1,16 +1,21 @@
 import type {
+	DashboardBuildAttempt,
+	DashboardDeletionPreview,
 	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardDomainBinding,
 	DashboardEnvironment,
 	DashboardProject,
 	DashboardRepositoryInspection,
+	DashboardServiceLogGap,
 	DashboardServiceLogLine,
 	DashboardServiceLogType,
 	DashboardServiceRecord,
+	DashboardServiceSecret,
 	DashboardServiceSpec,
 	DashboardServiceStatus,
 	DashboardUser,
+	DashboardVolume,
 	PlatformGateway,
 } from "#/lib/dashboard/core/types.server";
 
@@ -85,6 +90,8 @@ export interface FakePlatformGateway extends PlatformGateway {
 		search?: string;
 		startTime?: Date;
 		endTime?: Date;
+		pageToken?: string;
+		gapPageToken?: string;
 	}>;
 	listServiceDeploymentsCalls: Array<{
 		user: DashboardUser;
@@ -107,6 +114,11 @@ export interface FakePlatformGateway extends PlatformGateway {
 	servicesIndex: number;
 	serviceStatuses: Map<string, DashboardServiceStatus>;
 	serviceLogs: Array<DashboardServiceLogLine>;
+	serviceLogGaps: Array<DashboardServiceLogGap>;
+	volumes: Array<DashboardVolume>;
+	serviceSecrets: Map<string, Array<DashboardServiceSecret>>;
+	buildAttempts: Array<DashboardBuildAttempt>;
+	deletionPreview: DashboardDeletionPreview;
 	serviceDeployments: Array<DashboardDeploymentRecord>;
 	domainBindings: Array<DashboardDomainBinding>;
 	nextRepositoryInspection?: DashboardRepositoryInspection;
@@ -156,6 +168,16 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		servicesIndex: 1,
 		serviceStatuses: new Map<string, DashboardServiceStatus>(),
 		serviceLogs: [],
+		serviceLogGaps: [],
+		volumes: [],
+		serviceSecrets: new Map<string, Array<DashboardServiceSecret>>(),
+		buildAttempts: [],
+		deletionPreview: {
+			environments: [],
+			services: [],
+			domains: [],
+			volumes: [],
+		},
 		serviceDeployments: [],
 		domainBindings: [],
 		nextRepositoryInspection: undefined,
@@ -184,12 +206,41 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		async setFleetAgentLifecycle() {
 			throw new Error("fleet lifecycle is not available in tests");
 		},
-		async listProjects(user): Promise<Array<DashboardProject>> {
+		async listProjects(user, options): Promise<Array<DashboardProject>> {
 			platform.listProjectsCalls.push(user);
 			if (platform.errors.listProjects) {
 				throw platform.errors.listProjects;
 			}
-			return platform.projects;
+			return platform.projects.filter(
+				(project) => options?.includeDeleted || !project.deletion,
+			);
+		},
+		async getProject(_, projectId) {
+			const project = platform.projects.find((entry) => entry.id === projectId);
+			if (!project) throw new Error("project not found");
+			return project;
+		},
+		async updateProjectLogRetention(_, input) {
+			const project = await platform.getProject(_, input.projectId);
+			project.logRetentionDays = input.logRetentionDays;
+			return project;
+		},
+		async previewProjectDeletion() {
+			return platform.deletionPreview;
+		},
+		async deleteProject(_, input) {
+			const project = await platform.getProject(_, input.projectId);
+			if (input.confirmationName !== project.name) {
+				throw new Error(
+					"confirmation name does not match the current resource name",
+				);
+			}
+			project.deletion = { deletedAt: new Date(), inherited: false };
+		},
+		async restoreProject(_, projectId) {
+			const project = await platform.getProject(_, projectId);
+			project.deletion = undefined;
+			return project;
 		},
 		async createProject(user, name): Promise<DashboardProject> {
 			platform.createProjectCalls.push({ user, name });
@@ -215,10 +266,12 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			];
 			return project;
 		},
-		async listEnvironments(user, projectId) {
+		async listEnvironments(user, projectId, options) {
 			platform.listEnvironmentsCalls.push({ user, projectId });
 			let environments = platform.environments.filter(
-				(entry) => entry.projectId === projectId,
+				(entry) =>
+					entry.projectId === projectId &&
+					(options?.includeDeleted || !entry.deletion),
 			);
 			if (
 				environments.length === 0 &&
@@ -287,13 +340,28 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			environment.autoDeploy = input.autoDeploy;
 			return environment;
 		},
-		async deleteEnvironment(_, environmentId) {
-			platform.environments = platform.environments.filter(
-				(entry) => entry.id !== environmentId || entry.isProduction,
-			);
+		async previewEnvironmentDeletion() {
+			return platform.deletionPreview;
+		},
+		async deleteEnvironment(_, input) {
+			const environment = await platform.getEnvironment(_, input.environmentId);
+			if (
+				environment.isProduction &&
+				input.confirmationName !== environment.name
+			) {
+				throw new Error(
+					"confirmation name does not match the current resource name",
+				);
+			}
+			environment.deletion = { deletedAt: new Date(), inherited: false };
 			platform.services = platform.services.filter(
-				(entry) => entry.environmentId !== environmentId,
+				(entry) => entry.environmentId !== input.environmentId,
 			);
+		},
+		async restoreEnvironment(_, environmentId) {
+			const environment = await platform.getEnvironment(_, environmentId);
+			environment.deletion = undefined;
+			return environment;
 		},
 		async releaseEnvironment(user, environmentId) {
 			void user;
@@ -318,7 +386,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.servicesIndex += 1;
 			return deployed.map((service) => ({ service }));
 		},
-		async listServices(user, environmentId) {
+		async listServices(user, environmentId, options) {
 			platform.listServicesCalls.push({ user, environmentId });
 			if (platform.errors.listServices) {
 				throw platform.errors.listServices;
@@ -327,7 +395,9 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				index: platform.servicesIndex,
 				notModified: false,
 				services: platform.services.filter(
-					(service) => service.environmentId === environmentId,
+					(service) =>
+						service.environmentId === environmentId &&
+						(options?.includeDeleted || !service.deletion),
 				),
 			};
 		},
@@ -603,6 +673,62 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.servicesIndex += 1;
 			platform.serviceStatuses.delete(input.serviceId);
 		},
+		async restoreService(_, serviceId): Promise<DashboardServiceRecord> {
+			const service = platform.services.find((entry) => entry.id === serviceId);
+			if (!service) throw new Error("service not found");
+			service.deletion = undefined;
+			return service;
+		},
+		async listServiceSecrets(_, serviceId) {
+			return platform.serviceSecrets.get(serviceId) ?? [];
+		},
+		async sealServiceSecret(_, input) {
+			const current = platform.serviceSecrets.get(input.serviceId) ?? [];
+			const previous = current.find((entry) => entry.name === input.name);
+			const sealed: DashboardServiceSecret = {
+				name: input.name,
+				version: (previous?.version ?? 0) + 1,
+				updatedAt: new Date(),
+			};
+			platform.serviceSecrets.set(input.serviceId, [
+				...current.filter((entry) => entry.name !== input.name),
+				sealed,
+			]);
+			return sealed;
+		},
+		async deleteServiceSecret(_, input) {
+			platform.serviceSecrets.set(
+				input.serviceId,
+				(platform.serviceSecrets.get(input.serviceId) ?? []).filter(
+					(entry) => entry.name !== input.name,
+				),
+			);
+		},
+		async listVolumes(_, environmentId, options) {
+			return platform.volumes.filter(
+				(volume) =>
+					volume.environmentId === environmentId &&
+					(options?.includeDeleted || !volume.deletion),
+			);
+		},
+		async previewVolumeDeletion() {
+			return platform.deletionPreview;
+		},
+		async deleteVolume(_, input) {
+			const volume = platform.volumes.find(
+				(entry) => entry.id === input.volumeId,
+			);
+			if (!volume) throw new Error("volume not found");
+			if (input.confirmationName !== volume.name) {
+				throw new Error(
+					"confirmation name does not match the current resource name",
+				);
+			}
+			volume.deletion = { deletedAt: new Date(), inherited: false };
+		},
+		async listBuildAttempts() {
+			return platform.buildAttempts;
+		},
 		async getService(user, input): Promise<DashboardServiceRecord> {
 			platform.getServiceCalls.push({ user, ...input });
 			if (platform.errors.getService) {
@@ -634,22 +760,22 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				status: await platform.getServiceStatus(user, input),
 			};
 		},
-		async listServiceLogs(
-			user,
-			input,
-		): Promise<Array<DashboardServiceLogLine>> {
+		async listServiceLogs(user, input) {
 			platform.listServiceLogsCalls.push({ user, ...input });
 			if (platform.errors.listServiceLogs) {
 				throw platform.errors.listServiceLogs;
 			}
-			return platform.serviceLogs.filter(
-				(line) =>
-					(line.allocationId === input.allocationId ||
-						input.allocationId === undefined) &&
-					(line.logType === input.logType || input.logType === undefined) &&
-					(line.buildId === input.buildId || input.buildId === undefined) &&
-					(input.search === undefined || line.line.includes(input.search)),
-			);
+			return {
+				lines: platform.serviceLogs.filter(
+					(line) =>
+						(line.allocationId === input.allocationId ||
+							input.allocationId === undefined) &&
+						(line.logType === input.logType || input.logType === undefined) &&
+						(line.buildId === input.buildId || input.buildId === undefined) &&
+						(input.search === undefined || line.line.includes(input.search)),
+				),
+				gaps: platform.serviceLogGaps,
+			};
 		},
 		async listServiceDeployments(
 			user,
@@ -733,6 +859,14 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			platform.domainBindings = platform.domainBindings.filter(
 				(b) => b.hostname !== input.hostname,
 			);
+		},
+		async restoreDomainBinding(_, hostname): Promise<DashboardDomainBinding> {
+			const binding = platform.domainBindings.find(
+				(entry) => entry.hostname === hostname,
+			);
+			if (!binding) throw new Error("domain binding not found");
+			binding.deletion = undefined;
+			return binding;
 		},
 	};
 	return platform;

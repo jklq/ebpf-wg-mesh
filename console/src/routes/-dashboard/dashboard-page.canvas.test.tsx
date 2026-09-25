@@ -7,7 +7,15 @@ import {
 	screen,
 	waitFor,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	afterEach,
+	beforeAll,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from "vitest";
 import { CreatedServiceCacheProvider } from "./created-service-cache";
 import { DashboardPage } from "./dashboard-page";
 import {
@@ -39,6 +47,10 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@tanstack/react-router")>()),
 	useRouter: () => routerMock,
 }));
+
+beforeAll(async () => {
+	await import("./service-panel");
+});
 
 vi.mock("./server-fns", () => ({
 	doCreateServiceFast: doCreateServiceFastMock,

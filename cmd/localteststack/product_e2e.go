@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -514,6 +515,7 @@ func matchingProductAllocation(status *platformv1.ServiceStatus, specRevision, r
 }
 
 func waitForProductRoute(ctx context.Context, routeURL, marker string) error {
+	log.Printf("verifying product route: %s", routeURL)
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 		Transport: &http.Transport{
@@ -523,20 +525,30 @@ func waitForProductRoute(ctx context.Context, routeURL, marker string) error {
 			}).DialContext,
 		},
 	}
-	return testutil.Poll(ctx, testutil.PollConfig{Timeout: 90 * time.Second, Interval: 500 * time.Millisecond}, func(ctx context.Context) (bool, error) {
+	lastResponse := "no response"
+	err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 90 * time.Second, Interval: 500 * time.Millisecond}, func(ctx context.Context) (bool, error) {
 		request, err := http.NewRequestWithContext(ctx, http.MethodGet, routeURL, nil)
 		if err != nil {
 			return false, err
 		}
 		response, err := client.Do(request)
 		if err != nil {
+			lastResponse = err.Error()
 			return false, nil
 		}
 		defer response.Body.Close()
+		lastResponse = response.Status
 		body, err := io.ReadAll(io.LimitReader(response.Body, 4096))
 		if err != nil {
 			return false, nil
 		}
+		if response.StatusCode == http.StatusOK && !strings.Contains(string(body), marker) {
+			lastResponse += " (deployment marker missing)"
+		}
 		return response.StatusCode == http.StatusOK && strings.Contains(string(body), marker), nil
 	})
+	if err != nil {
+		return fmt.Errorf("%w; URL %s; last response: %s", err, routeURL, lastResponse)
+	}
+	return nil
 }

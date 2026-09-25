@@ -281,7 +281,7 @@ describe("PanelSettings", () => {
 		).toBe(true);
 	});
 
-	it("deletes the service once its name is typed back", async () => {
+	it("deletes the service after confirmation", async () => {
 		const onDeleted = vi.fn();
 		render(
 			<PanelSettings
@@ -295,11 +295,7 @@ describe("PanelSettings", () => {
 		fireEvent.click(screen.getByRole("button", { name: /delete service/i }));
 
 		const confirm = screen.getByRole("button", { name: "Delete" });
-		expect((confirm as HTMLButtonElement).disabled).toBe(true);
-
-		fireEvent.change(screen.getByLabelText("Type hello to confirm"), {
-			target: { value: "hello" },
-		});
+		expect((confirm as HTMLButtonElement).disabled).toBe(false);
 		fireEvent.click(confirm);
 
 		await waitFor(() =>
@@ -323,9 +319,6 @@ describe("PanelSettings", () => {
 		);
 
 		fireEvent.click(screen.getByRole("button", { name: /delete service/i }));
-		fireEvent.change(screen.getByLabelText("Type hello to confirm"), {
-			target: { value: "hello" },
-		});
 		fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
 		expect(await screen.findByText("service is protected")).toBeTruthy();
@@ -571,6 +564,8 @@ function state(): DashboardHomeState {
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
 		},
+		projects: [],
+
 		environments: [environment],
 		environment,
 		onboarding: {

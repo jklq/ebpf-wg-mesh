@@ -21,6 +21,7 @@ import {
 	statusDotClass,
 } from "#/lib/ui-classes";
 import { AllocationCrashEvidence } from "./allocation-crash-evidence";
+import { DeploymentDetails } from "./deployment-details";
 import {
 	buildStepHint,
 	deploymentBadgeLabel,
@@ -82,7 +83,12 @@ export function DeploymentCard({
 			? (build?.stages ?? [])
 			: (record.stages ?? []),
 	);
-	const stages = withSourceStage(service, build, reportedStages);
+	const stages =
+		record.status?.buildReused || record.status?.reasonCode === "BUILD_REUSED"
+			? reportedStages.filter(
+					(stage) => !["build", "source"].includes(stage.key),
+				)
+			: withSourceStage(service, build, reportedStages);
 	const active = hasActiveDeployment(status, build);
 	const timestamp =
 		status?.transitionedAt ??
@@ -222,7 +228,9 @@ export function DeploymentCard({
 					disabled={!logsEnabled}
 				>
 					<p className="m-0 overflow-hidden text-ellipsis whitespace-nowrap font-display text-[15px] font-medium leading-[1.25] tracking-[-0.02em] text-ink">
-						{deploymentCardHeadline(build)}
+						{record.artifact?.kind === "direct_image"
+							? "Image deployment"
+							: deploymentCardHeadline(build)}
 					</p>
 					<div className="flex flex-wrap items-center gap-[7px] font-mono text-[11px] text-muted">
 						{meta.map((entry, index) => (
@@ -277,6 +285,7 @@ export function DeploymentCard({
 				)}
 			</div>
 
+			<DeploymentDetails record={record} serviceId={service.id} />
 			{((record.actions?.length ?? 0) > 0 || actionError) && (
 				<div className="flex flex-wrap items-end gap-x-3 gap-y-2 border-t border-dashed border-[rgba(80,76,71,0.55)] px-7 py-2.5 pb-3 max-[900px]:px-4">
 					<DeploymentActionHistory record={record} />
@@ -439,6 +448,7 @@ function allocationsForDeployment(
 }
 
 export function DeploymentHistoryRow({
+	serviceId,
 	record,
 	build,
 	allocation,
@@ -449,6 +459,7 @@ export function DeploymentHistoryRow({
 	onOpenLogs,
 	onAction,
 }: {
+	serviceId?: string;
 	record: DashboardDeploymentRecord;
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
@@ -510,7 +521,9 @@ export function DeploymentHistoryRow({
 						aria-label={`Status: ${toneToHealthClass(tone)}`}
 					/>
 					<span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[13px]">
-						{deploymentCardHeadline(build)}
+						{record.artifact?.kind === "direct_image"
+							? "Image deployment"
+							: deploymentCardHeadline(build)}
 					</span>
 					<span className="inline-flex items-center gap-2 font-mono text-[10px] text-dim">
 						{build?.commitSha && (
@@ -532,6 +545,7 @@ export function DeploymentHistoryRow({
 					/>
 				)}
 			</div>
+			<DeploymentDetails record={record} serviceId={serviceId} />
 			{actionError && (
 				<div
 					className={cn(

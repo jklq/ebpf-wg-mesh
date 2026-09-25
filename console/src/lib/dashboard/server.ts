@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
 	deleteCookie,
@@ -11,9 +11,11 @@ import * as auth from "#/lib/dashboard/core/auth.server";
 import * as domains from "#/lib/dashboard/core/operations-domains.server";
 import * as fleet from "#/lib/dashboard/core/operations-fleet.server";
 import * as home from "#/lib/dashboard/core/operations-home.server";
+import * as lifecycle from "#/lib/dashboard/core/operations-lifecycle.server";
 import * as onboarding from "#/lib/dashboard/core/operations-onboarding.server";
 import * as services from "#/lib/dashboard/core/operations-services.server";
 import {
+	assertDistinctDashboardSecrets,
 	assertProductionDashboardConfig,
 	formatDashboardStartupContract,
 	parseRuntimeProfile,
@@ -27,8 +29,12 @@ import {
 	type CreateServiceFastResult,
 	type DashboardAgentEnrollment,
 	type DashboardAgentLifecycleState,
+	type DashboardBuildAttempt,
 	type DashboardConfig,
 	DashboardConfigError,
+	type DashboardDeletableKind,
+	type DashboardDeletedResource,
+	type DashboardDeletionPreview,
 	type DashboardDeploymentAction,
 	type DashboardDeploymentRecord,
 	type DashboardDomainBinding,
@@ -37,10 +43,13 @@ import {
 	type DashboardGitHubAccount,
 	type DashboardHomeState,
 	type DashboardProject,
-	type DashboardServiceLogLine,
+	type DashboardProjectSettings,
+	type DashboardRestorableKind,
+	type DashboardServiceLogPage,
 	type DashboardServiceLogType,
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
+	type DashboardServiceSecret,
 	type DashboardServiceStatus,
 	type DevLoginIdentity,
 	type FleetAgentInput,
@@ -227,11 +236,60 @@ export function updateEnvironmentAutoDeployFromSession(input: {
 	);
 }
 
-export function deleteEnvironmentFromSession(environmentId: string) {
-	return onboarding.deleteEnvironmentFromSession(
+export function loadProjectSettingsFromSession(
+	projectId: string,
+): Promise<DashboardProjectSettings> {
+	return lifecycle.loadProjectSettingsFromSession(
 		getDashboardRuntime(),
-		environmentId,
+		projectId,
 	);
+}
+
+export function projectLandingEnvironmentFromSession(
+	projectId: string,
+): Promise<string | null> {
+	return lifecycle.projectLandingEnvironmentFromSession(
+		getDashboardRuntime(),
+		projectId,
+	);
+}
+
+export function updateProjectLogRetentionFromSession(input: {
+	projectId: string;
+	logRetentionDays: number;
+}): Promise<DashboardProject> {
+	return lifecycle.updateProjectLogRetentionFromSession(
+		getDashboardRuntime(),
+		input,
+	);
+}
+
+export function previewDeletionFromSession(input: {
+	kind: DashboardDeletableKind;
+	id: string;
+}): Promise<DashboardDeletionPreview> {
+	return lifecycle.previewDeletionFromSession(getDashboardRuntime(), input);
+}
+
+export function deleteResourceFromSession(input: {
+	kind: DashboardDeletableKind;
+	id: string;
+	confirmationName?: string;
+}): Promise<void> {
+	return lifecycle.deleteResourceFromSession(getDashboardRuntime(), input);
+}
+
+export function restoreResourceFromSession(input: {
+	kind: DashboardRestorableKind;
+	id: string;
+}): Promise<void> {
+	return lifecycle.restoreResourceFromSession(getDashboardRuntime(), input);
+}
+
+export function loadRecentlyDeletedFromSession(): Promise<
+	Array<DashboardDeletedResource>
+> {
+	return lifecycle.loadRecentlyDeletedFromSession(getDashboardRuntime());
 }
 
 export function releaseEnvironmentFromSession(environmentId: string) {
@@ -303,8 +361,38 @@ export function listServiceLogsFromSession(input: {
 	search?: string;
 	startTime?: Date;
 	endTime?: Date;
-}): Promise<Array<DashboardServiceLogLine>> {
+	pageToken?: string;
+	gapPageToken?: string;
+}): Promise<DashboardServiceLogPage> {
 	return services.listServiceLogsFromSession(getDashboardRuntime(), input);
+}
+
+export function listBuildAttemptsFromSession(input: {
+	serviceId: string;
+	buildId: string;
+}): Promise<Array<DashboardBuildAttempt>> {
+	return services.listBuildAttemptsFromSession(getDashboardRuntime(), input);
+}
+
+export function listServiceSecretsFromSession(input: {
+	serviceId: string;
+}): Promise<Array<DashboardServiceSecret>> {
+	return services.listServiceSecretsFromSession(getDashboardRuntime(), input);
+}
+
+export function sealServiceSecretFromSession(input: {
+	serviceId: string;
+	name: string;
+	value: string;
+}): Promise<DashboardServiceSecret> {
+	return services.sealServiceSecretFromSession(getDashboardRuntime(), input);
+}
+
+export function deleteServiceSecretFromSession(input: {
+	serviceId: string;
+	name: string;
+}): Promise<void> {
+	return services.deleteServiceSecretFromSession(getDashboardRuntime(), input);
 }
 
 export function listServiceDeploymentsFromSession(input: {
@@ -421,6 +509,7 @@ function readConfig(): RuntimeConfig {
 	const databaseURL = mustSecret("DASHBOARD_DATABASE_URL");
 	const githubClientSecret = optionalSecret("DASHBOARD_GITHUB_CLIENT_SECRET");
 	const jwtSecret = mustSecret("DASHBOARD_JWT_SECRET");
+	const jwtSecretPrevious = optionalSecret("DASHBOARD_JWT_SECRET_PREVIOUS");
 	const userAssertionSecret = mustSecret(
 		"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET",
 	);
@@ -438,29 +527,13 @@ function readConfig(): RuntimeConfig {
 				"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY must be base64 or base64url encoding of exactly 32 bytes",
 		});
 	}
-	if (Buffer.byteLength(userAssertionSecret, "utf8") < 32) {
-		throw new DashboardConfigError({
-			message:
-				"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET must be at least 32 bytes",
-		});
-	}
-	if (userAssertionSecret === jwtSecret) {
-		throw new DashboardConfigError({
-			message:
-				"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET must be distinct from DASHBOARD_JWT_SECRET",
-		});
-	}
-	if (
-		githubTokenEncryptionKeyValue === jwtSecret ||
-		githubTokenEncryptionKeyValue === userAssertionSecret ||
-		keyMatchesSecret(githubTokenEncryptionKey, jwtSecret) ||
-		keyMatchesSecret(githubTokenEncryptionKey, userAssertionSecret)
-	) {
-		throw new DashboardConfigError({
-			message:
-				"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY must be distinct from dashboard JWT and user-assertion secrets",
-		});
-	}
+	assertDistinctDashboardSecrets({
+		jwtSecret,
+		jwtSecretPrevious,
+		userAssertionSecret,
+		githubTokenEncryptionKeyValue,
+		githubTokenEncryptionKey,
+	});
 	const profile = parseRuntimeProfile(process.env.DASHBOARD_PROFILE);
 	const databaseSchema = parseIdentifier(
 		process.env.DASHBOARD_DATABASE_SCHEMA ?? "dashboard",
@@ -485,6 +558,7 @@ function readConfig(): RuntimeConfig {
 			localDomainSuffix: process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim(),
 			localIngressBaseURL,
 			jwtSecret,
+			jwtSecretPrevious,
 			userAssertionSecret,
 			databaseURL,
 			controlPlaneAddress,
@@ -513,6 +587,7 @@ function readConfig(): RuntimeConfig {
 		controlPlaneAddress,
 		controlPlaneServerName,
 		jwtSecret,
+		jwtSecretPrevious,
 		userAssertionSecret,
 		githubTokenCipher: createGitHubTokenCipher(githubTokenEncryptionKey),
 		controlPlaneCA: readPEM(
@@ -556,11 +631,6 @@ function readConfig(): RuntimeConfig {
 		}),
 	);
 	return loaded;
-}
-
-function keyMatchesSecret(key: Buffer, secret: string): boolean {
-	const candidate = Buffer.from(secret, "utf8");
-	return candidate.length === key.length && timingSafeEqual(key, candidate);
 }
 
 function decodeBase64Env(name: string): Buffer {

@@ -31,6 +31,22 @@ type consoleProcess struct {
 func startConsole(ctx context.Context, consoleDir string, env map[string]string, port int, bindAddress string, reserved net.Listener) (*consoleProcess, error) {
 	healthURL := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
 
+	// The console's generated protobuf client is not checked in; regenerate it
+	// so the console never runs against stale RPC types.
+	generate, err := localteststack.ChildCommand(ctx, "bun", []string{"run", "generate:proto"}, cloneEnvironmentOverrides(env))
+	if err != nil {
+		return nil, err
+	}
+	generate.Dir = consoleDir
+	generate.Stdout = os.Stdout
+	generate.Stderr = os.Stderr
+	if err := generate.Run(); err != nil {
+		if reserved != nil {
+			_ = reserved.Close()
+		}
+		return nil, fmt.Errorf("generate console protobuf client: %w", err)
+	}
+
 	var cmd *exec.Cmd
 	if os.Getenv("LOCALTESTSTACK_CONSOLE_PRODUCTION") == "1" {
 		buildEnv := cloneEnvironmentOverrides(env)
@@ -66,6 +82,13 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 	cmd.Dir = consoleDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// bun spawns the dev server as a child. Run the console in its own process
+	// group and signal the whole group, so shutdown never orphans a server
+	// that keeps rewriting console sources for later runs.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		return signalConsoleGroup(cmd, syscall.SIGKILL)
+	}
 	if reserved != nil {
 		if err := reserved.Close(); err != nil {
 			return nil, fmt.Errorf("release reserved console port %d: %w", port, err)
@@ -216,13 +239,22 @@ func stopConsoleProcess(proc *consoleProcess) {
 		return
 	default:
 	}
-	_ = proc.cmd.Process.Signal(syscall.SIGTERM)
+	_ = signalConsoleGroup(proc.cmd, syscall.SIGTERM)
 	select {
 	case <-proc.done:
 	case <-time.After(5 * time.Second):
-		_ = proc.cmd.Process.Kill()
+		_ = signalConsoleGroup(proc.cmd, syscall.SIGKILL)
 		<-proc.done
 	}
+	// The group leader can exit before its children; sweep what is left.
+	_ = signalConsoleGroup(proc.cmd, syscall.SIGKILL)
+}
+
+func signalConsoleGroup(cmd *exec.Cmd, sig syscall.Signal) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	return syscall.Kill(-cmd.Process.Pid, sig)
 }
 
 func waitForLocalAgent(ctx context.Context, server *controlplane.Server, agentID string, runErrCh <-chan error) error {

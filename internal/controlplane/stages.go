@@ -74,6 +74,14 @@ func lifecycleBuildStage(dep deliverycore.DeploymentRecord, service deliverycore
 		stage.Detail = "No build required — using prebuilt image"
 		return stage
 	}
+	if dep.BuildReused() {
+		stage.State = platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED
+		stage.Detail = "Reusing image built for commit"
+		if build != nil && build.CommitSHA != "" {
+			stage.Detail += " " + shortSHA(build.CommitSHA)
+		}
+		return stage
+	}
 	started := firstTransitionTime(dep, deliverycore.DeploymentStateQueuedBuild, time.Time{})
 	if started.IsZero() && build != nil {
 		started = build.QueuedAt

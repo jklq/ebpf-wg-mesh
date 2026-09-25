@@ -36,18 +36,21 @@ describe("allocation crash evidence", () => {
 	afterEach(cleanup);
 
 	beforeEach(() => {
-		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([
-			{
-				observedAt: new Date("2026-08-13T10:00:00Z"),
-				allocationId: "alloc-1",
-				agentId: "agent-1",
-				stream: "stderr",
-				rolloutGeneration: 1,
-				sequence: 1,
-				line: "panic: runtime error",
-				logType: "SERVICE_LOG_TYPE_RUNTIME",
-			},
-		]);
+		serverFns.fetchServiceLogs.mockReset().mockResolvedValue({
+			lines: [
+				{
+					observedAt: new Date("2026-08-13T10:00:00Z"),
+					allocationId: "alloc-1",
+					agentId: "agent-1",
+					stream: "stderr",
+					rolloutGeneration: 1,
+					sequence: 1,
+					line: "panic: runtime error",
+					logType: "SERVICE_LOG_TYPE_RUNTIME",
+				},
+			],
+			gaps: [],
+		});
 	});
 
 	it("shows OOM cause with exit code, restarts, crash loop, and log tail", async () => {
@@ -119,8 +122,8 @@ describe("allocation crash evidence", () => {
 		try {
 			serverFns.fetchServiceLogs
 				.mockReset()
-				.mockResolvedValueOnce([])
-				.mockResolvedValue([crashLogLine()]);
+				.mockResolvedValueOnce({ lines: [], gaps: [] })
+				.mockResolvedValue({ lines: [crashLogLine()], gaps: [] });
 			render(
 				<AllocationCrashEvidence
 					serviceId="svc-1"
@@ -144,7 +147,9 @@ describe("allocation crash evidence", () => {
 	it("stops retrying an empty log tail after bounded attempts", async () => {
 		vi.useFakeTimers();
 		try {
-			serverFns.fetchServiceLogs.mockReset().mockResolvedValue([]);
+			serverFns.fetchServiceLogs
+				.mockReset()
+				.mockResolvedValue({ lines: [], gaps: [] });
 			render(
 				<AllocationCrashEvidence
 					serviceId="svc-1"
@@ -170,8 +175,14 @@ describe("allocation crash evidence", () => {
 	it("refetches the log tail when the same allocation crashes again", async () => {
 		serverFns.fetchServiceLogs
 			.mockReset()
-			.mockResolvedValueOnce([{ ...crashLogLine(), line: "first crash tail" }])
-			.mockResolvedValue([{ ...crashLogLine(), line: "second crash tail" }]);
+			.mockResolvedValueOnce({
+				lines: [{ ...crashLogLine(), line: "first crash tail" }],
+				gaps: [],
+			})
+			.mockResolvedValue({
+				lines: [{ ...crashLogLine(), line: "second crash tail" }],
+				gaps: [],
+			});
 		const first = render(
 			<AllocationCrashEvidence
 				serviceId="svc-1"

@@ -26,7 +26,8 @@ vi.mock("./server-fns", () => ({
 	doUpdateService: doUpdateServiceMock,
 	doScaleService: doScaleServiceMock,
 	fetchServiceDeployments: vi.fn().mockResolvedValue([]),
-	fetchServiceLogs: vi.fn().mockResolvedValue([]),
+	fetchServiceSecrets: vi.fn().mockResolvedValue([]),
+	fetchServiceLogs: vi.fn().mockResolvedValue({ lines: [], gaps: [] }),
 	doApplyDeploymentAction: vi.fn(),
 }));
 
@@ -477,6 +478,8 @@ function state(): DashboardHomeState {
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
 		},
+		projects: [],
+
 		environments: [environment],
 		environment,
 		onboarding: {

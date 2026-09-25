@@ -15,6 +15,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as LivezRouteImport } from './routes/livez'
 import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as FleetRouteImport } from './routes/fleet'
+import { Route as DeletedRouteImport } from './routes/deleted'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
@@ -22,6 +23,8 @@ import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/e
 import { Route as EnvironmentsEnvironmentIdRouteImport } from './routes/environments/$environmentId'
 import { Route as AuthStartRouteImport } from './routes/auth/start'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
+import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
+import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
 
 const ReadyzRoute = ReadyzRouteImport.update({
   id: '/readyz',
@@ -51,6 +54,11 @@ const HealthzRoute = HealthzRouteImport.update({
 const FleetRoute = FleetRouteImport.update({
   id: '/fleet',
   path: '/fleet',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DeletedRoute = DeletedRouteImport.update({
+  id: '/deleted',
+  path: '/deleted',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -90,9 +98,21 @@ const AuthCallbackRoute = AuthCallbackRouteImport.update({
   path: '/auth/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
+  id: '/projects/$projectId/',
+  path: '/projects/$projectId/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsProjectIdSettingsRoute =
+  ProjectsProjectIdSettingsRouteImport.update({
+    id: '/projects/$projectId/settings',
+    path: '/projects/$projectId/settings',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/deleted': typeof DeletedRoute
   '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
@@ -105,9 +125,12 @@ export interface FileRoutesByFullPath {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/deleted': typeof DeletedRoute
   '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
@@ -120,10 +143,13 @@ export interface FileRoutesByTo {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/deleted': typeof DeletedRoute
   '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
   '/livez': typeof LivezRoute
@@ -136,11 +162,14 @@ export interface FileRoutesById {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/deleted'
     | '/fleet'
     | '/healthz'
     | '/livez'
@@ -153,9 +182,12 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/deleted'
     | '/fleet'
     | '/healthz'
     | '/livez'
@@ -168,9 +200,12 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId'
   id:
     | '__root__'
     | '/'
+    | '/deleted'
     | '/fleet'
     | '/healthz'
     | '/livez'
@@ -183,10 +218,13 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/projects/$projectId/settings'
+    | '/projects/$projectId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DeletedRoute: typeof DeletedRoute
   FleetRoute: typeof FleetRoute
   HealthzRoute: typeof HealthzRoute
   LivezRoute: typeof LivezRoute
@@ -199,6 +237,8 @@ export interface RootRouteChildren {
   EventsEnvironmentServicesRoute: typeof EventsEnvironmentServicesRoute
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
+  ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
+  ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -243,6 +283,13 @@ declare module '@tanstack/react-router' {
       path: '/fleet'
       fullPath: '/fleet'
       preLoaderRoute: typeof FleetRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/deleted': {
+      id: '/deleted'
+      path: '/deleted'
+      fullPath: '/deleted'
+      preLoaderRoute: typeof DeletedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -294,11 +341,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects/$projectId/': {
+      id: '/projects/$projectId/'
+      path: '/projects/$projectId'
+      fullPath: '/projects/$projectId/'
+      preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects/$projectId/settings': {
+      id: '/projects/$projectId/settings'
+      path: '/projects/$projectId/settings'
+      fullPath: '/projects/$projectId/settings'
+      preLoaderRoute: typeof ProjectsProjectIdSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DeletedRoute: DeletedRoute,
   FleetRoute: FleetRoute,
   HealthzRoute: HealthzRoute,
   LivezRoute: LivezRoute,
@@ -311,6 +373,8 @@ const rootRouteChildren: RootRouteChildren = {
   EventsEnvironmentServicesRoute: EventsEnvironmentServicesRoute,
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,
+  ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
+  ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

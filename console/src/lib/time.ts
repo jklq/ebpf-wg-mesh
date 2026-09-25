@@ -77,7 +77,7 @@ export function formatRelativeTime(
 	if (diffMs > 0) {
 		return "just now";
 	}
-	const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+	const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
 	const absSeconds = Math.round(Math.abs(diffMs) / 1000);
 	if (absSeconds < 60) {
 		return rtf.format(Math.round(diffMs / 1000), "second");
@@ -106,6 +106,40 @@ export function formatLogTime(date: Date): string {
 		hour: "2-digit",
 		minute: "2-digit",
 		second: "2-digit",
+		hour12: false,
+	}).format(date);
+}
+
+/** "in 6 days" style distance to a future moment; "any moment now" once due. */
+export function formatTimeUntil(
+	value: Date,
+	nowMs: number = Date.now(),
+): string {
+	const diffMs = value.getTime() - nowMs;
+	if (!Number.isFinite(diffMs) || diffMs <= 60_000) {
+		return "any moment now";
+	}
+	const rtf = new Intl.RelativeTimeFormat("en", { numeric: "always" });
+	const minutes = Math.round(diffMs / 60_000);
+	if (minutes < 60) {
+		return rtf.format(minutes, "minute");
+	}
+	const hours = Math.round(minutes / 60);
+	if (hours < 48) {
+		return rtf.format(hours, "hour");
+	}
+	return rtf.format(Math.round(hours / 24), "day");
+}
+
+export function formatDateTime(date: Date): string {
+	return new Intl.DateTimeFormat("en", {
+		timeZone: "UTC",
+		timeZoneName: "short",
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
 		hour12: false,
 	}).format(date);
 }

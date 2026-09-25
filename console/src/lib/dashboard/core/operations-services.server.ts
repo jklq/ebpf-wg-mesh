@@ -5,12 +5,14 @@ import {
 	storeCall,
 } from "#/lib/dashboard/core/runtime.server";
 import {
+	type DashboardBuildAttempt,
 	type DashboardDeploymentAction,
 	type DashboardDeploymentRecord,
-	type DashboardServiceLogLine,
+	type DashboardServiceLogPage,
 	type DashboardServiceLogType,
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
+	type DashboardServiceSecret,
 	type DashboardServiceStatus,
 	type DashboardSourceSpec,
 	DashboardValidationError,
@@ -19,6 +21,7 @@ import {
 	type UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
+import { sealedSecretName } from "#/lib/dashboard/sealed-secrets";
 import {
 	applyServicePositions,
 	normalizeResource,
@@ -97,8 +100,10 @@ export async function listServiceLogsFromSession(
 		search?: string;
 		startTime?: Date;
 		endTime?: Date;
+		pageToken?: string;
+		gapPageToken?: string;
 	},
-): Promise<Array<DashboardServiceLogLine>> {
+): Promise<DashboardServiceLogPage> {
 	const session = await requireSession(runtime);
 	return platformCall(runtime, "listServiceLogs", (platform) =>
 		platform.listServiceLogs(session.user, input),
@@ -115,6 +120,57 @@ export async function listServiceDeploymentsFromSession(
 			serviceId: input.serviceId,
 			limit: input.limit,
 		}),
+	);
+}
+
+export async function listBuildAttemptsFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string; buildId: string },
+): Promise<Array<DashboardBuildAttempt>> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "listBuildAttempts", (platform) =>
+		platform.listBuildAttempts(session.user, input),
+	);
+}
+
+export async function listServiceSecretsFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string },
+): Promise<Array<DashboardServiceSecret>> {
+	const session = await requireSession(runtime);
+	return platformCall(runtime, "listServiceSecrets", (platform) =>
+		platform.listServiceSecrets(session.user, input.serviceId),
+	);
+}
+
+/** Seals a write-only value. The value goes to the RPC and nowhere else. */
+export async function sealServiceSecretFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string; name: string; value: string },
+): Promise<DashboardServiceSecret> {
+	const session = await requireSession(runtime);
+	const name = sealedSecretName.safeParse(input.name);
+	if (!name.success) {
+		throw new DashboardValidationError({
+			message: name.error.issues[0]?.message ?? "Invalid secret name.",
+		});
+	}
+	return platformCall(runtime, "sealServiceSecret", (platform) =>
+		platform.sealServiceSecret(session.user, {
+			serviceId: input.serviceId,
+			name: name.data,
+			value: input.value,
+		}),
+	);
+}
+
+export async function deleteServiceSecretFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string; name: string },
+): Promise<void> {
+	const session = await requireSession(runtime);
+	await platformCall(runtime, "deleteServiceSecret", (platform) =>
+		platform.deleteServiceSecret(session.user, input),
 	);
 }
 

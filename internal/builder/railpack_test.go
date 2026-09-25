@@ -162,7 +162,7 @@ func TestRailpackBuildCommandUsesBuildxFrontendSyntaxWhenDockerBinarySelected(t 
 
 	req := railpackBuildCommand(
 		"docker",
-		"docker-buildx",
+		"unix:///run/docker.sock",
 		"ghcr.io/railwayapp/railpack-frontend:latest",
 		"/workspace/repo",
 		"/workspace/plan",
@@ -172,7 +172,7 @@ func TestRailpackBuildCommandUsesBuildxFrontendSyntaxWhenDockerBinarySelected(t 
 		[]string{"DOCKER_CONFIG=/tmp/docker"},
 	)
 	want := []string{
-		"buildx", "build",
+		"--host", "unix:///run/docker.sock", "buildx", "build",
 		"--progress=plain",
 		"--add-host", "host.docker.internal:host-gateway",
 		"--build-arg", "BUILDKIT_SYNTAX=ghcr.io/railwayapp/railpack-frontend:latest",
@@ -227,7 +227,7 @@ func TestExecuteRailpackBuildsWithDockerBinary(t *testing.T) {
 	}
 	spec := testExecutionSpec(t, "build-1", archive, &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_RAILPACK, ContextDir: "."})
 	spec.Buildkit.Binary = "docker"
-	spec.Buildkit.Address = "docker-buildx"
+	spec.Buildkit.Address = "unix:///run/docker.sock"
 	executor := newDevelopmentExecutor(t.TempDir(), runner, "/usr/bin:/bin")
 	result, err := executor.Execute(context.Background(), spec)
 	if err != nil {

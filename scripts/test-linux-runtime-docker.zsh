@@ -27,7 +27,9 @@ fi
 docker volume create ebpf-wg-mesh-gobuild >/dev/null
 docker volume create ebpf-wg-mesh-gomod >/dev/null
 
+# Keep nested overlay snapshots off the outer container's overlay filesystem.
 exec docker run --rm --privileged --cgroupns=private \
+	--mount type=volume,destination=/var/lib/containerd \
 	-v "$PWD":/src \
 	-v ebpf-wg-mesh-gobuild:/root/.cache/go-build \
 	-v ebpf-wg-mesh-gomod:/go/pkg/mod \

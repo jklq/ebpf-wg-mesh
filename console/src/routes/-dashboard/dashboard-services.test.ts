@@ -245,6 +245,8 @@ function loader(
 		repositories: [],
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",
+		projects: [],
+
 		environments: [],
 		environment: {
 			id: environmentId,

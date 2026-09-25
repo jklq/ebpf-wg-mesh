@@ -14,7 +14,13 @@ const DashboardJWTIssuer = "managed-dashboard";
 const DashboardJWTAudience = "managed-dashboard";
 
 export interface DashboardJWTConfig {
+	/** Signs every new token and is tried first on verification. */
 	jwtSecret: string;
+	/**
+	 * Verifies tokens issued before a rotation until they expire. Never
+	 * signs.
+	 */
+	jwtSecretPrevious?: string;
 }
 
 interface DashboardTokenPayload {
@@ -161,13 +167,14 @@ function verifyToken(
 	}
 	const [headerSegment, payloadSegment, signatureSegment] = parts;
 	const signingInput = `${headerSegment}.${payloadSegment}`;
-	const expectedSignature = decodeBase64URL(
-		sign(config.jwtSecret, signingInput),
-	);
 	const actualSignature = decodeBase64URL(signatureSegment);
+	const verificationSecrets = config.jwtSecretPrevious
+		? [config.jwtSecret, config.jwtSecretPrevious]
+		: [config.jwtSecret];
 	if (
-		expectedSignature.length !== actualSignature.length ||
-		!timingSafeEqual(expectedSignature, actualSignature)
+		!verificationSecrets.some((secret) =>
+			signatureMatches(secret, signingInput, actualSignature),
+		)
 	) {
 		throw new Error("token signature mismatch");
 	}
@@ -196,6 +203,18 @@ function verifyToken(
 		throw new Error("token expired");
 	}
 	return payload;
+}
+
+function signatureMatches(
+	secret: string,
+	signingInput: string,
+	actualSignature: Buffer,
+): boolean {
+	const expectedSignature = decodeBase64URL(sign(secret, signingInput));
+	return (
+		expectedSignature.length === actualSignature.length &&
+		timingSafeEqual(expectedSignature, actualSignature)
+	);
 }
 
 function sign(secret: string, value: string): string {

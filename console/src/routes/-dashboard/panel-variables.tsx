@@ -15,6 +15,7 @@ import {
 	unappliedSurface,
 } from "#/lib/ui-classes";
 
+import { PanelSecrets } from "./panel-secrets";
 import { doUpdateService } from "./server-fns";
 import { formatError } from "./service-utils";
 import { ModalOverlay, PanelSection } from "./ui";
@@ -298,6 +299,7 @@ export function PanelVariables({
 				</div>
 			</PanelSection>
 
+			<PanelSecrets key={service.id} serviceId={service.id} />
 			{error && <p className={errorMsg}>{error}</p>}
 
 			{rawDialogOpen && (

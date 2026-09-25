@@ -551,7 +551,7 @@ func buildDigestRefFromMetadata(pushRef, metadataFile string) (string, error) {
 
 func buildCommand(buildBinary, buildkitAddress, contextDir, repoDir, dockerfilePath, pushRef, metadataFile string, env []string) commandRequest {
 	if isDockerBuildBinary(buildBinary) {
-		return dockerBuildxCommand(buildBinary, contextDir, repoDir, dockerfilePath, pushRef, metadataFile, env)
+		return dockerBuildxCommand(buildBinary, buildkitAddress, contextDir, repoDir, dockerfilePath, pushRef, metadataFile, env)
 	}
 	return buildctlCommand(buildBinary, buildkitAddress, contextDir, repoDir, dockerfilePath, pushRef, metadataFile, env)
 }
@@ -560,12 +560,12 @@ func isDockerBuildBinary(buildBinary string) bool {
 	return filepath.Base(strings.TrimSpace(buildBinary)) == "docker"
 }
 
-func dockerBuildxCommand(dockerBinary, contextDir, repoDir, dockerfilePath, pushRef, metadataFile string, env []string) commandRequest {
+func dockerBuildxCommand(dockerBinary, dockerAddress, contextDir, repoDir, dockerfilePath, pushRef, metadataFile string, env []string) commandRequest {
 	return commandRequest{
 		Binary: dockerBinary,
 		Env:    env,
 		Args: []string{
-			"buildx", "build",
+			"--host", dockerAddress, "buildx", "build",
 			"--progress=plain",
 			"--add-host", "host.docker.internal:host-gateway",
 			"--file", filepath.Join(repoDir, filepath.FromSlash(dockerfilePath)),

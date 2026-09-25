@@ -1,4 +1,8 @@
-import { createClient, type Transport } from "@connectrpc/connect";
+import {
+	ConnectError,
+	createClient,
+	type Transport,
+} from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
 import type { DashboardUser } from "#/lib/dashboard/core/types.server";
@@ -77,7 +81,12 @@ export function toPlatformGatewayError(
 	}
 	return new PlatformGatewayError({
 		operation,
-		message: formatError(cause),
+		// rawMessage is the backend's own message without the "[code]" prefix,
+		// so user-facing errors (name mismatch, volume in use) read as written.
+		message:
+			cause instanceof ConnectError && cause.rawMessage
+				? cause.rawMessage
+				: formatError(cause),
 		cause,
 		grpcCode: connectCodeToGRPC(cause),
 	});
