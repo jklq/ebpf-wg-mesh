@@ -148,16 +148,6 @@ export async function updateEnvironmentAutoDeployFromSession(
 	);
 }
 
-export async function deleteEnvironmentFromSession(
-	runtime: DashboardRuntime,
-	environmentId: string,
-): Promise<void> {
-	const session = await requireSession(runtime);
-	await platformCall(runtime, "deleteEnvironment", (platform) =>
-		platform.deleteEnvironment(session.user, environmentId),
-	);
-}
-
 export async function releaseEnvironmentFromSession(
 	runtime: DashboardRuntime,
 	environmentId: string,

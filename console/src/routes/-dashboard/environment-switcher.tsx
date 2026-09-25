@@ -9,11 +9,12 @@ import type {
 	DashboardHomeState,
 } from "#/lib/dashboard/core/types.server";
 
-import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
+import { DeleteDialog } from "./delete-dialog";
 import {
-	doDeleteEnvironment,
+	doDeleteResource,
 	doRenameEnvironment,
 	doUpdateEnvironmentAutoDeploy,
+	fetchDeletionPreview,
 } from "./server-fns";
 import { formatError } from "./service-utils";
 
@@ -172,12 +173,14 @@ export function EnvironmentSwitcher({
 		}
 	};
 
-	const confirmDelete = async () => {
+	const confirmDelete = async (confirmationName: string) => {
 		if (!deleting) return;
 		setBusy(true);
 		setError(undefined);
 		try {
-			await doDeleteEnvironment({ data: { environmentId: deleting.id } });
+			await doDeleteResource({
+				data: { kind: "environment", id: deleting.id, confirmationName },
+			});
 			setBusy(false);
 			if (deleting.id === environment.id) {
 				const fallback = state.environments.find(
@@ -322,12 +325,10 @@ export function EnvironmentSwitcher({
 												type="button"
 												role="menuitem"
 												className={cn(rowMenuItem, "text-failed")}
-												disabled={
-													entry.isProduction || environments.length === 1
-												}
+												disabled={environments.length === 1}
 												title={
-													entry.isProduction
-														? "The production environment cannot be deleted"
+													environments.length === 1
+														? "A project keeps at least one environment. Delete the project instead."
 														: undefined
 												}
 												onClick={() => {
@@ -364,16 +365,28 @@ export function EnvironmentSwitcher({
 			)}
 
 			{deleting && (
-				<ConfirmDeleteDialog
-					title="Delete Environment"
+				<DeleteDialog
+					title={
+						deleting.isProduction
+							? "Delete Production Environment"
+							: "Delete Environment"
+					}
 					name={deleting.name}
+					recovery="restorable"
+					requireName={deleting.isProduction}
+					loadPreview={() =>
+						fetchDeletionPreview({
+							data: { kind: "environment", id: deleting.id },
+						})
+					}
 					busy={busy}
 					error={error}
 					description={
 						<>
 							You are <span className="text-failed">deleting</span> the
-							environment <strong>{deleting.name}</strong> and every service,
-							variable, and runtime state inside it.
+							{deleting.isProduction ? " production" : ""} environment{" "}
+							<strong>{deleting.name}</strong>. Its services stop serving and
+							its domains stop routing.
 						</>
 					}
 					onCancel={() => {
@@ -381,7 +394,7 @@ export function EnvironmentSwitcher({
 						setDeleting(null);
 						setError(undefined);
 					}}
-					onConfirm={() => void confirmDelete()}
+					onConfirm={(confirmationName) => void confirmDelete(confirmationName)}
 				/>
 			)}
 		</div>

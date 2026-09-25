@@ -56,6 +56,8 @@ function homeState(overrides: Partial<DashboardHomeState>): DashboardHomeState {
 		repositories: [],
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",
+		projects: [],
+
 		environments: [],
 		services: [],
 		servicesRevision: 0,

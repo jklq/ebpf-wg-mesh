@@ -9,6 +9,7 @@ import {
 import {
 	toAgentEnrollment,
 	toApplyDeploymentActionRequest,
+	toBuildAttempts,
 	toCreateAgentRequest,
 	toCreateDomainBindingRequest,
 	toCreateEnvironmentRequest,
@@ -16,7 +17,11 @@ import {
 	toCreateServiceRequest,
 	toDeleteDomainBindingRequest,
 	toDeleteEnvironmentRequest,
+	toDeleteProjectRequest,
 	toDeleteServiceRequest,
+	toDeleteServiceSecretRequest,
+	toDeleteVolumeRequest,
+	toDeletionPreview,
 	toDeploymentRecords,
 	toDiscardServiceChangesRequest,
 	toDomainBinding,
@@ -29,6 +34,7 @@ import {
 	toFleetAgent,
 	toGenerateDomainBindingRequest,
 	toGetEnvironmentRequest,
+	toGetProjectRequest,
 	toGetServiceRequest,
 	toGetServiceStatusRequest,
 	toIndexedServiceStatus,
@@ -36,26 +42,41 @@ import {
 	toIngestGitHubWebhookRequest,
 	toInspectSourceRequest,
 	toLinkGitHubRepositoryRequest,
+	toListBuildAttemptsRequest,
 	toListDomainBindingsRequest,
 	toListEnvironmentsRequest,
 	toListProjectsRequest,
 	toListServiceDeploymentsRequest,
 	toListServiceLogsRequest,
+	toListServiceSecretsRequest,
 	toListServicesRequest,
+	toListVolumesRequest,
+	toPreviewEnvironmentDeletionRequest,
+	toPreviewProjectDeletionRequest,
+	toPreviewVolumeDeletionRequest,
 	toProject,
 	toProjects,
 	toReleaseEnvironmentRequest,
 	toRenameEnvironmentRequest,
 	toRepositoryInspection,
+	toRestoreDomainBindingRequest,
+	toRestoreEnvironmentRequest,
+	toRestoreProjectRequest,
+	toRestoreServiceRequest,
 	toScaleServiceRequest,
-	toServiceLogLines,
+	toSealServiceSecretRequest,
+	toServiceLogPage,
 	toServiceRecord,
+	toServiceSecret,
+	toServiceSecrets,
 	toServiceStatus,
 	toSetAgentLifecycleRequest,
 	toUpdateAgentRequest,
 	toUpdateDomainBindingRequest,
 	toUpdateEnvironmentAutoDeployRequest,
+	toUpdateProjectLogRetentionRequest,
 	toUpdateServiceRequest,
+	toVolume,
 } from "#/lib/platform-grpc/proto-mappers.server";
 
 export interface IngestGitHubWebhookInput {
@@ -63,6 +84,15 @@ export interface IngestGitHubWebhookInput {
 	eventType: string;
 	signature256: string;
 	payload: Uint8Array;
+}
+
+/** Runs one RPC and reports failures as a PlatformGatewayError. */
+async function rpc<A>(operation: string, run: () => Promise<A>): Promise<A> {
+	try {
+		return await run();
+	} catch (cause) {
+		throw toPlatformGatewayError(operation, cause);
+	}
 }
 
 export function createPlatformGateway(
@@ -76,416 +106,451 @@ export function createPlatformGateway(
 	}
 
 	return {
-		async listFleet(user) {
-			try {
-				return toFleet(
-					await ops.listFleet(toEmptyRequest(), callOptions(user)),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListFleet", cause);
-			}
-		},
-		async createFleetAgent(user, input) {
-			try {
-				return toAgentEnrollment(
+		listFleet: (user) =>
+			rpc("ListFleet", async () =>
+				toFleet(await ops.listFleet(toEmptyRequest(), callOptions(user))),
+			),
+		createFleetAgent: (user, input) =>
+			rpc("CreateAgent", async () =>
+				toAgentEnrollment(
 					await ops.createAgent(toCreateAgentRequest(input), callOptions(user)),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("CreateAgent", cause);
-			}
-		},
-		async updateFleetAgent(user, input) {
-			try {
-				return toFleetAgent(
+				),
+			),
+		updateFleetAgent: (user, input) =>
+			rpc("UpdateAgent", async () =>
+				toFleetAgent(
 					await ops.updateAgent(toUpdateAgentRequest(input), callOptions(user)),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("UpdateAgent", cause);
-			}
-		},
-		async setFleetAgentLifecycle(user, input) {
-			try {
-				return toFleetAgent(
+				),
+			),
+		setFleetAgentLifecycle: (user, input) =>
+			rpc("SetAgentLifecycle", async () =>
+				toFleetAgent(
 					await ops.setAgentLifecycle(
 						toSetAgentLifecycleRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("SetAgentLifecycle", cause);
-			}
-		},
-		async listProjects(user) {
-			try {
-				return toProjects(
+				),
+			),
+		listProjects: (user, options) =>
+			rpc("ListProjects", async () =>
+				toProjects(
 					(
 						await platform.listProjects(
-							toListProjectsRequest(),
+							toListProjectsRequest(options?.includeDeleted),
 							callOptions(user),
 						)
 					).projects,
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListProjects", cause);
-			}
-		},
-		async createProject(user, name) {
-			try {
-				return toProject(
+				),
+			),
+		getProject: (user, projectId) =>
+			rpc("GetProject", async () =>
+				toProject(
+					await platform.getProject(
+						toGetProjectRequest(projectId),
+						callOptions(user),
+					),
+				),
+			),
+		createProject: (user, name) =>
+			rpc("CreateProject", async () =>
+				toProject(
 					await platform.createProject(
 						toCreateProjectRequest(name),
 						callOptions(user),
 					),
+				),
+			),
+		updateProjectLogRetention: (user, input) =>
+			rpc("UpdateProjectLogRetention", async () =>
+				toProject(
+					await platform.updateProjectLogRetention(
+						toUpdateProjectLogRetentionRequest(input),
+						callOptions(user),
+					),
+				),
+			),
+		previewProjectDeletion: (user, projectId) =>
+			rpc("PreviewProjectDeletion", async () =>
+				toDeletionPreview(
+					await platform.previewProjectDeletion(
+						toPreviewProjectDeletionRequest(projectId),
+						callOptions(user),
+					),
+				),
+			),
+		deleteProject: (user, input) =>
+			rpc("DeleteProject", async () => {
+				await platform.deleteProject(
+					toDeleteProjectRequest(input),
+					callOptions(user),
 				);
-			} catch (cause) {
-				throw toPlatformGatewayError("CreateProject", cause);
-			}
-		},
-		async listEnvironments(user, projectId) {
-			try {
-				return toEnvironments(
+			}),
+		restoreProject: (user, projectId) =>
+			rpc("RestoreProject", async () =>
+				toProject(
+					await platform.restoreProject(
+						toRestoreProjectRequest(projectId),
+						callOptions(user),
+					),
+				),
+			),
+		listEnvironments: (user, projectId, options) =>
+			rpc("ListEnvironments", async () =>
+				toEnvironments(
 					(
 						await platform.listEnvironments(
-							toListEnvironmentsRequest(projectId),
+							toListEnvironmentsRequest(projectId, options?.includeDeleted),
 							callOptions(user),
 						)
 					).environments,
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListEnvironments", cause);
-			}
-		},
-		async getEnvironment(user, environmentId) {
-			try {
-				return toEnvironment(
+				),
+			),
+		getEnvironment: (user, environmentId) =>
+			rpc("GetEnvironment", async () =>
+				toEnvironment(
 					await platform.getEnvironment(
 						toGetEnvironmentRequest(environmentId),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("GetEnvironment", cause);
-			}
-		},
-		async createEnvironment(user, input) {
-			try {
-				return toEnvironment(
+				),
+			),
+		createEnvironment: (user, input) =>
+			rpc("CreateEnvironment", async () =>
+				toEnvironment(
 					await platform.createEnvironment(
 						toCreateEnvironmentRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("CreateEnvironment", cause);
-			}
-		},
-		async duplicateEnvironment(user, input) {
-			try {
-				return toEnvironment(
+				),
+			),
+		duplicateEnvironment: (user, input) =>
+			rpc("DuplicateEnvironment", async () =>
+				toEnvironment(
 					await platform.duplicateEnvironment(
 						toDuplicateEnvironmentRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("DuplicateEnvironment", cause);
-			}
-		},
-		async renameEnvironment(user, input) {
-			try {
-				return toEnvironment(
+				),
+			),
+		renameEnvironment: (user, input) =>
+			rpc("RenameEnvironment", async () =>
+				toEnvironment(
 					await platform.renameEnvironment(
 						toRenameEnvironmentRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("RenameEnvironment", cause);
-			}
-		},
-		async updateEnvironmentAutoDeploy(user, input) {
-			try {
-				return toEnvironment(
+				),
+			),
+		updateEnvironmentAutoDeploy: (user, input) =>
+			rpc("UpdateEnvironmentAutoDeploy", async () =>
+				toEnvironment(
 					await platform.updateEnvironmentAutoDeploy(
 						toUpdateEnvironmentAutoDeployRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("UpdateEnvironmentAutoDeploy", cause);
-			}
-		},
-		async deleteEnvironment(user, environmentId) {
-			try {
+				),
+			),
+		previewEnvironmentDeletion: (user, environmentId) =>
+			rpc("PreviewEnvironmentDeletion", async () =>
+				toDeletionPreview(
+					await platform.previewEnvironmentDeletion(
+						toPreviewEnvironmentDeletionRequest(environmentId),
+						callOptions(user),
+					),
+				),
+			),
+		deleteEnvironment: (user, input) =>
+			rpc("DeleteEnvironment", async () => {
 				await platform.deleteEnvironment(
-					toDeleteEnvironmentRequest(environmentId),
+					toDeleteEnvironmentRequest(input),
 					callOptions(user),
 				);
-			} catch (cause) {
-				throw toPlatformGatewayError("DeleteEnvironment", cause);
-			}
-		},
-		async releaseEnvironment(user, environmentId) {
-			try {
+			}),
+		restoreEnvironment: (user, environmentId) =>
+			rpc("RestoreEnvironment", async () =>
+				toEnvironment(
+					await platform.restoreEnvironment(
+						toRestoreEnvironmentRequest(environmentId),
+						callOptions(user),
+					),
+				),
+			),
+		releaseEnvironment: (user, environmentId) =>
+			rpc("ReleaseEnvironment", async () => {
 				const response = await platform.releaseEnvironment(
 					toReleaseEnvironmentRequest(environmentId),
 					callOptions(user),
 				);
 				return response.services.map(toServiceStatus);
-			} catch (cause) {
-				throw toPlatformGatewayError("ReleaseEnvironment", cause);
-			}
-		},
-		async listServices(user, environmentId) {
-			try {
-				return toIndexedServices(
+			}),
+		listServices: (user, environmentId, options) =>
+			rpc("ListServices", async () =>
+				toIndexedServices(
 					await platform.listServices(
-						toListServicesRequest({ environmentId }),
+						toListServicesRequest({
+							environmentId,
+							includeDeleted: options?.includeDeleted,
+						}),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListServices", cause);
-			}
-		},
-		async waitForServices(user, input) {
-			try {
-				return toIndexedServices(
+				),
+			),
+		waitForServices: (user, input) =>
+			rpc("ListServices", async () =>
+				toIndexedServices(
 					await platform.listServices(
 						toListServicesRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListServices", cause);
-			}
-		},
-		async inspectRepositorySource(user, input) {
-			try {
-				return toRepositoryInspection(
+				),
+			),
+		inspectRepositorySource: (user, input) =>
+			rpc("InspectSource", async () =>
+				toRepositoryInspection(
 					await platform.inspectSource(
 						toInspectSourceRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("InspectSource", cause);
-			}
-		},
-		async linkGitHubRepository(user, input) {
-			try {
-				return toRepositoryInspection(
+				),
+			),
+		linkGitHubRepository: (user, input) =>
+			rpc("LinkGitHubRepository", async () =>
+				toRepositoryInspection(
 					await platform.linkGitHubRepository(
 						toLinkGitHubRepositoryRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("LinkGitHubRepository", cause);
-			}
-		},
-		async createService(user, input) {
-			try {
-				return toServiceRecord(
+				),
+			),
+		createService: (user, input) =>
+			rpc("CreateService", async () =>
+				toServiceRecord(
 					await platform.createService(
 						toCreateServiceRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("CreateService", cause);
-			}
-		},
-		async updateService(user, input) {
-			try {
-				return toServiceRecord(
+				),
+			),
+		updateService: (user, input) =>
+			rpc("UpdateService", async () =>
+				toServiceRecord(
 					await platform.updateService(
 						toUpdateServiceRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("UpdateService", cause);
-			}
-		},
-		async applyDeploymentAction(user, input) {
-			try {
-				return toServiceStatus(
+				),
+			),
+		applyDeploymentAction: (user, input) =>
+			rpc("ApplyDeploymentAction", async () =>
+				toServiceStatus(
 					await platform.applyDeploymentAction(
 						toApplyDeploymentActionRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ApplyDeploymentAction", cause);
-			}
-		},
-		async scaleService(user, input) {
-			try {
-				return toServiceStatus(
+				),
+			),
+		scaleService: (user, input) =>
+			rpc("ScaleService", async () =>
+				toServiceStatus(
 					await platform.scaleService(
 						toScaleServiceRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ScaleService", cause);
-			}
-		},
-		async discardServiceChanges(user, input) {
-			try {
-				return toServiceRecord(
+				),
+			),
+		discardServiceChanges: (user, input) =>
+			rpc("DiscardServiceChanges", async () =>
+				toServiceRecord(
 					await platform.discardServiceChanges(
 						toDiscardServiceChangesRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("DiscardServiceChanges", cause);
-			}
-		},
-		async deleteService(user, input) {
-			try {
+				),
+			),
+		deleteService: (user, input) =>
+			rpc("DeleteService", async () => {
 				await platform.deleteService(
 					toDeleteServiceRequest(input.serviceId),
 					callOptions(user),
 				);
-			} catch (cause) {
-				throw toPlatformGatewayError("DeleteService", cause);
-			}
-		},
-		async getService(user, input) {
-			try {
-				return toServiceRecord(
+			}),
+		restoreService: (user, serviceId) =>
+			rpc("RestoreService", async () =>
+				toServiceRecord(
+					await platform.restoreService(
+						toRestoreServiceRequest(serviceId),
+						callOptions(user),
+					),
+				),
+			),
+		getService: (user, input) =>
+			rpc("GetService", async () =>
+				toServiceRecord(
 					await platform.getService(
 						toGetServiceRequest(input.serviceId),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("GetService", cause);
-			}
-		},
-		async getServiceStatus(user, input) {
-			try {
-				return toServiceStatus(
+				),
+			),
+		getServiceStatus: (user, input) =>
+			rpc("GetServiceStatus", async () =>
+				toServiceStatus(
 					await platform.getServiceStatus(
 						toGetServiceStatusRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("GetServiceStatus", cause);
-			}
-		},
-		async waitForServiceStatus(user, input) {
-			try {
-				return toIndexedServiceStatus(
+				),
+			),
+		waitForServiceStatus: (user, input) =>
+			rpc("GetServiceStatus", async () =>
+				toIndexedServiceStatus(
 					await platform.getServiceStatus(
 						toGetServiceStatusRequest(input),
 						callOptions(user),
 					),
+				),
+			),
+		listServiceSecrets: (user, serviceId) =>
+			rpc("ListServiceSecrets", async () =>
+				toServiceSecrets(
+					await platform.listServiceSecrets(
+						toListServiceSecretsRequest(serviceId),
+						callOptions(user),
+					),
+				),
+			),
+		sealServiceSecret: (user, input) =>
+			rpc("SealServiceSecret", async () =>
+				toServiceSecret(
+					await platform.sealServiceSecret(
+						toSealServiceSecretRequest(input),
+						callOptions(user),
+					),
+				),
+			),
+		deleteServiceSecret: (user, input) =>
+			rpc("DeleteServiceSecret", async () => {
+				await platform.deleteServiceSecret(
+					toDeleteServiceSecretRequest(input),
+					callOptions(user),
 				);
-			} catch (cause) {
-				throw toPlatformGatewayError("GetServiceStatus", cause);
-			}
-		},
-		async listServiceLogs(user, input) {
-			try {
-				return toServiceLogLines(
+			}),
+		listVolumes: (user, environmentId, options) =>
+			rpc("ListVolumes", async () =>
+				(
+					await platform.listVolumes(
+						toListVolumesRequest(environmentId, options?.includeDeleted),
+						callOptions(user),
+					)
+				).volumes.map(toVolume),
+			),
+		previewVolumeDeletion: (user, volumeId) =>
+			rpc("PreviewVolumeDeletion", async () =>
+				toDeletionPreview(
+					await platform.previewVolumeDeletion(
+						toPreviewVolumeDeletionRequest(volumeId),
+						callOptions(user),
+					),
+				),
+			),
+		deleteVolume: (user, input) =>
+			rpc("DeleteVolume", async () => {
+				await platform.deleteVolume(
+					toDeleteVolumeRequest(input),
+					callOptions(user),
+				);
+			}),
+		listServiceLogs: (user, input) =>
+			rpc("ListServiceLogs", async () =>
+				toServiceLogPage(
 					await platform.listServiceLogs(
 						toListServiceLogsRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListServiceLogs", cause);
-			}
-		},
-		async listServiceDeployments(user, input) {
-			try {
-				return toDeploymentRecords(
+				),
+			),
+		listServiceDeployments: (user, input) =>
+			rpc("ListServiceDeployments", async () =>
+				toDeploymentRecords(
 					await platform.listServiceDeployments(
 						toListServiceDeploymentsRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListServiceDeployments", cause);
-			}
-		},
-		async listDomainBindings(user, input) {
-			try {
-				return toDomainBindings(
+				),
+			),
+		listBuildAttempts: (user, input) =>
+			rpc("ListBuildAttempts", async () =>
+				toBuildAttempts(
+					await platform.listBuildAttempts(
+						toListBuildAttemptsRequest(input),
+						callOptions(user),
+					),
+				),
+			),
+		listDomainBindings: (user, input) =>
+			rpc("ListDomainBindings", async () =>
+				toDomainBindings(
 					(
 						await platform.listDomainBindings(
-							toListDomainBindingsRequest(input.serviceId),
+							toListDomainBindingsRequest(input),
 							callOptions(user),
 						)
 					).bindings,
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("ListDomainBindings", cause);
-			}
-		},
-		async generateDomainBinding(user, input) {
-			try {
-				return toDomainBinding(
+				),
+			),
+		generateDomainBinding: (user, input) =>
+			rpc("GenerateDomainBinding", async () =>
+				toDomainBinding(
 					await platform.generateDomainBinding(
 						toGenerateDomainBindingRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("GenerateDomainBinding", cause);
-			}
-		},
-		async createDomainBinding(user, input) {
-			try {
-				return toDomainBinding(
+				),
+			),
+		createDomainBinding: (user, input) =>
+			rpc("CreateDomainBinding", async () =>
+				toDomainBinding(
 					await platform.createDomainBinding(
 						toCreateDomainBindingRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("CreateDomainBinding", cause);
-			}
-		},
-		async updateDomainBinding(user, input) {
-			try {
-				return toDomainBinding(
+				),
+			),
+		updateDomainBinding: (user, input) =>
+			rpc("UpdateDomainBinding", async () =>
+				toDomainBinding(
 					await platform.updateDomainBinding(
 						toUpdateDomainBindingRequest(input),
 						callOptions(user),
 					),
-				);
-			} catch (cause) {
-				throw toPlatformGatewayError("UpdateDomainBinding", cause);
-			}
-		},
-		async deleteDomainBinding(user, input) {
-			try {
+				),
+			),
+		deleteDomainBinding: (user, input) =>
+			rpc("DeleteDomainBinding", async () => {
 				await platform.deleteDomainBinding(
 					toDeleteDomainBindingRequest(input.hostname),
 					callOptions(user),
 				);
-			} catch (cause) {
-				throw toPlatformGatewayError("DeleteDomainBinding", cause);
-			}
-		},
+			}),
+		restoreDomainBinding: (user, hostname) =>
+			rpc("RestoreDomainBinding", async () =>
+				toDomainBinding(
+					await platform.restoreDomainBinding(
+						toRestoreDomainBindingRequest(hostname),
+						callOptions(user),
+					),
+				),
+			),
 	};
 }
 
-export async function ingestGitHubWebhook(
+export function ingestGitHubWebhook(
 	runtime: PlatformRuntimeConfig,
 	input: IngestGitHubWebhookInput,
 ): Promise<void> {
-	try {
+	return rpc("IngestGitHubWebhook", async () => {
 		await getOpsClient(runtime).ingestGitHubWebhook(
 			toIngestGitHubWebhookRequest(input),
 		);
-	} catch (cause) {
-		throw toPlatformGatewayError("IngestGitHubWebhook", cause);
-	}
+	});
 }

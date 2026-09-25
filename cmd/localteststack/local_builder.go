@@ -11,6 +11,7 @@ import (
 	"ebof-wg-mesh/internal/builder"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/localteststack"
 )
 
 const localBuilderID = "localteststack-builder"
@@ -94,7 +95,14 @@ func resolveLocalBuilderBuildConfig() (string, string, error) {
 	const defaultBuildkitAddress = "unix:///run/buildkit/buildkitd.sock"
 
 	if binary := strings.TrimSpace(os.Getenv("BUILDER_BUILDCTL_BINARY")); binary != "" {
-		return binary, firstNonEmpty(os.Getenv("BUILDER_BUILDKIT_ADDRESS"), defaultBuildkitAddress), nil
+		if address := strings.TrimSpace(os.Getenv("BUILDER_BUILDKIT_ADDRESS")); address != "" {
+			return binary, address, nil
+		}
+		if filepath.Base(binary) == "docker" {
+			address, err := localteststack.DockerEndpoint(context.Background(), nil)
+			return binary, address, err
+		}
+		return binary, defaultBuildkitAddress, nil
 	}
 	if address := strings.TrimSpace(os.Getenv("BUILDER_BUILDKIT_ADDRESS")); address != "" {
 		return "buildctl", address, nil
@@ -103,7 +111,8 @@ func resolveLocalBuilderBuildConfig() (string, string, error) {
 		return "buildctl", defaultBuildkitAddress, nil
 	}
 	if _, err := exec.LookPath("docker"); err == nil {
-		return "docker", "docker-buildx", nil
+		address, err := localteststack.DockerEndpoint(context.Background(), nil)
+		return "docker", address, err
 	}
 	return "buildctl", defaultBuildkitAddress, nil
 }

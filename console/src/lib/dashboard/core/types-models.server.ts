@@ -5,11 +5,91 @@ export interface DashboardUser {
 
 export type DashboardProjectKind = "PROJECT_KIND_USER" | "PROJECT_KIND_MANAGED";
 
+/**
+ * A tombstoned resource. Absent while the resource is live. `inherited` means
+ * an ancestor was deleted and the timestamps identify that ancestor's
+ * tombstone.
+ */
+export interface DashboardDeletionState {
+	deletedAt?: Date;
+	deleteExpiresAt?: Date;
+	inherited: boolean;
+}
+
 export interface DashboardProject {
 	id: string;
 	name: string;
 	kind: DashboardProjectKind;
 	systemKey?: string;
+	/** Log retention in days; 0 or absent means the platform default. */
+	logRetentionDays?: number;
+	deletion?: DashboardDeletionState;
+}
+
+/** Live dependents a delete would tombstone, as previewed by the platform. */
+export interface DashboardDeletionPreview {
+	environments: Array<{ id: string; name: string; isProduction: boolean }>;
+	services: Array<{
+		id: string;
+		name: string;
+		environmentId: string;
+		environmentName: string;
+	}>;
+	domains: Array<{
+		hostname: string;
+		serviceId: string;
+		serviceName: string;
+		platformGenerated: boolean;
+	}>;
+	volumes: Array<{ id: string; name: string; environmentId: string }>;
+}
+
+export interface DashboardVolume {
+	id: string;
+	environmentId: string;
+	name: string;
+	sizeBytes: number;
+	createdAt?: Date;
+	deletion?: DashboardDeletionState;
+}
+
+export type DashboardDeletableKind = "project" | "environment" | "volume";
+
+export type DashboardRestorableKind =
+	| "project"
+	| "environment"
+	| "service"
+	| "domain";
+
+export type DashboardDeletedResourceKind = DashboardRestorableKind | "volume";
+
+/**
+ * One tombstoned resource on the recently deleted view. `id` is the hostname
+ * for domains. `deletedWith` names the nearest tombstoned ancestor: such a
+ * resource comes back with (or only after) that ancestor.
+ */
+export interface DashboardDeletedResource {
+	kind: DashboardDeletedResourceKind;
+	id: string;
+	name: string;
+	projectId: string;
+	projectName: string;
+	environmentName?: string;
+	serviceName?: string;
+	deletion: DashboardDeletionState;
+	deletedWith?: {
+		kind: DashboardDeletedResourceKind;
+		id: string;
+		name: string;
+	};
+}
+
+export interface DashboardProjectSettings {
+	project: DashboardProject;
+	environments: Array<{
+		environment: DashboardEnvironment;
+		volumes: Array<DashboardVolume>;
+	}>;
 }
 
 export interface DashboardEnvironment {
@@ -22,6 +102,7 @@ export interface DashboardEnvironment {
 	copiedFromEnvironmentId?: string;
 	createdAt?: Date;
 	updatedAt?: Date;
+	deletion?: DashboardDeletionState;
 }
 
 export type RepositoryAccessState =
@@ -103,6 +184,8 @@ export interface DashboardDeploymentStatus {
 	specRevision: number;
 	imageDigest: string;
 	rolloutGeneration: number;
+	/** The deployment reused an image built earlier instead of building. */
+	buildReused?: boolean;
 }
 
 export type DashboardServiceLogType =
@@ -307,6 +390,20 @@ export interface DashboardResolvedSourceBinding {
 	buildRecipe?: DashboardBuildRecipe;
 }
 
+/**
+ * Immutable deploy-by-digest identity. `imageRef` is what runs; a tag only
+ * appears as `sourceImageRef`, the user input it was resolved from.
+ */
+export interface DashboardBuildArtifact {
+	id: string;
+	kind: "build" | "direct_image";
+	imageRef: string;
+	sourceImageRef?: string;
+	commitSha?: string;
+	buildId?: string;
+	createdAt?: Date;
+}
+
 export interface DashboardBuildStatus {
 	buildId: string;
 	state: DashboardBuildState;
@@ -320,6 +417,31 @@ export interface DashboardBuildStatus {
 	commitAuthor?: string;
 	stages?: Array<DashboardDeploymentStage>;
 	builder?: DashboardBuilderKind;
+	/** Every claim of the build, including takeovers after worker loss. */
+	attemptCount?: number;
+	attemptLimit?: number;
+	/** Set while a running build has been asked to stop but has not yet. */
+	cancelRequestedAt?: Date;
+	artifact?: DashboardBuildArtifact;
+}
+
+export type DashboardBuildAttemptOutcome =
+	| "leased"
+	| "succeeded"
+	| "failed_terminal"
+	| "worker_lost"
+	| "cancelled"
+	| "timed_out"
+	| "superseded"
+	| (string & {});
+
+export interface DashboardBuildAttempt {
+	attemptNumber: number;
+	builderId: string;
+	startedAt?: Date;
+	finishedAt?: Date;
+	outcome: DashboardBuildAttemptOutcome;
+	detail: string;
 }
 
 export interface DashboardDeploymentStage {
@@ -388,6 +510,7 @@ export interface DashboardServiceRecord {
 	desiredReplicaCount?: number;
 	readyReplicaCount?: number;
 	placementMessage?: string;
+	deletion?: DashboardDeletionState;
 }
 
 export interface DashboardRestartObservation {
@@ -446,6 +569,8 @@ export interface DashboardIndexedServiceStatus {
 }
 
 export interface DashboardServiceLogLine {
+	/** Stable identity for ordering and deduplication across pages. */
+	lineId?: string;
 	observedAt?: Date;
 	allocationId: string;
 	agentId: string;
@@ -456,6 +581,41 @@ export interface DashboardServiceLogLine {
 	logType?: DashboardServiceLogType;
 	buildId?: string;
 	stage?: string;
+	/** Platform event name (e.g. deploy.started); empty for customer output. */
+	event?: string;
+	attributes?: Record<string, string>;
+	/** The line was cut at the 64 KiB line limit. */
+	truncated?: boolean;
+}
+
+/** A window where lines were dropped instead of delivered. */
+export interface DashboardServiceLogGap {
+	allocationId: string;
+	buildId: string;
+	logType?: DashboardServiceLogType;
+	stream: string;
+	droppedCount: number;
+	reason: string;
+	windowStart?: Date;
+	windowEnd?: Date;
+}
+
+/**
+ * One page of the log timeline. Lines and gaps paginate independently and
+ * only move toward older entries.
+ */
+export interface DashboardServiceLogPage {
+	lines: Array<DashboardServiceLogLine>;
+	nextPageToken?: string;
+	gaps: Array<DashboardServiceLogGap>;
+	nextGapPageToken?: string;
+}
+
+/** Masked existence record for a sealed secret: never its value. */
+export interface DashboardServiceSecret {
+	name: string;
+	version: number;
+	updatedAt?: Date;
 }
 
 export interface DashboardDeploymentRecord {
@@ -473,6 +633,9 @@ export interface DashboardDeploymentRecord {
 	imageDigest?: string;
 	actions?: Array<DashboardDeploymentActionRecord>;
 	variableVersions?: Record<string, number>;
+	/** Sealed secret name to the version pinned at deploy time. */
+	sealedVersions?: Record<string, number>;
+	artifact?: DashboardBuildArtifact;
 }
 
 export interface CreateServiceFastResult {
@@ -497,6 +660,7 @@ export interface DashboardDomainBinding {
 	platformGenerated: boolean;
 	ownershipState: DashboardDomainOwnershipState;
 	ownershipMessage?: string;
+	deletion?: DashboardDeletionState;
 }
 
 export interface DashboardHomeState {
@@ -512,6 +676,8 @@ export interface DashboardHomeState {
 	ingressTargetHost: string;
 	localDomainSuffix?: string;
 	project?: DashboardProject;
+	/** Every live project, for switching. */
+	projects: Array<DashboardProject>;
 	environments: Array<DashboardEnvironment>;
 	environment?: DashboardEnvironment;
 	services: Array<DashboardServiceRecord>;
@@ -547,6 +713,11 @@ export interface DashboardConfig {
 	devUsers: Array<DevLoginIdentity>;
 	sessionMaxAgeSeconds: number;
 	jwtSecret: string;
+	/**
+	 * The previous session signing secret during a rotation overlap. Tokens
+	 * verify against it after the active secret; nothing is signed with it.
+	 */
+	jwtSecretPrevious?: string;
 	githubInstallURL?: string;
 	operatorGitHubLogin?: string;
 	ingressTargetHost: string;

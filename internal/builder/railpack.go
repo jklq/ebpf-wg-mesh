@@ -24,17 +24,17 @@ func railpackPlanCommand(railpackBinary, appDir, planPath string) commandRequest
 
 func railpackBuildCommand(buildBinary, buildkitAddress, frontendImage, appDir, planDir, planPath, pushRef, metadataFile string, env []string) commandRequest {
 	if isDockerBuildBinary(buildBinary) {
-		return railpackDockerBuildxCommand(buildBinary, frontendImage, appDir, planPath, pushRef, metadataFile, env)
+		return railpackDockerBuildxCommand(buildBinary, buildkitAddress, frontendImage, appDir, planPath, pushRef, metadataFile, env)
 	}
 	return railpackBuildctlCommand(buildBinary, buildkitAddress, frontendImage, appDir, planDir, pushRef, metadataFile, env)
 }
 
-func railpackDockerBuildxCommand(dockerBinary, frontendImage, appDir, planPath, pushRef, metadataFile string, env []string) commandRequest {
+func railpackDockerBuildxCommand(dockerBinary, dockerAddress, frontendImage, appDir, planPath, pushRef, metadataFile string, env []string) commandRequest {
 	return commandRequest{
 		Binary: dockerBinary,
 		Env:    env,
 		Args: []string{
-			"buildx", "build",
+			"--host", dockerAddress, "buildx", "build",
 			"--progress=plain",
 			"--add-host", "host.docker.internal:host-gateway",
 			"--build-arg", "BUILDKIT_SYNTAX=" + frontendImage,

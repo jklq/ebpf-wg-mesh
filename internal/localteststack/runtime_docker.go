@@ -99,7 +99,7 @@ func NewDockerRuntime(cfg DockerRuntimeConfig) (*DockerRuntime, error) {
 	if err := os.MkdirAll(cfg.VolumesDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir volumes dir: %w", err)
 	}
-	if err := EnsureDockerNetwork(context.Background(), runner, cfg.DockerNetwork); err != nil {
+	if err := EnsureWorkloadDockerNetwork(context.Background(), runner, cfg.DockerNetwork); err != nil {
 		return nil, err
 	}
 	return &DockerRuntime{
@@ -406,7 +406,15 @@ func (r *DockerRuntime) ensureService(ctx context.Context, svc *agentv1.DesiredS
 		return dockerServiceStatus{}, false, err
 	}
 	if environmentNetwork != r.cfg.DockerNetwork {
-		if _, err := r.runner.Run(ctx, "network", "connect", r.cfg.DockerNetwork, containerName); err != nil {
+		connectArgs := []string{"network", "connect"}
+		if svc.GetPrivateIpv4() != "" {
+			connectArgs = append(connectArgs, "--ip", svc.GetPrivateIpv4())
+		}
+		if svc.GetPrivateIpv6() != "" {
+			connectArgs = append(connectArgs, "--ip6", svc.GetPrivateIpv6())
+		}
+		connectArgs = append(connectArgs, r.cfg.DockerNetwork, containerName)
+		if _, err := r.runner.Run(ctx, connectArgs...); err != nil {
 			_ = r.removeService(ctx, svc.GetAllocationId())
 			return dockerServiceStatus{}, false, fmt.Errorf("connect %s to ingress network: %w", containerName, err)
 		}

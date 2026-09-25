@@ -86,6 +86,9 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 			return errors.New("snapshot archive exceeds expanded size limit")
 		}
 		totalBytes += hdr.Size
+		if hdr.Typeflag == tar.TypeXGlobalHeader {
+			continue
+		}
 		name := strings.TrimSpace(hdr.Name)
 		if name == "" {
 			continue

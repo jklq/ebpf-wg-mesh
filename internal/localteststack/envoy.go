@@ -70,7 +70,7 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 	if cfg.Image == "" {
 		cfg.Image = defaultLocalIngressImage
 	}
-	if err := EnsureDockerNetwork(ctx, runner, cfg.DockerNetwork); err != nil {
+	if err := EnsureWorkloadDockerNetwork(ctx, runner, cfg.DockerNetwork); err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(cfg.StateDir, 0o755); err != nil {

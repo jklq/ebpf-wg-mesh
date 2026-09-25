@@ -161,3 +161,20 @@ overlap; see `docs/frontend-handoff/2.3b.md`.
   file and re-check.
 - Errors and `list` output carry identifiers and public material only.
   Private bytes cross only the `export` boundary for HMAC scopes.
+
+## Dashboard rotation
+
+For dashboard sessions, set `DASHBOARD_JWT_SECRET_PREVIOUS` to the old
+`DASHBOARD_JWT_SECRET` and replace `DASHBOARD_JWT_SECRET` with a new secret.
+Restart the console. New sessions are signed with the active secret; existing
+sessions verify against the active key and then the previous key. Keep this
+pair for 31 days, then clear `DASHBOARD_JWT_SECRET_PREVIOUS` and restart.
+Both values follow the same secret loading rules. Startup rejects equal keys.
+
+For user assertions, rotate `user-assertion` with the control-plane
+CLI described above, then immediately swap
+`DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET` and restart the console. The
+control plane accepts the previous assertion key for five minutes. The console
+only signs assertions, so it needs no previous assertion key. Before restarting,
+check that the new assertion secret differs from both active and previous
+session secrets; startup validates the new pair as well.

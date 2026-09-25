@@ -329,6 +329,7 @@ func toProtoDeploymentStatus(rec *deliverycore.DeploymentRecord) *platformv1.Dep
 		SpecRevision:      rec.SpecRevision,
 		ImageDigest:       rec.ImageDigest,
 		RolloutGeneration: rec.RolloutGeneration,
+		BuildReused:       rec.BuildReused(),
 	}
 }
 

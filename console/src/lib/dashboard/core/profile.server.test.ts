@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { DashboardConfigError } from "#/lib/dashboard/core/types.server";
 import {
+	assertDistinctDashboardSecrets,
 	assertProductionDashboardConfig,
 	formatDashboardStartupContract,
 	parseRuntimeProfile,
@@ -107,4 +108,30 @@ describe("dashboard production profile", () => {
 			assertProductionDashboardConfig({ ...validProduction, ...override }),
 		).toThrow(want);
 	});
+});
+
+it("rejects colliding rotation keys and validates the previous production key", () => {
+	const keys = {
+		...validProduction,
+		githubTokenEncryptionKeyValue: "separate-key",
+		githubTokenEncryptionKey: Buffer.alloc(32, 7),
+	};
+	expect(() =>
+		assertDistinctDashboardSecrets({
+			...keys,
+			jwtSecretPrevious: keys.jwtSecret,
+		}),
+	).toThrow("distinct");
+	expect(() =>
+		assertDistinctDashboardSecrets({
+			...keys,
+			jwtSecretPrevious: keys.userAssertionSecret,
+		}),
+	).toThrow("distinct");
+	expect(() =>
+		assertProductionDashboardConfig({
+			...validProduction,
+			jwtSecretPrevious: "dashboard-test-secret",
+		}),
+	).toThrow();
 });

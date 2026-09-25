@@ -117,6 +117,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("pick registry port: %v", err)
 	}
+	// Each ephemeral run recreates its owned bridge with the workload IPAM pools.
+	if err := localteststack.RemoveDockerNetwork(ctx, localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
+		return fmt.Errorf("reset local workload network: %w", err)
+	}
 	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
 		StateDir:      filepath.Join(stateDir, "local-ingress"),
 		DockerNetwork: stackCfg.DockerNetwork,
@@ -133,6 +137,11 @@ func run() error {
 	defer func() {
 		if err := ingress.Close(); err != nil {
 			log.Printf("stop managed local ingress: %v", err)
+		}
+		// Agent shutdown deliberately preserves workloads; an ephemeral stack owns
+		// and removes those containers before dropping their ingress bridge.
+		if _, err := localteststack.CleanupStaleLocalteststackContainers(context.Background(), localteststack.ExecDockerRunner{}); err != nil {
+			log.Printf("remove local workload containers: %v", err)
 		}
 		if err := localteststack.RemoveDockerNetwork(context.Background(), localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
 			log.Printf("remove local docker network: %v", err)
@@ -223,7 +232,8 @@ func run() error {
 			InterfaceName:              "wg0",
 			ListenPort:                 51820,
 			NetworkCIDR:                "fd00:44::/64",
-			WorkloadPoolCIDR:           "fd00:200::/48",
+			WorkloadPoolCIDR:           localteststack.LocalWorkloadIPv6Pool,
+			WorkloadIPv4PoolCIDR:       localteststack.LocalWorkloadIPv4Pool,
 			PersistentKeepaliveSeconds: 5,
 		},
 	}

@@ -41,56 +41,59 @@ describe("deployments panel inline failure", () => {
 		serverFns.fetchServiceDeployments
 			.mockReset()
 			.mockResolvedValue([failedDeployment()]);
-		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([
-			{
-				observedAt: new Date("2026-08-13T10:00:00Z"),
-				allocationId: "",
-				agentId: "builder-1",
-				stream: "stdout",
-				rolloutGeneration: 1,
-				sequence: 1,
-				line: "#6 [builder 5/7] RUN go build -o /out/worker ./cmd/worker",
-				logType: "build",
-				buildId: "build-1",
-				stage: "build",
-			},
-			{
-				observedAt: new Date("2026-08-13T10:00:01Z"),
-				allocationId: "",
-				agentId: "builder-1",
-				stream: "stdout",
-				rolloutGeneration: 1,
-				sequence: 2,
-				line: "#6 0.412 config: reading environment",
-				logType: "build",
-				buildId: "build-1",
-				stage: "build",
-			},
-			{
-				observedAt: new Date("2026-08-13T10:00:02Z"),
-				allocationId: "",
-				agentId: "builder-1",
-				stream: "stderr",
-				rolloutGeneration: 1,
-				sequence: 3,
-				line: "#6 0.418 fatal: STRIPE_KEY is required at build time",
-				logType: "build",
-				buildId: "build-1",
-				stage: "build",
-			},
-			{
-				observedAt: new Date("2026-08-13T10:00:03Z"),
-				allocationId: "",
-				agentId: "builder-1",
-				stream: "stderr",
-				rolloutGeneration: 1,
-				sequence: 4,
-				line: "#6 ERROR: process did not complete successfully: exit code 1",
-				logType: "build",
-				buildId: "build-1",
-				stage: "build",
-			},
-		]);
+		serverFns.fetchServiceLogs.mockReset().mockResolvedValue({
+			lines: [
+				{
+					observedAt: new Date("2026-08-13T10:00:00Z"),
+					allocationId: "",
+					agentId: "builder-1",
+					stream: "stdout",
+					rolloutGeneration: 1,
+					sequence: 1,
+					line: "#6 [builder 5/7] RUN go build -o /out/worker ./cmd/worker",
+					logType: "build",
+					buildId: "build-1",
+					stage: "build",
+				},
+				{
+					observedAt: new Date("2026-08-13T10:00:01Z"),
+					allocationId: "",
+					agentId: "builder-1",
+					stream: "stdout",
+					rolloutGeneration: 1,
+					sequence: 2,
+					line: "#6 0.412 config: reading environment",
+					logType: "build",
+					buildId: "build-1",
+					stage: "build",
+				},
+				{
+					observedAt: new Date("2026-08-13T10:00:02Z"),
+					allocationId: "",
+					agentId: "builder-1",
+					stream: "stderr",
+					rolloutGeneration: 1,
+					sequence: 3,
+					line: "#6 0.418 fatal: STRIPE_KEY is required at build time",
+					logType: "build",
+					buildId: "build-1",
+					stage: "build",
+				},
+				{
+					observedAt: new Date("2026-08-13T10:00:03Z"),
+					allocationId: "",
+					agentId: "builder-1",
+					stream: "stderr",
+					rolloutGeneration: 1,
+					sequence: 4,
+					line: "#6 ERROR: process did not complete successfully: exit code 1",
+					logType: "build",
+					buildId: "build-1",
+					stage: "build",
+				},
+			],
+			gaps: [],
+		});
 		serverFns.doApplyDeploymentAction.mockReset().mockResolvedValue({
 			service: failedService(),
 		});
@@ -209,7 +212,9 @@ describe("deployments panel live rollouts", () => {
 				activeDeployment(),
 				completedDeployment(),
 			]);
-		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([]);
+		serverFns.fetchServiceLogs
+			.mockReset()
+			.mockResolvedValue({ lines: [], gaps: [] });
 		serverFns.doApplyDeploymentAction.mockReset();
 	});
 
@@ -562,7 +567,9 @@ describe("deployments panel source revision banner", () => {
 
 	beforeEach(() => {
 		serverFns.fetchServiceDeployments.mockReset().mockResolvedValue([]);
-		serverFns.fetchServiceLogs.mockReset().mockResolvedValue([]);
+		serverFns.fetchServiceLogs
+			.mockReset()
+			.mockResolvedValue({ lines: [], gaps: [] });
 		serverFns.doReleaseEnvironment.mockReset().mockResolvedValue([]);
 	});
 

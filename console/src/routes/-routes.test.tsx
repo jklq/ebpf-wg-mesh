@@ -276,6 +276,8 @@ function homeState(
 			hostname: "",
 		},
 		repositories: [],
+		projects: [],
+
 		environments: [],
 		services: [],
 		servicesRevision: 0,

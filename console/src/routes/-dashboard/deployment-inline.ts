@@ -191,6 +191,8 @@ export function deploymentBadgeLabel(
 	state: DashboardDeploymentState | undefined,
 	build?: DashboardBuildStatus,
 ): string {
+	if (build?.state === "BUILD_STATE_RUNNING" && build.cancelRequestedAt)
+		return "Cancelling";
 	switch (state) {
 		case "DEPLOYMENT_STATE_STAGED":
 			return "Staged";

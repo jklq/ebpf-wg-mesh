@@ -131,7 +131,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	assertArgContains(t, runArgs, "--network", runtime.environmentNetworkName("environment-1"))
 	assertArgContains(t, runArgs, "--network-alias", "accurate-reflection.mesh.internal")
 	assertArgContains(t, runArgs, "--network-alias", "accurate-reflection")
-	if !runner.hasCommand("network", "connect", "mesh-local", "localteststack-svc-alloc-1") {
+	if !runner.hasCommand("network", "connect", "--ip", "10.200.0.2", "--ip6", "fd00:200::2", "mesh-local", "localteststack-svc-alloc-1") {
 		t.Fatalf("expected ingress network connection, got commands %+v", runner.commands)
 	}
 	assertArgContains(t, runArgs, "--mount", "type=bind,src="+filepath.Join(dir, "volumes", "vol-1")+",dst="+localRuntimeVolumeMount)

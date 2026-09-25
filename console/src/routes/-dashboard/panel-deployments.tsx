@@ -136,6 +136,19 @@ export function PanelDeployments({
 			action: DashboardDeploymentAction,
 			allocationId?: string,
 		) => {
+			if (
+				action === "DEPLOYMENT_ACTION_ROLLBACK" ||
+				action === "DEPLOYMENT_ACTION_EXACT_REDEPLOY"
+			) {
+				const image =
+					record.artifact?.imageRef ?? record.build?.artifact?.imageRef;
+				if (
+					!window.confirm(
+						`${action === "DEPLOYMENT_ACTION_ROLLBACK" ? "Roll back" : "Redeploy"}${image ? ` using ${image}` : " this deployment"}? Pinned secret versions will be restored.`,
+					)
+				)
+					return;
+			}
 			const requestKey = `${record.id}:${action}:${allocationId ?? "all"}`;
 			let idempotencyKey = actionKeys.current.get(requestKey);
 			if (!idempotencyKey) {
@@ -341,6 +354,7 @@ export function PanelDeployments({
 							<div className="flex flex-col">
 								{previousDeployments.map((entry) => (
 									<DeploymentHistoryRow
+										serviceId={service.id}
 										key={entry.id}
 										build={entry.build}
 										allocation={entry.allocation}

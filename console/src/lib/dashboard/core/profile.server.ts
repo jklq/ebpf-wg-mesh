@@ -1,3 +1,6 @@
+import { Buffer } from "node:buffer";
+import { timingSafeEqual } from "node:crypto";
+
 import { DashboardConfigError } from "#/lib/dashboard/core/types.server";
 
 export type RuntimeProfile = "development" | "production";
@@ -27,6 +30,7 @@ export function assertProductionDashboardConfig(input: {
 	localDomainSuffix?: string;
 	localIngressBaseURL?: string;
 	jwtSecret: string;
+	jwtSecretPrevious?: string;
 	userAssertionSecret: string;
 	databaseURL: string;
 	controlPlaneAddress: string;
@@ -61,10 +65,77 @@ export function assertProductionDashboardConfig(input: {
 		input.controlPlaneAddress,
 	);
 	assertProductionSecret("DASHBOARD_JWT_SECRET", input.jwtSecret);
+	if (input.jwtSecretPrevious !== undefined) {
+		assertProductionSecret(
+			"DASHBOARD_JWT_SECRET_PREVIOUS",
+			input.jwtSecretPrevious,
+		);
+	}
 	assertProductionSecret(
 		"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET",
 		input.userAssertionSecret,
 	);
+}
+
+/**
+ * Refuses secret sets where one secret could stand in for another. During a
+ * rotation this checks the new pair: the active and previous session secrets
+ * must differ, and neither may equal the user-assertion secret or the GitHub
+ * token encryption key.
+ */
+export function assertDistinctDashboardSecrets(input: {
+	jwtSecret: string;
+	jwtSecretPrevious?: string;
+	userAssertionSecret: string;
+	githubTokenEncryptionKeyValue: string;
+	githubTokenEncryptionKey: Buffer;
+}): void {
+	const {
+		jwtSecret,
+		jwtSecretPrevious,
+		userAssertionSecret,
+		githubTokenEncryptionKeyValue,
+		githubTokenEncryptionKey,
+	} = input;
+	if (Buffer.byteLength(userAssertionSecret, "utf8") < 32) {
+		throw new DashboardConfigError({
+			message:
+				"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET must be at least 32 bytes",
+		});
+	}
+	if (jwtSecretPrevious === jwtSecret) {
+		throw new DashboardConfigError({
+			message:
+				"DASHBOARD_JWT_SECRET_PREVIOUS must be distinct from DASHBOARD_JWT_SECRET",
+		});
+	}
+	const sessionSecrets =
+		jwtSecretPrevious === undefined
+			? [jwtSecret]
+			: [jwtSecret, jwtSecretPrevious];
+	if (sessionSecrets.includes(userAssertionSecret)) {
+		throw new DashboardConfigError({
+			message:
+				"DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET must be distinct from DASHBOARD_JWT_SECRET and DASHBOARD_JWT_SECRET_PREVIOUS",
+		});
+	}
+	if (
+		[...sessionSecrets, userAssertionSecret].some(
+			(secret) =>
+				githubTokenEncryptionKeyValue === secret ||
+				keyMatchesSecret(githubTokenEncryptionKey, secret),
+		)
+	) {
+		throw new DashboardConfigError({
+			message:
+				"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY must be distinct from dashboard JWT and user-assertion secrets",
+		});
+	}
+}
+
+function keyMatchesSecret(key: Buffer, secret: string): boolean {
+	const candidate = Buffer.from(secret, "utf8");
+	return candidate.length === key.length && timingSafeEqual(key, candidate);
 }
 
 export function usesSecureCookies(publicBaseURL: string): boolean {

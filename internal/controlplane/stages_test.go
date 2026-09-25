@@ -155,3 +155,54 @@ func TestDeploymentStagesSurfacesFailedHealthProbe(t *testing.T) {
 		t.Fatalf("post-deploy stage did not surface probe failure: %+v", got)
 	}
 }
+
+func TestDeploymentStagesSkipBuildForReusedImage(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	dep := deliverycore.DeploymentRecord{
+		ID:                "dep-2",
+		ServiceID:         "service-1",
+		BuildID:           "build-1",
+		RolloutGeneration: 4,
+		State:             deliverycore.DeploymentStateActive,
+		ReasonCode:        "DEPLOYMENT_ACTIVE",
+		CreatedAt:         now.Add(-time.Minute),
+		UpdatedAt:         now,
+		Transitions: []deliverycore.DeploymentTransitionRecord{
+			{ToState: deliverycore.DeploymentStateStaged, ReasonCode: "BUILD_REUSED", OccurredAt: now.Add(-time.Minute)},
+			{ToState: deliverycore.DeploymentStateScheduling, ReasonCode: "BUILD_REUSED", OccurredAt: now.Add(-50 * time.Second)},
+			{ToState: deliverycore.DeploymentStateActive, ReasonCode: "DEPLOYMENT_ACTIVE", OccurredAt: now},
+		},
+	}
+	service := deliverycore.ServiceRecord{ID: "service-1", Spec: repositoryServiceSpec(nil, nil), LatestDeployment: &dep}
+	build := &deliverycore.BuildRunRecord{
+		ID:         "build-1",
+		State:      deliverycore.BuildStateSucceeded,
+		CommitSHA:  "0123456789abcdef",
+		QueuedAt:   now.Add(-time.Hour),
+		FinishedAt: sql.NullTime{Time: now.Add(-50 * time.Minute), Valid: true},
+	}
+
+	if !dep.BuildReused() {
+		t.Fatal("expected BUILD_REUSED creation transition to mark the deployment as reused")
+	}
+	if !toProtoDeploymentStatus(&dep).GetBuildReused() {
+		t.Fatal("expected deployment status to expose build_reused")
+	}
+	var buildStage *platformv1.DeploymentStage
+	for _, stage := range deploymentStages(service, build) {
+		if stage.GetKey() == logs.StageBuild {
+			buildStage = stage
+		}
+	}
+	if buildStage == nil {
+		t.Fatal("expected a build stage")
+	}
+	if buildStage.GetState() != platformv1.DeploymentStageState_DEPLOYMENT_STAGE_STATE_SKIPPED {
+		t.Fatalf("expected reused build stage to be skipped, got %v", buildStage.GetState())
+	}
+	if buildStage.GetDetail() != "Reusing image built for commit 0123456" {
+		t.Fatalf("unexpected reused build detail %q", buildStage.GetDetail())
+	}
+}

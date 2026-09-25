@@ -2,7 +2,6 @@ import { defineConfig, devices } from "@playwright/test";
 
 const dashboardBaseURL =
   process.env.DASHBOARD_E2E_BASE_URL ?? "http://platform.localtest.me:8080";
-const dashboardReadyURL = new URL("/healthz", dashboardBaseURL).toString();
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -23,7 +22,9 @@ export default defineConfig({
           LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL: "1",
           LOCALTESTSTACK_CONSOLE_BIND_ADDRESS: "0.0.0.0",
         },
-        url: dashboardReadyURL,
+        // Health is available before the tunnel and product fixture are ready.
+        wait: { stderr: /ephemeral stack ready/ },
+        gracefulShutdown: { signal: "SIGTERM", timeout: 30_000 },
         reuseExistingServer: false,
         timeout: 300_000,
       },

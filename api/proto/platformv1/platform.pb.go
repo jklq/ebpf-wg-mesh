@@ -2752,8 +2752,12 @@ type DeploymentStatus struct {
 	SpecRevision      int64                  `protobuf:"varint,8,opt,name=spec_revision,json=specRevision,proto3" json:"spec_revision,omitempty"`
 	ImageDigest       string                 `protobuf:"bytes,9,opt,name=image_digest,json=imageDigest,proto3" json:"image_digest,omitempty"`
 	RolloutGeneration int64                  `protobuf:"varint,10,opt,name=rollout_generation,json=rolloutGeneration,proto3" json:"rollout_generation,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// True when the deployment reused an image built for an earlier deployment
+	// of the same commit instead of running a build (reason BUILD_REUSED).
+	// reason_code only carries that reason until the rollout moves on.
+	BuildReused   bool `protobuf:"varint,11,opt,name=build_reused,json=buildReused,proto3" json:"build_reused,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DeploymentStatus) Reset() {
@@ -2854,6 +2858,13 @@ func (x *DeploymentStatus) GetRolloutGeneration() int64 {
 		return x.RolloutGeneration
 	}
 	return 0
+}
+
+func (x *DeploymentStatus) GetBuildReused() bool {
+	if x != nil {
+		return x.BuildReused
+	}
+	return false
 }
 
 type DeploymentStage struct {
@@ -10514,7 +10525,7 @@ const file_platform_proto_rawDesc = "" +
 	"\rallocation_id\x18\x05 \x01(\tR\fallocationId\x12/\n" +
 	"\x14requested_by_user_id\x18\x06 \x01(\tR\x11requestedByUserId\x129\n" +
 	"\n" +
-	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xbc\x03\n" +
+	"created_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"\xdf\x03\n" +
 	"\x10DeploymentStatus\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x122\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1c.platform.v1.DeploymentStateR\x05state\x12C\n" +
@@ -10528,7 +10539,8 @@ const file_platform_proto_rawDesc = "" +
 	"\rspec_revision\x18\b \x01(\x03R\fspecRevision\x12!\n" +
 	"\fimage_digest\x18\t \x01(\tR\vimageDigest\x12-\n" +
 	"\x12rollout_generation\x18\n" +
-	" \x01(\x03R\x11rolloutGeneration\"\x82\x02\n" +
+	" \x01(\x03R\x11rolloutGeneration\x12!\n" +
+	"\fbuild_reused\x18\v \x01(\bR\vbuildReused\"\x82\x02\n" +
 	"\x0fDeploymentStage\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05label\x18\x02 \x01(\tR\x05label\x12\x16\n" +

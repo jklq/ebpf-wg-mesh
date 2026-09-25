@@ -4,9 +4,13 @@ import {
 	type DashboardAgentEnrollment,
 	type DashboardAgentLifecycleState,
 	type DashboardAllocationStatus,
+	type DashboardBuildArtifact,
+	type DashboardBuildAttempt,
 	type DashboardBuildRecipe,
 	type DashboardBuildState,
 	type DashboardBuildStatus,
+	type DashboardDeletionPreview,
+	type DashboardDeletionState,
 	type DashboardDeploymentAction,
 	type DashboardDeploymentActionRecord,
 	type DashboardDeploymentCauseKind,
@@ -30,9 +34,12 @@ import {
 	type DashboardRollingStrategy,
 	type DashboardRuntimePort,
 	type DashboardRuntimeSpec,
+	type DashboardServiceLogGap,
 	type DashboardServiceLogLine,
+	type DashboardServiceLogPage,
 	type DashboardServiceLogType,
 	type DashboardServiceRecord,
+	type DashboardServiceSecret,
 	type DashboardServiceSourceSummary,
 	type DashboardServiceSpec,
 	type DashboardServiceStatus,
@@ -40,6 +47,7 @@ import {
 	type DashboardSourceSpec,
 	type DashboardUnappliedChange,
 	type DashboardUnappliedChangeAction,
+	type DashboardVolume,
 	DEFAULT_SERVICE_CPU_MILLIS,
 	DEFAULT_SERVICE_MEMORY_MEBIBYTES,
 } from "#/lib/dashboard/core/types.server";
@@ -49,6 +57,8 @@ import {
 	AgentLifecycleStateSchema,
 	type AllocationStatus,
 	ApplyDeploymentActionRequestSchema,
+	type BuildArtifact,
+	type BuildAttempt,
 	BuilderKindSchema,
 	type BuildRecipe,
 	BuildStateSchema,
@@ -61,7 +71,12 @@ import {
 	CreateServiceRequestSchema,
 	DeleteDomainBindingRequestSchema,
 	DeleteEnvironmentRequestSchema,
+	DeleteProjectRequestSchema,
 	DeleteServiceRequestSchema,
+	DeleteServiceSecretRequestSchema,
+	DeleteVolumeRequestSchema,
+	type DeletionPreview,
+	type DeletionState,
 	type DeploymentActionRecord,
 	DeploymentActionSchema,
 	DeploymentCauseKindSchema,
@@ -78,6 +93,7 @@ import {
 	type Fleet,
 	GenerateDomainBindingRequestSchema,
 	GetEnvironmentRequestSchema,
+	GetProjectRequestSchema,
 	GetServiceRequestSchema,
 	type HealthCheck,
 	HealthCheck_Type,
@@ -85,6 +101,8 @@ import {
 	IngestGitHubWebhookRequestSchema,
 	InspectSourceRequestSchema,
 	LinkGitHubRepositoryRequestSchema,
+	ListBuildAttemptsRequestSchema,
+	type ListBuildAttemptsResponse,
 	ListDomainBindingsRequestSchema,
 	ListEnvironmentsRequestSchema,
 	ListProjectsRequestSchema,
@@ -93,7 +111,14 @@ import {
 	type ListServiceLogsRequest,
 	ListServiceLogsRequestSchema,
 	type ListServiceLogsResponse,
+	ListServiceSecretsRequestSchema,
+	type ListServiceSecretsResponse,
+	ListServicesRequestSchema,
 	type ListServicesResponse,
+	ListVolumesRequestSchema,
+	PreviewEnvironmentDeletionRequestSchema,
+	PreviewProjectDeletionRequestSchema,
+	PreviewVolumeDeletionRequestSchema,
 	type Project,
 	ProjectKind,
 	ProjectKindSchema,
@@ -103,13 +128,21 @@ import {
 	RestartCauseSchema,
 	type RestartObservation,
 	RestartPolicySchema,
+	RestoreDomainBindingRequestSchema,
+	RestoreEnvironmentRequestSchema,
+	RestoreProjectRequestSchema,
+	RestoreServiceRequestSchema,
 	ScaleServiceRequestSchema,
+	SealServiceSecretRequestSchema,
+	type SealServiceSecretResponse,
 	type Service,
+	type ServiceLogGap,
 	type ServiceLogLine,
 	ServiceLogTypeSchema,
 	type ServiceRestart,
 	type ServiceRuntime,
 	type ServiceRuntimePort,
+	type ServiceSecretMetadata,
 	type ServiceSourceSpec,
 	type ServiceSourceSummary,
 	type ServiceSpec,
@@ -124,8 +157,10 @@ import {
 	UpdateAgentRequestSchema,
 	UpdateDomainBindingRequestSchema,
 	UpdateEnvironmentAutoDeployRequestSchema,
+	UpdateProjectLogRetentionRequestSchema,
 	type UpdateServiceRequest,
 	UpdateServiceRequestSchema,
+	type Volume,
 } from "#/lib/platform-gen/platform_pb";
 import { protoTimestampToDate } from "#/lib/time";
 
@@ -186,6 +221,61 @@ export function toProject(project: Project): DashboardProject {
 							);
 						})(),
 		systemKey: project.systemKey || undefined,
+		logRetentionDays: project.logRetentionDays,
+		deletion: toDeletionState(project.deletion),
+	};
+}
+
+export function toDeletionState(
+	deletion: DeletionState | undefined,
+): DashboardDeletionState | undefined {
+	if (!deletion) {
+		return undefined;
+	}
+	return {
+		deletedAt: optionalDate(deletion.deletedAt),
+		deleteExpiresAt: optionalDate(deletion.deleteExpiresAt),
+		inherited: deletion.inherited,
+	};
+}
+
+export function toDeletionPreview(
+	preview: DeletionPreview,
+): DashboardDeletionPreview {
+	return {
+		environments: preview.environments.map((entry) => ({
+			id: entry.id,
+			name: entry.name,
+			isProduction: entry.isProduction,
+		})),
+		services: preview.services.map((entry) => ({
+			id: entry.id,
+			name: entry.name,
+			environmentId: entry.environmentId,
+			environmentName: entry.environmentName,
+		})),
+		domains: preview.domains.map((entry) => ({
+			hostname: entry.hostname,
+			serviceId: entry.serviceId,
+			serviceName: entry.serviceName,
+			platformGenerated: entry.platformGenerated,
+		})),
+		volumes: preview.volumes.map((entry) => ({
+			id: entry.id,
+			name: entry.name,
+			environmentId: entry.environmentId,
+		})),
+	};
+}
+
+export function toVolume(volume: Volume): DashboardVolume {
+	return {
+		id: requireString(volume.id, "volume.id"),
+		environmentId: requireString(volume.environmentId, "volume.environmentId"),
+		name: requireString(volume.name, "volume.name"),
+		sizeBytes: safeNumber(volume.sizeBytes),
+		createdAt: optionalDate(volume.createdAt),
+		deletion: toDeletionState(volume.deletion),
 	};
 }
 
@@ -207,6 +297,7 @@ export function toEnvironment(environment: Environment): DashboardEnvironment {
 		copiedFromEnvironmentId: environment.copiedFromEnvironmentId || undefined,
 		createdAt: optionalDate(environment.createdAt),
 		updatedAt: optionalDate(environment.updatedAt),
+		deletion: toDeletionState(environment.deletion),
 	};
 }
 
@@ -283,6 +374,7 @@ export function toDomainBinding(
 			binding.ownershipState,
 		) as DashboardDomainOwnershipState,
 		ownershipMessage: binding.ownershipMessage || undefined,
+		deletion: toDeletionState(binding.deletion),
 	};
 }
 
@@ -317,6 +409,7 @@ export function toServiceRecord(service: Service): DashboardServiceRecord {
 		desiredReplicaCount: safeNumber(service.desiredReplicaCount, 1),
 		readyReplicaCount: safeNumber(service.readyReplicaCount),
 		placementMessage: service.placementMessage || undefined,
+		deletion: toDeletionState(service.deletion),
 	};
 }
 
@@ -357,7 +450,45 @@ export function toBuildStatus(
 		commitAuthor: build.commitAuthor || undefined,
 		stages: build.stages.map(toDeploymentStage),
 		...(builder ? { builder } : {}),
+		attemptCount: safeNumber(build.attemptCount),
+		attemptLimit: safeNumber(build.attemptLimit),
+		cancelRequestedAt: optionalDate(build.cancelRequestedAt),
+		artifact: toBuildArtifact(build.artifact),
 	};
+}
+
+export function toBuildArtifact(
+	artifact: BuildArtifact | undefined,
+): DashboardBuildArtifact | undefined {
+	if (!artifact?.id || !artifact.imageRef) {
+		return undefined;
+	}
+	return {
+		id: artifact.id,
+		kind: artifact.kind === "direct_image" ? "direct_image" : "build",
+		imageRef: artifact.imageRef,
+		sourceImageRef: artifact.sourceImageRef || undefined,
+		commitSha: artifact.commitSha || undefined,
+		buildId: artifact.buildId || undefined,
+		createdAt: optionalDate(artifact.createdAt),
+	};
+}
+
+function toBuildAttempt(attempt: BuildAttempt): DashboardBuildAttempt {
+	return {
+		attemptNumber: safeNumber(attempt.attemptNumber),
+		builderId: attempt.builderId,
+		startedAt: optionalDate(attempt.startedAt),
+		finishedAt: optionalDate(attempt.finishedAt),
+		outcome: attempt.outcome,
+		detail: attempt.detail,
+	};
+}
+
+export function toBuildAttempts(
+	response: ListBuildAttemptsResponse,
+): DashboardBuildAttempt[] {
+	return response.attempts.map(toBuildAttempt);
 }
 
 function toDeploymentStage(stage: DeploymentStage): DashboardDeploymentStage {
@@ -397,6 +528,7 @@ export function toDeploymentStatus(
 		specRevision: safeNumber(status.specRevision),
 		imageDigest: status.imageDigest,
 		rolloutGeneration: safeNumber(status.rolloutGeneration),
+		buildReused: status.buildReused,
 	};
 }
 
@@ -429,6 +561,13 @@ export function toDeploymentRecord(
 				safeNumber(version),
 			]),
 		),
+		sealedVersions: Object.fromEntries(
+			Object.entries(record.sealedVersions).map(([name, version]) => [
+				name,
+				safeNumber(version),
+			]),
+		),
+		artifact: toBuildArtifact(record.artifact),
 	};
 }
 
@@ -724,6 +863,7 @@ export function toServiceLogLine(
 	line: ServiceLogLine,
 ): DashboardServiceLogLine {
 	return {
+		lineId: line.lineId || undefined,
 		observedAt: optionalDate(line.observedAt),
 		allocationId: line.allocationId,
 		agentId: line.agentId,
@@ -737,13 +877,56 @@ export function toServiceLogLine(
 		) as DashboardServiceLogType,
 		buildId: line.buildId || undefined,
 		stage: line.stage || undefined,
+		event: line.event || undefined,
+		attributes:
+			Object.keys(line.attributes).length > 0
+				? { ...line.attributes }
+				: undefined,
+		truncated: line.truncated || undefined,
 	};
 }
 
-export function toServiceLogLines(
+function toServiceLogGap(gap: ServiceLogGap): DashboardServiceLogGap {
+	return {
+		allocationId: gap.allocationId,
+		buildId: gap.buildId,
+		logType: gap.logType
+			? (enumName(ServiceLogTypeSchema, gap.logType) as DashboardServiceLogType)
+			: undefined,
+		stream: gap.stream,
+		droppedCount: safeNumber(gap.droppedCount),
+		reason: gap.reason,
+		windowStart: optionalDate(gap.windowStart),
+		windowEnd: optionalDate(gap.windowEnd),
+	};
+}
+
+export function toServiceLogPage(
 	response: ListServiceLogsResponse,
-): DashboardServiceLogLine[] {
-	return response.lines.map(toServiceLogLine);
+): DashboardServiceLogPage {
+	return {
+		lines: response.lines.map(toServiceLogLine),
+		nextPageToken: response.nextPageToken || undefined,
+		gaps: response.gaps.map(toServiceLogGap),
+		nextGapPageToken: response.nextGapPageToken || undefined,
+	};
+}
+
+export function toServiceSecret(
+	secret: ServiceSecretMetadata | SealServiceSecretResponse,
+): DashboardServiceSecret {
+	return {
+		name: requireString(secret.name, "service secret.name"),
+		version: safeNumber(secret.version),
+		updatedAt:
+			"updatedAt" in secret ? optionalDate(secret.updatedAt) : undefined,
+	};
+}
+
+export function toServiceSecrets(
+	response: ListServiceSecretsResponse,
+): DashboardServiceSecret[] {
+	return response.secrets.map(toServiceSecret);
 }
 
 export function toDeploymentRecords(
@@ -831,6 +1014,8 @@ export function toListServiceLogsRequest(input: {
 	search?: string;
 	startTime?: Date;
 	endTime?: Date;
+	pageToken?: string;
+	gapPageToken?: string;
 }): ListServiceLogsRequest {
 	return create(ListServiceLogsRequestSchema, {
 		serviceId: input.serviceId,
@@ -843,6 +1028,8 @@ export function toListServiceLogsRequest(input: {
 			: 0,
 		buildId: input.buildId,
 		search: input.search,
+		pageToken: input.pageToken,
+		gapPageToken: input.gapPageToken,
 	});
 }
 
@@ -858,8 +1045,37 @@ export function toListProjectsRequest(includeDeleted = false) {
 	return create(ListProjectsRequestSchema, { includeDeleted });
 }
 
-export function toListEnvironmentsRequest(projectId: string) {
-	return create(ListEnvironmentsRequestSchema, { projectId });
+export function toGetProjectRequest(projectId: string) {
+	return create(GetProjectRequestSchema, { projectId });
+}
+
+export function toUpdateProjectLogRetentionRequest(input: {
+	projectId: string;
+	logRetentionDays: number;
+}) {
+	return create(UpdateProjectLogRetentionRequestSchema, input);
+}
+
+export function toPreviewProjectDeletionRequest(projectId: string) {
+	return create(PreviewProjectDeletionRequestSchema, { projectId });
+}
+
+export function toDeleteProjectRequest(input: {
+	projectId: string;
+	confirmationName: string;
+}) {
+	return create(DeleteProjectRequestSchema, input);
+}
+
+export function toRestoreProjectRequest(projectId: string) {
+	return create(RestoreProjectRequestSchema, { projectId });
+}
+
+export function toListEnvironmentsRequest(
+	projectId: string,
+	includeDeleted = false,
+) {
+	return create(ListEnvironmentsRequestSchema, { projectId, includeDeleted });
 }
 
 export function toGetEnvironmentRequest(environmentId: string) {
@@ -895,8 +1111,19 @@ export function toUpdateEnvironmentAutoDeployRequest(input: {
 	return create(UpdateEnvironmentAutoDeployRequestSchema, input);
 }
 
-export function toDeleteEnvironmentRequest(environmentId: string) {
-	return create(DeleteEnvironmentRequestSchema, { environmentId });
+export function toPreviewEnvironmentDeletionRequest(environmentId: string) {
+	return create(PreviewEnvironmentDeletionRequestSchema, { environmentId });
+}
+
+export function toDeleteEnvironmentRequest(input: {
+	environmentId: string;
+	confirmationName?: string;
+}) {
+	return create(DeleteEnvironmentRequestSchema, input);
+}
+
+export function toRestoreEnvironmentRequest(environmentId: string) {
+	return create(RestoreEnvironmentRequestSchema, { environmentId });
 }
 
 export function toReleaseEnvironmentRequest(environmentId: string) {
@@ -939,6 +1166,54 @@ export function toDeleteServiceRequest(serviceId: string) {
 	return create(DeleteServiceRequestSchema, { serviceId });
 }
 
+export function toRestoreServiceRequest(serviceId: string) {
+	return create(RestoreServiceRequestSchema, { serviceId });
+}
+
+export function toListServiceSecretsRequest(serviceId: string) {
+	return create(ListServiceSecretsRequestSchema, { serviceId });
+}
+
+export function toSealServiceSecretRequest(input: {
+	serviceId: string;
+	name: string;
+	value: string;
+}) {
+	return create(SealServiceSecretRequestSchema, input);
+}
+
+export function toDeleteServiceSecretRequest(input: {
+	serviceId: string;
+	name: string;
+}) {
+	return create(DeleteServiceSecretRequestSchema, input);
+}
+
+export function toListVolumesRequest(
+	environmentId: string,
+	includeDeleted = false,
+) {
+	return create(ListVolumesRequestSchema, { environmentId, includeDeleted });
+}
+
+export function toPreviewVolumeDeletionRequest(volumeId: string) {
+	return create(PreviewVolumeDeletionRequestSchema, { volumeId });
+}
+
+export function toDeleteVolumeRequest(input: {
+	volumeId: string;
+	confirmationName: string;
+}) {
+	return create(DeleteVolumeRequestSchema, input);
+}
+
+export function toListBuildAttemptsRequest(input: {
+	serviceId: string;
+	buildId: string;
+}) {
+	return create(ListBuildAttemptsRequestSchema, input);
+}
+
 export function toGetServiceRequest(serviceId: string) {
 	return create(GetServiceRequestSchema, { serviceId });
 }
@@ -950,8 +1225,11 @@ export function toListServiceDeploymentsRequest(input: {
 	return create(ListServiceDeploymentsRequestSchema, input);
 }
 
-export function toListDomainBindingsRequest(serviceId: string) {
-	return create(ListDomainBindingsRequestSchema, { serviceId });
+export function toListDomainBindingsRequest(input: {
+	serviceId: string;
+	includeDeleted?: boolean;
+}) {
+	return create(ListDomainBindingsRequestSchema, input);
 }
 
 export function toGenerateDomainBindingRequest(input: {
@@ -986,17 +1264,23 @@ export function toDeleteDomainBindingRequest(hostname: string) {
 	return create(DeleteDomainBindingRequestSchema, { hostname });
 }
 
+export function toRestoreDomainBindingRequest(hostname: string) {
+	return create(RestoreDomainBindingRequestSchema, { hostname });
+}
+
 export function toListServicesRequest(input: {
 	environmentId: string;
 	waitIndex?: number;
 	waitTimeoutSeconds?: number;
+	includeDeleted?: boolean;
 }) {
-	return {
+	return create(ListServicesRequestSchema, {
 		environmentId: input.environmentId,
 		waitIndex:
 			input.waitIndex === undefined ? undefined : BigInt(input.waitIndex),
 		waitTimeoutSeconds: input.waitTimeoutSeconds,
-	};
+		includeDeleted: input.includeDeleted,
+	});
 }
 
 export function toGetServiceStatusRequest(input: {

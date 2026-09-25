@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"time"
 )
 
 type DockerRunner interface {
@@ -67,7 +69,24 @@ func redactEnvAssignment(assignment string) string {
 	return redactedValue
 }
 
+// These pools match the single local agent's control-plane address space.
+// Docker allocates infrastructure addresses at the end; workloads attach with
+// their reserved addresses so ingress can use the normal production endpoints.
+const LocalWorkloadIPv4Pool = "10.200.0.0/16"
+const LocalWorkloadIPv6Pool = "fd00:200::/48"
+
+func EnsureWorkloadDockerNetwork(ctx context.Context, runner DockerRunner, name string) error {
+	return ensureDockerNetwork(ctx, runner, name, []string{
+		"--subnet", LocalWorkloadIPv4Pool, "--ip-range", "10.200.255.0/24", "--gateway", "10.200.255.1",
+		"--ipv6", "--subnet", LocalWorkloadIPv6Pool, "--ip-range", "fd00:200:0:ffff::/64", "--gateway", "fd00:200:0:ffff::1",
+	})
+}
+
 func EnsureDockerNetwork(ctx context.Context, runner DockerRunner, name string) error {
+	return ensureDockerNetwork(ctx, runner, name, nil)
+}
+
+func ensureDockerNetwork(ctx context.Context, runner DockerRunner, name string, options []string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("docker network name is required")
@@ -78,7 +97,7 @@ func EnsureDockerNetwork(ctx context.Context, runner DockerRunner, name string) 
 	if _, err := runner.Run(ctx, "network", "inspect", name); err == nil {
 		return nil
 	}
-	if _, err := runner.Run(ctx, "network", "create", name); err != nil {
+	if _, err := runner.Run(ctx, append(append([]string{"network", "create"}, options...), name)...); err != nil {
 		if _, inspectErr := runner.Run(ctx, "network", "inspect", name); inspectErr == nil {
 			return nil
 		}
@@ -201,4 +220,28 @@ func isDockerMissingObjectError(err error) bool {
 		strings.Contains(message, "no such container") ||
 		strings.Contains(message, "no such network") ||
 		strings.Contains(message, "not found")
+}
+
+// DockerEndpoint resolves host configuration before build children receive their
+// isolated environment and scoped registry credentials.
+func DockerEndpoint(ctx context.Context, runner DockerRunner) (string, error) {
+	if os.Getenv("DOCKER_CONTEXT") == "" {
+		if address := strings.TrimSpace(os.Getenv("DOCKER_HOST")); address != "" {
+			return address, nil
+		}
+	}
+	if runner == nil {
+		runner = ExecDockerRunner{}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	out, err := runner.Run(ctx, "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")
+	if err != nil {
+		return "", fmt.Errorf("resolve local Docker endpoint: %w", err)
+	}
+	address := strings.TrimSpace(string(out))
+	if address == "" {
+		return "", fmt.Errorf("local Docker context has no endpoint")
+	}
+	return address, nil
 }

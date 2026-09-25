@@ -1,6 +1,6 @@
 import {
 	AlertCircle,
-	Layers,
+	History,
 	LogOut,
 	RefreshCw,
 	Server,
@@ -12,6 +12,7 @@ import { btnGhost } from "#/lib/ui-classes";
 
 import { DeployButton } from "./deploy-button";
 import { EnvironmentSwitcher } from "./environment-switcher";
+import { ProjectSwitcher } from "./project-switcher";
 
 export function Topbar({
 	state,
@@ -41,10 +42,7 @@ export function Topbar({
 
 			{state.project && (
 				<div className="flex min-w-0 items-center gap-2">
-					<span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-[1px] border border-line bg-surface-raised px-2 py-[3px] font-condensed text-[11px] font-semibold uppercase tracking-[0.06em] text-muted">
-						<Layers size={12} />
-						{state.project.name}
-					</span>
+					<ProjectSwitcher state={state} />
 					{state.environment && (
 						<>
 							<span className="text-sm text-dim">/</span>
@@ -73,6 +71,16 @@ export function Topbar({
 			)}
 
 			<div className="flex-1" />
+
+			{!state.project && (
+				<a
+					href="/deleted"
+					className={cn(btnGhost, "gap-1 text-xs")}
+					title="Recently deleted"
+				>
+					<History size={13} /> Recently deleted
+				</a>
+			)}
 
 			{state.canManageFleet && (
 				<a

@@ -16,7 +16,7 @@ import {
 	unappliedSurface,
 } from "#/lib/ui-classes";
 
-import { ConfirmDeleteDialog } from "./confirm-delete-dialog";
+import { DeleteDialog } from "./delete-dialog";
 import { ReplicaScaleControls } from "./replica-scale";
 import { RepositoryPicker } from "./repository-picker";
 import { doDeleteService, doUpdateService } from "./server-fns";
@@ -467,8 +467,8 @@ export function PanelSettings({
 								Delete this service
 							</strong>
 							<span className="block text-xs leading-normal text-muted">
-								Removes {service.name} from this environment. This cannot be
-								undone.
+								Stops {service.name} and removes it from this environment. You
+								can restore it from Recently deleted.
 							</span>
 						</div>
 						<button
@@ -487,9 +487,11 @@ export function PanelSettings({
 			</PanelSection>
 
 			{confirmingDelete && (
-				<ConfirmDeleteDialog
+				<DeleteDialog
 					title="Delete Service"
 					name={service.name}
+					recovery="restorable"
+					requireName={false}
 					busy={deleting}
 					error={deleteError}
 					description={
