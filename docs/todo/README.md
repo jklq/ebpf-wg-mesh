@@ -90,7 +90,7 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 | 3.6 | Metrics graphs and log search (3.2) | M | [03](03-operate-multi-tenant.md#36-service-and-environment-observability-views) |
 | 2.14 | Core onboarding path (8.9) | M | [02](02-host-untrusted-code.md#214-core-onboarding-path) |
 
-Several landed or in-review backends have no console yet, and some of that UI is a feature users need, not polish: the log viewer ([2.9 handoff](../frontend-handoff/2.9.md)) and build cancellation/progress ([2.5 handoff](../frontend-handoff/2.5.md)). Treat those handoffs as part of this tier. The same goes for [1.8](../frontend-handoff/1.8.md) delete/restore and [2.3a](../frontend-handoff/2.3a.md) secrets. Operator-only handoffs (2.1, 2.4b, and the operator half of 2.5) wait for 3.10.
+Several landed or in-review backends have no console yet, and some of that UI is a feature users need, not polish: the log viewer ([2.9 handoff](../frontend-handoff/2.9.md)), build cancellation/progress ([2.5 handoff](../frontend-handoff/2.5.md)), and digest-pinned image identity ([2.6 handoff](../frontend-handoff/2.6.md)). Treat those handoffs as part of this tier. The same goes for [1.8](../frontend-handoff/1.8.md) delete/restore and [2.3a](../frontend-handoff/2.3a.md) secrets. Operator-only handoffs (2.1, 2.4b, and the operator half of 2.5) wait for 3.10.
 
 ### Alongside: host untrusted code safely
 
