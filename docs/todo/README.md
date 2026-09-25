@@ -16,7 +16,7 @@ Files are slices of that queue, not sequential gates. Category is a tag, not a m
 
 **Numbers are names, not an order.** `2.6` does not have to follow `2.5`. The only real constraints are the `Depends on:` line on each item and the [product gates](#product-gates). Read the queue as a set with a dependency graph over it.
 
-**Items are not the same size.** The `Size` column is a rough order of magnitude, not an estimate. `2.4b` and `5.2` are each plausibly ten times `1.11`. Planning that treats the table as uniform units will be wrong by a lot.
+**Items are not the same size.** The `Size` column is a rough order of magnitude, not an estimate. `2.4b` is plausibly ten times `1.2`. Planning that treats the table as uniform units will be wrong by a lot.
 
 **Test lists are the hidden cost.** Most prompts close with six to ten named scenarios. Summed across the backlog that is plausibly more work than the features. When implementing, split each prompt's list into the cases that must run in CI forever and the cases that are one-time proof — write both, keep the first, and record the second in the item's notes rather than the suite. A permanent test for every adversarial scenario in this directory is not affordable and not the point.
 
@@ -45,31 +45,28 @@ Gates are about a running product, not about emptying a folder.
 
 A known person can connect a typical GitHub repository, set secrets, deploy, and reach a process that bound `0.0.0.0` or `::`. Status, health, crashes, and timestamps are truthful. Auto-deploy can be turned off. Delete does not instantly destroy recoverable resources.
 
-Requires the open items in [01-running-service.md](01-running-service.md).
+Requires [01-running-service.md](01-running-service.md). Only 1.2 (secrets in the console) is still open.
 
 ### Design-partner beta
 
-That loop survives hosting someone else’s code.
+Someone else can run a **real app** on the platform, and hosting their code does not endanger the platform. A real app is a web service plus a database plus a worker, on the partner's own domain over HTTPS, with secrets, migrations, and a volume that survives redeploys (not node loss; no backups, the same as Railway's baseline).
 
-The gate is **not** all of 02. It is 2.2, 2.4a, 2.4b, 2.6, 2.7a, 2.9, and 2.15 — marked ★ in the queue. Source that does not live on one node's disk, a build boundary that holds against hostile code, digest-pinned runtime identity, an ingress that is not a single Caddy, logs that outlive a ClickHouse blip, and a container that cannot reach the platform's own control surface. No important persistent customer data on platform volumes. No GA promise.
+The gate is the ★ items in the queue:
 
-The rest of 02 — the durable-work consolidation, key lifecycle, build fairness, the per-node sync rewrite, the topology harness, onboarding polish — is real work that a design partner will never see. It has to happen; it does not have to happen first.
+- **Features:** 1.2 secrets, 2.8 domains and TLS, 4.2 reference variables, 6.1 basic volumes.
+- **Safety:** 2.4a, 2.4b, 2.6, 2.7a, 2.9, 2.15. These cover source that does not live on one node's disk, a build boundary that holds against hostile code, digest-pinned runtime identity, an ingress that is not a single Caddy, logs that outlive a ClickHouse blip, and a container that cannot reach the platform's own control surface.
 
-Requires [01-running-service.md](01-running-service.md) and the ★ items in [02-host-untrusted-code.md](02-host-untrusted-code.md).
+No GA promise. The rest of 02 (durable-work consolidation, key lifecycle, the per-node sync rewrite, onboarding polish) is real work a design partner will never see. It has to happen; it does not have to happen first.
 
-### Multi-tenant stateless
+### Multi-tenant
 
-More than one team can share the installation with RBAC, quotas, audit, metrics, explicit HTTP exposure, and an API/CLI. Platform backup exists.
+More than one team can share the installation. It needs workspaces with members, API tokens and a CLI, workspace limits, audit, deploy notifications, and platform backup.
 
-Requires [03-operate-multi-tenant.md](03-operate-multi-tenant.md).
+Requires the "More than one team" section of the queue.
 
-### Paid stateless
+### Paid
 
-Plans, metering, spend limits, abuse controls, support access, and the GA proof in [07-ga-proof.md](07-ga-proof.md). Developer-surface items in [04-developer-surface.md](04-developer-surface.md) may land earlier whenever they help.
-
-### Stateful production
-
-Advertise databases or durable customer workloads only after [06-stateful.md](06-stateful.md) and the recovery drills in 7.5. A local bind mount is not a production volume.
+Usage metering, Stripe plans with a hard spend limit, security scanning in CI, and an external penetration test. The GA-proof program (topology harness, fault and load suites, SLOs, DR drills) is parked in [freeze.md](freeze.md) and unparks when paid GA is actually scheduled.
 
 ## Work queue
 
@@ -77,11 +74,25 @@ Landed work is recorded in [landed.md](landed.md), parked work in [freeze.md](fr
 
 ★ marks the [design-partner beta](#design-partner-beta) minimum. `Size` is an order of magnitude (S/M/L/XL), not an estimate.
 
-### Next: the running service is real
+**Priority is features a user touches.** When choosing between items with met dependencies, prefer the one that lets someone run an app they could not run before. Anything that is a platform-category checkbox (operator dashboards, programs, proofs, second sources of truth for existing settings) belongs in [freeze.md](freeze.md) until a real user needs it.
 
-Done. 1.1, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, and 1.11 landed; see [landed.md](landed.md#11-dual-stack-workload-overlay), [landed.md](landed.md#14-crash-evidence-in-the-console), [landed.md](landed.md#15-truthful-time-and-status), [landed.md](landed.md#16-railpack-as-the-default-builder), [landed.md](landed.md#17-auto-deploy-onoff-per-environment), [landed.md](landed.md#18-safe-deletion), [landed.md](landed.md#19-credentials-out-of-process-arguments), and [landed.md](landed.md#111-bounded-ephemeral-disk). 1.2 is parked; see [freeze.md](freeze.md#12-encrypted-sealed-secrets).
+### Now: a real app runs on it
 
-### Then: host untrusted code without a shared disk
+| # | Item | Size | File |
+| --- | --- | --- | --- |
+| ★ 1.2 | Sealed secrets in the console (2.4) | S | [01](01-running-service.md#12-sealed-secrets-in-the-console) |
+| ★ 6.1 | Basic volumes (7.1, 7.2) | M | [06](06-stateful.md#61-basic-volumes) |
+| ★ 2.8 | Custom domains and TLS (5.3) | M | [02](02-host-untrusted-code.md#28-domain-and-certificate-lifecycle) |
+| ★ 4.2 | Reference variables (8.7) | M | [04](04-developer-surface.md#42-reference-variables) |
+| 4.4 | Pre-deploy jobs (8.6) | M | [04](04-developer-surface.md#44-pre-deploy-jobs) |
+| 3.7 | Public HTTP and TCP exposure (5.4) | M | [03](03-operate-multi-tenant.md#37-explicit-http-exposure) |
+| 3.5 | Workload metrics (3.1) | M | [03](03-operate-multi-tenant.md#35-workload-and-platform-metrics) |
+| 3.6 | Metrics graphs and log search (3.2) | M | [03](03-operate-multi-tenant.md#36-service-and-environment-observability-views) |
+| 2.14 | Core onboarding path (8.9) | M | [02](02-host-untrusted-code.md#214-core-onboarding-path) |
+
+Several landed or in-review backends have no console yet, and some of that UI is a feature users need, not polish: the log viewer ([2.9 handoff](../frontend-handoff/2.9.md)) and build cancellation/progress ([2.5 handoff](../frontend-handoff/2.5.md)). Treat those handoffs as part of this tier. The same goes for [1.8](../frontend-handoff/1.8.md) delete/restore and [2.3a](../frontend-handoff/2.3a.md) secrets. Operator-only handoffs (2.1, 2.4b, and the operator half of 2.5) wait for 3.10.
+
+### Alongside: host untrusted code safely
 
 | # | Item | Size | File |
 | --- | --- | --- | --- |
@@ -92,17 +103,14 @@ Done. 1.1, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, and 1.11 landed; see [landed.md](landed
 | 2.5 | Build leases and cancellation (4.3) | M | [02](02-host-untrusted-code.md#25-build-leases-and-cancellation) |
 | ★ 2.6 | Deploy-by-digest (4.5) | S | [02](02-host-untrusted-code.md#26-deploy-by-digest) |
 | ★ 2.7a | xDS control plane and Caddy cutover (5.2) | L | [02](02-host-untrusted-code.md#27a-xds-control-plane-and-caddy-cutover) |
-| 2.7b | Envoy fleet and availability policy (5.2) | M | [02](02-host-untrusted-code.md#27b-envoy-fleet-and-availability-policy) |
-| 2.8 | Domain and certificate lifecycle (5.3) | L | [02](02-host-untrusted-code.md#28-domain-and-certificate-lifecycle) |
+| 2.7b | Envoy fleet (5.2) | M | [02](02-host-untrusted-code.md#27b-envoy-fleet-and-availability-policy) |
 | ★ 2.9 | Durable bounded logs (3.3) | M | [02](02-host-untrusted-code.md#29-durable-bounded-logs) |
 | 2.10 | Incremental per-node allocation sync | M | [02](02-host-untrusted-code.md#210-incremental-per-node-allocation-sync) |
 | 2.11 | Scoped identity policy | M | [02](02-host-untrusted-code.md#211-scoped-identity-policy) |
 | 2.12 | Environment-scoped WireGuard peering | M | [02](02-host-untrusted-code.md#212-environment-scoped-wireguard-peering) |
-| 2.13 | Production-like topology harness (9.1) | L | [02](02-host-untrusted-code.md#213-production-like-topology-harness) |
-| 2.14 | Core onboarding path (8.9) | M | [02](02-host-untrusted-code.md#214-core-onboarding-path) |
 | ★ 2.15 | Workload egress guardrails (5.5) | M | [02](02-host-untrusted-code.md#215-workload-egress-guardrails) |
 
-2.2 landed; see [landed.md](landed.md#22-source-object-storage).
+2.2 landed; see [landed.md](landed.md#22-source-object-storage). Most of this table is already in review. What is open is 2.6, 2.7b, 2.15, and the partial 2.11/2.12.
 
 2.10–2.12 delete more code than they add and get harder the longer other code assumes the full snapshot and full mesh. They are not ★, but do not let them drift to the end.
 
@@ -110,55 +118,23 @@ Done. 1.1, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, and 1.11 landed; see [landed.md](landed
 
 | # | Item | Size | File |
 | --- | --- | --- | --- |
-| 3.1 | Organizations and RBAC (6.1) | L | [03](03-operate-multi-tenant.md#31-organizations-and-rbac) |
-| 3.2 | Scoped API credentials and sessions (6.3) | M | [03](03-operate-multi-tenant.md#32-scoped-api-credentials-and-sessions) |
-| 3.3 | Resource quotas (6.4) | L | [03](03-operate-multi-tenant.md#33-resource-quotas) |
-| 3.4 | Audit history (6.2) | M | [03](03-operate-multi-tenant.md#34-audit-history) |
-| 3.5 | Workload and platform metrics (3.1) | L | [03](03-operate-multi-tenant.md#35-workload-and-platform-metrics) |
-| 3.6 | Service and environment observability views (3.2) | L | [03](03-operate-multi-tenant.md#36-service-and-environment-observability-views) |
-| 3.7 | Explicit HTTP exposure (5.4) | M | [03](03-operate-multi-tenant.md#37-explicit-http-exposure) |
-| 3.9 | Monitors, notifications, webhooks (3.4) | L | [03](03-operate-multi-tenant.md#39-monitors-notifications-and-webhooks) |
-| 3.10 | Operator control room (3.5) | M | [03](03-operate-multi-tenant.md#310-operator-control-room) |
-| 3.11 | Platform backup and restore (2.5) | L | [03](03-operate-multi-tenant.md#311-platform-backup-and-restore) |
-| 3.12 | Public customer API (8.1) | L | [03](03-operate-multi-tenant.md#312-public-customer-api) |
-| 3.13 | Platform CLI (8.2) | L | [03](03-operate-multi-tenant.md#313-platform-cli) |
-| 3.14 | Tenant-safe build cache (4.4) | M | [03](03-operate-multi-tenant.md#314-tenant-safe-build-cache) |
-| 3.15 | Image and artifact lifecycle (4.6) | L | [03](03-operate-multi-tenant.md#315-image-and-artifact-lifecycle) |
-| 3.16 | Production registry contract (4.7) | M | [03](03-operate-multi-tenant.md#316-production-registry-contract) |
-| 3.17 | Failure and recovery scenarios (9.2) | L | [03](03-operate-multi-tenant.md#317-failure-and-recovery-scenarios) |
-| 3.18 | Load, scale, and noisy-neighbor limits (9.3) | L | [03](03-operate-multi-tenant.md#318-load-scale-and-noisy-neighbor-limits) |
-| 3.19 | Build admission and fairness (4.3) | M | [03](03-operate-multi-tenant.md#319-build-admission-and-fairness) |
+| 3.1 | Workspaces and members (6.1) | M | [03](03-operate-multi-tenant.md#31-organizations-and-rbac) |
+| 3.2 | API tokens (6.3) | S | [03](03-operate-multi-tenant.md#32-scoped-api-credentials-and-sessions) |
+| 3.13 | Platform CLI (8.2) | M | [03](03-operate-multi-tenant.md#313-platform-cli) |
+| 3.3 | Workspace limits (6.4) | S | [03](03-operate-multi-tenant.md#33-resource-quotas) |
+| 3.4 | Audit history (6.2) | S | [03](03-operate-multi-tenant.md#34-audit-history) |
+| 3.9 | Deploy notifications and webhooks (3.4) | M | [03](03-operate-multi-tenant.md#39-monitors-notifications-and-webhooks) |
+| 3.14 | Per-project build cache (4.4) | M | [03](03-operate-multi-tenant.md#314-tenant-safe-build-cache) |
+| 3.11 | Platform backup and restore (2.5) | S | [03](03-operate-multi-tenant.md#311-platform-backup-and-restore) |
 
-### Convenience on a working substrate
-
-Do not postpone 1.x or 2.x for these.
+### Then: charge for it
 
 | # | Item | Size | File |
 | --- | --- | --- | --- |
-| 4.1 | Repository configuration as code (8.3) | M | [04](04-developer-surface.md#41-repository-configuration-as-code) |
-| 4.2 | Reference variables (8.7) | L | [04](04-developer-surface.md#42-reference-variables) |
-| 4.3 | Monorepo watch paths (8.5) | M | [04](04-developer-surface.md#43-monorepo-watch-paths) |
-| 4.4 | Pre-deploy jobs (8.6) | M | [04](04-developer-surface.md#44-pre-deploy-jobs) |
-| 4.5 | Pull-request environments (8.4) | L | [04](04-developer-surface.md#45-pull-request-environments) |
-
-### Charge and govern
-
-| # | Item | Size | File |
-| --- | --- | --- | --- |
-| 5.1 | VictoriaMetrics billing meter (6.5) | L | [05](05-commercial.md#51-victoriametrics-billing-meter) |
-| 5.2 | Plans, credits, and spend controls (6.6) | XL | [05](05-commercial.md#52-plans-credits-and-spend-controls) |
-| 5.3 | Fair-use and abuse safeguards (6.7) | L | [05](05-commercial.md#53-fair-use-and-abuse-safeguards) |
-| 5.4 | Account retention and closure (6.8) | L | [05](05-commercial.md#54-account-retention-and-closure) |
+| 5.1 | Usage meter (6.5) | M | [05](05-commercial.md#51-victoriametrics-billing-meter) |
+| 5.2 | Plans and spend limit (6.6) | L | [05](05-commercial.md#52-plans-credits-and-spend-controls) |
 | 7.1 | Security checks in CI (9.5) | M | [07](07-ga-proof.md#71-security-checks-in-ci) |
-| 7.2 | SLOs and incident response (9.6) | L | [07](07-ga-proof.md#72-slos-and-incident-response) |
-| 7.3 | Version skew and cutover (9.7) | M | [07](07-ga-proof.md#73-version-skew-and-cutover) |
 
-### Last: stateful production
+### Parked
 
-| # | Item | Size | File |
-| --- | --- | --- | --- |
-| 6.1 | Volume provider contract (7.1) | L | [06](06-stateful.md#61-volume-provider-contract) |
-| 6.2 | Attachment, mount paths, and resize (7.2) | L | [06](06-stateful.md#62-attachment-mount-paths-and-resize) |
-| 6.3 | Volume snapshots, backups, and restores (7.3) | L | [06](06-stateful.md#63-volume-snapshots-backups-and-restores) |
-| 6.5 | Storage monitoring and safety rails (7.5) | M | [06](06-stateful.md#65-storage-monitoring-and-safety-rails) |
-| 7.5 | Continuous backup and disaster-recovery drills (9.4) | L | [07](07-ga-proof.md#75-continuous-backup-and-disaster-recovery-drills) |
+2.13, 3.10, 3.12, 3.15–3.19, 4.1, 4.3, 4.5, 5.3, 5.4, 6.3, 6.4, 6.5, 7.2, 7.3, and 7.5. Each entry in [freeze.md](freeze.md) records why it was parked and what unparks it.

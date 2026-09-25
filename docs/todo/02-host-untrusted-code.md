@@ -4,9 +4,9 @@ These items make the dogfood loop safe to offer a design partner. Control-plane 
 
 Do not wait to empty this file before starting 3.x items that have no dependency here. Do wait to invite a second tenant’s source onto a shared builder until 2.4b exists.
 
-Not every item here is partner-visible. The **design-partner minimum** is 2.2, 2.4a, 2.4b, 2.6, 2.7a, 2.9, and 2.15 — source that does not live on one disk, someone else’s code that does not run in your host process, digest-pinned images, an ingress that is not one Caddy, logs that survive a backend blip, and a container that cannot reach the platform’s own control surface. Everything else in this file is real work that no design partner will ever see; schedule it accordingly.
+Not every item here is partner-visible. The **design-partner safety minimum** here is 2.2, 2.4a, 2.4b, 2.6, 2.7a, 2.9, and 2.15 — source that does not live on one disk, someone else’s code that does not run in your host process, digest-pinned images, an ingress that is not one Caddy, logs that survive a backend blip, and a container that cannot reach the platform’s own control surface. 2.8 is also in the beta gate, as a feature: a partner's app needs its own domain over HTTPS. Everything else in this file is real work that no design partner will ever see; schedule it accordingly.
 
-Extend the VM harness as each item needs a new topology component; 2.13 is done when the listed topology exists.
+Extend the VM harness as each item needs a new topology component. The full distributed topology (2.13) is parked; see [freeze.md](freeze.md#213-production-like-topology-harness).
 
 ## 2.1 Durable-work package
 
@@ -54,7 +54,7 @@ Design-partner minimum. This item creates the seam and the policy; 2.4b makes th
 
 Implemented: `BuildExecutor` interface (`Execute`, `RecoverStaleWorkspaces`, `Name`, `Isolating`) with the development executor as the only implementation. Every build receives an explicit `ExecutionSpec`: re-verified read-only source snapshot, isolated writable workspace (repo/scratch/tmp/plan), BuildKit endpoint, push credentials scoped to exactly one repository, CPU/memory/disk/PID/time limits, restricted network policy, and a content-addressed cache policy (mode `none` today; `ContentCacheKey` derives keys purely from snapshot digest, recipe, and toolchain). Build children get an explicit environment (no ambient inheritance; no proxy vars, no docker contexts), prlimit-backed process limits and process-group cancellation on Linux, and a per-execution docker config holding exactly one auth entry. Workspaces carry an owner marker, are destroyed and verified on completion/cancellation/timeout, and stale markers from dead workers are reclaimed at startup. Builder config, flags, and env vars carry executor/limits/network with defaults and validation; the startup contract prints `executor_development` plus `executor_non_isolating`, and production logs a non-isolation warning. Tests cover limit enforcement (CPU/memory/file-size/process-count/disk/timeout), credential scope, timeout, cancellation with process-tree kill, cleanup after worker death, snapshot tampering, and ambient-environment scrubbing.
 
-Remaining: the hardened backend itself is 2.4b (production still warns rather than refuses the development executor; network CIDRs are validated inputs, not data-plane enforcement; the BuildKit daemon stays shared host state). Operator visibility into executor selection is deferred; see `docs/frontend-handoff/2.4a.md`.
+Remaining: the hardened backend itself is 2.4b (production still warns rather than refuses the development executor; network CIDRs are validated inputs, not data-plane enforcement; the BuildKit daemon stays shared host state). Operator visibility into executor selection is deferred; see `docs/frontend-handoff/2.4b.md`.
 
 Prompt:
 
@@ -86,7 +86,7 @@ Was: 4.3
 Status: in review
 Depends on: 2.1 if build claims move onto the shared durable-work package; otherwise keep the existing build-lease table and converge later.
 
-Weighted fairness and quota-driven admission moved to 3.19. There is no second tenant to be fair between yet.
+Weighted fairness and quota-driven admission moved to 3.19, which is parked. There is no second tenant to be fair between yet.
 
 Implemented: the CockroachDB build queue is a durable lease-based scheduler on the existing `build_runs` table (owner epoch, lease expiry with heartbeat, attempt count/limit, cancel request, claim deadline). Claim, heartbeat, and completion are compare-and-swaps on (builder, epoch); superseded owners get `ErrBuildLeaseLost`. Cancellation of a queued build finishes it immediately; cancellation of a running build is cooperative and the late completion converges to cancelled without publishing an image or scheduling a rollout. Worker loss requeues with bounded retries; retry exhaustion, build timeout, and maximum queue age are terminal. Global and per-project concurrent-build caps (projects proxy for workspaces until 3.1), `build_attempts` history, `BuildStatus` lease/cancel progress fields, and operator drain/pause controls (`ListBuilders`/`SetBuilderDrain`, `GetBuildScheduler`/`SetBuildSchedulerPaused`) with Connect RPCs. Tests cover worker death and takeover, retry exhaustion, split-ownership fencing, late completion after cancellation, cap release on every terminal path, timeout, queue age, drain, and pause.
 
@@ -124,9 +124,9 @@ Depends on: none. One Caddy is currently a product outage and the wrong apply pr
 
 Design-partner minimum.
 
-Implemented: `internal/controlplane/xds` is the xDS authority. `Build` derives LDS/CDS/EDS/RDS deterministically from healthy backends plus static routes; the version is the hex SHA-256 of the canonical inputs so racing replicas converge on one publication-row winner via compare-and-swap. Every replica serves the durable publication from its own xDS socket. Only ready, non-draining `serving` allocations are routed; draining flips the allocation out of EDS before the container is destroyed. Subscriber apply state is durable (`xds_node_observations`); a withdrawn allocation keeps running until every known Envoy has fully applied the current snapshot. Caddy is removed from production, localteststack, and the VM harness. See `docs/frontend-handoff/2.7a.md` for the full API surface.
+Implemented: `internal/controlplane/xds` is the xDS authority. `Build` derives LDS/CDS/EDS/RDS deterministically from healthy backends plus static routes; the version is the hex SHA-256 of the canonical inputs so racing replicas converge on one publication-row winner via compare-and-swap. Every replica serves the durable publication from its own xDS socket. Only ready, non-draining `serving` allocations are routed; draining flips the allocation out of EDS before the container is destroyed. Subscriber apply state is durable (`xds_node_observations`); a withdrawn allocation keeps running until every known Envoy has fully applied the current snapshot. Caddy is removed from production, localteststack, and the VM harness.
 
-Remaining: SDS is served but empty until 2.8 pushes certificates (Envoy serves plaintext until then). The xDS transport is plaintext without client auth and must be network-isolated until mTLS lands with the fleet work. A rollout waits for every known Envoy to apply; an Envoy that never returns keeps retaining its withdrawn allocations until 2.7b adds a configured availability policy (fleet tracking, per-instance health, and config diff also stay 2.7b). No console ingress-status UI and no status RPC; see `docs/frontend-handoff/2.7a.md`.
+Remaining: SDS is served but empty until 2.8 pushes certificates (Envoy serves plaintext until then). The xDS transport is plaintext without client auth and must be network-isolated until mTLS lands with the fleet work. A rollout waits for every known Envoy to apply; an Envoy that never returns keeps retaining its withdrawn allocations until 2.7b drops dead instances after a timeout. Fleet tracking and per-instance liveness are also 2.7b. There is no ingress-status UI or status RPC.
 
 Prompt:
 
@@ -143,7 +143,7 @@ Depends on: 2.7a
 Prompt:
 
 ```text
-Run a fleet of interchangeable Envoy instances against the xDS authority from 2.7a. Track per-instance applied revision and health, and define a configured availability policy that makes ingress readiness depend on enough instances sitting at the current revision rather than on any single instance. Provide per-instance status and a config diff without secrets. One instance being down, stale, or NACKing must not withdraw healthy traffic or block a rollout that the policy still satisfies. Extend the VM harness to at least two instances. Failure tests: one Envoy down, one Envoy stuck on an old revision, an instance rejoining behind the current revision, and a rollout that cannot satisfy the availability policy.
+Run two or more interchangeable Envoy instances against the xDS authority from 2.7a. Track each instance's applied revision and liveness. A rollout proceeds once every live instance has applied it; an instance that is down or NACKing is excluded after a timeout and reported, so one bad Envoy cannot block rollouts or keep withdrawn allocations alive forever. Extend the VM harness to two instances. Test one Envoy down, one stuck on an old revision, and one rejoining behind. Do not add a configurable availability-policy language or a per-instance config diff.
 ```
 
 ## 2.8 Domain and certificate lifecycle
@@ -152,10 +152,12 @@ Was: 5.3
 Status: open
 Depends on: 1.8 so deleted hostnames cannot be rebound during grace. 2.7a so certs are pushed to Envoy via SDS rather than Caddy automatic HTTPS.
 
+Design-partner minimum. Envoy serves plaintext until this lands; nobody runs a real app without their own domain over HTTPS.
+
 Prompt:
 
 ```text
-Turn domain bindings into an explicit verification and certificate lifecycle. Persist requested, verification-pending, verified, certificate-pending, active, degraded, and removing states with safe reason codes and timestamps. Prevent hostname takeover by proving DNS ownership according to the domain type, recheck ownership periodically, and avoid serving a new customer’s workload on a hostname retained from a deleted project. Issue certificates through a narrow ACME provider contract (not Caddy); push materials to Envoy over SDS with rate-limit awareness, renewal monitoring, challenge cleanup, and last-known-good certificate behavior. Show exact DNS records, observed values, certificate expiry, and actionable errors in the console. Generated domains must be collision-resistant and reserved transactionally. Test conflicting claims, dangling CNAMEs, rebinding after deletion grace, issuance failure, renewal failure, and certificate expiry alerts.
+Let a user attach a custom domain to a service: show the exact CNAME (or A/AAAA for apex) record to create, verify it by DNS lookup, issue a Let's Encrypt certificate through a narrow ACME client (HTTP-01 is enough), push it to Envoy over SDS, and renew automatically before expiry. States are pending-dns, issuing, active, and failed, with a readable error. A hostname can be bound by one service at a time, and a hostname from a deleted project stays reserved through the 1.8 grace. Generated platform subdomains get a wildcard certificate. Test a wrong DNS record, a conflicting claim, issuance failure with retry, renewal, and rebinding after deletion grace. Do not add periodic ownership re-verification, DNS-01, or expiry alerting in this item.
 ```
 
 ## 2.9 Durable bounded logs
@@ -225,20 +227,6 @@ Prompt:
 
 ```text
 Stop forming a WireGuard peer between every pair of agents. Create and maintain tunnels only (1) between agents that currently share at least one environment and (2) between those agents and the Envoy instances that publish their allocations. AllowedIPs on each peer are only that peer’s overlay prefixes, not the whole cluster. When the last shared environment leaves a pair of nodes, tear the peer down. Control-plane mTLS stays off the mesh. The IPv6 host identity remains separate from the address-family-neutral WireGuard endpoint. Test: disjoint environments produce no agent-agent peer; adding a shared environment creates a peer; removing it destroys the peer; east-west same-environment still works; cross-environment stays denied without a tunnel; Envoy can still reach ready backends.
-```
-
-## 2.13 Production-like topology harness
-
-Was: 9.1
-Status: open
-Depends on: none. Grow the existing testvm as 2.2, 2.4b, 2.7b, and 2.9 need components. Done when the topology below exists.
-
-The harness now proves two control-plane processes, live-owner takeover, and two-agent reconnect/failover against one colocated CockroachDB process. The remaining work is to turn that proof harness into the distributed topology below.
-
-Prompt:
-
-```text
-Extend the OpenTofu/VM harness into a production-like disposable topology with multiple control-plane replicas, a CockroachDB cluster, VictoriaMetrics, ClickHouse, object storage, registry, at least two Envoy instances, builders, and at least three agents across distinct failure domains. Keep external managed-provider behaviors behind test doubles or lightweight compatible services where provisioning the real provider is inappropriate. Generate per-run credentials, expose no admin service publicly, collect sanitized artifacts, and guarantee teardown on success, failure, or interruption. The harness must deploy the actual built binaries and configuration profiles rather than alternate test implementations. Produce a machine-readable topology manifest and health summary so scenario tests can target components deterministically.
 ```
 
 ## 2.14 Core onboarding path

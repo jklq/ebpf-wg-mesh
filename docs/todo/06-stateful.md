@@ -1,55 +1,20 @@
-# 6 — Stateful production
+# 6 — Volumes
 
-Last among product capabilities. Do not advertise databases or durable customer workloads until this file and the recovery drills in 7.5 are complete. A local bind mount is not a production volume.
+Railway-level volumes, nothing fancier to start. A volume is a directory on one node that survives redeploys, restarts, and agent upgrades. It is **not** replicated and **not** backed up. If the node is lost, the volume is lost, and the console says so. Backups (6.3), a durable network/block provider (6.4), and storage monitoring (6.5) are parked in [freeze.md](freeze.md).
 
 Volume-backed services reject overlapping replacement: a redeploy stops the current allocation before starting the next, even with a healthcheck. Replicas cannot be used with volumes.
 
-## 6.1 Volume provider contract
+What exists today: volume rows with a stored size, node-pinned placement, a directory under the agent's volumes dir, and a fixed `/data` mount. The size is not enforced, and the agent `RemoveAll`s any volume directory missing from its desired state. That prune is the one unacceptable behavior: a bad checkpoint or a placement bug deletes customer data.
 
-Was: 7.1
+## 6.1 Basic volumes
+
+Was: 7.1 and 7.2, cut down
 Status: open
-Depends on: none beyond the existing volume rows. Production must stop treating agent-local directories as durable.
+Size: M
+Depends on: none
 
 Prompt:
 
 ```text
-Replace the production volume implementation based on agent-local directories with a VolumeProvider contract for operator-selected durable block or network storage. Keep local directories only as an explicitly non-durable development provider. A volume has provider identity, region/failure domain, requested and actual size, filesystem, mount options, lifecycle state, attachment generation, and exactly one writer unless a provider explicitly supports another mode. The control plane owns attachment intent and fences it with a monotonically increasing token; agents attach, format only once, mount at the configured absolute path, report observed identity, and refuse stale attachment generations. Scheduling must honor volume locality and provider availability. Never call RemoveAll on production volume data. Add provider conformance tests and simulate attach timeout, stale attachment, node loss, remount, provider outage, and accidental format attempts.
+Make the existing node-local volumes a complete basic feature, at Railway's level and no further. A service may attach at most one volume, at an explicit absolute mount path chosen by the user (default /data), with unsafe root and system paths rejected; attaching, detaching, or changing the path is a staged change like any other configuration. The volume is pinned to the node that hosts it, and a volume-backed service is only ever placed there. Enforce the volume's size on the node (reuse the filesystem-quota or cgroup mechanism from 1.11); a full volume produces ENOSPC for the workload and a visible "volume full" status, not a full host disk. Size can grow and never shrink; the new size takes effect on the next start without data movement. Report used bytes from the agent and show used/size on the service and volume views. Agents must never delete volume data because a volume is missing from desired state: delete data only on an explicit, fenced delete instruction from the control plane after the 1.8 deletion grace. Unknown volume directories are reported to the operator, not removed. If the pinned node is lost or retired, the service shows that its volume is unavailable and why, and does not silently start on another node with an empty volume. The console states plainly that volumes are not backed up. Test data persistence across redeploy, agent restart, and agent upgrade; that a missing desired-state entry does not delete data; size enforcement; grow; mount-path change; and the node-lost status.
 ```
-
-## 6.2 Attachment, mount paths, and resize
-
-Was: 7.2
-Status: open
-Depends on: 6.1
-
-Prompt:
-
-```text
-Make volume attachment a first-class service setting rather than a name that implies a fixed /data mount. Each service may attach at most one volume, with an explicit absolute mount path and read/write mode. Validate collisions with image paths and platform secret mounts, reject unsafe root or system paths, and show attachment effects as staged changes. Add grow-only online resize where the provider/filesystem supports it and a durable offline workflow otherwise; never report the new capacity until both provider and filesystem agree. Never shrink. Prevent detach or delete while an allocation may still write. Test mount persistence across deploys, rename, environment duplication policy, resize interruption, stale agent reports, and rollback to specs with different attachments.
-```
-
-## 6.3 Volume snapshots, backups, and restores
-
-Was: 7.3
-Status: open
-Depends on: 6.1, 2.1, 3.4
-
-Prompt:
-
-```text
-Implement manual and scheduled volume backups through the configured VolumeProvider or BackupProvider, with daily/weekly/monthly policies, retention, encryption, progress, failure state, and cost/size metadata. Define crash-consistent behavior honestly; optionally support pre/post hooks for application-coordinated backups without claiming consistency when hooks fail. A restore must create a new volume from the chosen backup, verify provider completion and size, stage an attachment change, and preserve the previous volume until the user explicitly deletes it after a grace period. Never restore destructively in place by default. Backup and restore actions must be authorized, audited, monitored for freshness, and safe under retry. Add restoration verification that mounts the recovered volume in isolation and checks a supplied sentinel, plus tests for partial snapshots, retention locks, schedule races, provider outage, and restore cancellation.
-```
-
-## 6.5 Storage monitoring and safety rails
-
-Was: 7.5
-Status: open
-Depends on: 6.1, 6.3, 3.5, 3.9, 5.1 if storage is billed
-
-Prompt:
-
-```text
-Collect volume provisioned bytes, used bytes, inode use where available, read/write bytes, IOPS, latency, attachment errors, backup age, and restore state into VictoriaMetrics using stable volume identity. Add warning and critical capacity monitors and surface them on service and volume views. Prevent shrink operations. Production volume deletion requires typed confirmation, a grace period with restore, and an audit event. Bill provisioned storage and backup storage from authoritative provider/lifecycle records reconciled with VictoriaMetrics, not from mutable console values.
-```
-
-
