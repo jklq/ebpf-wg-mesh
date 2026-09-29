@@ -10,9 +10,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/registry"
-	"ebof-wg-mesh/internal/controlplane/source"
 	"fmt"
 	"io"
 	"net"
@@ -22,6 +19,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
@@ -67,12 +68,12 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 			},
 		},
 		Database: config.DatabaseConfig{
-			URL:          deliverycore.FirstNonEmpty(opts.databaseURL, createTestDatabase(t)),
+			URL:          firstNonEmpty(opts.databaseURL, createTestDatabase(t)),
 			MaxOpenConns: 4,
 			MaxIdleConns: 4,
 		},
 		Logs:      config.LogCaptureConfig{ClickHouse: config.ClickHouseConfig{URL: opts.clickhouseURL}},
-		StateDir:  deliverycore.FirstNonEmpty(opts.stateDir, stateDir),
+		StateDir:  firstNonEmpty(opts.stateDir, stateDir),
 		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: systemTestDashboardID},
 		Bootstrap: opts.bootstrap,

@@ -3,18 +3,26 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/config"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/authz"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/logs"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
+	"ebof-wg-mesh/internal/controlplane/source"
 
+	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -27,12 +35,12 @@ type database struct {
 	journal          *journal.Store
 }
 
-// PersistenceOption customizes persistence construction.
-type PersistenceOption func(*database)
+// persistenceOption customizes persistence construction.
+type persistenceOption func(*database)
 
-// WithDeletionGracePeriod overrides how long tombstones stay restorable.
+// withDeletionGracePeriod overrides how long tombstones stay restorable.
 // Zero selects deliverycore.DefaultDeletionGracePeriod.
-func WithDeletionGracePeriod(grace time.Duration) PersistenceOption {
+func withDeletionGracePeriod(grace time.Duration) persistenceOption {
 	return func(db *database) {
 		db.deletionGrace = grace
 	}
@@ -54,7 +62,7 @@ func (s *database) reserveAgents(agentIDs ...string) {
 	}
 }
 
-func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig, opts ...PersistenceOption) (*persistence, error) {
+func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig, opts ...persistenceOption) (*persistence, error) {
 	normalizeDatabaseConfig(&dbCfg)
 	db, err := sql.Open("pgx", dbCfg.URL)
 	if err != nil {
@@ -265,4 +273,192 @@ func normalizeDatabaseConfig(dbCfg *config.DatabaseConfig) {
 	if dbCfg.MaxIdleConns > dbCfg.MaxOpenConns {
 		dbCfg.MaxIdleConns = dbCfg.MaxOpenConns
 	}
+}
+
+type persistence struct {
+	*database
+	liveImplementation *deliverycore.Live
+	notifications      liveNotifications
+	publication        publicationFence
+	catalog            *catalogPersistence
+	fleet              *fleetPersistence
+	reads              deliverycore.ReadModel
+	routing            *routingPersistence
+	source             *source.SQLStore
+	secrets            *secretkeys.Service
+}
+
+// attachSecrets wires the sealed-secret backend. Production always attaches
+// before serving; delivery skips sealed handling while it is nil.
+func (p *persistence) attachSecrets(svc *secretkeys.Service) {
+	p.secrets = svc
+}
+
+type catalogPersistence struct {
+	*database
+	authz  *authz.Authorizer
+	source deliverycore.SourceStore
+}
+
+type fleetPersistence struct {
+	*database
+	authz    *authz.Authorizer
+	sessions agentSessions
+	live     fleetLiveReader
+	reads    deliverycore.ReadModel
+}
+
+type routingPersistence struct {
+	*database
+	authz *authz.Authorizer
+	live  ingressLiveReader
+}
+
+func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error) error {
+	return s.withLeaseGuard(ctx, fn)
+}
+
+func newPersistence(db *database) *persistence {
+	live := deliverycore.NewLive()
+	db.initJournal()
+	db.journal.SetOnApplied(live.ApplyDurable)
+	p := &persistence{database: db, liveImplementation: live, notifications: live, publication: live}
+	authorizer := authz.NewAuthorizer(db.db)
+	p.catalog = &catalogPersistence{database: db, authz: authorizer}
+	p.fleet = &fleetPersistence{database: db, authz: authorizer, sessions: live, live: live}
+	p.routing = &routingPersistence{database: db, authz: authorizer, live: live}
+	p.source = source.NewSQLStore(db.db, db.withCoordinationTx, func(ctx context.Context, serviceID string) (source.Service, error) {
+		rec, err := p.reads.ServiceSnapshot(ctx, serviceID)
+		if err != nil {
+			return source.Service{}, err
+		}
+		return source.Service{ID: rec.ID, ProjectID: rec.ProjectID, Spec: rec.Spec, SpecRevision: rec.SpecRevision, Deleted: rec.Deletion != nil}, nil
+	})
+	p.catalog.source = p.source
+	return p
+}
+
+// authorizer returns the persistence-wide Authorizer. All scopes mint from this
+// single instance; nothing constructs a second one per handle.
+func (p *persistence) authorizer() *authz.Authorizer { return p.catalog.authz }
+
+type platformPersistence struct {
+	*catalogPersistence
+	*routingPersistence
+	deliverycore.ReadModel
+}
+
+func (p *persistence) platform() platformPersistence {
+	return platformPersistence{p.catalog, p.routing, p.reads}
+}
+
+func newDeliveryWithScheduler(store *persistence, scheduler *deliverycore.BuildSchedulerConfig, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *platformEvents, logEmitter *logs.LogEmitter) *deliverycore.Delivery {
+	deps := deliveryDependencies(store, notifier, ingress, events, logEmitter)
+	if scheduler != nil {
+		deps.BuildScheduler = *scheduler
+	}
+	d := deliverycore.New(deps)
+	store.reads = d
+	store.fleet.reads = d
+	return d
+}
+
+func buildSchedulerConfigFromControlPlane(cfg config.ControlPlaneBuilderConfig) deliverycore.BuildSchedulerConfig {
+	return deliverycore.BuildSchedulerConfig{
+		LeaseTTL:                time.Duration(cfg.LeaseTTLSeconds) * time.Second,
+		AttemptLimit:            int64(cfg.MaxAttempts),
+		MaxConcurrentGlobal:     cfg.MaxConcurrentGlobal,
+		MaxConcurrentPerProject: cfg.MaxConcurrentPerProject,
+		BuildTimeout:            time.Duration(cfg.BuildTimeoutSeconds) * time.Second,
+		MaxQueueAge:             time.Duration(cfg.MaxQueueAgeSeconds) * time.Second,
+	}.WithDefaults()
+}
+
+func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, events *platformEvents, logEmitter *logs.LogEmitter) deliverycore.Dependencies {
+	return deliverycore.Dependencies{
+		CreateEnvironment: store.catalog.createEnvironmentQuerier, CreateVolume: store.catalog.createVolumeTx, EnqueueSourceWork: store.source.Work().EnqueueTx, SourceStore: store.source,
+		DB: store.db, Mesh: store.mesh, Live: store.liveImplementation, ProductTransaction: store.withProductTx,
+		ObservationTransaction: store.withObservationTx,
+		ReadState:              store.readLiveState,
+		ReservedAgentIDs:       store.reservedAgentIDs,
+		Notifier:               notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
+		Authorizer: store.authorizer(), Secrets: store.secrets, DeletionGracePeriod: store.deletionGracePeriod(),
+	}
+}
+
+const controlPlaneStorageMarker = ".control-plane-storage-id"
+
+func verifySharedControlPlaneDirectory(ctx context.Context, store *persistence, name, directory string) error {
+	if store == nil || store.db == nil {
+		return errors.New("control-plane store is required")
+	}
+	directory = filepath.Clean(strings.TrimSpace(directory))
+	if directory == "" || directory == "." {
+		return fmt.Errorf("control-plane %s directory is required", name)
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create control-plane %s directory: %w", name, err)
+	}
+	markerPath := filepath.Join(directory, controlPlaneStorageMarker)
+	storageID, err := readOrCreateStorageMarker(markerPath)
+	if err != nil {
+		return fmt.Errorf("initialize control-plane %s storage marker: %w", name, err)
+	}
+
+	var registered string
+	err = store.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO control_plane_storage(name, storage_id, created_at)
+			VALUES ($1, $2, statement_timestamp()) ON CONFLICT(name) DO NOTHING`, name, storageID); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(ctx, `SELECT storage_id FROM control_plane_storage WHERE name = $1`, name).Scan(&registered)
+	})
+	if err != nil {
+		return fmt.Errorf("register control-plane %s storage: %w", name, err)
+	}
+	if registered != storageID {
+		return fmt.Errorf("control-plane %s directory is not the shared directory registered by this database", name)
+	}
+	return nil
+}
+
+func readOrCreateStorageMarker(path string) (string, error) {
+	if raw, err := os.ReadFile(path); err == nil {
+		return validateStorageID(raw)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	storageID := uuid.NewString()
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return "", readErr
+		}
+		return validateStorageID(raw)
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, err := file.WriteString(storageID + "\n"); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
+		return "", err
+	}
+	return storageID, nil
+}
+
+func validateStorageID(raw []byte) (string, error) {
+	storageID := strings.TrimSpace(string(raw))
+	if _, err := uuid.Parse(storageID); err != nil {
+		return "", fmt.Errorf("invalid storage marker: %w", err)
+	}
+	return storageID, nil
 }

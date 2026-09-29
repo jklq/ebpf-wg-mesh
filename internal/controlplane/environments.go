@@ -1,0 +1,560 @@
+package controlplane
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/dbtx"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
+
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+func (s *catalogPersistence) ensureProductionEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID string) (deliverycore.EnvironmentRecord, error) {
+	rec, err := deliverycore.ScanEnvironmentRow(q.QueryRowContext(ctx, environmentSelect+`
+		WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
+	if err == nil {
+		if rec.Deletion != nil {
+			return deliverycore.EnvironmentRecord{}, deliverycore.ErrEnvironmentDeleted
+		}
+		return rec, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	return s.createEnvironmentQuerier(ctx, q, projectID, "Production", true, "")
+}
+
+func (s *catalogPersistence) createEnvironment(ctx context.Context, user authz.User, projectID, name string) (deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	var rec deliverycore.EnvironmentRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		project, err := s.projectByIDInternalQuerier(ctx, tx, scope.ID())
+		if err != nil {
+			return err
+		}
+		if project.Deletion != nil {
+			return deliverycore.ErrProjectDeleted
+		}
+		rec, err = s.createEnvironmentQuerier(ctx, tx, scope.ID(), name, false, "")
+		if err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+				return s.environmentNameConflictErr(ctx, tx, scope.ID(), name)
+			}
+			return err
+		}
+		return nil
+	})
+	return rec, err
+}
+
+// environmentNameConflictErr maps an environment-name collision to a typed
+// error. Tombstoned rows reserve their names for the grace period.
+func (s *catalogPersistence) environmentNameConflictErr(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string) error {
+	row := q.QueryRowContext(ctx, environmentSelect+`
+		 WHERE e.project_id = $1 AND e.name = $2`,
+		projectID, strings.TrimSpace(name))
+	existing, err := deliverycore.ScanEnvironmentRow(row)
+	if err != nil {
+		return fmt.Errorf("%w: %q", deliverycore.ErrEnvironmentAlreadyExists, strings.TrimSpace(name))
+	}
+	if existing.Deletion != nil && !existing.Deletion.Inherited {
+		return fmt.Errorf("%w: %q was deleted; restore it or wait until %s", deliverycore.ErrEnvironmentAlreadyExists, existing.Name, existing.Deletion.ExpiresAt.Format(time.RFC3339))
+	}
+	return fmt.Errorf("%w: %q", deliverycore.ErrEnvironmentAlreadyExists, existing.Name)
+}
+
+func (s *catalogPersistence) listEnvironments(ctx context.Context, user authz.User, projectID string, includeDeleted bool) ([]deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Read)
+	if err != nil {
+		return nil, err
+	}
+	filter := `
+		 AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
+	if includeDeleted {
+		filter = ``
+	}
+	rows, err := s.db.QueryContext(ctx, environmentSelect+`
+		 WHERE e.project_id = $1`+filter+`
+		 ORDER BY e.is_production DESC, e.created_at ASC, e.id ASC`, scope.ID())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []deliverycore.EnvironmentRecord
+	for rows.Next() {
+		rec, err := deliverycore.ScanEnvironmentRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+func (s *catalogPersistence) productionEnvironmentByProjectInternal(ctx context.Context, projectID string) (deliverycore.EnvironmentRecord, error) {
+	return deliverycore.ScanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+`
+		 WHERE e.project_id = $1 AND e.is_production = TRUE
+		   AND e.deleted_at IS NULL AND p.deleted_at IS NULL`, projectID))
+}
+
+func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.User, environmentID, name string) (deliverycore.EnvironmentRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
+	}
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	var rec deliverycore.EnvironmentRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.environmentByScopeQuerier(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if current.Deletion != nil {
+			return deliverycore.ErrEnvironmentDeleted
+		}
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
+			return err
+		}
+		journal.RecordEnvironment(ctx, current.ID)
+		current.Name = name
+		current.UpdatedAt = now
+		rec = current
+		return nil
+	})
+	return rec, err
+}
+
+func (s *catalogPersistence) updateEnvironmentAutoDeploy(ctx context.Context, user authz.User, environmentID string, autoDeploy bool) (deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	var rec deliverycore.EnvironmentRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.environmentByScopeQuerier(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if current.Deletion != nil {
+			return deliverycore.ErrEnvironmentDeleted
+		}
+		now := time.Now().UTC()
+		if _, err := tx.ExecContext(ctx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
+			return err
+		}
+		journal.RecordEnvironment(ctx, current.ID)
+		current.AutoDeploy = autoDeploy
+		current.UpdatedAt = now
+		rec = current
+		return nil
+	})
+	return rec, err
+}
+
+// deleteEnvironment tombstones an environment and quiesces its services.
+// Production environments require a typed confirmation matching the current
+// name; the confirmation is only checked on the first delete, so repeats
+// stay idempotent.
+func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.User, environmentID, confirmation string) ([]string, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return nil, err
+	}
+	var agentIDs []string
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		agentIDs = nil
+		rec, err := s.lockEnvironmentTx(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if rec.Deletion != nil && !rec.Deletion.Inherited {
+			return nil
+		}
+		if rec.IsProduction {
+			if err := deliverycore.CheckDeletionConfirmation(rec.Name, confirmation); err != nil {
+				return err
+			}
+		}
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		tombstoned, err := s.tombstoneEnvironmentTx(ctx, tx, rec.ID, user.ID(), now)
+		if err != nil {
+			return err
+		}
+		if !tombstoned {
+			return nil
+		}
+		if err := s.quiesceEnvironmentServicesTx(ctx, tx, rec.ID, user.ID()); err != nil {
+			return err
+		}
+		if err := journal.RecordEnvironmentRemoval(ctx, tx, rec.ID); err != nil {
+			return err
+		}
+		agentIDs, err = s.environmentAgentIDsQuerier(ctx, tx, rec.ID)
+		if err != nil {
+			return err
+		}
+		// Drop after the agent query: the notifier set is derived from the
+		// assignments being removed.
+		return dropEnvironmentAssignmentsTx(ctx, tx, rec.ID)
+	})
+	return agentIDs, err
+}
+
+// restoreEnvironment clears an environment's tombstone within the grace
+// period. Restoring under a tombstoned project is refused: restore top-down.
+// Independently tombstoned services keep their tombstones.
+func (s *catalogPersistence) restoreEnvironment(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	var rec deliverycore.EnvironmentRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		current, err := s.lockEnvironmentTx(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if current.Deletion == nil {
+			rec = current
+			return nil
+		}
+		if current.Deletion.Inherited {
+			return deliverycore.ErrAncestorDeleted
+		}
+		restored, err := s.clearEnvironmentTombstoneTx(ctx, tx, current.ID)
+		if err != nil {
+			return err
+		}
+		if !restored {
+			return deliverycore.ErrDeletionExpired
+		}
+		if err := dropEnvironmentAssignmentsTx(ctx, tx, current.ID); err != nil {
+			return err
+		}
+		if err := journal.RecordEnvironmentRemoval(ctx, tx, current.ID); err != nil {
+			return err
+		}
+		rec, err = s.environmentByScopeQuerier(ctx, tx, scope)
+		return err
+	})
+	return rec, err
+}
+
+func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q deliverycore.ServiceQueryer, projectID, name string, production bool, copiedFrom string) (deliverycore.EnvironmentRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return deliverycore.EnvironmentRecord{}, fmt.Errorf("environment name is required")
+	}
+	networkIdentity, err := allocateEnvironmentNetworkIdentity(ctx, q)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	now := time.Now().UTC()
+	rec := deliverycore.EnvironmentRecord{
+		ID:                      uuid.NewString(),
+		ProjectID:               projectID,
+		Name:                    name,
+		Kind:                    deliverycore.EnvironmentKindPersistent,
+		IsProduction:            production,
+		AutoDeploy:              true,
+		NetworkIdentity:         networkIdentity,
+		CopiedFromEnvironmentID: copiedFrom,
+		CreatedAt:               now,
+		UpdatedAt:               now,
+	}
+	_, err = q.ExecContext(ctx, `
+		INSERT INTO environments(
+			id, project_id, name, kind, is_production, auto_deploy, network_identity,
+			copied_from_environment_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		rec.ID, rec.ProjectID, rec.Name, string(rec.Kind), rec.IsProduction, rec.AutoDeploy,
+		rec.NetworkIdentity, nullIfEmpty(rec.CopiedFromEnvironmentID), rec.CreatedAt, rec.UpdatedAt,
+	)
+	if err != nil {
+		return deliverycore.EnvironmentRecord{}, err
+	}
+	journal.RecordEnvironment(ctx, rec.ID)
+	return rec, nil
+}
+
+func allocateEnvironmentNetworkIdentity(ctx context.Context, q deliverycore.ServiceQueryer) (uint32, error) {
+	var identity int64
+	if err := q.QueryRowContext(ctx,
+		`UPDATE environment_network_identity_counter
+		    SET next_identity = next_identity + 1
+		  WHERE id = TRUE AND next_identity <= 4294967295
+		  RETURNING next_identity - 1`,
+	).Scan(&identity); err != nil {
+		if err == sql.ErrNoRows {
+			return 0, fmt.Errorf("environment network identity space exhausted")
+		}
+		return 0, fmt.Errorf("allocate environment network identity: %w", err)
+	}
+	return uint32(identity), nil
+}
+
+func nullIfEmpty(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func (s *catalogPersistence) environmentByScopeQuerier(ctx context.Context, q deliverycore.ServiceQueryer, scope authz.Environment) (deliverycore.EnvironmentRecord, error) {
+	row := q.QueryRowContext(ctx, environmentSelect+`
+		 WHERE e.id = $1 AND e.project_id = $2`,
+		scope.ID(), scope.ProjectID())
+	return deliverycore.ScanEnvironmentRow(row)
+}
+
+const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production, e.auto_deploy,
+	e.network_identity, COALESCE(e.copied_from_environment_id, ''), e.created_at, e.updated_at,
+	e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+	p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+	FROM environments e JOIN projects p ON p.id = e.project_id`
+
+func (s *catalogPersistence) agentIDsQuerier(ctx context.Context, q deliverycore.ServiceQueryer) ([]string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT id FROM agents ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+func (s *catalogPersistence) createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write)
+	if err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	var rec deliverycore.VolumeRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		var err error
+		rec, err = s.createVolumeTx(ctx, tx, scope.Project(), scope.ID(), name, sizeBytes)
+		return err
+	})
+	if err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	return rec, nil
+}
+
+func (s *catalogPersistence) listVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error) {
+	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Read)
+	if err != nil {
+		return nil, err
+	}
+	filter := `
+		    AND v.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
+	if includeDeleted {
+		filter = ``
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT v.id, v.environment_id, v.name, v.size_bytes, v.created_at,
+		        v.deleted_at, v.deleted_by_user_id, v.delete_expires_at,
+		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		   FROM volumes v
+		   JOIN environments e ON e.id = v.environment_id
+		   JOIN projects p ON p.id = e.project_id
+		  WHERE v.environment_id = $1`+filter+`
+		  ORDER BY v.created_at ASC`,
+		scope.ID(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []deliverycore.VolumeRecord
+	for rows.Next() {
+		var rec deliverycore.VolumeRecord
+		var self, environment, project deliverycore.Tombstone
+		targets := []any{&rec.ID, &rec.EnvironmentID, &rec.Name, &rec.SizeBytes, &rec.CreatedAt}
+		targets = deliverycore.ScanTombstone(targets, &self)
+		targets = deliverycore.ScanTombstone(targets, &environment)
+		if err := rows.Scan(deliverycore.ScanTombstone(targets, &project)...); err != nil {
+			return nil, err
+		}
+		rec.Deletion = deliverycore.EffectiveDeletion(self, environment, project)
+		out = append(out, rec)
+	}
+	return out, rows.Err()
+}
+
+// deleteVolume tombstones a volume. Deletion needs typed confirmation, is never
+// restored, and is delayed by the grace period. A volume referenced by a live
+// service is refused; a production volume ever attached is refused as possibly
+// non-empty.
+func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, volumeID, confirmation string) error {
+	scope, err := s.authz.AuthorizeVolume(ctx, user, volumeID, authz.Write)
+	if err != nil {
+		return err
+	}
+	return s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		rec, production, err := s.lockVolumeTx(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if rec.Deletion != nil && !rec.Deletion.Inherited {
+			return nil
+		}
+		if err := deliverycore.CheckDeletionConfirmation(rec.Name, confirmation); err != nil {
+			return err
+		}
+		if err := s.requireVolumeDetachedTx(ctx, tx, rec); err != nil {
+			return err
+		}
+		if production {
+			if err := s.requireVolumeNeverAttachedTx(ctx, tx, rec); err != nil {
+				return err
+			}
+		}
+		now, err := dbtx.DatabaseTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		tombstoned, err := s.tombstoneVolumeTx(ctx, tx, rec.ID, user.ID(), now)
+		if err != nil {
+			return err
+		}
+		if !tombstoned {
+			return nil
+		}
+		journal.RecordVolume(ctx, rec.ID)
+		return nil
+	})
+}
+
+// requireVolumeDetachedTx refuses deletion while a live service references the
+// volume. Tombstoned services do not block: their mounts are withdrawn.
+func (s *catalogPersistence) requireVolumeDetachedTx(ctx context.Context, tx *sql.Tx, rec deliverycore.VolumeRecord) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT s.id, r.spec_json
+		   FROM live_services s
+		   JOIN service_revisions r ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
+		  WHERE s.environment_id = $1`,
+		rec.EnvironmentID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var serviceID string
+		var rawSpec []byte
+		if err := rows.Scan(&serviceID, &rawSpec); err != nil {
+			return err
+		}
+		spec, err := deliverycore.LoadServiceSpec(rawSpec)
+		if err != nil {
+			return err
+		}
+		if deliverycore.ServiceVolumeName(spec) == rec.Name {
+			return fmt.Errorf("%w: service %s references volume %s", deliverycore.ErrVolumeInUse, serviceID, rec.ID)
+		}
+	}
+	return rows.Err()
+}
+
+// requireVolumeNeverAttachedTx fails closed on production volumes: any service
+// revision that ever referenced the volume blocks deletion.
+func (s *catalogPersistence) requireVolumeNeverAttachedTx(ctx context.Context, tx *sql.Tx, rec deliverycore.VolumeRecord) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT r.spec_json
+		   FROM service_revisions r
+		   JOIN services s ON s.id = r.service_id
+		  WHERE s.environment_id = $1`,
+		rec.EnvironmentID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var rawSpec []byte
+		if err := rows.Scan(&rawSpec); err != nil {
+			return err
+		}
+		spec, err := deliverycore.LoadServiceSpec(rawSpec)
+		if err != nil {
+			return err
+		}
+		if deliverycore.ServiceVolumeName(spec) == rec.Name {
+			return fmt.Errorf("%w: production volume %q was attached and cannot be proven empty", deliverycore.ErrVolumeNotEmpty, rec.Name)
+		}
+	}
+	return rows.Err()
+}
+
+func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, project authz.Project, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || sizeBytes <= 0 {
+		return deliverycore.VolumeRecord{}, deliverycore.ErrInvalidVolume
+	}
+	var resolvedID string
+	var environmentTombstone, projectTombstone deliverycore.Tombstone
+	err := tx.QueryRowContext(ctx,
+		`SELECT e.id, e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		   FROM environments e JOIN projects p ON p.id = e.project_id
+		  WHERE e.id = $1 AND e.project_id = $2`,
+		environmentID, project.ID(),
+	).Scan(&resolvedID, &environmentTombstone.DeletedAt, &environmentTombstone.DeletedByUserID, &environmentTombstone.ExpiresAt,
+		&projectTombstone.DeletedAt, &projectTombstone.DeletedByUserID, &projectTombstone.ExpiresAt)
+	if err != nil {
+		return deliverycore.VolumeRecord{}, err
+	}
+	if environmentTombstone.Active() || projectTombstone.Active() {
+		return deliverycore.VolumeRecord{}, deliverycore.ErrEnvironmentDeleted
+	}
+	rec := deliverycore.VolumeRecord{
+		ID:            uuid.NewString(),
+		EnvironmentID: resolvedID,
+		Name:          name,
+		SizeBytes:     sizeBytes,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO volumes(id, environment_id, name, size_bytes, created_at) VALUES ($1, $2, $3, $4, $5)`,
+		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
+	); err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "volumes_environment_id_name_key" {
+			return deliverycore.VolumeRecord{}, deliverycore.ErrVolumeAlreadyExists
+		}
+		return deliverycore.VolumeRecord{}, err
+	}
+	journal.RecordVolume(ctx, rec.ID)
+	return rec, nil
+}

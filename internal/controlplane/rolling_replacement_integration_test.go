@@ -4,12 +4,13 @@ package controlplane
 
 import (
 	"context"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/xds"
 	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/xds"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -67,7 +68,7 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 
 	probe := &rolloutIngressProbe{store: store, err: errors.New("xds unavailable")}
 	delivery := newTestDelivery(store, nil, probe, nil)
-	reconciler := NewRolloutReconciler(delivery, time.Second)
+	reconciler := newRolloutReconciler(delivery, time.Second)
 	fixedNow := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	delivery.rolloutNow = func() time.Time { return fixedNow }
 	if err := reconciler.Reconcile(ctx); err == nil || !errors.Is(err, probe.err) {
@@ -84,7 +85,7 @@ func TestRollingReplacementWaitsForIngressBeforeDrain(t *testing.T) {
 
 	probe.err = nil
 	restartedDelivery := newTestDelivery(store, nil, probe, nil)
-	restarted := NewRolloutReconciler(restartedDelivery, time.Second)
+	restarted := newRolloutReconciler(restartedDelivery, time.Second)
 	restartedDelivery.rolloutNow = func() time.Time { return fixedNow }
 	if err := restarted.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile after restart: %v", err)
@@ -120,7 +121,7 @@ func TestRollingReplacementUsesPlatformManagedSingleReplicaBatches(t *testing.T)
 		markRolloutAllocationReady(t, store, alloc)
 	}
 	probe := &rolloutIngressProbe{store: store}
-	reconciler := NewRolloutReconciler(newTestDelivery(store, nil, probe, nil), time.Second)
+	reconciler := newRolloutReconciler(newTestDelivery(store, nil, probe, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile first batch: %v", err)
 	}
@@ -213,7 +214,7 @@ func TestRollingReplacementShutdownTimeoutRemovesDrainedPredecessor(t *testing.T
 	markRolloutAllocationReady(t, store, target)
 	fixedNow := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	delivery := newTestDelivery(store, nil, &rolloutIngressProbe{store: store}, nil)
-	reconciler := NewRolloutReconciler(delivery, time.Second)
+	reconciler := newRolloutReconciler(delivery, time.Second)
 	delivery.rolloutNow = func() time.Time { return fixedNow }
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile to drain: %v", err)
@@ -249,7 +250,7 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 		t.Fatalf("rollout 2 allocations = %+v, want one", replacement)
 	}
 	markRolloutAllocationReady(t, store, replacement[0])
-	reconciler := NewRolloutReconciler(newTestDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
+	reconciler := newRolloutReconciler(newTestDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("promote rollout 2 replacement: %v", err)
 	}
@@ -349,7 +350,7 @@ func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {
 		t.Fatalf("node loss during rollout disturbed predecessor: %+v", old)
 	}
 	markRolloutAllocationReady(t, store, replacement)
-	reconciler := NewRolloutReconciler(newTestDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
+	reconciler := newRolloutReconciler(newTestDelivery(store, nil, &rolloutIngressProbe{store: store}, nil), time.Second)
 	if err := reconciler.Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile recovered target: %v", err)
 	}
@@ -542,7 +543,7 @@ func TestRollingReplacementRetainsAllocationUntilIngressApplies(t *testing.T) {
 	fixedNow := time.Date(2026, 8, 31, 10, 0, 0, 0, time.UTC)
 	delivery := newTestDelivery(store, nil, probe, nil)
 	delivery.rolloutNow = func() time.Time { return fixedNow }
-	if err := NewRolloutReconciler(delivery, time.Second).Reconcile(ctx); err != nil {
+	if err := newRolloutReconciler(delivery, time.Second).Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile with pending ingress apply: %v", err)
 	}
 	old = allocationByID(t, store, service.ID, old.ID)
@@ -555,7 +556,7 @@ func TestRollingReplacementRetainsAllocationUntilIngressApplies(t *testing.T) {
 	probe.notConverged = false
 	restartedDelivery := newTestDelivery(store, nil, probe, nil)
 	restartedDelivery.rolloutNow = func() time.Time { return fixedNow }
-	if err := NewRolloutReconciler(restartedDelivery, time.Second).Reconcile(ctx); err != nil {
+	if err := newRolloutReconciler(restartedDelivery, time.Second).Reconcile(ctx); err != nil {
 		t.Fatalf("reconcile after ingress applied: %v", err)
 	}
 	old = allocationByID(t, store, service.ID, old.ID)

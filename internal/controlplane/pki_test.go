@@ -9,13 +9,16 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	identitycore "ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
 	"google.golang.org/grpc/codes"
@@ -87,7 +90,7 @@ func TestAgentServiceIssuesManagedDashboardCertificateOnlyToTrustedAgent(t *test
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
-	service := NewAgentService(nil, nil, nil, nil, authority, nil, true, "agent-trusted", "dashboard-1", WithReplicaAddresses([]string{" replica-a:9443", "replica-b:9443", "replica-a:9443"}))
+	service := newAgentService(nil, nil, nil, nil, authority, nil, true, "agent-trusted", "dashboard-1", withReplicaAddresses([]string{" replica-a:9443", "replica-b:9443", "replica-a:9443"}))
 	req := &agentv1.ManagedDashboardCertificateRequest{
 		AgentId: "agent-trusted",
 		CsrPem:  string(mustCreateCSR(t, "locally-generated")),
@@ -151,4 +154,44 @@ func mustParseCertificate(t *testing.T, certPEM string) *x509.Certificate {
 		t.Fatalf("ParseCertificate: %v", err)
 	}
 	return cert
+}
+
+type serviceCallerClass = identitycore.CallerClass
+
+type ServiceCaller = identitycore.ServiceCaller
+
+type TLSAuthority = identitycore.TLSAuthority
+
+type ClientIdentityMaterial = identitycore.ClientIdentityMaterial
+
+const (
+	serviceCallerAgent      = identitycore.CallerAgent
+	serviceCallerBuilder    = identitycore.CallerBuilder
+	serviceCallerDashboard  = identitycore.CallerDashboard
+	testUserAssertionSecret = "test-control-plane-user-assertion-secret"
+	userAssertionHeader     = "x-platform-user-assertion"
+	userAssertionIssuer     = "managed-dashboard"
+	userAssertionAudience   = "controlplane"
+	userAssertionMaxAge     = 30 * time.Second
+)
+
+var (
+	NewTLSAuthority           = identitycore.NewTLSAuthority
+	NewCertificateRevocations = identitycore.NewCertificateRevocations
+	DelegatedUserFromContext  = identitycore.DelegatedUserFromContext
+	ServiceCallerFromContext  = identitycore.ServiceCallerFromContext
+)
+
+func contextWithClientIdentity(class serviceCallerClass, id string) context.Context {
+	return identitycore.WithVerifiedClientCertificate(context.Background(), &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: id, OrganizationalUnit: []string{string(class)}},
+	})
+}
+
+func contextWithCertificate(class serviceCallerClass, id string, serial *big.Int) context.Context {
+	return identitycore.WithVerifiedClientCertificate(context.Background(), &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: id, OrganizationalUnit: []string{string(class)}},
+	})
 }

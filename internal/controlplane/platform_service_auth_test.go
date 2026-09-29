@@ -33,7 +33,7 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 			}}, nil
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil)
+	service := newPlatformService(store, noopNotifier{}, noopIngress{}, nil)
 
 	resp, err := service.ListProjects(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ListProjectsRequest{})
 	if err != nil {
@@ -48,7 +48,7 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 	t.Parallel()
 
 	t.Run("viewer", func(t *testing.T) {
-		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+		service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 			applyDeploymentActionFn: func(context.Context, authz.User, string, string, platformv1.DeploymentAction, string, string) (deliverycore.DeploymentActionResult, error) {
 				return deliverycore.DeploymentActionResult{}, authz.ErrDenied
 			},
@@ -66,7 +66,7 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 	})
 
 	t.Run("stale", func(t *testing.T) {
-		service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+		service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 			applyDeploymentActionFn: func(context.Context, authz.User, string, string, platformv1.DeploymentAction, string, string) (deliverycore.DeploymentActionResult, error) {
 				return deliverycore.DeploymentActionResult{}, deliverycore.ErrDeploymentStale
 			},
@@ -87,7 +87,7 @@ func TestPlatformServiceApplyDeploymentActionRejectsViewerAndStaleTargets(t *tes
 func TestPlatformServiceRejectsViewerWrites(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 		deleteServiceFn: func(context.Context, authz.User, string) error {
 			return authz.ErrDenied
 		},
@@ -109,7 +109,7 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 			return deliverycore.ServiceRecord{}, deliverycore.ErrNoPlacementAvailable
 		},
 	}
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
 
 	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 		EnvironmentId: "project-1",
@@ -126,7 +126,7 @@ func TestPlatformServiceCreateServiceMapsPlacementErrors(t *testing.T) {
 func TestPlatformServiceRejectsUnsafeHTTPHealthPaths(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil)
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil)
 	for _, path := range []string{"healthz", "//redirect.example/healthz", "/healthz\r\nX-Test: injected"} {
 		_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 			EnvironmentId: "project-1",
@@ -144,7 +144,7 @@ func TestPlatformServiceRejectsUnsafeHTTPHealthPaths(t *testing.T) {
 func TestPlatformServiceRejectsUnknownHealthCheckType(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil)
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, nil)
 	_, err := service.CreateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateServiceRequest{
 		EnvironmentId: "project-1",
 		Service: &platformv1.ServiceInput{Name: "web", Spec: directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
@@ -168,7 +168,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 			return deliverycore.ServiceRecord{}, false, deliverycore.ErrConcurrentUpdate
 		},
 	}
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
 		ServiceId: "service-1",
@@ -184,7 +184,7 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		listVolumesFn: func(ctx context.Context, _ authz.User, _ string, _ bool) ([]deliverycore.VolumeRecord, error) {
 			return []deliverycore.VolumeRecord{}, nil
 		},
@@ -201,7 +201,7 @@ func TestPlatformServiceDeleteVolumeReturnsNotFound(t *testing.T) {
 func TestPlatformServiceGetProjectMapsMissingProject(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		projectByIDFn: func(ctx context.Context, _ authz.User, _ string) (deliverycore.ProjectRecord, error) {
 			return deliverycore.ProjectRecord{}, sql.ErrNoRows
 		},
@@ -228,159 +228,159 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 		name    string
 		fail    error
 		want    codes.Code
-		service func(fail error) *PlatformService
-		call    func(*PlatformService) error
+		service func(fail error) *platformService
+		call    func(*platformService) error
 	}{
 		{
 			name: "create environment denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					createEnvironmentFn: func(context.Context, authz.User, string, string) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.CreateEnvironment(ctx, &platformv1.CreateEnvironmentRequest{ProjectId: "project-1", Name: "preview"})
 				return err
 			},
 		},
 		{
 			name: "create environment missing", fail: sql.ErrNoRows, want: codes.NotFound,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					createEnvironmentFn: func(context.Context, authz.User, string, string) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.CreateEnvironment(ctx, &platformv1.CreateEnvironmentRequest{ProjectId: "project-1", Name: "preview"})
 				return err
 			},
 		},
 		{
 			name: "create environment fault", fail: boom, want: codes.Internal,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					createEnvironmentFn: func(context.Context, authz.User, string, string) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.CreateEnvironment(ctx, &platformv1.CreateEnvironmentRequest{ProjectId: "project-1", Name: "preview"})
 				return err
 			},
 		},
 		{
 			name: "duplicate environment denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					duplicateEnvironmentFn: func(context.Context, authz.User, string, string, bool) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.DuplicateEnvironment(ctx, &platformv1.DuplicateEnvironmentRequest{SourceEnvironmentId: "env-1", Name: "copy"})
 				return err
 			},
 		},
 		{
 			name: "rename environment denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					renameEnvironmentFn: func(context.Context, authz.User, string, string) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.RenameEnvironment(ctx, &platformv1.RenameEnvironmentRequest{EnvironmentId: "env-1", Name: "next"})
 				return err
 			},
 		},
 		{
 			name: "update environment auto-deploy denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					updateEnvironmentAutoDeployFn: func(context.Context, authz.User, string, bool) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.UpdateEnvironmentAutoDeploy(ctx, &platformv1.UpdateEnvironmentAutoDeployRequest{EnvironmentId: "env-1", AutoDeploy: true})
 				return err
 			},
 		},
 		{
 			name: "delete environment denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					deleteEnvironmentFn: func(context.Context, authz.User, string, string) ([]string, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.DeleteEnvironment(ctx, &platformv1.DeleteEnvironmentRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "delete environment missing", fail: sql.ErrNoRows, want: codes.NotFound,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					deleteEnvironmentFn: func(context.Context, authz.User, string, string) ([]string, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.DeleteEnvironment(ctx, &platformv1.DeleteEnvironmentRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "release environment denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					releaseEnvironmentFn: func(context.Context, authz.User, string) ([]deliverycore.ReleasedService, error) {
 						return nil, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ReleaseEnvironment(ctx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "release environment missing", fail: sql.ErrNoRows, want: codes.NotFound,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					releaseEnvironmentFn: func(context.Context, authz.User, string) ([]deliverycore.ReleasedService, error) {
 						return nil, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ReleaseEnvironment(ctx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "create service write denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					createScheduledServiceFn: func(context.Context, authz.User, string, string, *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error) {
 						return deliverycore.ServiceRecord{}, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.CreateService(ctx, &platformv1.CreateServiceRequest{
 					EnvironmentId: "env-1",
 					Service:       &platformv1.ServiceInput{Name: "web", Spec: spec()},
@@ -390,14 +390,14 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 		},
 		{
 			name: "update service write denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					updateServiceFn: func(context.Context, authz.User, string, string, *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
 						return deliverycore.ServiceRecord{}, false, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.UpdateService(ctx, &platformv1.UpdateServiceRequest{
 					ServiceId: "service-1",
 					Service:   &platformv1.ServiceUpdate{Spec: spec()},
@@ -407,178 +407,178 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 		},
 		{
 			name: "scale service write denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					scaleServiceFn: func(context.Context, authz.User, string, int32) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, int64, error) {
 						return deliverycore.ServiceRecord{}, nil, 0, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ScaleService(ctx, &platformv1.ScaleServiceRequest{ServiceId: "service-1", DesiredReplicaCount: 2})
 				return err
 			},
 		},
 		{
 			name: "discard service changes denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					discardServiceChangesFn: func(context.Context, authz.User, string, []string, bool) (deliverycore.ServiceRecord, error) {
 						return deliverycore.ServiceRecord{}, fail
 					},
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.DiscardServiceChanges(ctx, &platformv1.DiscardServiceChangesRequest{ServiceId: "service-1", DiscardAll: true})
 				return err
 			},
 		},
 		{
 			name: "delete service denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
 					deleteServiceFn: func(context.Context, authz.User, string) error { return fail },
 				})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.DeleteService(ctx, &platformv1.DeleteServiceRequest{ServiceId: "service-1"})
 				return err
 			},
 		},
 		{
 			name: "list volumes denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					listVolumesFn: func(context.Context, authz.User, string, bool) ([]deliverycore.VolumeRecord, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ListVolumes(ctx, &platformv1.ListVolumesRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "list domain bindings denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					listDomainBindingsFn: func(context.Context, authz.User, string, bool) ([]deliverycore.DomainBindingRecord, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ListDomainBindings(ctx, &platformv1.ListDomainBindingsRequest{ServiceId: "service-1"})
 				return err
 			},
 		},
 		{
 			name: "list environments denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					listEnvironmentsFn: func(context.Context, authz.User, string, bool) ([]deliverycore.EnvironmentRecord, error) {
 						return nil, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ListEnvironments(ctx, &platformv1.ListEnvironmentsRequest{ProjectId: "project-1"})
 				return err
 			},
 		},
 		{
 			name: "list services pre-wait denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					environmentByIDFn: func(context.Context, authz.User, string) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.ListServices(ctx, &platformv1.ListServicesRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "get service denied reads as not found", fail: denied, want: codes.NotFound,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					serviceByIDFn: func(context.Context, authz.User, string) (deliverycore.ServiceRecord, error) {
 						return deliverycore.ServiceRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.GetService(ctx, &platformv1.GetServiceRequest{ServiceId: "service-1"})
 				return err
 			},
 		},
 		{
 			name: "get service fault", fail: boom, want: codes.Internal,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					serviceByIDFn: func(context.Context, authz.User, string) (deliverycore.ServiceRecord, error) {
 						return deliverycore.ServiceRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.GetService(ctx, &platformv1.GetServiceRequest{ServiceId: "service-1"})
 				return err
 			},
 		},
 		{
 			name: "get environment denied reads as not found", fail: denied, want: codes.NotFound,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					environmentByIDFn: func(context.Context, authz.User, string) (deliverycore.EnvironmentRecord, error) {
 						return deliverycore.EnvironmentRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.GetEnvironment(ctx, &platformv1.GetEnvironmentRequest{EnvironmentId: "env-1"})
 				return err
 			},
 		},
 		{
 			name: "get project denied reads as not found", fail: denied, want: codes.NotFound,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					projectByIDFn: func(context.Context, authz.User, string) (deliverycore.ProjectRecord, error) {
 						return deliverycore.ProjectRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.GetProject(ctx, &platformv1.GetProjectRequest{ProjectId: "project-1"})
 				return err
 			},
 		},
 		{
 			name: "delete volume denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					deleteVolumeFn: func(context.Context, authz.User, string, string) error { return fail },
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.DeleteVolume(ctx, &platformv1.DeleteVolumeRequest{VolumeId: "volume-1"})
 				return err
 			},
 		},
 		{
 			name: "create volume denied", fail: denied, want: codes.PermissionDenied,
-			service: func(fail error) *PlatformService {
-				return NewPlatformService(&fakePlatformStore{
+			service: func(fail error) *platformService {
+				return newPlatformService(&fakePlatformStore{
 					createScheduledVolumeFn: func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 						return deliverycore.VolumeRecord{}, fail
 					},
 				}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 			},
-			call: func(s *PlatformService) error {
+			call: func(s *platformService) error {
 				_, err := s.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "env-1", Name: "data", SizeBytes: 64 << 20})
 				return err
 			},
@@ -597,7 +597,7 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 func TestPlatformServiceRejectsBlankDelegatedUser(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 	for _, id := range []string{"", "   "} {
 		_, err := service.ListProjects(contextWithDelegatedUser(id, ""), &platformv1.ListProjectsRequest{})
 		if status.Code(err) != codes.Unauthenticated {
@@ -609,7 +609,7 @@ func TestPlatformServiceRejectsBlankDelegatedUser(t *testing.T) {
 func TestServiceStatusErrorCodes(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
 	ctx := context.Background()
 	denied := fmt.Errorf("%w: %w", authz.ErrDenied, sql.ErrNoRows)
 	for _, tc := range []struct {

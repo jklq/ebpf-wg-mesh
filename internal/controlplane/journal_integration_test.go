@@ -158,7 +158,7 @@ func TestProductNoOpDoesNotAdvanceJournalOrEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeEvent, err := store.events.currentGlobalRevision(ctx)
+	beforeEvent, err := store.database.currentGlobalRevision(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestProductNoOpDoesNotAdvanceJournalOrEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterEvent, err := store.events.currentGlobalRevision(ctx)
+	afterEvent, err := store.database.currentGlobalRevision(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +236,7 @@ func TestJournalLeaseLossRollsBackDecision(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := NewLeaseManager(store.database, 0, 0)
+	lease := newLeaseManager(store.database, 0, 0)
 	claim, ok, err := lease.acquire(ctx, "journal-test")
 	if err != nil || !ok {
 		t.Fatalf("acquire: %v, %v", ok, err)

@@ -2,11 +2,12 @@ package controlplane
 
 import (
 	"context"
+	"strings"
+	"testing"
+
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/routing"
-	"strings"
-	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -18,7 +19,7 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
 		updateServiceFn: func(ctx context.Context, _ authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
 			return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, true, nil
 		},
@@ -42,7 +43,7 @@ func TestPlatformServiceDeleteServiceRequestsIngressWhenServiceHasDomains(t *tes
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
 		deleteServiceFn: func(ctx context.Context, _ authz.User, serviceID string) error {
 			ingress.RequestSync()
 			return nil
@@ -64,7 +65,7 @@ func TestPlatformServiceDeleteServiceSkipsIngressWhenServiceHasNoDomains(t *test
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{})
+	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{})
 
 	_, err := service.DeleteService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.DeleteServiceRequest{
 		ServiceId: "service-1",
@@ -81,7 +82,7 @@ func TestPlatformServiceUpdateDomainBindingRequestsIngress(t *testing.T) {
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		updateDomainBindingFn: func(ctx context.Context, _ authz.User, hostname, serviceID string, targetPort int32) (deliverycore.DomainBindingRecord, bool, error) {
 			return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort}, true, nil
 		},
@@ -107,7 +108,7 @@ func TestPlatformServiceGenerateDomainBindingCreatesStablePlatformHostname(t *te
 			return deliverycore.DomainBindingRecord{Hostname: hostname, EnvironmentID: "environment-1", ServiceID: serviceID, TargetPort: targetPort, PlatformGenerated: true}, true, nil
 		},
 	}
-	service := NewPlatformService(store, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
+	service := newPlatformService(store, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"))
 
 	binding, err := service.GenerateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GenerateDomainBindingRequest{
 		ServiceId:  "service-1",
@@ -127,11 +128,11 @@ func TestPlatformServiceGenerateDomainBindingCreatesStablePlatformHostname(t *te
 func TestPlatformServiceCreateDomainBindingVerifiesCNAMEToPlatformHostname(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{
+	}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"), withDomainCNAMEResolver(staticCNAMEResolver{
 		"web.example.com": "violet-7k3.platform.example.",
 	}))
 	binding, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
@@ -151,11 +152,11 @@ func TestPlatformServiceCreateDomainBindingVerifiesCNAMEToPlatformHostname(t *te
 func TestPlatformServiceCreateDomainBindingSucceedsWhenCNAMELookupFails(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{}))
+	}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"), withDomainCNAMEResolver(staticCNAMEResolver{}))
 	binding, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
 		Binding: &platformv1.DomainBindingInput{Hostname: "me.angeltvedt.com", ServiceId: "service-1", TargetPort: 8080},
 	})
@@ -173,11 +174,11 @@ func TestPlatformServiceCreateDomainBindingSucceedsWhenCNAMELookupFails(t *testi
 func TestPlatformServiceCreateDomainBindingVerifiesSharedCanonicalName(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticDNSResolver{
+	}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"), withDomainCNAMEResolver(staticDNSResolver{
 		cname: map[string]string{
 			"web.example.com":             "edge.cfargotunnel.com.",
 			"violet-7k3.platform.example": "edge.cfargotunnel.com.",
@@ -197,11 +198,11 @@ func TestPlatformServiceCreateDomainBindingVerifiesSharedCanonicalName(t *testin
 func TestPlatformServiceCreateDomainBindingVerifiesMatchingAddresses(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticDNSResolver{
+	}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"), withDomainCNAMEResolver(staticDNSResolver{
 		hosts: map[string][]string{
 			"web.example.com":             {"104.21.44.122", "2606:4700:3032::6815:2c7a"},
 			"violet-7k3.platform.example": {"172.67.199.150", "104.21.44.122"},
@@ -221,11 +222,11 @@ func TestPlatformServiceCreateDomainBindingVerifiesMatchingAddresses(t *testing.
 func TestPlatformServiceCreateDomainBindingRecordsUnverifiedCNAME(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
-	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{
+	}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"), withDomainCNAMEResolver(staticCNAMEResolver{
 		"web.example.com": "wrong.platform.example.",
 	}))
 	binding, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
@@ -245,7 +246,7 @@ func TestPlatformServiceCreateDomainBindingRecordsUnverifiedCNAME(t *testing.T) 
 func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		platformDomainBindingForServiceFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.DomainBindingRecord, error) {
 			return deliverycore.DomainBindingRecord{Hostname: "violet-7k3.platform.example", EnvironmentID: "environment-1", ServiceID: serviceID, PlatformGenerated: true}, nil
 		},
@@ -255,7 +256,7 @@ func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 				{Hostname: "web.example.com", ProjectID: "project-1", ServiceID: serviceID, TargetPort: 8080},
 			}, nil
 		},
-	}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"), WithDomainCNAMEResolver(staticCNAMEResolver{}))
+	}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"), withDomainCNAMEResolver(staticCNAMEResolver{}))
 
 	resp, err := service.ListDomainBindings(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ListDomainBindingsRequest{
 		ServiceId: "service-1",
@@ -280,9 +281,9 @@ func TestPlatformServiceListDomainBindingsAnnotatesOwnership(t *testing.T) {
 func TestPlatformServiceCreateDomainBindingRequiresPlatformHostname(t *testing.T) {
 	t.Parallel()
 
-	service := NewPlatformService(&fakePlatformStore{createDomainBindingFn: func(context.Context, authz.User, string, string, int32) (deliverycore.DomainBindingRecord, bool, error) {
+	service := newPlatformService(&fakePlatformStore{createDomainBindingFn: func(context.Context, authz.User, string, string, int32) (deliverycore.DomainBindingRecord, bool, error) {
 		return deliverycore.DomainBindingRecord{}, false, routing.ErrPlatformDomainNotGenerated
-	}}, noopNotifier{}, noopIngress{}, nil, WithPlatformDomainSuffix("platform.example"))
+	}}, noopNotifier{}, noopIngress{}, nil, withPlatformDomainSuffix("platform.example"))
 	_, err := service.CreateDomainBinding(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.CreateDomainBindingRequest{
 		Binding: &platformv1.DomainBindingInput{Hostname: "web.example.com", ServiceId: "service-1", TargetPort: 8080},
 	})
@@ -295,7 +296,7 @@ func TestPlatformServiceDeleteDomainBindingRequestsIngress(t *testing.T) {
 	t.Parallel()
 
 	ingress := &countingIngress{}
-	service := NewPlatformService(&fakePlatformStore{
+	service := newPlatformService(&fakePlatformStore{
 		deleteDomainBindingFn: func(ctx context.Context, _ authz.User, hostname string) (bool, error) {
 			return true, nil
 		},

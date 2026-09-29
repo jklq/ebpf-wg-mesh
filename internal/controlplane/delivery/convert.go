@@ -1,10 +1,13 @@
 package delivery
 
 import (
-	"google.golang.org/protobuf/proto"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/source"
+
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
@@ -197,4 +200,25 @@ func toProtoSourceStateSummary(desired *platformv1.ServiceSourceSpec, binding *s
 			SourceState: state,
 		},
 	}
+}
+
+func ts(v time.Time) *timestamppb.Timestamp {
+	return ToProtoTimestamp(v)
+}
+
+// ToProtoTimestamp represents absent, zero, epoch, and out-of-range times
+// as nil; every valid instant is transported in UTC.
+func ToProtoTimestamp(v time.Time) *timestamppb.Timestamp {
+	if v.IsZero() {
+		return nil
+	}
+	v = v.UTC()
+	if v.Unix() == 0 && v.Nanosecond() == 0 {
+		return nil
+	}
+	out := timestamppb.New(v)
+	if out == nil || !out.IsValid() {
+		return nil
+	}
+	return out
 }

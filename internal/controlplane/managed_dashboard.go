@@ -2,11 +2,12 @@ package controlplane
 
 import (
 	"context"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -14,16 +15,16 @@ import (
 
 const managedDashboardSecretsMount = "/run/secrets/dashboard"
 
-type ManagedDashboardReconciler struct {
+type managedDashboardReconciler struct {
 	cfg      config.ManagedDashboardConfig
 	profile  config.Profile
 	store    *catalogPersistence
 	delivery *deliverycore.Delivery
 	ingress  deliverycore.PlatformIngress
-	notifier *Notifier
+	notifier *notifier
 }
 
-func (r *ManagedDashboardReconciler) Run(ctx context.Context) error {
+func (r *managedDashboardReconciler) Run(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
@@ -45,18 +46,18 @@ func (r *ManagedDashboardReconciler) Run(ctx context.Context) error {
 	}
 }
 
-func NewManagedDashboardReconciler(
+func newManagedDashboardReconciler(
 	cfg config.ManagedDashboardConfig,
 	profile config.Profile,
 	store *catalogPersistence,
 	delivery *deliverycore.Delivery,
 	ingress deliverycore.PlatformIngress,
-	notifier *Notifier,
-) *ManagedDashboardReconciler {
+	notifier *notifier,
+) *managedDashboardReconciler {
 	if !cfg.Enabled {
 		return nil
 	}
-	return &ManagedDashboardReconciler{
+	return &managedDashboardReconciler{
 		cfg:      cfg,
 		profile:  profile,
 		store:    store,
@@ -66,7 +67,7 @@ func NewManagedDashboardReconciler(
 	}
 }
 
-func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
+func (r *managedDashboardReconciler) Reconcile(ctx context.Context) error {
 	if r == nil {
 		return nil
 	}
@@ -109,7 +110,7 @@ func (r *ManagedDashboardReconciler) Reconcile(ctx context.Context) error {
 	return r.ingress.Sync(ctx)
 }
 
-func (r *ManagedDashboardReconciler) dashboardEnv() (map[string]string, error) {
+func (r *managedDashboardReconciler) dashboardEnv() (map[string]string, error) {
 	env := make(map[string]string, len(r.cfg.Env)+12)
 	for key, value := range r.cfg.Env {
 		if managedDashboardSecretEnvKey(key) {

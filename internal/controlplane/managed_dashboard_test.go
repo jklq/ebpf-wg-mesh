@@ -10,7 +10,7 @@ import (
 func TestManagedDashboardDesiredEnvironmentContainsOnlySecretFileReferences(t *testing.T) {
 	t.Parallel()
 
-	reconciler := &ManagedDashboardReconciler{cfg: config.ManagedDashboardConfig{
+	reconciler := &managedDashboardReconciler{cfg: config.ManagedDashboardConfig{
 		DatabaseSchema:    "dashboard",
 		SessionCookieName: "dashboard_session",
 		ControlPlaneAddr:  "controlplane:9443",
@@ -58,7 +58,7 @@ func TestManagedDashboardRejectsSecretsInConfiguredEnvironment(t *testing.T) {
 		"DASHBOARD_CONTROLPLANE_KEY_PEM_B64",
 		"DASHBOARD_GITHUB_CLIENT_SECRET",
 	} {
-		reconciler := &ManagedDashboardReconciler{cfg: config.ManagedDashboardConfig{
+		reconciler := &managedDashboardReconciler{cfg: config.ManagedDashboardConfig{
 			Env: map[string]string{key: "secret"},
 		}}
 		if _, err := reconciler.dashboardEnv(); err == nil {

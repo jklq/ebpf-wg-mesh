@@ -17,20 +17,20 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
-type OpsService struct {
+type opsService struct {
 	platformv1.UnimplementedOpsServiceServer
 	webhooks  *source.GitHubWebhookHandler
 	store     *fleetPersistence
 	delivery  *deliverycore.Delivery
-	notifier  *Notifier
+	notifier  *notifier
 	authority interface{ RevokeSerials([]string) error }
 }
 
-func NewOpsService(webhooks *source.GitHubWebhookHandler, store *fleetPersistence, delivery *deliverycore.Delivery, notifier *Notifier, authority interface{ RevokeSerials([]string) error }) *OpsService {
-	return &OpsService{webhooks: webhooks, store: store, delivery: delivery, notifier: notifier, authority: authority}
+func newOpsService(webhooks *source.GitHubWebhookHandler, store *fleetPersistence, delivery *deliverycore.Delivery, notifier *notifier, authority interface{ RevokeSerials([]string) error }) *opsService {
+	return &opsService{webhooks: webhooks, store: store, delivery: delivery, notifier: notifier, authority: authority}
 }
 
-func (s *OpsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platformv1.Fleet, error) {
+func (s *opsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platformv1.Fleet, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -42,7 +42,7 @@ func (s *OpsService) ListFleet(ctx context.Context, _ *emptypb.Empty) (*platform
 	return fleet, nil
 }
 
-func (s *OpsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgentRequest) (*platformv1.AgentEnrollment, error) {
+func (s *opsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgentRequest) (*platformv1.AgentEnrollment, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -54,7 +54,7 @@ func (s *OpsService) CreateAgent(ctx context.Context, req *platformv1.CreateAgen
 	return &platformv1.AgentEnrollment{Agent: toProtoAgent(rec), BootstrapToken: token}, nil
 }
 
-func (s *OpsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgentRequest) (*platformv1.Agent, error) {
+func (s *opsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgentRequest) (*platformv1.Agent, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -66,7 +66,7 @@ func (s *OpsService) UpdateAgent(ctx context.Context, req *platformv1.UpdateAgen
 	return toProtoAgent(rec), nil
 }
 
-func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetAgentLifecycleRequest) (*platformv1.Agent, error) {
+func (s *opsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetAgentLifecycleRequest) (*platformv1.Agent, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -88,7 +88,7 @@ func (s *OpsService) SetAgentLifecycle(ctx context.Context, req *platformv1.SetA
 	return toProtoAgent(rec), nil
 }
 
-func (s *OpsService) ListBuilders(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListBuildersResponse, error) {
+func (s *opsService) ListBuilders(ctx context.Context, _ *emptypb.Empty) (*platformv1.ListBuildersResponse, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -104,7 +104,7 @@ func (s *OpsService) ListBuilders(ctx context.Context, _ *emptypb.Empty) (*platf
 	return resp, nil
 }
 
-func (s *OpsService) SetBuilderDrain(ctx context.Context, req *platformv1.SetBuilderDrainRequest) (*platformv1.BuilderWorker, error) {
+func (s *opsService) SetBuilderDrain(ctx context.Context, req *platformv1.SetBuilderDrainRequest) (*platformv1.BuilderWorker, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func (s *OpsService) SetBuilderDrain(ctx context.Context, req *platformv1.SetBui
 	return deliverycore.ToProtoBuilderWorker(rec), nil
 }
 
-func (s *OpsService) GetBuildScheduler(ctx context.Context, _ *emptypb.Empty) (*platformv1.BuildSchedulerState, error) {
+func (s *opsService) GetBuildScheduler(ctx context.Context, _ *emptypb.Empty) (*platformv1.BuildSchedulerState, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -131,7 +131,7 @@ func (s *OpsService) GetBuildScheduler(ctx context.Context, _ *emptypb.Empty) (*
 	return deliverycore.ToProtoBuildSchedulerState(state), nil
 }
 
-func (s *OpsService) SetBuildSchedulerPaused(ctx context.Context, req *platformv1.SetBuildSchedulerPausedRequest) (*platformv1.BuildSchedulerState, error) {
+func (s *opsService) SetBuildSchedulerPaused(ctx context.Context, req *platformv1.SetBuildSchedulerPausedRequest) (*platformv1.BuildSchedulerState, error) {
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -170,7 +170,7 @@ func fleetStatusError(operation string, err error) error {
 	}
 }
 
-func (s *OpsService) IngestGitHubWebhook(ctx context.Context, req *platformv1.IngestGitHubWebhookRequest) (*emptypb.Empty, error) {
+func (s *opsService) IngestGitHubWebhook(ctx context.Context, req *platformv1.IngestGitHubWebhookRequest) (*emptypb.Empty, error) {
 	if s.webhooks == nil {
 		return nil, status.Error(codes.FailedPrecondition, "github webhooks are not configured")
 	}

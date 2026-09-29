@@ -29,22 +29,22 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type AgentService struct {
+type agentService struct {
 	agentv1.UnimplementedAgentControlServer
 	store                   *fleetPersistence
 	delivery                agentDelivery
 	logStore                *logs.LogStore
 	logIngester             *logs.AsyncIngester
-	notifier                *Notifier
+	notifier                *notifier
 	authority               *identity.TLSAuthority
 	enrollment              *identity.Enrollment
-	dashboard               *ManagedDashboardReconciler
+	dashboard               *managedDashboardReconciler
 	dashboardEnabled        bool
 	dashboardTrustedAgentID string
 	dashboardCallerID       string
 	registry                *registry.Policy
 	replicaAddresses        []string
-	liveOwner               LiveOwner
+	liveOwner               liveOwner
 
 	credMu    sync.Mutex
 	credCache map[string]map[string]cachedPullCredential // agentID -> allocationID -> credential
@@ -61,7 +61,7 @@ type cachedPullCredential struct {
 	image     string
 }
 
-type LiveOwner interface {
+type liveOwner interface {
 	Lookup(context.Context) (held bool, advertiseAddr string, err error)
 }
 
@@ -70,7 +70,7 @@ type liveOwnerWatcher interface {
 }
 
 type leaseLiveOwner struct {
-	leases *LeaseManager
+	leases *leaseManager
 	name   string
 }
 
@@ -89,14 +89,14 @@ func (o leaseLiveOwner) Watch() (<-chan struct{}, func()) {
 	return o.leases.Watch(o.name)
 }
 
-func watchLiveOwner(owner LiveOwner) (<-chan struct{}, func()) {
+func watchLiveOwner(owner liveOwner) (<-chan struct{}, func()) {
 	if watcher, ok := owner.(liveOwnerWatcher); ok {
 		return watcher.Watch()
 	}
 	return nil, func() {}
 }
 
-type AgentServiceOption func(*AgentService)
+type agentServiceOption func(*agentService)
 
 type agentDelivery interface {
 	ObserveAgentStatus(context.Context, string, *agentv1.StatusReport) error
@@ -109,33 +109,33 @@ type agentDelivery interface {
 	RegisterAgent(context.Context, *agentv1.AgentHello) (bool, error)
 }
 
-func WithAgentRegistry(policy *registry.Policy) AgentServiceOption {
-	return func(service *AgentService) {
+func withAgentRegistry(policy *registry.Policy) agentServiceOption {
+	return func(service *agentService) {
 		service.registry = policy
 	}
 }
 
-// WithLogIngester routes log batches through the async ingest queue so a
+// withLogIngester routes log batches through the async ingest queue so a
 // ClickHouse outage cannot stall the Sync loop.
-func WithLogIngester(ingester *logs.AsyncIngester) AgentServiceOption {
-	return func(service *AgentService) {
+func withLogIngester(ingester *logs.AsyncIngester) agentServiceOption {
+	return func(service *agentService) {
 		service.logIngester = ingester
 	}
 }
 
-func WithReplicaAddresses(addresses []string) AgentServiceOption {
-	return func(service *AgentService) {
+func withReplicaAddresses(addresses []string) agentServiceOption {
+	return func(service *agentService) {
 		service.replicaAddresses = normalizeReplicaAddresses(addresses)
 	}
 }
 
-func WithLiveOwner(owner LiveOwner) AgentServiceOption {
-	return func(service *AgentService) {
+func withLiveOwner(owner liveOwner) agentServiceOption {
+	return func(service *agentService) {
 		service.liveOwner = owner
 	}
 }
 
-func (s *AgentService) requireLiveOwner(ctx context.Context) error {
+func (s *agentService) requireLiveOwner(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
@@ -165,8 +165,8 @@ func (s *AgentService) requireLiveOwner(ctx context.Context) error {
 	return status.Error(codes.Unavailable, "live owner is not ready")
 }
 
-func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *logs.LogStore, notifier *Notifier, authority *identity.TLSAuthority, dashboard *ManagedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...AgentServiceOption) *AgentService {
-	service := &AgentService{
+func newAgentService(store *fleetPersistence, delivery agentDelivery, logStore *logs.LogStore, notifier *notifier, authority *identity.TLSAuthority, dashboard *managedDashboardReconciler, dashboardEnabled bool, dashboardTrustedAgentID, dashboardCallerID string, opts ...agentServiceOption) *agentService {
+	service := &agentService{
 		store: store, delivery: delivery, logStore: logStore, notifier: notifier, authority: authority, dashboard: dashboard,
 		enrollment:              identity.NewEnrollment(store, authority),
 		credReuseHorizon:        authority.ClientCertificateTTL(),
@@ -182,7 +182,7 @@ func NewAgentService(store *fleetPersistence, delivery agentDelivery, logStore *
 	return service
 }
 
-func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
+func (s *agentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (*agentv1.EnrollResponse, error) {
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (s *AgentService) Enroll(ctx context.Context, req *agentv1.EnrollRequest) (
 	return s.withReplicaAddresses(resp), nil
 }
 
-func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
+func (s *agentService) IssueManagedDashboardCertificate(ctx context.Context, req *agentv1.ManagedDashboardCertificateRequest) (*agentv1.EnrollResponse, error) {
 	if err := s.requireLiveOwner(ctx); err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (s *AgentService) IssueManagedDashboardCertificate(ctx context.Context, req
 	return s.withReplicaAddresses(resp), nil
 }
 
-func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
+func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	ctx := stream.Context()
 	ownerChanged, stopOwnerWatch := watchLiveOwner(s.liveOwner)
 	defer stopOwnerWatch()
@@ -440,7 +440,7 @@ type syncSent struct {
 	overlay     string
 }
 
-func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
+func (s *agentService) sendLoop(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, hello *agentv1.AgentHello, notifyCh, ownerChanged <-chan struct{}) error {
 	// Initialize from hello so an unchanged reconnect sends nothing.
 	sent := syncSent{
 		alloc:       hello.GetReconciliationCursor(),
@@ -483,7 +483,7 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 
 // sendSyncBatch emits one fenced batch terminated by a batch-end marker,
 // returning the new position.
-func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
+func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
 		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
@@ -622,7 +622,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	}, nil
 }
 
-func (s *AgentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agentv1.EnrollResponse {
+func (s *agentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agentv1.EnrollResponse {
 	if resp == nil {
 		return nil
 	}
@@ -730,7 +730,7 @@ func crashLoopEventLine(agentID, environmentID string, cond *agentv1.ServiceCond
 	}
 }
 
-func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, report *agentv1.StatusReport) {
+func (s *agentService) emitCrashLoopEvents(ctx context.Context, agentID string, report *agentv1.StatusReport) {
 	if s == nil || report == nil || s.logStore == nil || !s.logStore.Enabled() {
 		return
 	}
@@ -739,7 +739,7 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 		if cond.GetPhase() != restartpolicy.PhaseCrashLoop && !cond.GetRestart().GetCrashLoop() {
 			continue
 		}
-		alloc, err := s.store.reads.allocationByServiceID(ctx, cond.GetServiceId())
+		service, err := s.store.reads.ServiceSnapshot(ctx, cond.GetServiceId())
 		if err != nil {
 			continue
 		}
@@ -749,7 +749,7 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 			"allocation_id", cond.GetAllocationId(),
 			"message", cond.GetMessage(),
 		)
-		lines = append(lines, crashLoopEventLine(agentID, alloc.EnvironmentID, cond))
+		lines = append(lines, crashLoopEventLine(agentID, service.EnvironmentID, cond))
 	}
 	if len(lines) == 0 {
 		return
@@ -760,7 +760,7 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 // deliverPlatformLines routes platform lines through the async queue so they
 // retry, shed, and drain like agent batches. Without an ingester, or once the
 // drain seals, it falls back to sync.
-func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
+func (s *agentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
 	if s.logIngester != nil {
 		switch s.logIngester.EnqueueLines(lines) {
 		case logs.AdmitAccepted:
@@ -781,7 +781,7 @@ const pullCredentialCacheTTL = time.Hour
 
 // pullCredentialsForAgent mints (with cache) the independently versioned pull credentials for
 // this agent's desired services. Only platform images need entries.
-func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) (*agentv1.PullCredentialSet, error) {
+func (s *agentService) pullCredentialsForAgent(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) (*agentv1.PullCredentialSet, error) {
 	out := &agentv1.PullCredentialSet{AgentId: agentID}
 	if s == nil || s.registry == nil || !s.registry.Enabled() || state == nil {
 		out.CredentialsVersion = reconciliation.HashCredentials(nil)

@@ -38,7 +38,7 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
-	service := NewAgentService(store.fleet, nil, nil, nil, authority, nil, false, "", "")
+	service := newAgentService(store.fleet, nil, nil, nil, authority, nil, false, "", "")
 	csr := string(mustCreateCSR(t, "node-1"))
 
 	if err := os.WriteFile(revocationPath, []byte("63\n"), 0o600); err != nil {

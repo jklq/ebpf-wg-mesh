@@ -6,9 +6,10 @@ import (
 	"context"
 	"time"
 
+	"testing"
+
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/registry"
-	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
@@ -305,7 +306,7 @@ func TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged(t *testing.T) {
 
 func completeManagedAllocation(t *testing.T, store *persistence, ctx context.Context, serviceID string) deliverycore.AllocationRecord {
 	t.Helper()
-	allocation, err := store.reads.allocationByServiceID(ctx, serviceID)
+	allocation, err := store.primaryAllocationForTest(ctx, serviceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +316,7 @@ func completeManagedAllocation(t *testing.T, store *persistence, ctx context.Con
 	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatal(err)
 	}
-	allocation, err = store.reads.allocationByServiceID(ctx, serviceID)
+	allocation, err = store.primaryAllocationForTest(ctx, serviceID)
 	if err != nil {
 		t.Fatal(err)
 	}

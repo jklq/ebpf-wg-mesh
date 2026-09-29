@@ -12,6 +12,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/grpc/codes"
@@ -36,9 +37,9 @@ func createSecondRepoService(t *testing.T, store *persistence, ctx context.Conte
 }
 
 func schedulerTestDelivery(store *persistence, cfg deliverycore.BuildSchedulerConfig) *testDeliveryHarness {
-	d := newTestDelivery(store, nil, nil, nil)
-	d.SetBuildSchedulerConfigForTest(cfg)
-	return d
+	d := newDeliveryWithScheduler(store, &cfg, nil, nil, nil, nil)
+	d.SetImageResolver(registry.StaticResolverForTest())
+	return &testDeliveryHarness{Delivery: d, store: store}
 }
 
 func claimBuildWith(t *testing.T, d *testDeliveryHarness, ctx context.Context, builderID, expectedBuildID string) deliverycore.BuildRunRecord {
@@ -210,7 +211,7 @@ func TestBuildLeaseSplitOwnershipFencing(t *testing.T) {
 	if err := testDelivery(store).HeartbeatBuild(ctx, "builder-1", build.ID, first.OwnerEpoch); !errors.Is(err, deliverycore.ErrBuildLeaseLost) {
 		t.Fatalf("stale heartbeat = %v, want ErrBuildLeaseLost", err)
 	}
-	operations := NewBuildOperations(store.builds, store.reads, store.source, nil, nil, nil)
+	operations := newBuildOperations(store.db, store.source, testDelivery(store).Delivery, nil, nil)
 	staleLogs, err := operations.ReportBuildLogs(
 		contextWithClientIdentity(serviceCallerBuilder, "builder-1"),
 		&platformv1.ReportBuildLogsRequest{BuildId: build.ID, LeaseEpoch: first.OwnerEpoch, Lines: []*platformv1.BuildLogLine{{Line: "stale"}}},
@@ -388,7 +389,7 @@ func TestBuildSchedulerGlobalAndProjectCaps(t *testing.T) {
 	}
 	claimBuildWith(t, d, ctx, "builder-2", buildB1.ID)
 
-	d.SetBuildSchedulerConfigForTest(deliverycore.BuildSchedulerConfig{
+	d = schedulerTestDelivery(store, deliverycore.BuildSchedulerConfig{
 		MaxConcurrentGlobal: 1, MaxConcurrentPerProject: 10,
 	}.WithDefaults())
 	if err := seedReadySourceState(t, store, serviceA, "commit-cap-a2"); err != nil {

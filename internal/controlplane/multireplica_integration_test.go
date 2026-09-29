@@ -22,7 +22,7 @@ func TestLiveWatchFiresAfterDurableApply(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
 		t.Fatal(err)
 	}
-	wake, stop := NewNotifier(store.notifications).Watch("agent-a")
+	wake, stop := newNotifier(store.notifications).Watch("agent-a")
 	defer stop()
 	bumpDesiredRevisionsForTest(t, store, ctx, []string{"agent-a"})
 	select {
@@ -45,7 +45,7 @@ func TestReplicaSnapshotAppliesDurableIntoLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = storeB.Close() })
-	wake, stop := NewNotifier(storeB.notifications).Watch("agent-a")
+	wake, stop := newNotifier(storeB.notifications).Watch("agent-a")
 	defer stop()
 	bumpDesiredRevisionsForTest(t, storeA, ctx, []string{"agent-a"})
 	snapshot, err := storeB.journal.Snapshot(ctx)
@@ -69,7 +69,7 @@ func TestReplicaSnapshotAppliesDurableIntoLive(t *testing.T) {
 func TestCoordinationTransactionDoesNotAdvancePlatformRevision(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	events := NewPlatformEvents(store.events, time.Millisecond)
+	events := newPlatformEvents(store.database, time.Millisecond)
 
 	before, err := events.Current(ctx)
 	if err != nil {
@@ -111,9 +111,9 @@ func TestLeaseManagerRecordsAdvertiseAddrForRedirect(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
 	const leaseName = "advertise-addr-test"
-	owner := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	owner := newLeaseManager(store.database, time.Minute, time.Millisecond)
 	owner.SetAdvertise("owner:9443")
-	standby := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	standby := newLeaseManager(store.database, time.Minute, time.Millisecond)
 	standby.SetAdvertise("standby:9443")
 
 	if _, acquired, err := owner.acquire(ctx, leaseName); err != nil || !acquired {
@@ -132,8 +132,8 @@ func TestLeaseManagerRecordsAdvertiseAddrForRedirect(t *testing.T) {
 func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first := NewLeaseManager(store.database, time.Minute, time.Millisecond)
-	second := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	first := newLeaseManager(store.database, time.Minute, time.Millisecond)
+	second := newLeaseManager(store.database, time.Minute, time.Millisecond)
 
 	firstClaim, acquired, err := first.acquire(ctx, "singleton-test")
 	if err != nil || !acquired {
@@ -167,8 +167,8 @@ func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 func TestLeaseGuardSerializesExternalEffectWithTakeover(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first := NewLeaseManager(store.database, time.Minute, time.Millisecond)
-	second := NewLeaseManager(store.database, time.Minute, time.Millisecond)
+	first := newLeaseManager(store.database, time.Minute, time.Millisecond)
+	second := newLeaseManager(store.database, time.Minute, time.Millisecond)
 	claim, acquired, err := first.acquire(ctx, "external-effect-test")
 	if err != nil || !acquired {
 		t.Fatalf("first acquire = (%v, %v)", acquired, err)
@@ -222,8 +222,8 @@ func TestLeaseGuardSerializesExternalEffectWithTakeover(t *testing.T) {
 func TestHeldLeaseRenewsUntilReleased(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
-	first := NewLeaseManager(store.database, 300*time.Millisecond, 5*time.Millisecond)
-	second := NewLeaseManager(store.database, 300*time.Millisecond, 5*time.Millisecond)
+	first := newLeaseManager(store.database, 300*time.Millisecond, 5*time.Millisecond)
+	second := newLeaseManager(store.database, 300*time.Millisecond, 5*time.Millisecond)
 	leaseCtx, release, err := first.hold(ctx, "held-test")
 	if err != nil {
 		t.Fatal(err)
@@ -244,8 +244,8 @@ func TestHeldLeaseRenewsUntilReleased(t *testing.T) {
 
 func TestLeaseManagerSelectsOneReplicaAndHandsOffOnShutdown(t *testing.T) {
 	store := openTestStore(t)
-	first := NewLeaseManager(store.database, time.Second, 10*time.Millisecond)
-	second := NewLeaseManager(store.database, time.Second, 10*time.Millisecond)
+	first := newLeaseManager(store.database, time.Second, 10*time.Millisecond)
+	second := newLeaseManager(store.database, time.Second, 10*time.Millisecond)
 	firstCtx, stopFirst := context.WithCancel(context.Background())
 	secondCtx, stopSecond := context.WithCancel(context.Background())
 	defer stopFirst()

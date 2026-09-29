@@ -180,7 +180,7 @@ func waitForSingletonLease(t *testing.T, server *Server) {
 	t.Helper()
 
 	if err := testutil.Poll(context.Background(), testutil.PollConfig{Timeout: 10 * time.Second}, func(ctx context.Context) (bool, error) {
-		held, _, err := server.leases.Lookup(ctx, SingletonLeaseName)
+		held, _, err := server.leases.Lookup(ctx, singletonLeaseName)
 		if err != nil {
 			return false, nil
 		}

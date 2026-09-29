@@ -426,7 +426,7 @@ func TestDurableLogsRetentionAndSafeDeletion(t *testing.T) {
 		t.Fatalf("force project expiry: %v", err)
 	}
 	var purged []string
-	gc := NewDeletionGC(store, nil, nil, time.Second)
+	gc := newDeletionGC(store, nil, nil, time.Second)
 	gc.SetLogPurgeHook(func(ctx context.Context, projectID string) error {
 		purged = append(purged, projectID)
 		return cp.server.logStore.PurgeProjectLogs(ctx, projectID)
@@ -435,7 +435,7 @@ func TestDurableLogsRetentionAndSafeDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
-	if stats.ByKind[ExpiredDeletionProject] != 1 {
+	if stats.ByKind[expiredDeletionProject] != 1 {
 		t.Fatalf("expected 1 collected project, got %+v", stats.ByKind)
 	}
 	if len(purged) != 1 || purged[0] != projA.ID {
