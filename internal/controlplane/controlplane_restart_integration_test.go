@@ -12,6 +12,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 
 	"ebof-wg-mesh/internal/config"
@@ -261,7 +262,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	if err := second.server.ingress.Sync(ctx); err != nil {
 		t.Fatalf("startup-equivalent ingress Sync: %v", err)
 	}
-	status := second.server.XDSServer().Status()
+	status := second.server.xdsServer.Status()
 	if !status.HasSnapshot {
 		t.Fatal("expected a published xDS snapshot after restart")
 	}

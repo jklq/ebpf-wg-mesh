@@ -5,17 +5,18 @@ package controlplane
 import (
 	"bytes"
 	"context"
-	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/authz"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/durablework"
-	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/authz"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/durablework"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -32,7 +33,7 @@ func TestPlatformServiceCreateRepoBackedServiceQueuesSyncWithoutBranchLookup(t *
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)))
+	service := newPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), withGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)))
 	ctx := context.Background()
 
 	projectID := bootstrapProjectAndAgent(t, store, ctx)
@@ -88,7 +89,7 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)))
+	service := newPlatformService(store.platform(), noopNotifier{}, noopIngress{}, newTestDelivery(store, noopNotifier{}, noopIngress{}, nil), withGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)))
 	ctx := context.Background()
 
 	projectID, serviceID := createRepoBackedTestService(t, store, ctx, "public/hello", 0, "main")
@@ -505,7 +506,7 @@ func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	beforeEvent, err := store.events.currentGlobalRevision(ctx)
+	beforeEvent, err := store.database.currentGlobalRevision(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,7 +563,7 @@ func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	afterEvent, err := store.events.currentGlobalRevision(ctx)
+	afterEvent, err := store.database.currentGlobalRevision(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

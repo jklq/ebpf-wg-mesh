@@ -4,16 +4,20 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 type staticCNAMEResolver map[string]string
@@ -211,9 +215,9 @@ type fakePlatformStore struct {
 	restoreEnvironmentFn              func(ctx context.Context, user authz.User, environmentID string) (deliverycore.EnvironmentRecord, error)
 	deleteProjectFn                   func(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error)
 	restoreProjectFn                  func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
-	previewProjectDeletionFn          func(ctx context.Context, user authz.User, projectID string) (DeletionPreview, error)
-	previewEnvironmentDeletionFn      func(ctx context.Context, user authz.User, environmentID string) (DeletionPreview, error)
-	previewVolumeDeletionFn           func(ctx context.Context, user authz.User, volumeID string) (DeletionPreview, error)
+	previewProjectDeletionFn          func(ctx context.Context, user authz.User, projectID string) (deletionPreview, error)
+	previewEnvironmentDeletionFn      func(ctx context.Context, user authz.User, environmentID string) (deletionPreview, error)
+	previewVolumeDeletionFn           func(ctx context.Context, user authz.User, volumeID string) (deletionPreview, error)
 	restoreDomainBindingFn            func(ctx context.Context, user authz.User, hostname string) (deliverycore.DomainBindingRecord, error)
 }
 
@@ -301,25 +305,25 @@ func (f *fakePlatformStore) restoreProject(ctx context.Context, user authz.User,
 	return deliverycore.ProjectRecord{ID: projectID}, nil
 }
 
-func (f *fakePlatformStore) previewProjectDeletion(ctx context.Context, user authz.User, projectID string) (DeletionPreview, error) {
+func (f *fakePlatformStore) previewProjectDeletion(ctx context.Context, user authz.User, projectID string) (deletionPreview, error) {
 	if f.previewProjectDeletionFn != nil {
 		return f.previewProjectDeletionFn(ctx, user, projectID)
 	}
-	return DeletionPreview{}, nil
+	return deletionPreview{}, nil
 }
 
-func (f *fakePlatformStore) previewEnvironmentDeletion(ctx context.Context, user authz.User, environmentID string) (DeletionPreview, error) {
+func (f *fakePlatformStore) previewEnvironmentDeletion(ctx context.Context, user authz.User, environmentID string) (deletionPreview, error) {
 	if f.previewEnvironmentDeletionFn != nil {
 		return f.previewEnvironmentDeletionFn(ctx, user, environmentID)
 	}
-	return DeletionPreview{}, nil
+	return deletionPreview{}, nil
 }
 
-func (f *fakePlatformStore) previewVolumeDeletion(ctx context.Context, user authz.User, volumeID string) (DeletionPreview, error) {
+func (f *fakePlatformStore) previewVolumeDeletion(ctx context.Context, user authz.User, volumeID string) (deletionPreview, error) {
 	if f.previewVolumeDeletionFn != nil {
 		return f.previewVolumeDeletionFn(ctx, user, volumeID)
 	}
-	return DeletionPreview{}, nil
+	return deletionPreview{}, nil
 }
 
 func (f *fakePlatformStore) projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error) {
@@ -473,5 +477,297 @@ func TestCustomerRuntimeContractOmitsPrivilegedHostAndMountControls(t *testing.T
 		if _, exists := forbidden[name]; exists {
 			t.Fatalf("customer runtime exposes forbidden field %q", name)
 		}
+	}
+}
+
+func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now().UTC()
+	var reads atomic.Int32
+	service := newPlatformService(&fakePlatformStore{
+		serviceStatusFn: func(ctx context.Context, _ authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error) {
+			applied := int64(1)
+			healthy := false
+			if reads.Add(1) > 1 {
+				applied = 2
+				healthy = true
+			}
+			return deliverycore.ServiceRecord{
+					ID:               serviceID,
+					ProjectID:        "project-1",
+					AllocatedAgentID: "node-1",
+					CreatedAt:        now.Add(-10 * time.Minute),
+					Spec:             directImageServiceSpec("nginx:1.27", nil),
+					LatestBuild: &platformv1.BuildStatus{
+						BuildId: "build-1",
+					},
+				}, []deliverycore.AllocationRecord{{
+					ID:                       "alloc-status",
+					ServiceID:                serviceID,
+					AgentID:                  "node-1",
+					DesiredRolloutGeneration: 2,
+					AppliedRolloutGeneration: applied,
+					Healthy:                  healthy,
+					UpdatedAt:                now,
+				}}, nil
+		},
+	}, noopNotifier{}, noopIngress{}, nil)
+
+	resp, err := service.GetServiceStatus(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.GetServiceStatusRequest{
+		ServiceId: "service-1",
+	})
+	if err != nil {
+		t.Fatalf("GetServiceStatus: %v", err)
+	}
+	if got := resp.GetAllocation().GetAppliedRolloutGeneration(); got != 2 {
+		t.Fatalf("expected the post-wait snapshot, got applied generation %d", got)
+	}
+	if !resp.GetAllocation().GetHealthy() {
+		t.Fatalf("expected the post-wait snapshot to report healthy")
+	}
+}
+
+func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
+	t.Parallel()
+
+	var allocationReads atomic.Int32
+	store := &fakePlatformStore{
+		listServicesFn: func(context.Context, authz.User, string, bool) ([]deliverycore.ServiceRecord, error) {
+			return []deliverycore.ServiceRecord{
+				{ID: "service-a", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
+				{ID: "service-b", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
+			}, nil
+		},
+		listAllocationsByServiceIDFn: func(context.Context, string) ([]deliverycore.AllocationRecord, error) {
+			allocationReads.Add(1)
+			return nil, nil
+		},
+	}
+	delivery := &fakePlatformDelivery{liveAllocationsFn: func(environmentID string) (map[string][]deliverycore.AllocationRecord, error) {
+		if environmentID != "environment-1" {
+			t.Fatalf("environment = %q", environmentID)
+		}
+		return map[string][]deliverycore.AllocationRecord{
+			"service-a": {{
+				Healthy: true, AllocationIPv4: "10.0.0.1", AllocationIPv6: "fd00::1",
+				DesiredSpecRevision: 1, AppliedSpecRevision: 1,
+				DesiredRolloutGeneration: 1, AppliedRolloutGeneration: 1,
+			}},
+		}, nil
+	}}
+	service := newPlatformService(store, noopNotifier{}, noopIngress{}, delivery)
+
+	resp, err := service.ListServices(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.ListServicesRequest{EnvironmentId: "environment-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allocationReads.Load() != 0 {
+		t.Fatalf("per-service allocation reads = %d, want 0", allocationReads.Load())
+	}
+	if len(resp.GetServices()) != 2 || resp.GetServices()[0].GetReadyReplicaCount() != 1 || resp.GetServices()[1].GetReadyReplicaCount() != 0 {
+		t.Fatalf("decorated services = %#v", resp.GetServices())
+	}
+}
+
+type staticLiveOwner struct {
+	held bool
+	addr string
+	err  error
+}
+
+func (o staticLiveOwner) Lookup(context.Context) (bool, string, error) {
+	return o.held, o.addr, o.err
+}
+
+func newPlatformServiceWithOwner(owner staticLiveOwner) *platformService {
+	return newPlatformService(
+		&fakePlatformStore{},
+		noopNotifier{},
+		noopIngress{},
+		&fakePlatformDelivery{},
+		withPlatformLiveOwner(owner),
+	)
+}
+
+func TestNonOwnerPlatformRPCsRedirectToLiveOwner(t *testing.T) {
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+	service := newPlatformServiceWithOwner(staticLiveOwner{held: false, addr: "owner.example:9443"})
+	want := deliverycore.LiveOwnerRedirectMessage("owner.example:9443")
+
+	calls := []struct {
+		name string
+		call func(context.Context) error
+	}{
+		{"CreateProject", func(ctx context.Context) error {
+			_, err := service.CreateProject(ctx, &platformv1.CreateProjectRequest{Name: "project"})
+			return err
+		}},
+		{"LinkGitHubRepository", func(ctx context.Context) error {
+			_, err := service.LinkGitHubRepository(ctx, &platformv1.LinkGitHubRepositoryRequest{ProjectId: "project-1", RepositorySelector: "owner/repo"})
+			return err
+		}},
+		{"GetServiceStatus", func(ctx context.Context) error {
+			_, err := service.GetServiceStatus(ctx, &platformv1.GetServiceStatusRequest{ServiceId: "service-1"})
+			return err
+		}},
+		{"GetService", func(ctx context.Context) error {
+			_, err := service.GetService(ctx, &platformv1.GetServiceRequest{ServiceId: "service-1"})
+			return err
+		}},
+		{"ListServices", func(ctx context.Context) error {
+			_, err := service.ListServices(ctx, &platformv1.ListServicesRequest{EnvironmentId: "environment-1"})
+			return err
+		}},
+		{"ListAgents", func(ctx context.Context) error {
+			_, err := service.ListAgents(ctx, &emptypb.Empty{})
+			return err
+		}},
+		{"CreateService", func(ctx context.Context) error {
+			_, err := service.CreateService(ctx, &platformv1.CreateServiceRequest{EnvironmentId: "environment-1"})
+			return err
+		}},
+		{"UpdateService", func(ctx context.Context) error {
+			_, err := service.UpdateService(ctx, &platformv1.UpdateServiceRequest{ServiceId: "service-1"})
+			return err
+		}},
+		{"ApplyDeploymentAction", func(ctx context.Context) error {
+			_, err := service.ApplyDeploymentAction(ctx, &platformv1.ApplyDeploymentActionRequest{
+				ServiceId: "service-1", DeploymentId: "deployment-1", IdempotencyKey: "key-1", Action: platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART,
+			})
+			return err
+		}},
+		{"ScaleService", func(ctx context.Context) error {
+			_, err := service.ScaleService(ctx, &platformv1.ScaleServiceRequest{ServiceId: "service-1", DesiredReplicaCount: 2})
+			return err
+		}},
+		{"DiscardServiceChanges", func(ctx context.Context) error {
+			_, err := service.DiscardServiceChanges(ctx, &platformv1.DiscardServiceChangesRequest{ServiceId: "service-1", DiscardAll: true})
+			return err
+		}},
+		{"DeleteService", func(ctx context.Context) error {
+			_, err := service.DeleteService(ctx, &platformv1.DeleteServiceRequest{ServiceId: "service-1"})
+			return err
+		}},
+		{"ReleaseEnvironment", func(ctx context.Context) error {
+			_, err := service.ReleaseEnvironment(ctx, &platformv1.ReleaseEnvironmentRequest{EnvironmentId: "environment-1"})
+			return err
+		}},
+		{"CreateVolume", func(ctx context.Context) error {
+			_, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1})
+			return err
+		}},
+		{"DeleteVolume", func(ctx context.Context) error {
+			_, err := service.DeleteVolume(ctx, &platformv1.DeleteVolumeRequest{VolumeId: "volume-1"})
+			return err
+		}},
+		{"CreateDomainBinding", func(ctx context.Context) error {
+			_, err := service.CreateDomainBinding(ctx, &platformv1.CreateDomainBindingRequest{})
+			return err
+		}},
+		{"GenerateDomainBinding", func(ctx context.Context) error {
+			_, err := service.GenerateDomainBinding(ctx, &platformv1.GenerateDomainBindingRequest{ServiceId: "service-1"})
+			return err
+		}},
+		{"UpdateDomainBinding", func(ctx context.Context) error {
+			_, err := service.UpdateDomainBinding(ctx, &platformv1.UpdateDomainBindingRequest{Hostname: "web.example.com"})
+			return err
+		}},
+		{"DeleteDomainBinding", func(ctx context.Context) error {
+			_, err := service.DeleteDomainBinding(ctx, &platformv1.DeleteDomainBindingRequest{Hostname: "web.example.com"})
+			return err
+		}},
+	}
+
+	for _, tc := range calls {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.call(ctx)
+			if status.Code(err) != codes.FailedPrecondition {
+				t.Fatalf("non-owner %s error = %v, want FailedPrecondition redirect", tc.name, err)
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("non-owner %s error = %v, want redirect %q", tc.name, err, want)
+			}
+		})
+	}
+}
+
+func TestListAgentsMapsErrNotLiveOwner(t *testing.T) {
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+	store := &fakePlatformStore{listAgentsFn: func(context.Context, authz.User) ([]deliverycore.AgentRecord, error) {
+		return nil, deliverycore.ErrNotLiveOwner
+	}}
+	service := newPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, withPlatformLiveOwner(staticLiveOwner{held: true}))
+	_, err := service.ListAgents(ctx, &emptypb.Empty{})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("ListAgents = %v, want Unavailable while the lease holder is not serving", err)
+	}
+}
+
+func TestServiceReadsMapErrNotLiveOwnerAfterInitialOwnerCheck(t *testing.T) {
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+
+	t.Run("create reload", func(t *testing.T) {
+		store := &fakePlatformStore{serviceByIDFn: func(context.Context, authz.User, string) (deliverycore.ServiceRecord, error) {
+			return deliverycore.ServiceRecord{}, deliverycore.ErrNotLiveOwner
+		}}
+		service := newPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, withPlatformLiveOwner(staticLiveOwner{held: true}))
+		_, err := service.CreateService(ctx, &platformv1.CreateServiceRequest{
+			EnvironmentId: "environment-1",
+			Service: &platformv1.ServiceInput{
+				Name: "web",
+				Spec: directImageServiceSpec("busybox:1.36", nil),
+			},
+		})
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("CreateService = %v, want Unavailable", err)
+		}
+	})
+
+	t.Run("delete delivery", func(t *testing.T) {
+		delivery := &fakePlatformDelivery{deleteServiceFn: func(context.Context, authz.User, string) error {
+			return deliverycore.ErrNotLiveOwner
+		}}
+		service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery, withPlatformLiveOwner(staticLiveOwner{held: true}))
+		_, err := service.DeleteService(ctx, &platformv1.DeleteServiceRequest{ServiceId: "service-1"})
+		if status.Code(err) != codes.Unavailable {
+			t.Fatalf("DeleteService = %v, want Unavailable", err)
+		}
+	})
+}
+
+func TestCreateVolumeMapsValidationErrors(t *testing.T) {
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+	store := &fakePlatformStore{}
+	service := newPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, withPlatformLiveOwner(staticLiveOwner{held: true}))
+
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{Name: "data", SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("empty environment: %v", err)
+	}
+	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
+		return deliverycore.VolumeRecord{}, sql.ErrNoRows
+	}
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "missing", Name: "data", SizeBytes: 1}); status.Code(err) != codes.NotFound {
+		t.Fatalf("unknown environment: %v", err)
+	}
+	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
+		return deliverycore.VolumeRecord{}, deliverycore.ErrVolumeAlreadyExists
+	}
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1}); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("duplicate name: %v", err)
+	}
+	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
+		return deliverycore.VolumeRecord{}, deliverycore.ErrInvalidVolume
+	}
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("store validation: %v", err)
+	}
+}
+
+func TestLiveOwnerPlatformRPCsAreNotRedirected(t *testing.T) {
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+	service := newPlatformServiceWithOwner(staticLiveOwner{held: true, addr: "owner.example:9443"})
+	if _, err := service.ListAgents(ctx, &emptypb.Empty{}); err != nil {
+		t.Fatalf("owner ListAgents error = %v, want nil", err)
 	}
 }

@@ -5,11 +5,12 @@ package controlplane
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/authz"
-	"ebof-wg-mesh/internal/controlplane/source"
 	"errors"
 	"net/http"
 	"testing"
+
+	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
@@ -113,12 +114,12 @@ func TestPlatformServiceInspectSourceReturnsPublicRepositoryBuildHints(t *testin
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(
+	service := newPlatformService(
 		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
+		withGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
@@ -167,12 +168,12 @@ func TestPlatformServiceGitHubLinkRequiresUserRepositoryAuthorization(t *testing
 	if err != nil {
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
-	service := NewPlatformService(
+	service := newPlatformService(
 		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(NewGitHubCatalog(store.source, client), client, authz.NewAuthorizer(store.db)),
+		withGitHubSourceInspection(NewGitHubCatalog(store.source, client), client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 	ctx := contextWithDelegatedUser("user-1", "user@example.com")
@@ -257,12 +258,12 @@ func TestPlatformServiceInspectSourceReturnsInstallationRequiredForPrivateRepoWi
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(
+	service := newPlatformService(
 		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
+		withGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
@@ -295,12 +296,12 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterInstallation(
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(
+	service := newPlatformService(
 		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
+		withGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 
@@ -350,12 +351,12 @@ func TestPlatformServiceInspectSourceResolvesPrivateRepositoryAfterForbiddenRepo
 		t.Fatalf("NewGitHubClient: %v", err)
 	}
 	catalog := NewGitHubCatalog(store.source, client)
-	service := NewPlatformService(
+	service := newPlatformService(
 		store.platform(),
 		noopNotifier{},
 		noopIngress{},
 		newTestDelivery(store, noopNotifier{}, noopIngress{}, nil),
-		WithGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
+		withGitHubSourceInspection(catalog, client, authz.NewAuthorizer(store.db)),
 	)
 	projectID := bootstrapProjectAndAgent(t, store, context.Background())
 

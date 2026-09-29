@@ -2,10 +2,15 @@ package delivery
 
 import (
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type ProjectKind string
@@ -387,4 +392,90 @@ func (a AgentRecord) Healthy(now time.Time) bool {
 		return false
 	}
 	return a.LifecycleState != AgentStateUnavailable && a.LifecycleState != AgentStateRetired && now.UTC().Sub(a.LastSeenAt.UTC()) < AgentHealthyTTL
+}
+
+var (
+	ErrVolumeInUse              = errors.New("volume still referenced by service")
+	ErrVolumeNotFound           = errors.New("volume not found")
+	ErrVolumeAlreadyExists      = errors.New("volume already exists")
+	ErrInvalidVolume            = errors.New("volume name and positive size are required")
+	ErrSealedSecretsUnavailable = errors.New("sealed secrets are not configured")
+	ErrInvalidSealedName        = errors.New("sealed secret name is invalid")
+	ErrSealedNameConflict       = errors.New("name is already used by the other variable kind")
+	ErrLeaseLost                = errors.New("control-plane lease lost")
+	ErrVolumeAgentMismatch      = errors.New("volume bound to different agent")
+	ErrConcurrentUpdate         = errors.New("concurrent service update")
+	ErrDomainAlreadyExists      = errors.New("domain binding already exists")
+	ErrInvalidPort              = errors.New("port must be an integer between 1 and 65535")
+	ErrNoPlacementAvailable     = errors.New("no healthy agent satisfies placement")
+	ErrInvalidReplicaCount      = errors.New("desired replica count is invalid")
+	ErrVolumeReplicaUnsupported = errors.New("volume-backed services support a single replica")
+	ErrServiceDeleted           = errors.New("service is deleted")
+	ErrEnvironmentDeleted       = errors.New("environment is deleted")
+	ErrProjectDeleted           = errors.New("project is deleted")
+	ErrDomainDeleted            = errors.New("domain binding is deleted")
+	ErrConfirmationMismatch     = errors.New("confirmation name does not match the current resource name")
+	ErrVolumeNotEmpty           = errors.New("volume may still hold data")
+	ErrAncestorDeleted          = errors.New("cannot restore under a deleted parent; restore the parent first")
+	ErrDeletionExpired          = errors.New("deletion grace period has expired")
+	ErrServiceAlreadyExists     = errors.New("service already exists")
+	ErrEnvironmentAlreadyExists = errors.New("environment already exists")
+)
+
+type jsonInt32Slice []int32
+
+type JSONInt32Slice = jsonInt32Slice
+
+type jsonStringSlice []string
+
+func encodeRestartObservation(obs *platformv1.RestartObservation) ([]byte, error) {
+	if obs == nil {
+		return []byte("{}"), nil
+	}
+	return protojson.Marshal(obs)
+}
+
+func decodeRestartObservation(raw []byte) (*platformv1.RestartObservation, error) {
+	if len(raw) == 0 || string(raw) == "{}" || string(raw) == "null" {
+		return nil, nil
+	}
+	obs := &platformv1.RestartObservation{}
+	if err := protojson.Unmarshal(raw, obs); err != nil {
+		return nil, err
+	}
+	return obs, nil
+}
+
+func (p *jsonStringSlice) Scan(src any) error {
+	if p == nil {
+		return nil
+	}
+	switch v := src.(type) {
+	case nil:
+		*p = nil
+		return nil
+	case []byte:
+		return json.Unmarshal(v, (*[]string)(p))
+	case string:
+		return json.Unmarshal([]byte(v), (*[]string)(p))
+	default:
+		return fmt.Errorf("scan string slice json: unsupported type %T", src)
+	}
+}
+
+func (p *jsonInt32Slice) Scan(src any) error {
+	if p == nil {
+		return nil
+	}
+	switch v := src.(type) {
+	case nil:
+		*p = nil
+		return nil
+	case []byte:
+		return json.Unmarshal(v, (*[]int32)(p))
+	case string:
+		return json.Unmarshal([]byte(v), (*[]int32)(p))
+	default:
+		return fmt.Errorf("scan int32 slice json: unsupported type %T", src)
+	}
 }

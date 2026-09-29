@@ -1,3 +1,5 @@
+// Package controlplane assembles the platform runtime and adapts authenticated
+// transports to delivery, catalog, routing, and identity operations.
 package controlplane
 
 import (
@@ -51,7 +53,7 @@ type Server struct {
 	logStore        *logs.LogStore
 	logEmitter      *logs.LogEmitter
 	logIngester     *logs.AsyncIngester
-	notifier        *Notifier
+	notifier        *notifier
 	authority       *identity.TLSAuthority
 	internalGRPC    *grpc.Server
 	internalHTTP    *http.Server
@@ -59,7 +61,7 @@ type Server struct {
 	xdsServer       *xds.Server
 	xdsGRPC         *grpc.Server
 	xdsLn           net.Listener
-	dashboard       *ManagedDashboardReconciler
+	dashboard       *managedDashboardReconciler
 	registry        *registry.Policy
 	registryAuth    *registry.Auth
 	registryHTTP    *http.Server
@@ -67,9 +69,9 @@ type Server struct {
 	webhooks        *source.GitHubWebhookProcessor
 	coordinator     *source.GitHubCoordinator
 	reconciler      *source.GitHubReconciler
-	rollouts        *RolloutReconciler
-	failover        *ServiceFailoverReconciler
-	leases          *LeaseManager
+	rollouts        *rolloutReconciler
+	failover        *serviceFailoverReconciler
+	leases          *leaseManager
 	buildStaleAfter time.Duration
 	internalLn      net.Listener
 	registryLn      net.Listener
@@ -83,7 +85,7 @@ type Server struct {
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
 	store, err := openPersistence(cfg.Database, cfg.Mesh,
-		WithDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays)*24*time.Hour))
+		withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays)*24*time.Hour))
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +107,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, fmt.Errorf("open signing keys: %w", err)
 	}
-	leases := NewLeaseManager(store.database, 15*time.Second, time.Second)
+	leases := newLeaseManager(store.database, 15*time.Second, time.Second)
 	leases.SetAdvertise(cfg.AdvertiseAddr)
 	archiveStore, err := source.NewSourceArchiveStore(cfg.SourceArchives)
 	if err != nil {
@@ -182,8 +184,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	logEmitter := logs.NewLogEmitter(logStore, logIngester)
-	notifier := NewNotifier(store.notifications)
-	platformEvents := NewPlatformEvents(store.events, 0)
+	notifier := newNotifier(store.notifications)
+	platformEvents := newPlatformEvents(store.database, 0)
 	staticRoutes := make([]xds.StaticRoute, 0, len(cfg.Ingress.StaticRoutes))
 	for _, route := range cfg.Ingress.StaticRoutes {
 		staticRoutes = append(staticRoutes, xds.StaticRoute{
@@ -229,40 +231,40 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		webhookHandler = source.NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
 
-	platformService := NewPlatformService(
+	platformService := newPlatformService(
 		store.platform(),
 		notifier,
 		ingress,
 		delivery,
-		WithServiceLogs(logStore),
-		WithServiceLogEmitter(logEmitter),
-		WithGitHubSourceInspection(githubCatalog, githubClient, store.authorizer()),
-		WithPlatformDomainSuffix(cfg.Ingress.PublicAddr),
-		WithPlatformEvents(platformEvents),
-		WithPlatformLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
+		withServiceLogs(logStore),
+		withServiceLogEmitter(logEmitter),
+		withGitHubSourceInspection(githubCatalog, githubClient, store.authorizer()),
+		withPlatformDomainSuffix(cfg.Ingress.PublicAddr),
+		withPlatformEvents(platformEvents),
+		withPlatformLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
 	)
 	internalAuth := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, userAssertionSecrets(signKeys), authority.Revocations())
-	dashboard := NewManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
-	rollouts := NewRolloutReconciler(delivery, 2*time.Second)
-	failover := NewServiceFailoverReconciler(delivery,
+	dashboard := newManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
+	rollouts := newRolloutReconciler(delivery, 2*time.Second)
+	failover := newServiceFailoverReconciler(delivery,
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
 	internal := grpc.NewServer(
 		grpc.UnaryInterceptor(internalAuth.UnaryServerInterceptor()),
 		grpc.StreamInterceptor(internalAuth.StreamServerInterceptor()),
 	)
-	agentv1.RegisterAgentControlServer(internal, NewAgentService(
+	agentv1.RegisterAgentControlServer(internal, newAgentService(
 		store.fleet, delivery, logStore, notifier, authority, dashboard,
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
-		WithAgentRegistry(policy),
-		WithReplicaAddresses(cfg.ReplicaAddresses),
-		WithLiveOwner(leaseLiveOwner{leases: leases, name: SingletonLeaseName}),
-		WithLogIngester(logIngester),
+		withAgentRegistry(policy),
+		withReplicaAddresses(cfg.ReplicaAddresses),
+		withLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
+		withLogIngester(logIngester),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
-	buildOperations := NewBuildOperations(store.builds, store.reads, store.source, delivery, policy, policy, WithBuilderLogEmitter(logEmitter))
-	platformv1.RegisterBuilderServiceServer(internal, NewBuilderService(buildOperations))
-	opsService := NewOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
+	buildOperations := newBuildOperations(store.db, store.source, delivery, policy, policy, withBuilderLogEmitter(logEmitter))
+	platformv1.RegisterBuilderServiceServer(internal, newBuilderService(buildOperations))
+	opsService := newOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
 	platformv1.RegisterOpsServiceServer(internal, opsService)
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
@@ -444,7 +446,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		s.leases.SetAdvertise(advertise)
 		s.leases.SetFenceHooks(func() { s.store.publication.SetPublishing(false) }, func() { s.store.publication.SetPublishing(true) })
-		err := s.leases.Run(runCtx, SingletonLeaseName, s.runSingletonJobs)
+		err := s.leases.Run(runCtx, singletonLeaseName, s.runSingletonJobs)
 		leaseDone <- err
 		errCh <- err
 	}()
@@ -554,7 +556,7 @@ func (s *Server) buildLeaseRepairLoop(ctx context.Context) error {
 }
 
 func (s *Server) deletionGC(ctx context.Context) error {
-	gc := NewDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
+	gc := newDeletionGC(s.store, s.notifier, s.ingress, time.Duration(s.cfg.Deletion.GCIntervalSeconds)*time.Second)
 	if s.logStore != nil {
 		gc.SetLogPurgeHook(s.logStore.PurgeProjectLogs)
 	}
@@ -745,14 +747,6 @@ func (s *Server) XDSAddr() string {
 		return ""
 	}
 	return s.xdsLn.Addr().String()
-}
-
-// XDSServer exposes the xDS management server for status inspection.
-func (s *Server) XDSServer() *xds.Server {
-	if s == nil {
-		return nil
-	}
-	return s.xdsServer
 }
 
 func (s *Server) RegistryAuthBundlePath() string {

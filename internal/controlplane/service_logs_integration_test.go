@@ -4,11 +4,12 @@ package controlplane
 
 import (
 	"context"
-	"ebof-wg-mesh/internal/controlplane/logs"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"ebof-wg-mesh/internal/controlplane/logs"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 

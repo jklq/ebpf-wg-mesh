@@ -139,8 +139,8 @@ func openTestStore(t *testing.T) *persistence {
 	if _, err := store.secrets.Registry().EnsureActiveKey(context.Background()); err != nil {
 		t.Fatalf("ensure active envelope key: %v", err)
 	}
-	lease := NewLeaseManager(store.database, time.Minute, time.Millisecond)
-	leaseCtx, releaseLease, err := lease.hold(context.Background(), SingletonLeaseName)
+	lease := newLeaseManager(store.database, time.Minute, time.Millisecond)
+	leaseCtx, releaseLease, err := lease.hold(context.Background(), singletonLeaseName)
 	if err != nil {
 		t.Fatal(err)
 	}

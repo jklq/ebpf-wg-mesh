@@ -57,7 +57,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	notifier := &releaseTestNotifier{}
 	delivery := newTestDelivery(store, notifier, nil, nil)
 	before := mustDesiredRevision(t, store, ctx, "node-1")
-	events := NewPlatformEvents(store.events, 0)
+	events := newPlatformEvents(store.database, 0)
 	eventBefore, err := events.Current(ctx)
 	if err != nil {
 		t.Fatal(err)

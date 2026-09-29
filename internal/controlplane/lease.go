@@ -26,9 +26,9 @@ type leaseClaim struct {
 
 type leaseContextKey struct{}
 
-const SingletonLeaseName = "control-plane-singleton"
+const singletonLeaseName = "control-plane-singleton"
 
-type LeaseManager struct {
+type leaseManager struct {
 	store         *database
 	holderID      string
 	ttl           time.Duration
@@ -44,14 +44,14 @@ type leaseWatcher struct {
 	ch chan struct{}
 }
 
-func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseManager {
+func newLeaseManager(store *database, ttl, retryInterval time.Duration) *leaseManager {
 	if ttl <= 0 {
 		ttl = 15 * time.Second
 	}
 	if retryInterval <= 0 {
 		retryInterval = time.Second
 	}
-	return &LeaseManager{
+	return &leaseManager{
 		store: store, holderID: uuid.NewString(), ttl: ttl, retryInterval: retryInterval,
 		watchers: make(map[string]map[*leaseWatcher]struct{}),
 	}
@@ -59,7 +59,7 @@ func NewLeaseManager(store *database, ttl, retryInterval time.Duration) *LeaseMa
 
 // Watch reports local lease transitions. The database remains authoritative;
 // this signal only avoids every connected agent polling it independently.
-func (m *LeaseManager) Watch(name string) (<-chan struct{}, func()) {
+func (m *leaseManager) Watch(name string) (<-chan struct{}, func()) {
 	if m == nil || strings.TrimSpace(name) == "" {
 		ch := make(chan struct{})
 		return ch, func() { close(ch) }
@@ -89,7 +89,7 @@ func (m *LeaseManager) Watch(name string) (<-chan struct{}, func()) {
 	}
 }
 
-func (m *LeaseManager) notifyChanged(name string) {
+func (m *leaseManager) notifyChanged(name string) {
 	if m == nil {
 		return
 	}
@@ -103,20 +103,20 @@ func (m *LeaseManager) notifyChanged(name string) {
 	}
 }
 
-func (m *LeaseManager) SetAdvertise(addr string) {
+func (m *leaseManager) SetAdvertise(addr string) {
 	if m != nil {
 		m.advertise = strings.TrimSpace(addr)
 	}
 }
 
-func (m *LeaseManager) SetFenceHooks(unfenced, fenced func()) {
+func (m *leaseManager) SetFenceHooks(unfenced, fenced func()) {
 	if m != nil {
 		m.onUnfenced = unfenced
 		m.onFenced = fenced
 	}
 }
 
-func (m *LeaseManager) Lookup(ctx context.Context, name string) (held bool, advertiseAddr string, err error) {
+func (m *leaseManager) Lookup(ctx context.Context, name string) (held bool, advertiseAddr string, err error) {
 	if m == nil || m.store == nil || name == "" {
 		return false, "", nil
 	}
@@ -140,7 +140,7 @@ func (m *LeaseManager) Lookup(ctx context.Context, name string) (held bool, adve
 	return false, addr, nil
 }
 
-func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Context) error) error {
+func (m *leaseManager) Run(ctx context.Context, name string, job func(context.Context) error) error {
 	if m == nil || m.store == nil || job == nil || name == "" {
 		return nil
 	}
@@ -176,7 +176,7 @@ func (m *LeaseManager) Run(ctx context.Context, name string, job func(context.Co
 	return nil
 }
 
-func (m *LeaseManager) acquireUntil(ctx context.Context, name string) (leaseClaim, error) {
+func (m *leaseManager) acquireUntil(ctx context.Context, name string) (leaseClaim, error) {
 	for {
 		claim, acquired, err := m.acquire(ctx, name)
 		if err != nil {
@@ -191,7 +191,7 @@ func (m *LeaseManager) acquireUntil(ctx context.Context, name string) (leaseClai
 	}
 }
 
-func (m *LeaseManager) hold(ctx context.Context, name string) (context.Context, func(), error) {
+func (m *leaseManager) hold(ctx context.Context, name string) (context.Context, func(), error) {
 	claim, err := m.acquireUntil(ctx, name)
 	if err != nil {
 		return nil, nil, err
@@ -259,7 +259,7 @@ func jitter(base time.Duration) time.Duration {
 	return base - spread + time.Duration(rand.Int64N(int64(2*spread)+1))
 }
 
-func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bool, error) {
+func (m *leaseManager) acquire(ctx context.Context, name string) (leaseClaim, bool, error) {
 	claim := leaseClaim{name: name, holder: m.holderID}
 	err := m.store.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		return tx.QueryRowContext(ctx, `
@@ -286,7 +286,7 @@ func (m *LeaseManager) acquire(ctx context.Context, name string) (leaseClaim, bo
 	return claim, err == nil, err
 }
 
-func (m *LeaseManager) renew(ctx context.Context, claim leaseClaim) (bool, error) {
+func (m *leaseManager) renew(ctx context.Context, claim leaseClaim) (bool, error) {
 	result, err := m.store.db.ExecContext(ctx, `
 		UPDATE control_plane_leases
 		   SET expires_at = statement_timestamp() + $1::INT8 * INTERVAL '1 microsecond', updated_at = statement_timestamp(), advertise_addr = $5
@@ -299,7 +299,7 @@ func (m *LeaseManager) renew(ctx context.Context, claim leaseClaim) (bool, error
 	return rows == 1, err
 }
 
-func (m *LeaseManager) release(ctx context.Context, claim leaseClaim) error {
+func (m *leaseManager) release(ctx context.Context, claim leaseClaim) error {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	_, err := m.store.db.ExecContext(ctx, `
@@ -350,7 +350,7 @@ func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
 func (s *database) liveOwnerAddr(ctx context.Context) (string, error) {
 	var addr string
 	err := s.db.QueryRowContext(ctx, `SELECT advertise_addr FROM control_plane_leases
-		WHERE name = $1 AND expires_at > statement_timestamp()`, SingletonLeaseName).Scan(&addr)
+		WHERE name = $1 AND expires_at > statement_timestamp()`, singletonLeaseName).Scan(&addr)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}

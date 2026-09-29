@@ -4,8 +4,6 @@ package controlplane
 
 import (
 	"context"
-	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/registry"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +12,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/registry"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 

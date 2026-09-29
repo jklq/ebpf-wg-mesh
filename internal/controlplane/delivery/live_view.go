@@ -10,6 +10,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/restartpolicy"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -634,4 +635,128 @@ func (l *Live) rolloutSnapshot(serviceID string) (rolloutSnapshot, string, bool)
 func rolloutPlanNeedsTx(plan rolloutPlan) bool {
 	return len(plan.Remove) > 0 || len(plan.Promote) > 0 || len(plan.Withdraw) > 0 ||
 		plan.Failure != "" || plan.Complete || plan.CompleteRemoval || plan.PlacementSlots > 0
+}
+
+func (l *Live) OverlayAgent(rec AgentRecord) AgentRecord {
+	if l == nil {
+		return overlayAgentAbsent(rec)
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	session, ok := l.sessions[rec.ID]
+	if !ok {
+		return overlayAgentAbsent(rec)
+	}
+	rec.LastSeenAt = session.LastContact
+	if rec.LifecycleState == AgentStateEnrolling || rec.LifecycleState == AgentStateRetired {
+		return rec
+	}
+	expired := l.serving && l.now().UTC().Sub(session.LastContact) >= l.ttl
+	if !session.Ready || !session.Reachable || expired {
+		rec.StateBeforeUnavailable = rec.LifecycleState
+		rec.LifecycleState = AgentStateUnavailable
+	}
+	return rec
+}
+
+func overlayAgentAbsent(rec AgentRecord) AgentRecord {
+	if rec.LifecycleState != AgentStateEnrolling && rec.LifecycleState != AgentStateRetired {
+		rec.StateBeforeUnavailable = rec.LifecycleState
+		rec.LifecycleState = AgentStateUnavailable
+	}
+	rec.LastSeenAt = time.Time{}
+	return rec
+}
+
+func (l *Live) OverlayAllocation(rec AllocationRecord) AllocationRecord {
+	var session AgentSession
+	var hasSession bool
+	var obs AllocationObservation
+	var hasObs bool
+	var now time.Time
+	ttl := AgentHealthyTTL
+	if l != nil {
+		l.mu.Lock()
+		if s, ok := l.sessions[rec.AgentID]; ok {
+			session, hasSession = *s, true
+		}
+		obs, hasObs = l.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
+		now = l.now().UTC()
+		ttl = l.ttl
+		l.mu.Unlock()
+	}
+	return overlayAllocation(rec, session, hasSession, obs, hasObs, now, ttl)
+}
+
+func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bool, obs AllocationObservation, hasObs bool, now time.Time, ttl time.Duration) AllocationRecord {
+	expired := !hasSession || !session.Reachable || (!now.IsZero() && now.Sub(session.LastContact) >= ttl)
+	if rec.RolloutState == AllocationRolloutLost || expired {
+		rec.Phase = "Unavailable"
+		rec.Healthy = false
+		rec.HealthyIPv4Ports = nil
+		rec.HealthyIPv6Ports = nil
+		if hasObs {
+			if rec.Message == "" {
+				rec.Message = obs.Message
+			}
+			if obs.Restart != nil {
+				rec.Restart = obs.Restart
+			}
+			if obs.ObservedAt.After(rec.UpdatedAt) {
+				rec.UpdatedAt = obs.ObservedAt
+			}
+		}
+		return rec
+	}
+	if rec.RolloutState == AllocationRolloutWithdrawing {
+		rec.Phase = "Withdrawing"
+		rec.Healthy = false
+		rec.HealthyIPv4Ports = nil
+		rec.HealthyIPv6Ports = nil
+		if hasObs && obs.Restart != nil {
+			rec.Restart = obs.Restart
+		}
+		return rec
+	}
+	if rec.RolloutState == AllocationRolloutDraining && (!hasObs || obs.Phase != "Drained") {
+		rec.Phase = "Draining"
+		rec.Healthy = false
+		rec.HealthyIPv4Ports = nil
+		rec.HealthyIPv6Ports = nil
+		if hasObs {
+			if rec.Message == "" {
+				rec.Message = obs.Message
+			}
+			if obs.Restart != nil {
+				rec.Restart = obs.Restart
+			}
+		}
+		return rec
+	}
+	if !hasObs {
+		if rec.Phase == "" {
+			rec.Phase = "Pending"
+		}
+		rec.Healthy = false
+		rec.AppliedSpecRevision = 0
+		rec.AppliedRolloutGeneration = 0
+		return rec
+	}
+	rec.AppliedSpecRevision = obs.AppliedSpecRevision
+	rec.AppliedRolloutGeneration = obs.AppliedGeneration
+	rec.Phase = obs.Phase
+	if rec.Message == "" {
+		rec.Message = obs.Message
+	}
+	rec.Healthy = obs.Healthy
+	rec.HealthyIPv4Ports = append([]int32(nil), obs.HealthyIPv4Ports...)
+	rec.HealthyIPv6Ports = append([]int32(nil), obs.HealthyIPv6Ports...)
+	rec.Restart = obs.Restart
+	if obs.ObservedAt.After(rec.UpdatedAt) {
+		rec.UpdatedAt = obs.ObservedAt
+	}
+	if rec.Phase == restartpolicy.PhaseCrashLoop {
+		rec.Healthy = false
+	}
+	return rec
 }

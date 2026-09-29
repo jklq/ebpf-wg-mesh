@@ -10,12 +10,14 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
@@ -23,6 +25,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func peerCtx(ip string) context.Context {
@@ -34,7 +37,8 @@ func peerCtx(ip string) context.Context {
 type stringPeerAddr string
 
 func (a stringPeerAddr) Network() string { return "tcp" }
-func (a stringPeerAddr) String() string  { return string(a) }
+
+func (a stringPeerAddr) String() string { return string(a) }
 
 func TestValidateAgentEndpointAgainstPeer(t *testing.T) {
 	hello := func(endpoint string) *agentv1.AgentHello {
@@ -108,8 +112,8 @@ func (s stubLiveOwner) Lookup(context.Context) (bool, string, error) {
 
 func TestAgentServiceRedirectsNonOwnerRPCs(t *testing.T) {
 	t.Parallel()
-	service := NewAgentService(nil, nil, nil, nil, nil, nil, true, "agent-trusted", "dashboard-1",
-		WithLiveOwner(stubLiveOwner{addr: "owner:9443"}))
+	service := newAgentService(nil, nil, nil, nil, nil, nil, true, "agent-trusted", "dashboard-1",
+		withLiveOwner(stubLiveOwner{addr: "owner:9443"}))
 	_, err := service.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-1"})
 	if status.Code(err) != codes.FailedPrecondition {
 		t.Fatalf("Enroll status = %v", err)
@@ -121,7 +125,7 @@ func TestAgentServiceRedirectsNonOwnerRPCs(t *testing.T) {
 	if got, ok := parseAgentLiveOwner(err); !ok || got != "owner:9443" {
 		t.Fatalf("dashboard redirect = %q, %v", got, err)
 	}
-	unavailable := NewAgentService(nil, nil, nil, nil, nil, nil, false, "", "", WithLiveOwner(stubLiveOwner{}))
+	unavailable := newAgentService(nil, nil, nil, nil, nil, nil, false, "", "", withLiveOwner(stubLiveOwner{}))
 	_, err = unavailable.Enroll(context.Background(), &agentv1.EnrollRequest{AgentId: "agent-1"})
 	if status.Code(err) != codes.Unavailable {
 		t.Fatalf("missing owner status = %v", err)
@@ -138,10 +142,10 @@ func parseAgentLiveOwner(err error) (string, bool) {
 
 func TestLeaseOwnerWatchCoalescesTransitionsAndCloses(t *testing.T) {
 	t.Parallel()
-	m := NewLeaseManager(nil, time.Second, time.Millisecond)
-	changed, stop := m.Watch(SingletonLeaseName)
-	m.notifyChanged(SingletonLeaseName)
-	m.notifyChanged(SingletonLeaseName)
+	m := newLeaseManager(nil, time.Second, time.Millisecond)
+	changed, stop := m.Watch(singletonLeaseName)
+	m.notifyChanged(singletonLeaseName)
+	m.notifyChanged(singletonLeaseName)
 
 	select {
 	case <-changed:
@@ -172,7 +176,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := &AgentService{registry: registry.NewPolicy(cfg, auth)}
+	service := &agentService{registry: registry.NewPolicy(cfg, auth)}
 	state := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{
 		{AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)}},
 		{AllocationId: "allocation-2", ServiceId: "service-2", EnvironmentId: "environment-2", Spec: &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"}},
@@ -266,7 +270,7 @@ func TestPullCredentialCacheReusesOnlyWhileValidThroughNextSession(t *testing.T)
 		PullCredentialTTLSeconds: 90,
 	}, minter)
 	now := time.Now()
-	service := &AgentService{registry: policy, credReuseHorizon: time.Minute}
+	service := &agentService{registry: policy, credReuseHorizon: time.Minute}
 	service.credNow = func() time.Time { return now }
 	state := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{
 		AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1",
@@ -297,5 +301,118 @@ func TestPullCredentialCacheReusesOnlyWhileValidThroughNextSession(t *testing.T)
 	}
 	if minter.mints != 2 {
 		t.Fatalf("mint calls = %d, want 2", minter.mints)
+	}
+}
+
+// A crash-loop observation resent after a reconnect must collapse
+// into one event row: identity and observed_at derive from the
+// content-stable facts of the observation, not the report wall clock.
+func TestCrashLoopEventLineStableAcrossResends(t *testing.T) {
+	t.Parallel()
+
+	window := timestamppb.New(time.Date(2026, 9, 22, 1, 2, 3, 0, time.UTC))
+	cond := func() *agentv1.ServiceCondition {
+		return &agentv1.ServiceCondition{
+			AllocationId:             "alloc-1",
+			ServiceId:                "svc-1",
+			DesiredRolloutGeneration: 7,
+			Phase:                    "CrashLoop",
+			Restart: &platformv1.RestartObservation{
+				CrashLoop:                true,
+				RestartCount:             5,
+				WindowStartedAt:          window,
+				AppliedRolloutGeneration: 7,
+			},
+		}
+	}
+
+	first := crashLoopEventLine("agent-1", "env-1", cond())
+	resend := crashLoopEventLine("agent-1", "env-1", cond())
+	if first.ID != resend.ID {
+		t.Fatalf("resent observation changed event identity: %q vs %q", first.ID, resend.ID)
+	}
+	if !first.ObservedAt.Equal(resend.ObservedAt) {
+		t.Fatalf("resent observation changed observed_at: %v vs %v", first.ObservedAt, resend.ObservedAt)
+	}
+	if first.Sequence == resend.Sequence {
+		t.Fatalf("distinct emissions share sequence %d", first.Sequence)
+	}
+
+	// A new restart window is a new crash-loop episode and must get a
+	// fresh identity.
+	nextWindow := cond()
+	nextWindow.Restart.WindowStartedAt = timestamppb.New(time.Date(2026, 9, 22, 2, 0, 0, 0, time.UTC))
+	next := crashLoopEventLine("agent-1", "env-1", nextWindow)
+	if first.ID == next.ID {
+		t.Fatalf("new restart window reused event identity %q", first.ID)
+	}
+
+	// Another allocation in the same window is its own event.
+	otherAlloc := cond()
+	otherAlloc.AllocationId = "alloc-2"
+	if first.ID == crashLoopEventLine("agent-1", "env-1", otherAlloc).ID {
+		t.Fatalf("foreign allocation reused event identity %q", first.ID)
+	}
+}
+
+// recordingLogSink captures durable writes behind the async ingester.
+type recordingLogSink struct {
+	mu    sync.Mutex
+	lines []logs.LogLineInput
+}
+
+func (r *recordingLogSink) Enabled() bool { return true }
+
+func (r *recordingLogSink) WriteLogLines(_ context.Context, lines []logs.LogLineInput) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.lines = append(r.lines, lines...)
+	return nil
+}
+
+func (r *recordingLogSink) WriteGaps(_ context.Context, _ []logs.GapInput) error { return nil }
+
+// Crash-loop events must ride the durable ingest queue like agent
+// batches: a synchronous write in the status path would block the
+// agent Sync receive loop and lose the event during a backend outage.
+func TestCrashLoopLinesRouteThroughDurableQueue(t *testing.T) {
+	t.Parallel()
+
+	sink := &recordingLogSink{}
+	ingester, err := logs.NewAsyncIngester(sink, logs.AsyncIngesterConfig{SpoolDir: t.TempDir(), ShutdownGrace: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("NewAsyncIngester: %v", err)
+	}
+	s := &agentService{logIngester: ingester}
+
+	cond := &agentv1.ServiceCondition{
+		AllocationId:             "alloc-1",
+		ServiceId:                "svc-1",
+		DesiredRolloutGeneration: 7,
+		Phase:                    "CrashLoop",
+		Restart: &platformv1.RestartObservation{
+			CrashLoop:                true,
+			RestartCount:             5,
+			WindowStartedAt:          timestamppb.New(time.Date(2026, 9, 22, 1, 2, 3, 0, time.UTC)),
+			AppliedRolloutGeneration: 7,
+		},
+	}
+	line := crashLoopEventLine("agent-1", "env-1", cond)
+	s.deliverPlatformLines(context.Background(), "agent-1", []logs.LogLineInput{line})
+
+	if stats := ingester.Stats(); stats.AcceptedLines != 1 {
+		t.Fatalf("crash-loop event bypassed the durable queue: %+v", stats)
+	}
+
+	// The queued event drains into the store with its stable identity.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := ingester.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if len(sink.lines) != 1 || sink.lines[0].ID != line.ID {
+		t.Fatalf("queued event not delivered intact: %+v", sink.lines)
 	}
 }

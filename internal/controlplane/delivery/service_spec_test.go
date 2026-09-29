@@ -1,9 +1,13 @@
 package delivery
 
 import (
+	"errors"
+	"strings"
 	"testing"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func TestValidateBuildRecipe(t *testing.T) {
@@ -129,5 +133,111 @@ func TestEqualDesiredSourceSpecComparesBuilder(t *testing.T) {
 	}
 	if equalDesiredSourceSpec(recipe(platformv1.BuilderKind_BUILDER_KIND_RAILPACK), recipe(platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE)) {
 		t.Fatal("railpack and dockerfile recipes compared equal")
+	}
+}
+
+const (
+	defaultServiceCPUMillis       int64 = 250
+	defaultServiceMemoryMebibytes int64 = 256
+)
+
+func directImageServiceSpec(image string, runtime *platformv1.ServiceRuntime) *platformv1.ServiceSpec {
+	if runtime == nil {
+		runtime = defaultServiceRuntime()
+	}
+	return &platformv1.ServiceSpec{
+		Runtime: runtime,
+		Source: &platformv1.ServiceSource{
+			Source: &platformv1.ServiceSource_Image{
+				Image: &platformv1.DirectImageSource{Image: image},
+			},
+		},
+	}
+}
+
+func repositoryServiceSpec(runtime *platformv1.ServiceRuntime, source *platformv1.ServiceSourceSpec) *platformv1.ServiceSpec {
+	if runtime == nil {
+		runtime = defaultServiceRuntime()
+	}
+	if source == nil {
+		source = &platformv1.ServiceSourceSpec{}
+	}
+	return &platformv1.ServiceSpec{
+		Runtime: runtime,
+		Source: &platformv1.ServiceSource{
+			Source: &platformv1.ServiceSource_SourceSpec{
+				SourceSpec: source,
+			},
+		},
+	}
+}
+
+func defaultServiceRuntime() *platformv1.ServiceRuntime {
+	return &platformv1.ServiceRuntime{
+		CpuMillis:       defaultServiceCPUMillis,
+		MemoryMebibytes: defaultServiceMemoryMebibytes,
+	}
+}
+
+func TestCanonicalRollingStrategyAppliesTimingDefaults(t *testing.T) {
+	t.Parallel()
+
+	got := canonicalRollingStrategy(&platformv1.RollingStrategy{})
+	if got.GetHealthcheckTimeoutSeconds() != 300 || got.GetDrainingSeconds() != 0 {
+		t.Fatalf("timeout defaults = %+v", got)
+	}
+}
+
+func TestCanonicalRollingStrategyPreservesExplicitTiming(t *testing.T) {
+	t.Parallel()
+
+	got := canonicalRollingStrategy(&platformv1.RollingStrategy{
+		HealthcheckTimeoutSeconds: proto.Int32(60),
+		DrainingSeconds:           proto.Int32(5),
+	})
+	if got.GetHealthcheckTimeoutSeconds() != 60 || got.GetDrainingSeconds() != 5 {
+		t.Fatalf("strategy = %+v, want healthcheck timeout 60s and draining time 5s", got)
+	}
+}
+
+func TestValidateRollingStrategyRejectsInvalidHealthcheckTimeout(t *testing.T) {
+	t.Parallel()
+
+	spec := &platformv1.ServiceSpec{
+		RollingStrategy: &platformv1.RollingStrategy{
+			HealthcheckTimeoutSeconds: proto.Int32(0),
+		},
+	}
+	if err := ValidateRollingStrategy(spec); err == nil || !strings.Contains(err.Error(), "healthcheck timeout") {
+		t.Fatalf("got %v, want healthcheck timeout error", err)
+	}
+}
+
+func TestInternalServiceHostnameUsesTheMemorableServiceName(t *testing.T) {
+	t.Parallel()
+
+	if got := InternalServiceHostname("Accurate Reflection", "service-1"); got != "accurate-reflection.mesh.internal" {
+		t.Fatalf("unexpected internal hostname %q", got)
+	}
+	if got := internalServiceShortName("---", "9D6D-6A8E"); got != "service-9d6d6a8e" {
+		t.Fatalf("unexpected fallback short name %q", got)
+	}
+}
+
+func TestValidateVolumeReplicaCompatibility(t *testing.T) {
+	t.Parallel()
+
+	volumeSpec := &platformv1.ServiceSpec{
+		Runtime: &platformv1.ServiceRuntime{VolumeName: "data"},
+	}
+	if err := validateVolumeReplicaCompatibility(volumeSpec, 1); err != nil {
+		t.Fatalf("volume with 1 replica should be allowed: %v", err)
+	}
+	if err := validateVolumeReplicaCompatibility(nil, 3); err != nil {
+		t.Fatalf("replicas without a volume should be allowed: %v", err)
+	}
+	err := validateVolumeReplicaCompatibility(volumeSpec, 2)
+	if !errors.Is(err, ErrVolumeReplicaUnsupported) {
+		t.Fatalf("expected errVolumeReplicaUnsupported, got %v", err)
 	}
 }

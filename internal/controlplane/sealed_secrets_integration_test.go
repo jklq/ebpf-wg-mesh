@@ -355,7 +355,7 @@ func TestSealedSecretsRPCWiring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rpc := NewPlatformService(store.platform(), noopNotifier{}, noopIngress{}, testDelivery(store))
+	rpc := newPlatformService(store.platform(), noopNotifier{}, noopIngress{}, testDelivery(store))
 	userCtx := contextWithDelegatedUser("owner", "owner@example.com")
 	sealed, err := rpc.SealServiceSecret(userCtx, &platformv1.SealServiceSecretRequest{
 		ServiceId: service.ID, Name: "TOKEN", Value: "rpc-secret",

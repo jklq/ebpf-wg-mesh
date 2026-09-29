@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -85,7 +86,7 @@ func ValidateServicePlacement(spec *platformv1.ServiceSpec) error {
 	if region == "" {
 		return nil
 	}
-	if !FleetLabelPattern.MatchString(region) {
+	if !fleetLabelPattern.MatchString(region) {
 		return errors.New("placement region must be a lowercase operator region label")
 	}
 	return nil
@@ -344,4 +345,110 @@ func LoadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
 		return nil, err
 	}
 	return CanonicalServiceSpec(spec), nil
+}
+
+func ValidatePort(port int32) error {
+	if port < 1 || port > 65535 {
+		return ErrInvalidPort
+	}
+	return nil
+}
+
+const (
+	defaultRolloutMaxUnavailable = 0
+	defaultRolloutMaxSurge       = 1
+	defaultRolloutSchedulingWait = 5 * time.Minute
+	defaultHealthcheckTimeout    = 5 * time.Minute
+	defaultDrainingTime          = time.Duration(0)
+	maxRolloutDeadline           = 24 * time.Hour
+)
+
+var ErrVolumeRollingUnsupported = errors.New("volume-backed services cannot overlap rollout generations until volume handoff is supported")
+
+var ErrRolloutInProgress = errors.New("a rollout is already in progress")
+
+func canonicalRollingStrategy(strategy *platformv1.RollingStrategy) *platformv1.RollingStrategy {
+	out := &platformv1.RollingStrategy{
+		HealthcheckTimeoutSeconds: proto.Int32(int32(defaultHealthcheckTimeout / time.Second)),
+		DrainingSeconds:           proto.Int32(int32(defaultDrainingTime / time.Second)),
+	}
+	if strategy == nil {
+		return out
+	}
+	if strategy.HealthcheckTimeoutSeconds != nil {
+		out.HealthcheckTimeoutSeconds = proto.Int32(strategy.GetHealthcheckTimeoutSeconds())
+	}
+	if strategy.DrainingSeconds != nil {
+		out.DrainingSeconds = proto.Int32(strategy.GetDrainingSeconds())
+	}
+	return out
+}
+
+func ValidateRollingStrategy(spec *platformv1.ServiceSpec) error {
+	strategy := canonicalRollingStrategy(spec.GetRollingStrategy())
+	healthcheckTimeout := time.Duration(strategy.GetHealthcheckTimeoutSeconds()) * time.Second
+	if healthcheckTimeout < time.Second || healthcheckTimeout > maxRolloutDeadline {
+		return fmt.Errorf("healthcheck timeout must be between 1 second and %s", maxRolloutDeadline)
+	}
+	drainingTime := time.Duration(strategy.GetDrainingSeconds()) * time.Second
+	if drainingTime < 0 || drainingTime > maxRolloutDeadline {
+		return fmt.Errorf("draining time must be between 0 seconds and %s", maxRolloutDeadline)
+	}
+	return nil
+}
+
+const internalDomainSuffix = "mesh.internal"
+
+func InternalServiceHostname(name, serviceID string) string {
+	return internalServiceShortName(name, serviceID) + "." + internalDomainSuffix
+}
+
+func internalServiceShortName(name, serviceID string) string {
+	var label strings.Builder
+	label.Grow(len(name))
+	separator := false
+	for _, char := range strings.ToLower(strings.TrimSpace(name)) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			if separator && label.Len() > 0 {
+				label.WriteByte('-')
+			}
+			separator = false
+			label.WriteRune(char)
+			continue
+		}
+		separator = true
+	}
+	shortName := strings.Trim(label.String(), "-")
+	if shortName == "" {
+		shortName = "service-" + compactServiceID(serviceID)
+	}
+	if len(shortName) > 63 {
+		shortName = strings.TrimRight(shortName[:63], "-")
+	}
+	return shortName
+}
+
+func compactServiceID(serviceID string) string {
+	var compact strings.Builder
+	for _, char := range strings.ToLower(serviceID) {
+		if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+			compact.WriteRune(char)
+			if compact.Len() == 12 {
+				break
+			}
+		}
+	}
+	if compact.Len() == 0 {
+		return "unknown"
+	}
+	return compact.String()
+}
+
+func volumeKey(environmentID, name string) string {
+	var b strings.Builder
+	b.Grow(len(environmentID) + 1 + len(name))
+	b.WriteString(environmentID)
+	b.WriteByte(0)
+	b.WriteString(name)
+	return b.String()
 }
