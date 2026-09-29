@@ -13,9 +13,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// fakeSandboxBackend is a scriptable SandboxBackend for hardened
-// executor tests. The zero value succeeds every operation; hooks
-// override individual behaviors.
+// fakeSandboxBackend is a scriptable SandboxBackend. The zero value succeeds; hooks override behaviors.
 type fakeSandboxBackend struct {
 	mu        sync.Mutex
 	setupNets []SandboxNet
@@ -75,7 +73,6 @@ func (f *fakeSandboxBackend) recordedSteps() []SandboxStep {
 	return append([]SandboxStep(nil), f.steps...)
 }
 
-// fakeDaemonProc is a scriptable per-execution daemon.
 type fakeDaemonProc struct {
 	readyErr   error
 	readyCalls int
@@ -118,17 +115,13 @@ func (s *fakeDaemonStarter) start(ctx context.Context, netnsPath, binary, sockPa
 }
 
 func newHardenedExecutorForTest(workDir string, backend *fakeSandboxBackend, starter *fakeDaemonStarter) *hardenedExecutor {
-	// Explicit nameservers: the test machine's own resolvers (often
-	// loopback-only) must not decide these tests. Resolver
-	// inheritance is covered in sandbox_test.go.
+	// Explicit nameservers so the test machine's own resolvers cannot decide these tests.
 	executor := newHardenedExecutor(workDir, backend, "buildkitd-test", []string{"10.0.0.53"})
 	executor.startDaemon = starter.start
 	return executor
 }
 
-// emulateBuildctl emulates a buildctl step inside the fake backend: it
-// writes build metadata to the host path behind the step's guest
-// --metadata-file flag.
+// emulateBuildctl emulates a buildctl step: it writes build metadata to the host path behind the guest --metadata-file flag.
 func emulateBuildctl(t *testing.T, workDir, buildID, digest string) func(context.Context, SandboxNet, SandboxStep) error {
 	t.Helper()
 	return func(_ context.Context, _ SandboxNet, step SandboxStep) error {
@@ -192,8 +185,7 @@ func TestHardenedExecuteDockerfile(t *testing.T) {
 	if step.Name != "build" || len(step.Argv) == 0 || step.Argv[0] != "buildctl" {
 		t.Fatalf("unexpected step argv %#v", step.Argv)
 	}
-	// The step must address the per-execution daemon socket, never
-	// the shared BuildKit address from the spec.
+	// The step must address the per-execution daemon socket, never the shared spec address.
 	if addr := buildctlAddrFlag(step.Argv); addr != "unix:///build/s/bk.sock" {
 		t.Fatalf("buildctl addr = %q, want the per-execution socket", addr)
 	}
@@ -243,9 +235,7 @@ func TestHardenedExecuteDockerfile(t *testing.T) {
 	if !strings.HasSuffix(call.sockPath, filepath.Join("build-1", "s", "bk.sock")) {
 		t.Fatalf("unexpected daemon socket %q", call.sockPath)
 	}
-	// Only the socket lives in the (sandbox-visible) workspace; the
-	// daemon root stays outside it so daemon state and disk use are
-	// neither visible to the build nor counted against its budget.
+	// Only the socket lives in the workspace; the daemon root stays outside it.
 	if want := filepath.Join(workDir, "bk", "build-1", "root"); call.rootDir != want {
 		t.Fatalf("daemon root = %q, want %q", call.rootDir, want)
 	}
@@ -286,8 +276,7 @@ func TestHardenedExecuteRailpack(t *testing.T) {
 	executor := newHardenedExecutorForTest(workDir, backend, starter)
 	backend.runHook = func(ctx context.Context, net SandboxNet, step SandboxStep) error {
 		if step.Name == "plan" {
-			// The plan step's last path argument is the guest plan
-			// file; find it by suffix.
+			// Find the guest plan file by suffix.
 			for _, arg := range step.Argv {
 				rel, err := filepath.Rel("/build", arg)
 				if err != nil || !strings.HasSuffix(rel, railpackPlanFilename) {
@@ -589,7 +578,6 @@ func TestSandboxStepError(t *testing.T) {
 	}
 }
 
-// writeSizedFileForTest writes a file with exactly size bytes.
 func writeSizedFileForTest(t *testing.T, path string, size int) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -600,8 +588,7 @@ func writeSizedFileForTest(t *testing.T, path string, size int) {
 	}
 }
 
-// sparseFileForTest creates a sparse file with the given apparent
-// size without allocating its blocks.
+// sparseFileForTest creates a sparse file with the given apparent size without allocating blocks.
 func sparseFileForTest(t *testing.T, path string, size int64) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -631,8 +618,6 @@ func TestEnforceHardenedDiskLimit(t *testing.T) {
 		writeSizedFileForTest(t, filepath.Join(ws, "repo", "Dockerfile"), workspace)
 		writeSizedFileForTest(t, filepath.Join(dd, "root", "layer.bin"), daemon)
 		writeSizedFileForTest(t, filepath.Join(cache, "blob"), cacheBefore)
-		// Grow the cache to its post-build size: the pre-existing
-		// bytes stay, the delta is the build's own export.
 		if extra := cacheAfter - cacheBefore; extra > 0 {
 			writeSizedFileForTest(t, filepath.Join(cache, "export.bin"), extra)
 		}
@@ -658,8 +643,6 @@ func TestEnforceHardenedDiskLimit(t *testing.T) {
 			ws, dd, cache := setup(t, test.workspace, test.daemon, test.cacheBefore, test.cacheBefore+test.cacheGrow)
 			var before int64
 			if test.cacheBefore > 0 || test.cacheGrow > 0 {
-				// The pre-build measurement sees only the
-				// pre-existing bytes.
 				before = int64(test.cacheBefore)
 			} else {
 				cache = ""
@@ -702,8 +685,7 @@ func TestEnforceHardenedDiskLimit(t *testing.T) {
 
 	t.Run("cache shrink is not credited", func(t *testing.T) {
 		t.Parallel()
-		// Operator pruning mid-build shrinks the cache; the build
-		// must not gain budget from bytes it never wrote.
+		// Operator pruning mid-build must not grant budget for bytes the build never wrote.
 		ws, dd, cache := setup(t, 600, 500, 500, 500)
 		if err := os.Remove(filepath.Join(cache, "blob")); err != nil {
 			t.Fatalf("Remove: %v", err)
@@ -722,8 +704,7 @@ func TestHardenedExecuteFailsWhenDaemonExceedsDiskLimit(t *testing.T) {
 	starter := &fakeDaemonStarter{}
 	executor := newHardenedExecutorForTest(workDir, backend, starter)
 	backend.runHook = emulateBuildctl(t, workDir, "build-1", "sha256:abc")
-	// The daemon writes layers outside the workspace; a hostile
-	// build's layers must still hit the disk budget.
+	// Daemon layers live outside the workspace but must still hit the disk budget.
 	executor.startDaemon = func(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error) {
 		sparseFileForTest(t, filepath.Join(rootDir, "worker", "layer.bin"), 2<<30)
 		return starter.start(ctx, netnsPath, binary, sockPath, rootDir, env)
@@ -786,8 +767,7 @@ func TestHardenedExecuteIgnoresPreexistingCacheBytes(t *testing.T) {
 		Mode: CacheModeContentAddressed,
 		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
 	}
-	// An earlier build with identical content filled the cache past
-	// this build's whole budget; none of it is attributable here.
+	// An earlier identical-content build filled the cache past this build's budget; none of it is attributable here.
 	dir, err := resolveExecutionCacheDir(workDir, spec)
 	if err != nil {
 		t.Fatalf("resolveExecutionCacheDir: %v", err)

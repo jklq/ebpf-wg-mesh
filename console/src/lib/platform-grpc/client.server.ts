@@ -81,8 +81,7 @@ export function toPlatformGatewayError(
 	}
 	return new PlatformGatewayError({
 		operation,
-		// rawMessage is the backend's own message without the "[code]" prefix,
-		// so user-facing errors (name mismatch, volume in use) read as written.
+		// rawMessage is the backend's own message without the "[code]" prefix, so errors read as written.
 		message:
 			cause instanceof ConnectError && cause.rawMessage
 				? cause.rawMessage

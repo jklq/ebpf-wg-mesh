@@ -293,9 +293,7 @@ func TestStatusReportPublishesInvalidationWhenEvaluationChangesNothing(t *testin
 	}
 	var evaluations, invalidations int
 	d := &Delivery{live: l, store: &persistence{
-		// The deployment evaluation ran but changed nothing, as happens
-		// when the deployment record is already terminal: no transition,
-		// no journal mutation, no revision bump.
+		// The evaluation ran but changed nothing: no transition, no revision bump.
 		withProductTx: func(context.Context, func(context.Context, *sql.Tx) error) error {
 			evaluations++
 			return nil
@@ -385,24 +383,21 @@ func TestLiveAdmissionReevaluatedOnStatusReport(t *testing.T) {
 			"alloc": {ID: "alloc", ServiceID: "svc", AgentID: "agent", DesiredSpecRevision: 1, DesiredRolloutGeneration: 1, RolloutState: AllocationRolloutServing},
 		},
 	})
-	// The session begins before the agent has started its assigned allocation, so
-	// it is not yet schedulable.
+	// The session begins before the agent started its allocation: not yet schedulable.
 	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if l.Admitted("agent") {
 		t.Fatal("agent admitted before inventory reconciled")
 	}
-	// A later status report that includes the allocation admits the agent without
-	// requiring a reconnect.
+	// A later status report including the allocation admits the agent without a reconnect.
 	if err := l.AcceptReport("agent", "s1", 1, []string{"alloc"}, true); err != nil {
 		t.Fatal(err)
 	}
 	if !l.Admitted("agent") {
 		t.Fatal("agent not admitted after inventory reconciled")
 	}
-	// Admission is sticky: an already-admitted agent is not demoted by a later
-	// incomplete report, so normal rollouts do not flap scheduling.
+	// Admission is sticky: a later incomplete report never demotes, so rollouts don't flap.
 	if err := l.AcceptReport("agent", "s1", 2, nil, true); err != nil {
 		t.Fatal(err)
 	}
@@ -639,8 +634,7 @@ func TestAcknowledgeAcceptsInFlightBatchVersions(t *testing.T) {
 	if err := l.Grant("agent", "s1", 3, SyncVersions{Cursor: 5, NodeConfig: "cfg-1", Credentials: "creds-1", Replicas: "reps-1"}); err != nil {
 		t.Fatal(err)
 	}
-	// An in-flight ack naming the first batch's versions must not be
-	// invalidated by a second batch granted before it is processed.
+	// An in-flight ack for the first batch must survive a second batch granted before processing.
 	if err := l.Grant("agent", "s1", 3, SyncVersions{Cursor: 6, NodeConfig: "cfg-2", Credentials: "creds-2", Replicas: "reps-2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -676,8 +670,7 @@ func TestAcknowledgementOfferHistoryIsBounded(t *testing.T) {
 	if len(session.OfferedNodeConfig) > offerHistoryLimit {
 		t.Fatalf("offered version history holds %d entries, want at most %d", len(session.OfferedNodeConfig), offerHistoryLimit)
 	}
-	// The evicted oldest offer fails validation and reconnects; it never
-	// accepts wrong state silently.
+	// The evicted oldest offer fails validation and reconnects instead of accepting silently.
 	if err := l.Acknowledge("agent", "s1", 3, SyncVersions{Cursor: 1, NodeConfig: "cfg-1"}); err == nil {
 		t.Fatal("acknowledgement for an evicted offered version accepted")
 	}
@@ -881,11 +874,9 @@ func TestAllocationsByServiceTracksAppliedDurableMutations(t *testing.T) {
 		}
 	}
 
-	// create/release: the assignment appears.
 	l.ApplyDurable(durable(1, map[string]journal.Assignment{"alloc": assignment}))
 	assertLiveAllocationIDs(t, l, "svc", []string{"alloc"})
 
-	// drain: rollout state changes in place.
 	draining := assignment
 	draining.RolloutState = AllocationRolloutDraining
 	l.ApplyDurable(durable(2, map[string]journal.Assignment{"alloc": draining}))
@@ -894,7 +885,6 @@ func TestAllocationsByServiceTracksAppliedDurableMutations(t *testing.T) {
 		t.Fatalf("drain view = %+v", got)
 	}
 
-	// delete: the assignment disappears.
 	l.ApplyDurable(durable(3, nil))
 	assertLiveAllocationIDs(t, l, "svc", nil)
 }

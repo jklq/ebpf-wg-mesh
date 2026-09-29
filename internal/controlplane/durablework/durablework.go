@@ -31,10 +31,8 @@ const (
 const MaxLastErrorRunes = 2048
 
 var (
-	// ErrLeaseLost reports that a heartbeat, completion, or failure named a
-	// stale (owner, epoch) pair: the lease expired and another owner took the
-	// record over, or the record left the leased state. The caller must drop
-	// the work; it must not retry the commit.
+	// ErrLeaseLost reports a stale (owner, epoch) pair: the lease expired and
+	// another owner took over. The caller must drop the work, never retry.
 	ErrLeaseLost = errors.New("durable work lease lost")
 )
 
@@ -119,8 +117,7 @@ type FailOptions struct {
 	// otherwise. A non-retryable failure moves the record to failed at once.
 	Retryable bool
 	// RetryAfter overrides the computed backoff for this failure. Zero means
-	// exponential backoff from the record's attempt count. The override is
-	// still jittered.
+	// exponential backoff from the attempt count. The override is still jittered.
 	RetryAfter time.Duration
 	// BaseDelay and MaxDelay bound the computed backoff. Zero means the
 	// corresponding default.
@@ -142,10 +139,8 @@ func (o FailOptions) bounds() (base, max time.Duration) {
 	return base, max
 }
 
-// RetryDelay returns the jittered backoff before the next attempt. Attempt is
-// the 1-based attempt count that just failed; the delay doubles per attempt
-// from base up to max, then jitters by up to twenty percent in either
-// direction.
+// RetryDelay returns the jittered backoff before the next attempt. The delay
+// doubles per attempt from base up to max, then jitters by ±20%.
 func RetryDelay(attempt int64, base, max time.Duration) time.Duration {
 	if base <= 0 {
 		base = DefaultBaseDelay
@@ -182,9 +177,8 @@ func jitter(base time.Duration) time.Duration {
 	return base - spread + time.Duration(rand.Int64N(int64(2*spread)+1))
 }
 
-// SanitizeError renders err as bounded single-line stored text. Empty errors
-// render as "". NUL bytes (rejected by the database text encoding) are
-// stripped and the text is truncated to MaxLastErrorRunes.
+// SanitizeError renders err as bounded single-line stored text: NUL bytes
+// stripped, truncated to MaxLastErrorRunes.
 func SanitizeError(err error) string {
 	if err == nil {
 		return ""
@@ -206,9 +200,8 @@ func SanitizeText(text string) string {
 	return strings.TrimSpace(string(runes))
 }
 
-// LeaseHeldBy reports whether rec is leased to owner at epoch. It is a
-// pure helper for handlers that keep the claimed record alongside the
-// owner they claimed with; the database CAS is the authority, not this.
+// LeaseHeldBy reports whether rec is leased to owner at epoch. The database
+// CAS is the authority, not this helper.
 func LeaseHeldBy(rec Record, ownerID string, epoch int64) bool {
 	return rec.State == StateLeased && rec.OwnerID == ownerID && rec.OwnerEpoch == epoch
 }

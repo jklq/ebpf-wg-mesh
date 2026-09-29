@@ -127,8 +127,7 @@ func TestBuildLogReporterRetriesAcrossOutage(t *testing.T) {
 	if len(requests) != 4 {
 		t.Fatalf("expected 3 failures plus 1 success, got %d requests", len(requests))
 	}
-	// Every attempt carries the same stable identity, so the
-	// retried reports deduplicate server-side.
+	// Every attempt carries the same stable identity so retries deduplicate server-side.
 	first := requests[0].GetLines()[0].GetLineId()
 	if first == "" {
 		t.Fatal("missing stable line identity")
@@ -166,7 +165,6 @@ func TestBuildLogReporterOrphansOnLeaseLoss(t *testing.T) {
 	if dropped == 0 {
 		t.Fatal("orphaned attempt deleted its unshipped lines without a gap")
 	}
-	// Reports after orphaning are no-ops.
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "two"})
 	if got := len(client.ReportRequests()); got != 1 {
 		t.Fatalf("expected no further reports after orphaning, got %d", got)
@@ -277,9 +275,8 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 	if err := os.Chtimes(stale, ancient, ancient); err != nil {
 		t.Fatal(err)
 	}
-	// A long-running attempt keeps writing to its segment file without
-	// touching the directory entry: staleness must follow the newest
-	// write, not the directory mtime.
+	// Staleness follows the newest write, not the directory mtime: a live attempt
+	// writes its segment file without touching the directory entry.
 	if err := os.WriteFile(filepath.Join(active, "seg-0000000000.log"), []byte("output"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -307,10 +304,8 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 	}
 }
 
-// A crashed attempt leaves its spool behind. The same build
-// reclaimed under a new lease epoch must start from a fresh spool
-// instead of re-emitting the previous attempt's records under the
-// new lease.
+// A build reclaimed under a new lease epoch must start from a fresh spool,
+// not re-emit the previous attempt's records.
 func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
 	t.Parallel()
 
@@ -361,8 +356,7 @@ func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
 	if lines[0].GetLineId() == staleID {
 		t.Fatalf("new lease reported a stale-epoch line: %q", lines[0].GetLineId())
 	}
-	// The crashed attempt's spool survives untouched for garbage
-	// collection.
+	// The crashed attempt's spool survives untouched for garbage collection.
 	if _, err := os.Stat(oldDir); err != nil {
 		t.Fatalf("previous attempt spool must survive for GC: %v", err)
 	}
@@ -387,9 +381,7 @@ func TestBuildLogShipConfigZeroRateDisablesLimiting(t *testing.T) {
 	}
 }
 
-// Close must report limiter and overflow drops even when every line
-// was dropped and the spool holds no records: the drain loop flushes
-// (collecting drop summaries) before ever consulting drained().
+// Close must report drops even when every line was dropped and the spool is empty.
 func TestBuildLogReporterCloseReportsDropsWithEmptySpool(t *testing.T) {
 	t.Parallel()
 
@@ -433,10 +425,8 @@ func TestBuildLogReporterCloseReportsDropsWithEmptySpool(t *testing.T) {
 	}
 }
 
-// A control-plane outage must not grow the pending drop summaries
-// without bound: every failed flush cycle folds its drops into one
-// coalesced summary per identity, and one successful report carries
-// the whole accumulated accounting.
+// An outage must not grow pending drop summaries without bound: failed flushes
+// coalesce per identity, and one successful report carries the whole accounting.
 func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 	t.Parallel()
 
@@ -475,8 +465,7 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 	if summary.GetBuildId() != "build-1" || summary.GetServiceId() != "svc-1" {
 		t.Fatalf("coalesced summary misattributed: %+v", summary)
 	}
-	// Denials are checkpointed at the line's observed time, so the
-	// coalesced window is that time rather than the later flush.
+	// Denials are checkpointed at the line's observed time, not the later flush.
 	if got := summary.GetWindowStart().AsTime(); !got.Equal(base) {
 		t.Fatalf("window start %v, want %v", got, base)
 	}
@@ -484,7 +473,6 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 		t.Fatalf("window end %v, want %v", got, base)
 	}
 
-	// Once the outage ends, one report carries the whole accounting.
 	client.mu.Lock()
 	client.failRemaining = 0
 	client.mu.Unlock()
@@ -497,9 +485,7 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 	}
 	reporter.Close()
 
-	// Failed attempts re-report their restored summaries
-	// (at-least-once), so only the final recovered request carries
-	// the complete accounting exactly once.
+	// Only the final recovered request carries the complete accounting exactly once.
 	requests := client.ReportRequests()
 	if len(requests) < 2 {
 		t.Fatalf("expected outage attempts plus a recovery, got %d requests", len(requests))
@@ -521,8 +507,7 @@ func TestBuildLogReporterCloseReportsAbandonedDelivery(t *testing.T) {
 	reporter := mustBuildLogReporter(t, client, 1, cfg)
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: "one"})
 
-	// The output is never accepted: completing the build anyway
-	// would garbage-collect the transcript and lose it.
+	// The output is never accepted: completing anyway would lose the transcript to GC.
 	if err := reporter.Close(); err == nil {
 		t.Fatal("Close must report abandoned delivery")
 	}
@@ -563,8 +548,7 @@ func TestBuildLogReporterInheritsPriorAttemptDropSummaries(t *testing.T) {
 	base := t.TempDir()
 	now := time.Now().UTC()
 
-	// Attempt 1 drops lines under a dead control plane and dies with
-	// the accounting still pending.
+	// Attempt 1 drops lines under a dead control plane and dies with the accounting pending.
 	failing := &recordingBuilderServiceClient{
 		calls:     make(chan struct{}, 8),
 		reportErr: errors.New("ingest down"),
@@ -592,9 +576,8 @@ func TestBuildLogReporterInheritsPriorAttemptDropSummaries(t *testing.T) {
 		t.Fatalf("drop summaries must persist beside the attempt spool: %v", err)
 	}
 
-	// Attempt 2 (new epoch) takes over the dead attempt's accounting:
-	// it re-emits its own output but can never recreate the lines
-	// attempt 1 dropped, so their gap must surface from here.
+	// Attempt 2 takes over the dead attempt's accounting: it re-emits its own output
+	// but can never recreate the lines attempt 1 dropped.
 	cfg2 := cfg1
 	cfg2.SpoolDir = buildLogSpoolDir(base, "build-1", 2)
 	cfg2.RatePerSec = 100000
@@ -631,9 +614,7 @@ func TestBuildLogReporterCapsBatchBytes(t *testing.T) {
 	cfg.BatchSize = 100
 	cfg.FlushInterval = time.Hour // Close must drain without waiting for a tick.
 	reporter := mustBuildLogReporter(t, client, 1, cfg)
-	// A report of permitted maximum-size lines must split at the wire
-	// budget instead of exceeding the transport's receive limit,
-	// which would wedge delivery and fail the build.
+	// Maximum-size lines must split at the wire budget instead of wedging delivery.
 	big := strings.Repeat("x", logpipeline.MaxLogLineBytes)
 	for i := 0; i < 40; i++ {
 		reporter.Report(context.Background(), commandOutputLine{ObservedAt: time.Now().UTC(), Stream: "stdout", Line: big})
@@ -666,7 +647,6 @@ func TestBuildLogReporterKeepsInheritedDropsWhenSaveFails(t *testing.T) {
 	base := t.TempDir()
 	now := time.Now().UTC()
 
-	// A dead attempt's accounting persists beside its spool.
 	prior := buildLogSpoolDir(base, "build-1", 1)
 	if err := os.MkdirAll(prior, 0o700); err != nil {
 		t.Fatalf("create prior attempt dir: %v", err)
@@ -684,8 +664,7 @@ func TestBuildLogReporterKeepsInheritedDropsWhenSaveFails(t *testing.T) {
 		t.Fatalf("save prior drops: %v", err)
 	}
 
-	// The merged snapshot cannot commit this time: the summary path
-	// is occupied by a directory, so SaveDrops' rename fails.
+	// The merged snapshot cannot commit: the summary path is occupied by a directory.
 	own := buildLogSpoolDir(base, "build-1", 2)
 	if err := os.MkdirAll(filepath.Join(own, logpipeline.PendingDropsFile), 0o700); err != nil {
 		t.Fatalf("block pending drops file: %v", err)
@@ -705,9 +684,7 @@ func TestBuildLogReporterKeepsInheritedDropsWhenSaveFails(t *testing.T) {
 	}
 	defer reporter.Close()
 
-	// The takeover copy must survive until a merged snapshot is
-	// durable: deleting it on a failed save loses the accounting
-	// forever.
+	// The takeover copy must survive until a merged snapshot is durable.
 	if _, err := os.Stat(filepath.Join(prior, logpipeline.PendingDropsFile)); err != nil {
 		t.Fatalf("inherited drop summaries removed before the merge was durable: %v", err)
 	}

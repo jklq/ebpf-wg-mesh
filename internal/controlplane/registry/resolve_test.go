@@ -145,8 +145,6 @@ func TestManifestURLForRoutesDockerHubToDistributionEndpoint(t *testing.T) {
 func TestHTTPResolverRefusesManifestRedirects(t *testing.T) {
 	t.Parallel()
 
-	// The manifest HEAD and its GET fallback both go through one request
-	// path; cover each entry into it.
 	for name, refuseHead := range map[string]bool{
 		"manifest redirect":     false,
 		"get fallback redirect": true,
@@ -178,11 +176,8 @@ func TestHTTPResolverRefusesManifestRedirects(t *testing.T) {
 	}
 }
 
-// TestHTTPResolverRefusesProhibitedRegistryDestination proves the registry
-// host itself is defended: a project writer must not be able to point
-// direct-image resolution at an internal address. The registry host is
-// user-controlled input, so an unlisted loopback, private, or link-local
-// destination is refused before any request leaves the control plane.
+// TestHTTPResolverRefusesProhibitedRegistryDestination: the registry host is
+// user-controlled, so unlisted loopback/private/link-local destinations are refused first.
 func TestHTTPResolverRefusesProhibitedRegistryDestination(t *testing.T) {
 	probed := false
 	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -213,13 +208,9 @@ func TestHTTPResolverRefusesProhibitedRegistryDestination(t *testing.T) {
 	}
 }
 
-// TestHTTPResolverRefusesRebindingBetweenCheckAndDial proves DNS rebinding
-// cannot bridge the destination check and the connection: a registry host
-// that answers the request-time check with a public address and the later
-// lookup with a private one must not have the control plane probe internal
-// services. The transport re-validates the address at every dial and
-// pins the approved one, so the rebinding answer is refused before any
-// connection is made.
+// TestHTTPResolverRefusesRebindingBetweenCheckAndDial: the transport re-validates at
+// every dial and pins the approved address, so a DNS answer flipping public-to-private
+// cannot make the control plane probe internal services.
 func TestHTTPResolverRefusesRebindingBetweenCheckAndDial(t *testing.T) {
 	probed := false
 	internal := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
@@ -231,10 +222,8 @@ func TestHTTPResolverRefusesRebindingBetweenCheckAndDial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A rebinding resolver: the request-time check sees a public answer,
-	// the dial-time lookup sees the private one the attacker controls —
-	// pointed at the internal service's port so a second unvalidated
-	// resolution would land on it.
+	// A rebinding resolver: the request-time check sees a public answer, the dial-time
+	// lookup the attacker-controlled private one.
 	lookups := 0
 	original := lookupIPAddr
 	lookupIPAddr = func(context.Context, string) ([]net.IPAddr, error) {
@@ -259,8 +248,7 @@ func TestHTTPResolverRefusesRebindingBetweenCheckAndDial(t *testing.T) {
 	}
 }
 
-// TestHTTPResolverAllowsOperatorApprovedPrivateRegistry proves the escape
-// hatch: an operator-declared internal registry resolves normally.
+// The escape hatch: an operator-declared internal registry resolves normally.
 func TestHTTPResolverAllowsOperatorApprovedPrivateRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -282,10 +270,8 @@ func TestHTTPResolverAllowsOperatorApprovedPrivateRegistry(t *testing.T) {
 	}
 }
 
-// TestHTTPResolverNeverProxiesRegistryTraffic proves an environment
-// proxy cannot bypass the dial guard: registry traffic connects to the
-// validated registry address itself, because a proxy would resolve the
-// target hostname on the far side, outside the validation and pinning.
+// TestHTTPResolverNeverProxiesRegistryTraffic: no environment proxy can bypass the dial
+// guard — traffic connects to the validated address itself.
 func TestHTTPResolverNeverProxiesRegistryTraffic(t *testing.T) {
 	registryDigest := "sha256:" + strings.Repeat("a1", 32)
 	proxiedDigest := "sha256:" + strings.Repeat("b2", 32)
@@ -303,11 +289,8 @@ func TestHTTPResolverNeverProxiesRegistryTraffic(t *testing.T) {
 	t.Cleanup(registry.Close)
 	registryHost := strings.TrimPrefix(registry.URL, "http://")
 
-	// The proxy sits at a public-looking hostname: the stub resolver
-	// sends the destination check and the guarded dial to the test's
-	// public answer, which the fake dial maps onto the local proxy. If
-	// the transport proxies, the request reaches it and comes back with
-	// the proxied digest; the guard must keep it out entirely.
+	// The proxy sits at a public-looking hostname: if the transport proxied, the request
+	// would reach it and come back with the proxied digest.
 	stubLookup(t, "93.184.216.34")
 	_, proxyPort, err := net.SplitHostPort(strings.TrimPrefix(proxy.URL, "http://"))
 	if err != nil {
@@ -370,11 +353,8 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// TestDialGuardRejectsAllowlistedHostnameOnOtherPorts is the
-// allowlist-port regression: an allowlist entry for one endpoint never
-// waives the dial-time address checks for another port. A DNS answer
-// that flips from public at preflight to private at dial time is refused
-// there; the listed endpoints themselves still dial as configured.
+// TestDialGuardRejectsAllowlistedHostnameOnOtherPorts: one endpoint's entry never
+// waives dial-time checks for another port.
 func TestDialGuardRejectsAllowlistedHostnameOnOtherPorts(t *testing.T) {
 	ctx := context.Background()
 	errSentinel := errors.New("sentinel: passthrough dial")
@@ -415,9 +395,7 @@ func TestHTTPResolverTriesLaterRegistryAddressesAfterFailedDial(t *testing.T) {
 	t.Cleanup(registryServer.Close)
 	registryPort := portOf(t, registryServer.URL)
 
-	// DNS answers with two permitted addresses and the first one is
-	// dead: a reachable registry must still resolve instead of failing
-	// on the first connection error.
+	// Two permitted addresses, first dead: a reachable registry must still resolve.
 	original := lookupIPAddr
 	lookupIPAddr = func(context.Context, string) ([]net.IPAddr, error) {
 		return []net.IPAddr{{IP: net.ParseIP("93.184.216.35")}, {IP: net.ParseIP("93.184.216.34")}}, nil

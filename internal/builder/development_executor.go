@@ -13,13 +13,10 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// developmentExecutor is the in-process BuildExecutor: it runs the
-// railpack and buildctl/docker build steps as host child processes
-// with explicit environments, process limits, and a scoped docker
-// config. It does not isolate hostile code: the BuildKit daemon is
-// shared host state, network policy is not enforced on the data plane,
-// and process limits bound only direct children. Production uses the
-// hardened executor.
+// developmentExecutor is the in-process BuildExecutor: build steps run as host
+// child processes with explicit environments, process limits, and a scoped
+// docker config. It does not isolate hostile code: the BuildKit daemon is shared
+// host state and network policy is not enforced on the data plane.
 type developmentExecutor struct {
 	workDir string
 	runner  commandRunner
@@ -112,8 +109,7 @@ func (e *developmentExecutor) Execute(ctx context.Context, spec ExecutionSpec) (
 	return ExecutionResult{ImageDigestRef: ref}, nil
 }
 
-// RecoverStaleWorkspaces reclaims workspaces left behind by dead
-// workers and verifies each removal.
+// RecoverStaleWorkspaces reclaims workspaces left behind by dead workers.
 func (e *developmentExecutor) RecoverStaleWorkspaces(_ context.Context) (int, error) {
 	return recoverStaleWorkspaces(e.workDir)
 }
@@ -182,10 +178,9 @@ func (e *developmentExecutor) invokeRailpackBuild(ctx context.Context, spec Exec
 	return buildDigestRefFromMetadata(spec.Push.Reference, workspace.metadataFile)
 }
 
-// buildEnv returns the complete explicit environment for a build
-// child: a fixed PATH, a HOME and TMPDIR inside the execution
-// workspace, and the scoped docker config when one is present. Proxy
-// variables and every other ambient variable are deliberately absent.
+// buildEnv returns the complete explicit environment for a build child: a fixed
+// PATH, a HOME and TMPDIR inside the workspace, and the scoped docker config
+// when one is present. Proxy variables and all other ambient state stay out.
 func (e *developmentExecutor) buildEnv(workspace executionWorkspace, dockerConfigDir string) []string {
 	env := []string{
 		"PATH=" + e.pathEnv,

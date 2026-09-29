@@ -32,9 +32,8 @@ const (
 	buildLogFinalDrainInterval   = 200 * time.Millisecond
 )
 
-// buildLogShipConfig bounds one build attempt's log reporter. Zero
-// values select defaults, except RatePerSec: a non-positive rate
-// disables producer limiting.
+// buildLogShipConfig bounds one build attempt's log reporter. Zero values select
+// defaults, except RatePerSec: a non-positive rate disables producer limiting.
 type buildLogShipConfig struct {
 	SpoolDir      string
 	SpoolMaxBytes int64
@@ -45,13 +44,10 @@ type buildLogShipConfig struct {
 	CloseTimeout  time.Duration
 }
 
-// buildLogReporter ships one build attempt's output through a
-// bounded disk-backed spool with retry. Lines and drop summaries
-// carry stable identities so retried reports deduplicate
-// server-side. The spool directory is removed on clean completion;
-// anything left behind (crash, lost lease, failed final flush) is
-// deleted by startup garbage collection, and a retried attempt
-// re-emits its own output from scratch.
+// buildLogReporter ships one build attempt's output through a bounded disk-backed
+// spool with retry. Stable line identities deduplicate retried reports
+// server-side. The spool is removed on clean completion; leftovers are deleted
+// by startup garbage collection, and a retried attempt re-emits its output.
 type buildLogReporter struct {
 	client     platformv1.BuilderServiceClient
 	builderID  string
@@ -77,8 +73,7 @@ type buildLogReporter struct {
 	abandoned atomic.Bool
 
 	mu sync.Mutex
-	// lineQueue feeds the spool writer goroutine: build output
-	// readers never block on disk syncs.
+	// lineQueue feeds the spool writer goroutine so output readers never block on disk syncs.
 	lineQueue   chan queuedBuildLine
 	linesStop   chan struct{}
 	writerDone  chan struct{}
@@ -137,16 +132,11 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		writerDone:    make(chan struct{}),
 	}
 	go reporter.writeLoop()
-	// Drop summaries of dead attempts of this build are taken over
-	// first and snapshotted before their files go away: a retried
-	// attempt re-emits its output from scratch but can never
-	// recreate lines the dead attempt dropped, so their gap
-	// accounting must survive into this attempt's reports.
+	// Take over dead attempts' drop summaries first: a retry re-emits its own output
+	// but can never recreate lines the dead attempt dropped.
 	consumed := loadAttemptDrops(filepath.Dir(cfg.SpoolDir), buildID, cfg.SpoolDir, reporter.pending)
 	if err := reporter.persistPendingLocked(); err != nil {
-		// The merged snapshot is not durable: keep the takeover
-		// copies as the surviving record instead of deleting the
-		// only copy of the dead attempt's accounting.
+		// The merge is not durable: keep the takeover copies as the surviving record.
 		slog.Warn("persist inherited build log drops", "builder_id", builderID, "build_id", buildID, "error", err)
 	} else {
 		for _, dir := range consumed {
@@ -157,10 +147,8 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 	return reporter, nil
 }
 
-// loadAttemptDrops folds the persisted drop summaries of this
-// attempt's spool directory and of earlier attempts of the same
-// build into pending, returning the sibling directories whose
-// summaries were taken over.
+// loadAttemptDrops folds this attempt's and earlier attempts' persisted drop
+// summaries into pending, returning the taken-over sibling directories.
 func loadAttemptDrops(baseDir, buildID, ownDir string, pending *logpipeline.DropSet) []string {
 	if rows, err := logpipeline.LoadDrops(ownDir); err != nil {
 		slog.Warn("load pending build log drops", "build_id", buildID, "error", err)
@@ -201,9 +189,8 @@ func loadAttemptDrops(baseDir, buildID, ownDir string, pending *logpipeline.Drop
 	return consumed
 }
 
-// persistPendingLocked snapshots the pending drop summaries next to
-// the attempt spool so a dead attempt's accounting survives into the
-// retry. Callers hold r.mu.
+// persistPendingLocked snapshots the pending drop summaries next to the attempt
+// spool so a dead attempt's accounting survives into the retry. Callers hold r.mu.
 func (r *buildLogReporter) persistPendingLocked() error {
 	if err := logpipeline.SaveDrops(r.spoolDir, r.pending.Summaries()); err != nil {
 		slog.Warn("persist pending build log drops", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
@@ -212,8 +199,7 @@ func (r *buildLogReporter) persistPendingLocked() error {
 	return nil
 }
 
-// Report rate-limits and spools one build output line. It never
-// blocks on the network.
+// Report rate-limits and spools one build output line. It never blocks on the network.
 func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 	if r == nil || r.orphaned.Load() {
 		return
@@ -224,8 +210,7 @@ func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 	default:
 	}
 	if !r.limiter.Allow(r.buildID) {
-		// Persist the denial before returning. A crash before the next
-		// flush would otherwise lose the only copy of the count.
+		// Persist the denial now: a crash before the next flush would lose the count.
 		denied := r.limiter.DrainDrops()
 		observedAt := line.ObservedAt.UTC()
 		if observedAt.IsZero() {
@@ -265,7 +250,6 @@ func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 	}
 }
 
-// buildLineQueueCap bounds the lines waiting for the spool writer.
 const buildLineQueueCap = 1024
 
 type queuedBuildLine struct {
@@ -274,11 +258,9 @@ type queuedBuildLine struct {
 	payload    []byte
 }
 
-// enqueueLine hands one marshaled line to the spool writer without
-// touching the disk on the caller's goroutine: Report runs on the
-// build's output reader, and a blocking per-line sync there would
-// fill the child process's pipe and stall execution. A full queue
-// drops the line into the overflow accounting instead of blocking.
+// enqueueLine hands one marshaled line to the spool writer. Report runs on the
+// build's output reader, so a blocking per-line sync there would fill the child
+// pipe and stall execution; a full queue drops into overflow accounting instead.
 func (r *buildLogReporter) enqueueLine(stream string, observedAt time.Time, payload []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -293,8 +275,6 @@ func (r *buildLogReporter) enqueueLine(stream string, observedAt time.Time, payl
 	}
 }
 
-// writeLoop spools queued lines on its own goroutine, so the syncs
-// per append cost the build's output readers nothing.
 func (r *buildLogReporter) writeLoop() {
 	defer close(r.writerDone)
 	for {
@@ -327,26 +307,17 @@ func (r *buildLogReporter) countOverflow(stream string, count uint64) {
 	r.overflow[stream] += count
 }
 
-// Close stops shipping, makes a best-effort final flush, and removes
-// the attempt spool when fully drained. The final flush always runs
-// at least once — it collects limiter and overflow drops first — so
-// an attempt whose lines were all dropped still reports its drop
-// summaries before the spool directory goes away. Anything left
-// behind is deleted by startup garbage collection.
+// Close stops shipping, makes a best-effort final flush, and removes the attempt
+// spool when fully drained. The final flush always runs at least once — an
+// attempt whose lines were all dropped still reports its drop summaries first.
 //
-// Close reports an error when the backend never accepted the
-// attempt's output within the close timeout. A build must not
-// complete successfully with its transcript undelivered: the
-// abandoned spool is garbage-collected and the output would be lost,
-// while a failed build is retried and re-emits its output from
-// scratch.
+// Close reports an error when the backend never accepted the output within the
+// close timeout: a build must not complete with its transcript undelivered.
 func (r *buildLogReporter) Close() error {
 	if r == nil {
 		return nil
 	}
 	r.closeOnce.Do(func() {
-		// Land every queued line in the spool before the ship loop
-		// stops, so the final flush carries the whole transcript.
 		r.mu.Lock()
 		r.linesClosed = true
 		r.mu.Unlock()
@@ -393,10 +364,8 @@ func (r *buildLogReporter) cleanup() {
 	_ = os.RemoveAll(r.spoolDir)
 }
 
-// persistOrphanGap records lines still in the spool as a gap and
-// keeps that summary on disk. The next lease loads sibling attempt
-// summaries; deleting the directory here would drop the only record
-// of the lost lines.
+// persistOrphanGap records unshipped spool lines as a gap and keeps the summary on
+// disk for the next lease to inherit.
 func (r *buildLogReporter) persistOrphanGap(unshipped int64) {
 	if r.spool != nil {
 		_ = r.spool.Close()
@@ -412,8 +381,8 @@ func (r *buildLogReporter) persistOrphanGap(unshipped int64) {
 	_ = r.persistPendingLocked()
 }
 
-// removeSpoolSegments deletes the attempt's log bytes and leaves the
-// pending-drops file for the next lease to inherit.
+// removeSpoolSegments deletes the attempt's log bytes, leaving the pending-drops
+// file for the next lease to inherit.
 func (r *buildLogReporter) removeSpoolSegments() {
 	entries, err := os.ReadDir(r.spoolDir)
 	if err != nil {
@@ -439,10 +408,6 @@ func (r *buildLogReporter) run() {
 	for {
 		select {
 		case <-r.stop:
-			// Always flush at least once: flush collects limiter and
-			// overflow drops first, so rate-limited or overflowed
-			// attempts with an empty spool still report their drops
-			// instead of draining away unreported.
 			for !r.orphaned.Load() && !r.abandoned.Load() {
 				r.flush()
 				if r.drained() {
@@ -500,9 +465,8 @@ func (r *buildLogReporter) flush() {
 	for _, summary := range taken {
 		dropped += summary.GetDroppedCount()
 	}
-	// Every request stays within the wire budget: a batch of
-	// maximum-size lines must never exceed the transport's receive
-	// limit, which would wedge delivery and fail the build.
+	// Every request stays within the wire budget; a batch past the transport
+	// receive limit would wedge delivery and fail the build.
 	chunks := logpipeline.ChunkByBytes(lines, func(l *platformv1.BuildLogLine) int { return proto.Size(l) }, logpipeline.MaxBatchBytes)
 	if len(chunks) == 0 {
 		chunks = [][]*platformv1.BuildLogLine{nil}
@@ -544,9 +508,7 @@ func (r *buildLogReporter) flush() {
 	r.mu.Unlock()
 }
 
-// restorePending merges unsent summaries back into the pending set
-// so a failed report keeps its accounting; coalescing folds them
-// into newer windows for the same identity.
+// restorePending merges unsent summaries back so a failed report keeps its accounting.
 func (r *buildLogReporter) restorePending(taken []*platformv1.LogDropSummary) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -554,10 +516,8 @@ func (r *buildLogReporter) restorePending(taken []*platformv1.LogDropSummary) {
 	r.persistPendingLocked()
 }
 
-// collectDrops drains limiter, spool, and overflow counters into the
-// pending gap summaries reported with the next batch, coalescing by
-// identity so repeated collections during an outage cannot grow the
-// pending set.
+// collectDrops drains limiter, spool, and overflow counters into the pending gap
+// summaries, coalescing by identity so an outage cannot grow the pending set.
 func (r *buildLogReporter) collectDrops(now time.Time) {
 	windowStart := now.Add(-r.flushInterval)
 	limited := r.limiter.DrainDrops()
@@ -586,9 +546,7 @@ func (r *buildLogReporter) collectDrops(now time.Time) {
 	r.persistPendingLocked()
 }
 
-// notePendingLocked coalesces one drop window into the pending entry
-// for its identity: one entry per (stream, reason) however long the
-// outage lasts.
+// notePendingLocked coalesces one drop window into the pending entry for its identity.
 func (r *buildLogReporter) notePendingLocked(stream string, count uint64, reason string, windowStart, windowEnd time.Time) {
 	r.pending.Add(logpipeline.DropKey{
 		ServiceID: r.serviceID,
@@ -599,8 +557,7 @@ func (r *buildLogReporter) notePendingLocked(stream string, count uint64, reason
 	}, count, windowStart, windowEnd)
 }
 
-// sanitizeBuildSpoolName maps a build ID onto a safe single path
-// segment. UUID build IDs pass through unchanged.
+// sanitizeBuildSpoolName maps a build ID onto a safe single path segment.
 func sanitizeBuildSpoolName(buildID string) string {
 	var out strings.Builder
 	for _, r := range strings.TrimSpace(buildID) {
@@ -621,20 +578,16 @@ func sanitizeBuildSpoolName(buildID string) string {
 	return name
 }
 
-// buildLogSpoolDir returns the per-attempt spool directory for one
-// build attempt, keyed by build ID and lease epoch: a build reclaimed
-// under a new lease starts from a fresh spool instead of re-opening
-// the previous attempt's records.
+// buildLogSpoolDir returns the per-attempt spool directory, keyed by build ID and
+// lease epoch so a reclaimed build starts from a fresh spool.
 func buildLogSpoolDir(baseDir, buildID string, leaseEpoch int64) string {
 	return filepath.Join(baseDir, sanitizeBuildSpoolName(buildID)+"-e"+strconv.FormatInt(leaseEpoch, 10))
 }
 
-// gcStaleBuildLogSpools deletes per-attempt spool directories with
-// no writes in the last maxAge. Attempts are short-lived and a
-// retried build re-emits its own output, so leftovers are always
-// safe to delete. Staleness follows the newest write inside the
-// spool, not the directory entry: appends touch the active segment
-// file while a long-running attempt's directory mtime stays old.
+// gcStaleBuildLogSpools deletes per-attempt spool directories with no writes in
+// the last maxAge. Staleness follows the newest write inside the spool, not the
+// directory entry: appends touch the active segment while the directory mtime
+// stays old on a long-running attempt.
 func gcStaleBuildLogSpools(baseDir string, maxAge time.Duration) (int, error) {
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
@@ -662,9 +615,8 @@ func gcStaleBuildLogSpools(baseDir string, maxAge time.Duration) (int, error) {
 	return reclaimed, nil
 }
 
-// spoolLastWrite reports the newest modification time across a spool
-// directory and its files. It reports false when the directory
-// cannot be inspected, so callers leave it alone.
+// spoolLastWrite reports the newest modification time across a spool directory
+// and its files, or false when it cannot be inspected.
 func spoolLastWrite(dir string) (time.Time, bool) {
 	info, err := os.Stat(dir)
 	if err != nil {

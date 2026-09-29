@@ -23,12 +23,9 @@ const (
 	buildkitdStopTimeout       = 5 * time.Second
 )
 
-// buildkitdProc is a per-execution BuildKit daemon. The hardened
-// executor starts one daemon per build with an isolated root and
-// socket so sibling builds share no cache, worker, or session state,
-// and joins it to the execution's network namespace so daemon-side
-// build work (image pulls, RUN steps) is covered by the same egress
-// policy as the sandboxed build clients.
+// buildkitdProc is a per-execution BuildKit daemon with isolated root and socket,
+// joined to the execution's network namespace so daemon-side build work shares
+// the sandboxed egress policy.
 type buildkitdProc struct {
 	cmd      *exec.Cmd
 	sockPath string
@@ -36,12 +33,9 @@ type buildkitdProc struct {
 	waitCh   chan error
 }
 
-// startBuildkitd starts a per-execution buildkitd joined to the
-// network namespace at netnsPath (no join when empty, for tests). The
-// daemon runs with an explicit environment, in its own process group,
-// with no insecure entitlements: a hostile Dockerfile cannot enable
-// privileged operations because the daemon flag that allows them is
-// never passed.
+// startBuildkitd starts a per-execution buildkitd joined to the namespace at
+// netnsPath (no join when empty, for tests). The daemon runs with an explicit
+// environment, in its own process group, with no insecure entitlements.
 func startBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (*buildkitdProc, error) {
 	if strings.TrimSpace(binary) == "" {
 		return nil, errors.New("per-execution buildkitd binary is required")
@@ -73,8 +67,7 @@ func startBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir st
 	}
 	proc := &buildkitdProc{cmd: cmd, sockPath: sockPath, stderr: stderr, waitCh: make(chan error, 1)}
 	go func() { proc.waitCh <- cmd.Wait() }()
-	// Kill promptly on cancellation; the goroutine ends with ctx,
-	// which is scoped to the execution.
+	// Kill promptly on cancellation; the goroutine ends with the execution ctx.
 	go func() {
 		<-ctx.Done()
 		proc.kill()
@@ -82,12 +75,9 @@ func startBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir st
 	return proc, nil
 }
 
-// startInNetNS starts cmd with the child in the network namespace at
-// nsPath, using the fork-inherits-calling-thread-namespaces trick: the
-// locked thread joins the target namespace, forks, and is restored
-// before it rejoins the pool. A thread that cannot be restored is
-// deliberately leaked rather than returned in the wrong namespace,
-// and the child is killed.
+// startInNetNS starts cmd with the child in the namespace at nsPath: the locked
+// thread joins the target namespace, forks, and is restored before rejoining
+// the pool. An unrestorable thread is leaked and the child is killed.
 func startInNetNS(nsPath string, cmd *exec.Cmd) error {
 	hostNS, err := netns.Get()
 	if err != nil {
@@ -124,9 +114,8 @@ func startInNetNS(nsPath string, cmd *exec.Cmd) error {
 	return nil
 }
 
-// waitReady waits until the daemon accepts connections on its socket,
-// the daemon exits early, or ctx ends. Context errors pass through so
-// the executor maps timeout and cancellation.
+// waitReady waits for the socket, early daemon exit, or ctx end. Context errors
+// pass through so the executor maps timeout and cancellation.
 func (p *buildkitdProc) waitReady(ctx context.Context) error {
 	for {
 		select {
@@ -153,9 +142,8 @@ func (p *buildkitdProc) waitReady(ctx context.Context) error {
 	}
 }
 
-// Stop terminates the daemon: SIGTERM to its process group, then
-// SIGKILL after a grace period. A stopped daemon is success even when
-// its exit status reports failure.
+// Stop terminates the daemon: SIGTERM to its process group, then SIGKILL after
+// a grace period. A stopped daemon is success even on failure exit status.
 func (p *buildkitdProc) Stop() error {
 	if p == nil || p.cmd == nil || p.cmd.Process == nil {
 		return nil
@@ -182,7 +170,6 @@ func (p *buildkitdProc) kill() {
 	_ = unix.Kill(-p.cmd.Process.Pid, unix.SIGKILL)
 }
 
-// tailWriter adapts boundedTailBuffer to io.Writer.
 type tailWriter struct {
 	buf *boundedTailBuffer
 }

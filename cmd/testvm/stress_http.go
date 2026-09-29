@@ -15,8 +15,8 @@ import (
 	"ebof-wg-mesh/internal/testutil"
 )
 
-// stressHTTPReport is the remote Python generator's JSON schema. It carries the
-// raw histogram so fanout flows can be merged before percentiles are computed.
+// stressHTTPReport is the remote generator's JSON schema. It carries the raw
+// histogram so fanout flows merge before percentiles are computed.
 type stressHTTPReport struct {
 	Requests int64            `json:"requests"`
 	Errors   int64            `json:"errors"`
@@ -43,9 +43,8 @@ func reserveHTTPFlows(flows []httpFlow, reserved map[int]bool) {
 	}
 }
 
-// planStressHTTP resolves a healthy allocation for each service and picks a
-// bounded fanout of same-project source→target flows, preferring a target on a
-// different agent so the WireGuard/eBPF path is exercised.
+// planStressHTTP picks a bounded fanout of same-project flows, preferring a
+// target on a different agent so the WireGuard/eBPF path is exercised.
 func planStressHTTP(ctx context.Context, o stressOptions, client platformv1.PlatformServiceClient, services []stressService, tolerant bool) ([]httpFlow, error) {
 	allocations := make(map[string]*platformv1.AllocationStatus, len(services))
 	for _, service := range services {
@@ -74,9 +73,8 @@ func planStressHTTP(ctx context.Context, o stressOptions, client platformv1.Plat
 	return chooseHTTPFlows(services, allocations, o.HTTPTargets), nil
 }
 
-// chooseHTTPFlows spreads a bounded number of flows across services and keeps
-// each flow within one project so the mesh isolation policy is not the thing
-// under test here.
+// chooseHTTPFlows spreads a bounded number of flows across services, each
+// within one project so mesh isolation is not under test here.
 func chooseHTTPFlows(services []stressService, allocations map[string]*platformv1.AllocationStatus, targets int) []httpFlow {
 	if targets < 1 {
 		targets = 1
@@ -134,10 +132,9 @@ func chooseHTTPFlows(services []stressService, allocations map[string]*platformv
 	return flows
 }
 
-// runStressHTTPFlows executes each planned flow in parallel inside its source
-// allocation's network namespace. In tolerant mode a flow that cannot start is
-// recorded and skipped; wrong content is always a hard failure because the
-// planned source/target services are excluded from concurrent mutation.
+// runStressHTTPFlows executes each planned flow in parallel in its source's
+// netns. Tolerant mode skips flows that cannot start; wrong content is always
+// a hard failure.
 func runStressHTTPFlows(ctx context.Context, o stressOptions, stage stressStage, flows []httpFlow, key string, hosts map[string]hostInfo, trace *stressTrace, tolerant bool, repoRoot string) (*stressStats, error) {
 	report := &stressStats{Codes: make(map[string]int64)}
 	if len(flows) == 0 {

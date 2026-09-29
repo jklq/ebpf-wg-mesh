@@ -37,23 +37,18 @@ type App struct {
 }
 
 const (
-	// logBatchAckTimeout bounds how long one batch waits for the
-	// server's acceptance ack before the send fails and the batch
-	// retries (deduplicated server-side).
+	// logBatchAckTimeout bounds how long one batch waits for the server's
+	// acceptance ack before the send fails and the batch retries.
 	logBatchAckTimeout    = 30 * time.Second
 	initialReconnectDelay = time.Second
 	maxReconnectDelay     = 30 * time.Second
 	// stableSessionDuration is how long a session must stay connected for a
-	// subsequent disconnect to reset the reconnect backoff. Without it a single
-	// transient outage leaves the agent waiting the accumulated maximum long
-	// after the control plane recovered, because a long-lived session never
-	// resets the delay.
+	// subsequent disconnect to reset the reconnect backoff.
 	stableSessionDuration   = time.Minute
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 	diskEnforcementInterval = 15 * time.Second
-	// reportRepublishQuietPeriod defers report publication to stream-quiet
-	// points; eager publication can emit a report predating the batch.
+	// reportRepublishQuietPeriod defers report publication to stream-quiet points.
 	reportRepublishQuietPeriod = 250 * time.Millisecond
 )
 
@@ -122,9 +117,8 @@ func (a *App) Run(ctx context.Context) error {
 	// The pinned identity adopted at enrollment, empty before the first
 	// enrollment. It survives CA rotations; the bundle on disk does not.
 	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
-	// Install the log sink before supervision restores workloads:
-	// containers started from stored desired state stream output
-	// immediately, and a nil sink would discard their boot logs.
+	// Install the log sink before supervision restores workloads: restored
+	// containers stream output immediately, and a nil sink would drop boot logs.
 	shipper, err := newLogShipper(a.cfg.Node.ID, logShipConfigFromAgent(a.cfg))
 	if err != nil {
 		_ = store.Close()
@@ -140,9 +134,8 @@ func (a *App) Run(ctx context.Context) error {
 		a.stateStore = nil
 		return fmt.Errorf("start workload supervision: %w", err)
 	}
-	// Join the ship loop before Run returns. Close persists pending
-	// gap summaries, and it must not race a flush that has taken
-	// those summaries out for an in-flight send.
+	// Join the ship loop before Run returns: Close must not race a flush holding
+	// summaries out for an in-flight send.
 	shipCtx, stopShip := context.WithCancel(ctx)
 	defer stopShip()
 	var shipping sync.WaitGroup
@@ -166,8 +159,7 @@ func logShipConfigFromAgent(cfg config.AgentConfig) logShipConfig {
 	return logShipConfig{
 		SpoolDir:      filepath.Join(cfg.Runtime.DataDir, "log-spool"),
 		SpoolMaxBytes: ship.SpoolMaxBytes,
-		// A non-positive rate disables producer limiting; zero is a
-		// deliberate operator choice, not an unset default.
+		// A non-positive rate disables producer limiting; zero is deliberate, not unset.
 		RatePerSec:    float64(ship.RatePerSec),
 		Burst:         burst,
 		BatchSize:     ship.FlushBatchSize,
@@ -213,11 +205,9 @@ func (a *App) runConnections(ctx context.Context) error {
 	}
 }
 
-// nextReconnectDelay advances the reconnect backoff after a failed session.
-// A session that stayed connected for at least stableSessionDuration is
-// treated as a healthy connection and resets the backoff; otherwise the delay
-// doubles up to maxReconnectDelay so a persistently unavailable control plane
-// is not hammered.
+// nextReconnectDelay advances the reconnect backoff after a failed session. The
+// delay doubles up to maxReconnectDelay so an unavailable control plane is not
+// hammered; a session healthy for stableSessionDuration resets it instead.
 func nextReconnectDelay(current time.Duration) time.Duration {
 	next := current * 2
 	if next > maxReconnectDelay {
@@ -272,9 +262,8 @@ func (a *App) runSession(ctx context.Context) error {
 	return fmt.Errorf("no reachable control-plane replica: %w", errors.Join(failures...))
 }
 
-// cumulativeAck acknowledges the whole accepted position. The authority epoch
-// is the session's confirmed epoch, not the store's: independent streams ack
-// before the first checkpoint or diff advances the accepted epoch.
+// cumulativeAck acknowledges the whole accepted position at the session's confirmed
+// epoch, not the store's.
 func cumulativeAck(agentID, sessionID string, summary localStateSummary, confirmedEpoch uint64) *agentv1.DesiredStateAcknowledgement {
 	return &agentv1.DesiredStateAcknowledgement{
 		AgentId: agentID, SessionId: sessionID,
@@ -324,9 +313,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		defer sendMu.Unlock()
 		return stream.Send(msg)
 	}
-	// Log batches are acknowledged per batch: sendLogs returns only
-	// once the server accepted the batch into its durable ingest path,
-	// so the shipper's spool commit can never outrun acceptance.
+	// Log batches are acknowledged per batch: sendLogs returns only once the server
+	// accepted the batch, so the spool commit can never outrun acceptance.
 	var batchSeq atomic.Uint64
 	var ackMu sync.Mutex
 	ackWaiters := make(map[uint64]chan struct{})
@@ -378,8 +366,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
 	}
-	// An unchanged reconnect sends no server messages: after the handshake
-	// window, confirm authority optimistically and publish the observation.
+	// An unchanged reconnect sends no server messages; confirm authority optimistically.
 	handshakeTimer := time.NewTimer(replicaRPCTimeout)
 	defer handshakeTimer.Stop()
 	if err := send(&agentv1.AgentClientMessage{
@@ -446,7 +433,6 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	// Newest authority epoch whose stamped payloads this session confirmed.
 	confirmedEpoch := summary.AuthorityEpoch
 	handshake := true
-	// batchOpen marks a server batch whose batch-end marker has not arrived.
 	batchOpen := false
 	sendCurrentReport := func() error {
 		report, err := a.supervisor.CurrentReport()
@@ -457,9 +443,8 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		if err != nil {
 			return err
 		}
-		// Publish only reports at the accepted allocation position: mid-batch
-		// the persisted report trails the accepts and would be rejected
-		// against the control plane's final assignments.
+		// Publish only reports at the accepted allocation position: a mid-batch
+		// report would be rejected against the control plane's final assignments.
 		if report.GetAuthorityEpoch() != summary.AuthorityEpoch || report.GetReconciliationCursor() != summary.ReconciliationCursor {
 			return nil
 		}
@@ -491,8 +476,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		}
 		authorityConfirmed = true
 	}
-	// The managed dashboard identity must be in place before reconciliation
-	// lets the runtime start the dashboard, for diffs as for checkpoints.
+	// The managed dashboard identity must be in place before reconciliation starts it.
 	reconcileAcceptedAllocations := func() error {
 		desired, err := a.stateStore.desiredState()
 		if err != nil {
@@ -505,7 +489,6 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		a.supervisor.ReconcileAcceptedDesired()
 		return nil
 	}
-	// Reports publish at stream-quiet points, never inside an open batch.
 	reportRepublish := make(chan struct{}, 1)
 	var republishTimer *time.Timer
 	scheduleReportRepublish := func() {
@@ -590,7 +573,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				continue
 			}
 			if ack := result.message.GetLogBatchAck(); ack != nil {
-				// Log acknowledgements have no state BatchEnd marker.
+				// Log acknowledgements have no BatchEnd marker.
 				completeAck(ack.GetBatchId())
 				continue
 			}
@@ -602,8 +585,6 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				scheduleReportRepublish()
 				continue
 			}
-			// Every state message opens or extends a batch; publication waits
-			// for the batch-end marker.
 			batchOpen = true
 			switch payload := result.message.Payload.(type) {
 			case *agentv1.AgentServerMessage_DesiredState:

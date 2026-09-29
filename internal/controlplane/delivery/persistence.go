@@ -17,8 +17,7 @@ import (
 
 type Transaction func(context.Context, func(context.Context, *sql.Tx) error) error
 
-// ObservationTransaction runs fn in a transaction that bumps the global
-// status revision when fn reports a change.
+// ObservationTransaction runs fn in a transaction that bumps the global status revision on change.
 type ObservationTransaction func(context.Context, func(context.Context, *sql.Tx) (bool, error)) error
 
 type ServiceQueryer interface {
@@ -35,16 +34,14 @@ type Dependencies struct {
 	CreateEnvironment func(context.Context, ServiceQueryer, string, string, bool, string) (EnvironmentRecord, error)
 	CreateVolume      func(context.Context, *sql.Tx, authz.Project, string, string, int64) (VolumeRecord, error)
 	EnqueueSourceWork func(context.Context, *sql.Tx, durablework.EnqueueParams) (bool, error)
-	// SourceStore supplies source-table reads/writes scoped to delivery's
-	// transactions. Delivery never touches source tables directly.
+	// SourceStore is delivery's only path to source tables, scoped to its transactions.
 	SourceStore SourceStore
 
 	DB                 *sql.DB
 	Mesh               config.ControlPlaneMeshConfig
 	Live               *Live
 	ProductTransaction Transaction
-	// ObservationTransaction publishes status invalidations for observation
-	// changes that carry no product work. It may be nil in tests.
+	// Publishes status invalidations for workless observation changes. Nil in tests.
 	ObservationTransaction ObservationTransaction
 	ReadState              func(context.Context, func(*sql.Tx, journal.DurableState) error) error
 	Authorizer             *authz.Authorizer
@@ -53,19 +50,14 @@ type Dependencies struct {
 	Events                 Events
 	LogEmitter             *logs.LogEmitter
 	ReservedAgentIDs       []string
-	// Secrets is the sealed-secret backend. It is always wired in
-	// production; when nil, explicit sealed operations fail closed while
-	// implicit paths (public spec updates, deployment capture, desired
-	// merge) skip sealed handling.
+	// Secrets is the sealed-secret backend, always wired in production. When nil, explicit
+	// sealed operations fail closed while implicit paths skip sealed handling.
 	Secrets *secretkeys.Service
-	// DeletionGracePeriod is how long tombstones stay restorable before
-	// garbage collection destroys them. Zero selects DefaultDeletionGracePeriod.
+	// DeletionGracePeriod is how long tombstones stay restorable. Zero selects the default.
 	DeletionGracePeriod time.Duration
-	// BuildScheduler tunes the lease-based build queue. Zero selects
-	// DefaultBuildSchedulerConfig.
+	// BuildScheduler tunes the lease-based build queue. Zero selects the default config.
 	BuildScheduler BuildSchedulerConfig
-	// ImageResolver pins direct-image tags at deploy time. Nil resolves
-	// digest-pinned references only and fails closed on mutable tags.
+	// ImageResolver pins direct-image tags. Nil resolves pinned refs only; tags fail closed.
 	ImageResolver registry.ImageResolver
 }
 
@@ -165,11 +157,8 @@ type ReadModel interface {
 	EnvironmentByID(context.Context, authz.User, string) (EnvironmentRecord, error)
 	ListServices(context.Context, authz.User, string, bool) ([]ServiceRecord, error)
 	ServiceByID(context.Context, authz.User, string) (ServiceRecord, error)
-	// AgentByID, AgentIDs, BuildByID, ServiceSnapshot, and
-	// ListAllocationsByServiceID are system reads without user
-	// authorization. They serve internal reconciliation, notification
-	// fan-out, and builder paths; user requests must go through the
-	// authorized methods above.
+	// AgentByID, AgentIDs, BuildByID, ServiceSnapshot, and ListAllocationsByServiceID are
+	// system reads without user authorization, for reconciliation and builder paths.
 	AgentByID(context.Context, string) (AgentRecord, error)
 	AgentIDs(context.Context) ([]string, error)
 	ListAllocationsByServiceID(context.Context, string) ([]AllocationRecord, error)

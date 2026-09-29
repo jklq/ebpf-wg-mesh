@@ -7,8 +7,7 @@ import (
 	"time"
 )
 
-// CheckDeletionConfirmation requires a typed confirmation to exactly match
-// the resource's current name.
+// CheckDeletionConfirmation requires a typed confirmation exactly matching the current name.
 func CheckDeletionConfirmation(current, confirmation string) error {
 	if current == "" || strings.TrimSpace(confirmation) != current {
 		return ErrConfirmationMismatch
@@ -16,24 +15,19 @@ func CheckDeletionConfirmation(current, confirmation string) error {
 	return nil
 }
 
-// ServiceQuiescer performs service-level deletion quiesce inside a caller's
-// product transaction. It lets catalog-owned operations (environment and
-// project deletion) reuse delivery's deployment, build, and source-work
-// transitions without duplicating them.
+// ServiceQuiescer performs service-level deletion quiesce inside a caller's product
+// transaction, letting catalog operations reuse delivery's transitions.
 type ServiceQuiescer struct {
 	store *persistence
 }
 
-// NewServiceQuiescer builds a quiescer over the delivery source store. The
-// quiescer never touches the database outside the caller's transaction.
+// NewServiceQuiescer builds a quiescer bound to the caller's transaction.
 func NewServiceQuiescer(sourceStore SourceStore) *ServiceQuiescer {
 	return &ServiceQuiescer{store: &persistence{sourceStore: sourceStore, deletionGrace: DefaultDeletionGracePeriod}}
 }
 
-// QuiesceTx stops new work for one service: its current deployment moves to
-// Removed (which also cancels late builder completions), queued builds are
-// cancelled, and pending source work is dropped. Running builds finish into
-// the terminal deployment and are cancelled on completion.
+// QuiesceTx stops new work for one service: its deployment moves to Removed, queued builds
+// cancel, and pending source work drops. Running builds finish into the terminal deployment.
 func (q *ServiceQuiescer) QuiesceTx(ctx context.Context, tx *sql.Tx, serviceID, actorUserID string) error {
 	return quiesceServiceTx(ctx, q.store, tx, serviceID, actorUserID)
 }
@@ -64,8 +58,7 @@ func (s *persistence) cancelQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serv
 	return err
 }
 
-// lockServiceDeletionTx locks the service row and reports its effective
-// deletion state: its own tombstone or the nearest tombstoned ancestor.
+// lockServiceDeletionTx locks the service row and reports its effective deletion state.
 func (s *persistence) lockServiceDeletionTx(ctx context.Context, tx *sql.Tx, serviceID string) (*DeletionInfo, error) {
 	var self, environment, project Tombstone
 	targets := ScanTombstone(nil, &self)
@@ -86,9 +79,8 @@ func (s *persistence) lockServiceDeletionTx(ctx context.Context, tx *sql.Tx, ser
 	return EffectiveDeletion(self, environment, project), nil
 }
 
-// serviceDeletionQuerier reports a service's effective deletion state without
-// locking. Callers that mutate must lock first (lockServiceDeletionTx) and
-// re-check, or hold the lock through an enclosing enumeration.
+// serviceDeletionQuerier reports effective deletion state without locking. Mutating callers
+// must lock first (lockServiceDeletionTx) and re-check.
 func (s *persistence) serviceDeletionQuerier(ctx context.Context, q ServiceQueryer, serviceID string) (*DeletionInfo, error) {
 	var self, environment, project Tombstone
 	targets := ScanTombstone(nil, &self)
@@ -117,9 +109,8 @@ func requireLiveService(deletion *DeletionInfo) error {
 	return nil
 }
 
-// tombstoneServiceTx marks the service deleted. It reports whether the row
-// transitioned; an already-tombstoned row is a no-op success so concurrent
-// deletes and retries stay idempotent.
+// tombstoneServiceTx marks the service deleted, reporting whether the row transitioned. An
+// already-tombstoned row is a no-op success so deletes stay idempotent.
 func (s *persistence) tombstoneServiceTx(ctx context.Context, tx *sql.Tx, serviceID, userID string, now time.Time) (bool, error) {
 	result, err := tx.ExecContext(ctx,
 		`UPDATE services
@@ -139,8 +130,7 @@ func (s *persistence) tombstoneServiceTx(ctx context.Context, tx *sql.Tx, servic
 	return affected > 0, nil
 }
 
-// hasLiveDomainBindingsQuerier reports whether the service has any bindings
-// still routed. Tombstoned bindings are already withdrawn from ingress.
+// hasLiveDomainBindingsQuerier reports whether the service has bindings still routed.
 func (s *persistence) hasLiveDomainBindingsQuerier(ctx context.Context, q ServiceQueryer, serviceID string) (bool, error) {
 	var exists bool
 	err := q.QueryRowContext(ctx,

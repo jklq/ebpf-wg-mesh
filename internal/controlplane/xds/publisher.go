@@ -38,9 +38,8 @@ type NodeStore interface {
 
 const defaultPublishMinSyncInterval = 2 * time.Second
 
-// Publisher recomputes the xDS snapshot from control-plane state and serves
-// it on the attached Server. It implements the delivery.PlatformIngress
-// contract (Sync, RequestSync, Converged).
+// Publisher recomputes the xDS snapshot from control-plane state and serves it on the
+// attached Server. It implements the delivery.PlatformIngress contract.
 type Publisher struct {
 	source    SnapshotSource
 	pubs      PublicationStore
@@ -65,9 +64,8 @@ type PublisherConfig struct {
 	MinSync      time.Duration
 }
 
-// NewPublisher builds a Publisher. A nil Server disables local serving; a nil
-// PublicationStore disables the durable row; a nil NodeStore disables node
-// tracking (Converged then reports true).
+// NewPublisher builds a Publisher. A nil Server disables local serving; a nil PublicationStore
+// disables the durable row; a nil NodeStore disables node tracking (Converged is then true).
 func NewPublisher(cfg PublisherConfig) *Publisher {
 	minSync := cfg.MinSync
 	if minSync <= 0 {
@@ -86,8 +84,7 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 	}
 }
 
-// Sync recomputes and publishes the snapshot. A build failure retains the
-// last-known-good snapshot.
+// Sync recomputes and publishes the snapshot; a build failure retains last-known-good.
 func (p *Publisher) Sync(ctx context.Context) error {
 	if p == nil {
 		return nil
@@ -131,8 +128,7 @@ func (p *Publisher) Run(ctx context.Context) error {
 	})
 }
 
-// Follow keeps this replica's server on the durable publication and records
-// node apply state. It runs on every replica, not just the live owner.
+// Follow tracks the durable publication and node apply state on every replica.
 func (p *Publisher) Follow(ctx context.Context) error {
 	return p.loop(ctx, nil, func() {
 		if err := p.Replicate(ctx); err != nil && ctx.Err() == nil {
@@ -161,8 +157,7 @@ func (p *Publisher) loop(ctx context.Context, requestCh <-chan struct{}, tick fu
 	}
 }
 
-// Converged reports whether every known Envoy has fully applied the current
-// publication. Rollouts must not destroy withdrawn allocations before this.
+// Converged gates destroying withdrawn allocations: every known Envoy must fully apply first.
 func (p *Publisher) Converged(ctx context.Context) (bool, error) {
 	if p == nil || p.nodes == nil {
 		return true, nil
@@ -206,9 +201,8 @@ func (p *Publisher) Replicate(ctx context.Context) error {
 	return p.flushNodeObservations(ctx)
 }
 
-// Refresh adopts the durable publication into the local server. It is
-// serialized with Sync and rechecks the row after building, so an adoption
-// never serves a publication the row has already moved past.
+// Refresh adopts the durable publication into the local server. It is serialized with Sync
+// and rechecks the row after building, so an adoption never serves a stale publication.
 func (p *Publisher) Refresh(ctx context.Context) error {
 	if p == nil || p.pubs == nil || p.server == nil {
 		return nil
@@ -261,9 +255,8 @@ func (p *Publisher) adoptPublicationLocked(ctx context.Context) (done bool, err 
 	return true, nil
 }
 
-// flushNodeObservations persists what this replica's subscribers applied.
-// A node fully applied only reports its version when every required type is
-// at the served version; otherwise the store keeps the previous version.
+// flushNodeObservations persists what this replica's subscribers applied. A node reports its
+// version only when fully applied; otherwise the store keeps the previous version.
 func (p *Publisher) flushNodeObservations(ctx context.Context) error {
 	if p.nodes == nil || p.server == nil {
 		return nil

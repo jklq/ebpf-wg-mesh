@@ -11,8 +11,7 @@ import (
 	"testing"
 )
 
-// stubLookup replaces the realm host resolver for one test and restores
-// it afterwards. Realm tests stay offline this way.
+// stubLookup replaces the realm host resolver for one test; realm tests stay offline.
 func stubLookup(t *testing.T, ip string) {
 	t.Helper()
 	original := lookupIPAddr
@@ -66,20 +65,15 @@ func TestTokenRealmURLConfinesRealmToRegistrySite(t *testing.T) {
 func TestTokenRealmURLBlocksPrivateResolution(t *testing.T) {
 	stubLookup(t, "127.0.0.1")
 	ctx := context.Background()
-	// A sibling of the registry's own site resolves to loopback and is
-	// not the registry's exact host, so following it would walk the
-	// control plane into internal addresses.
+	// A non-exact sibling host resolving to loopback must not be followed.
 	if _, err := tokenRealmURL(ctx, "https://token.evil.com/token", "evil.com", nil); err == nil ||
 		!strings.Contains(err.Error(), "prohibited private destination") {
 		t.Fatalf("tokenRealmURL resolved private destination without rejection: %v", err)
 	}
 }
 
-// TestTokenRealmURLAllowsAllowlistedPrivateSibling proves the operator
-// escape hatch: an allowlisted internal registry may keep its token realm
-// on a private sibling host (the realm authority is marked trusted so the
-// dial guard lets the request through), while the same sibling is refused
-// without the allowlist entry.
+// TestTokenRealmURLAllowsAllowlistedPrivateSibling: an allowlisted internal registry may
+// keep its token realm on a private sibling host; without the entry it is refused.
 func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 	stubLookup(t, "10.1.2.3")
 	ctx := context.Background()
@@ -87,10 +81,8 @@ func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 		!strings.Contains(err.Error(), "prohibited private destination") {
 		t.Fatalf("tokenRealmURL accepted unlisted private sibling: %v", err)
 	}
-	// The registry's own allowlist entry must not approve sibling
-	// services as token authorities: a compromised registry could aim
-	// the token fetch at any same-site private host and read a "token"
-	// field out of the response.
+	// The registry's own entry must not approve sibling token authorities: a compromised
+	// registry could read a "token" out of any same-site private host.
 	if _, err := tokenRealmURL(ctx, "https://auth.internal.test/token", "registry.internal.test:5000", []string{"registry.internal.test:5000"}); err == nil ||
 		!strings.Contains(err.Error(), "prohibited private destination") {
 		t.Fatalf("tokenRealmURL approved a private sibling realm on the registry's entry alone: %v", err)
@@ -112,11 +104,8 @@ func TestTokenRealmURLAllowsAllowlistedPrivateSibling(t *testing.T) {
 	}
 }
 
-// TestProhibitedIPRejectsNonPublicSpecialPurposeRanges is the shared-IP
-// regression: Go's IsPrivate misses RFC 6598 shared address space, which
-// routes inside provider networks like private space. Every
-// non-public special-purpose range must be prohibited for unallowlisted
-// registries; genuinely public unicast stays reachable.
+// TestProhibitedIPRejectsNonPublicSpecialPurposeRanges: Go's IsPrivate misses RFC 6598
+// shared space, so every non-public range is prohibited for unallowlisted registries.
 func TestProhibitedIPRejectsNonPublicSpecialPurposeRanges(t *testing.T) {
 	for _, tc := range []struct {
 		ip         string
@@ -153,12 +142,9 @@ func TestProhibitedIPRejectsNonPublicSpecialPurposeRanges(t *testing.T) {
 	}
 }
 
-// TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm is the
-// request-level regression for the dial guard rejecting what the realm
-// check accepts: an internal registry whose Bearer realm lives on a
-// private sibling host resolves end to end when the operator approved
-// both endpoints, and without the realm's own entry the private sibling
-// is never contacted — the registry's entry alone must not open it.
+// TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm: an internal registry whose
+// token realm lives on a private sibling resolves end to end when both endpoints are
+// approved; the registry's entry alone never opens the sibling.
 func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
 	stubLookup(t, "10.1.2.3")
 	digest := "sha256:" + strings.Repeat("7a", 32)
@@ -185,11 +171,8 @@ func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
 	t.Cleanup(registryServer.Close)
 	registryPort := portOf(t, registryServer.URL)
 
-	// The fake authorities share the internal.test site with the stub
-	// resolver's private answer; the transport's dial maps them onto the
-	// real test servers so the flow runs with real connections while the
-	// dial guard still makes every routing decision. TLS verification is
-	// not under test here.
+	// Fake authorities share internal.test with the stub resolver's private answer; the dial
+	// maps them onto real test servers while the guard makes every routing decision.
 	client := &http.Client{Transport: &http.Transport{
 		DialContext: fakeHostDial(map[string]string{
 			"registry.internal.test:" + registryPort: stripScheme(t, registryServer.URL),
@@ -207,14 +190,11 @@ func TestHTTPResolverReachesAllowlistedPrivateSiblingTokenRealm(t *testing.T) {
 	if got.ManifestDigest != digest {
 		t.Fatalf("Resolve digest = %q, want %q", got.ManifestDigest, digest)
 	}
-	// One challenged HEAD and one authorized HEAD.
 	if manifestHits != 2 || tokenHits != 1 {
 		t.Fatalf("manifest hits = %d, token hits = %d, want the sibling realm fetched", manifestHits, tokenHits)
 	}
 
-	// The registry's entry alone must not open the private sibling: a
-	// compromised registry naming it as the Bearer realm must not have
-	// the control plane probe it or echo its response as a token.
+	// The registry's entry alone must not open the private sibling.
 	realmUnapproved := NewHTTPResolver(client, []string{"registry.internal.test:" + registryPort})
 	if _, err := realmUnapproved.Resolve(context.Background(), ref); err == nil ||
 		!strings.Contains(err.Error(), "prohibited private destination") {
@@ -254,9 +234,8 @@ func stripScheme(t *testing.T, serverURL string) string {
 	return ""
 }
 
-// fakeHostDial maps fake host:port authorities onto real local test
-// servers so tests exercise the resolver's dial decisions with real
-// connections while names stay under the test's control.
+// fakeHostDial maps fake host:port authorities onto real local test servers so tests
+// exercise dial decisions with real connections.
 func fakeHostDial(mapping map[string]string) func(ctx context.Context, network, addr string) (net.Conn, error) {
 	dialer := &net.Dialer{}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
@@ -296,10 +275,8 @@ func TestAnonymousTokenRefusesRedirects(t *testing.T) {
 	}
 }
 
-// TestRegistryHostAllowedMatchesPortsExactly pins the allowlist identity:
-// an entry matches its own endpoint only, a bare entry means the default
-// port, and other ports must be listed explicitly — one declaration must
-// never waive the address checks for a different port.
+// TestRegistryHostAllowedMatchesPortsExactly: an entry matches its own endpoint only;
+// other ports must be listed explicitly.
 func TestRegistryHostAllowedMatchesPortsExactly(t *testing.T) {
 	entries := []string{"registry.internal.test", "registry.internal.test:5000", "[fd00::1]:5000"}
 	for _, tc := range []struct {

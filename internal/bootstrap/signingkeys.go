@@ -20,9 +20,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// signkeysSchemaVersion is the minimum control-plane schema version carrying
-// the platform signing-key tables. The operator CLI refuses to run against
-// older databases instead of failing mid-rotation.
+// signkeysSchemaVersion is the minimum schema version carrying the signing-key
+// tables. The CLI refuses older databases instead of failing mid-rotation.
 const signkeysSchemaVersion = 26
 
 // RunSigningKeys implements `controlplane signing-keys`, the operator
@@ -42,10 +41,8 @@ const signkeysSchemaVersion = 26
 //	issue-client-cert --caller-class C --caller-id ID [--ttl D]
 //	                           mint a fresh mTLS client identity from the active CA
 //
-// Rotation is overlap, not ceremony: rotate-start, provision the new
-// material to verifiers that hold it (dashboard secrets, registry
-// rootcertbundle), wait out the scope's overlap, then rotate-finish. The
-// lifetime table and runbook live in docs/signing-keys.md.
+// Rotation is overlap, not ceremony: rotate-start, provision verifiers, wait out
+// the overlap, then rotate-finish. Runbook: docs/signing-keys.md.
 func RunSigningKeys(args []string) error {
 	if len(args) == 0 {
 		return signingKeysUsageError()
@@ -124,9 +121,8 @@ func runSigningKeysCommand(command string, args []string) error {
 		return fmt.Errorf("controlplane signing-keys: database schema v%d is older than signing keys v%d; start the control plane first",
 			version, signkeysSchemaVersion)
 	}
-	// The CLI never auto-generates envelope state: init is the explicit
-	// command for that, and every other command fails closed on missing
-	// material.
+	// The CLI never auto-generates envelope state; only init does, and every
+	// other command fails closed on missing material.
 	provider, err := secretkeys.OpenProvider(keysCfg, secretkeys.Options{})
 	if err != nil {
 		return fmt.Errorf("controlplane signing-keys: %w", err)
@@ -278,8 +274,7 @@ func signingKeysExport(ctx context.Context, svc *signkeys.Service, scopes []stri
 		fmt.Fprintf(os.Stderr, "wrote %s %s to %s\n", scope, exportKind(keyType), trimmed)
 		return nil
 	}
-	// Raw bytes, no framing: callers capture stdout byte-for-byte into
-	// dashboard secret files or registry rootcertbundles.
+	// Raw bytes, no framing: callers capture stdout byte-for-byte.
 	if _, err := os.Stdout.Write(material); err != nil {
 		return fmt.Errorf("controlplane signing-keys export: %w", err)
 	}
@@ -355,9 +350,8 @@ func signingKeysIssueClientCert(ctx context.Context, svc *signkeys.Service, call
 	})
 }
 
-// resolveHMACSecret loads an operator-supplied HMAC secret once for init and
-// rotate-start. It is only valid for exactly one HMAC scope: ECDSA scopes
-// always generate, and one secret must never seed two scopes.
+// resolveHMACSecret loads an operator-supplied HMAC secret for exactly one HMAC
+// scope. ECDSA scopes always generate; one secret never seeds two scopes.
 func resolveHMACSecret(scopes []string, hmacSecret, hmacSecretFile string) ([]byte, error) {
 	if hmacSecret != "" && hmacSecretFile != "" {
 		return nil, fmt.Errorf("only one of hmac secret or hmac secret file may be configured")

@@ -5,12 +5,10 @@ import (
 	"time"
 )
 
-// Limiter is a per-key token bucket. Agents use one key per
-// allocation, builders one key per build, and the control plane one
-// key per allocation as an ingest guard. Drops are counted per key
-// so producers can persist them as explicit read gaps. The key table
-// is bounded and recycles its least recently used bucket, so a
-// long-lived process never permanently rejects a new key.
+// Limiter is a per-key token bucket: one key per allocation (agents, the
+// control-plane ingest guard) or per build (builders). Denied lines count per
+// key so producers persist them as read gaps. The key table is bounded and
+// recycles its least recently used bucket.
 type Limiter struct {
 	ratePerSec float64
 	burst      float64
@@ -22,16 +20,14 @@ type Limiter struct {
 	dropped map[string]uint64
 }
 
-// tokenBucket tracks one key's allowance. Tokens accrue at rate per
-// second up to burst; each allowed line spends one token.
+// tokenBucket tracks one key's allowance: tokens accrue at rate per second up to burst.
 type tokenBucket struct {
 	tokens  float64
 	updated time.Time
 }
 
-// NewLimiter builds a limiter allowing ratePerSec lines per second
-// per key with bursts of burst lines. A non-positive rate allows
-// everything (no limiting, no counting).
+// NewLimiter allows ratePerSec lines per second per key with bursts of burst.
+// A non-positive rate allows everything.
 func NewLimiter(ratePerSec float64, burst int) *Limiter {
 	return newLimiter(ratePerSec, burst, 4096, time.Now)
 }
@@ -53,8 +49,7 @@ func newLimiter(ratePerSec float64, burst, maxKeys int, now func() time.Time) *L
 	}
 }
 
-// Allow reports whether key may emit one line now, spending a token.
-// Denied lines are counted and must surface as read gaps.
+// Allow spends one token if key may emit now; denied lines count toward read gaps.
 func (l *Limiter) Allow(key string) bool {
 	if l == nil || l.ratePerSec <= 0 {
 		return true
@@ -86,10 +81,8 @@ func (l *Limiter) Allow(key string) bool {
 	return true
 }
 
-// evictOldestLocked recycles the least recently used bucket so a key
-// is never permanently rejected just because the process outlived the
-// key cap. Evicted keys return to a full burst, which for a producer
-// guard is the right failure direction.
+// evictOldestLocked recycles the least recently used bucket. Evicted keys
+// return to a full burst — the right failure direction for a producer guard.
 func (l *Limiter) evictOldestLocked() {
 	var victim string
 	var oldest time.Time
@@ -114,8 +107,7 @@ func (l *Limiter) DroppedSince(key string) uint64 {
 	return l.dropped[key]
 }
 
-// DrainDrops returns per-key denied counts accumulated since the
-// last drain and clears them.
+// DrainDrops returns per-key denied counts since the last drain and clears them.
 func (l *Limiter) DrainDrops() map[string]uint64 {
 	if l == nil {
 		return nil
@@ -130,7 +122,6 @@ func (l *Limiter) DrainDrops() map[string]uint64 {
 	return out
 }
 
-// Keys returns the number of tracked keys.
 func (l *Limiter) Keys() int {
 	if l == nil {
 		return 0

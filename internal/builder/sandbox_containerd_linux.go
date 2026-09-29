@@ -47,10 +47,9 @@ const (
 	sandboxKillPollInterval = 200 * time.Millisecond
 )
 
-// containerdSandboxBackend is the Linux SandboxBackend: one-shot OCI
-// containers on a private network namespace with CNI egress and
-// denied-CIDR blackholes. Every setup step fails closed: a build
-// whose sandbox cannot be fully contained does not run.
+// containerdSandboxBackend is the Linux SandboxBackend: one-shot OCI containers
+// on a private netns with CNI egress and denied-CIDR blackholes. Setup fails
+// closed: an uncontainable build does not run.
 type containerdSandboxBackend struct {
 	cfg      SandboxBackendConfig
 	client   *containerd.Client
@@ -94,8 +93,7 @@ func newSandboxBackendPlatform(cfg SandboxBackendConfig) (SandboxBackend, error)
 		_ = client.Close()
 		return nil, fmt.Errorf("sandbox image %q is not present: pre-pull the operator toolchain image: %w", cfg.Image, err)
 	}
-	// Unpack for the configured snapshotter so a present-but-unpacked
-	// image fails here with a clear error instead of mid-build.
+	// Unpack now so a present-but-unpacked image fails here, not mid-build.
 	if err := image.Unpack(ctx, cfg.Snapshotter); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("unpack sandbox image %q for %s: %w", cfg.Image, cfg.Snapshotter, err)
@@ -122,9 +120,8 @@ func (b *containerdSandboxBackend) Close() error {
 	return b.client.Close()
 }
 
-// sandboxNetOwner tracks a network namespace created by SetupNet so a
-// crashed builder's namespaces are reaped by owner death, the same
-// rule as workspace markers.
+// sandboxNetOwner tracks a SetupNet namespace so a crashed builder's namespaces
+// are reaped by owner death.
 type sandboxNetOwner struct {
 	Executor  string    `json:"executor"`
 	PID       int       `json:"pid"`
@@ -150,7 +147,6 @@ func (b *containerdSandboxBackend) SetupNet(ctx context.Context, buildID string,
 	if err != nil {
 		return SandboxNet{}, err
 	}
-	// A leftover namespace from a crashed run must never be reused.
 	b.removeNetNSForOwner(ownerPath)
 	ns, err := cnetns.NewNetNS(b.netnsDir)
 	if err != nil {
@@ -181,9 +177,8 @@ func (b *containerdSandboxBackend) SetupNet(ctx context.Context, buildID string,
 	}()
 
 	if !policy.AllowGeneralEgress {
-		// Loopback-only: a private namespace with no attachment and
-		// no routes. There is nothing to deny because there is no
-		// egress path at all.
+		// Loopback-only: a private namespace with no attachment, no routes,
+		// and therefore no egress path at all.
 		if err := inSandboxNetNS(nsPath, bringLoopbackUp); err != nil {
 			return SandboxNet{}, fmt.Errorf("isolate sandbox netns: %w", err)
 		}
@@ -246,9 +241,8 @@ func (b *containerdSandboxBackend) TeardownNet(ctx context.Context, sandboxNet S
 	return errors.Join(errs...)
 }
 
-// removeNetNSForOwner removes the namespace recorded in an owner file
-// plus the file itself. It is best effort: teardown and stale
-// recovery must not fail on already-removed state.
+// removeNetNSForOwner removes the namespace recorded in an owner file plus the
+// file itself. Best effort: teardown must not fail on already-removed state.
 func (b *containerdSandboxBackend) removeNetNSForOwner(ownerPath string) {
 	data, err := os.ReadFile(ownerPath)
 	if err == nil {
@@ -303,10 +297,9 @@ func cniResultHasIP(result *cni.Result) bool {
 	return false
 }
 
-// inSandboxNetNS runs fn with the calling thread inside the network
-// namespace at nsPath, then restores the host namespace. A thread
-// that cannot be restored is deliberately leaked rather than
-// returned to the pool in the wrong namespace.
+// inSandboxNetNS runs fn with the calling thread inside the namespace at
+// nsPath, then restores the host namespace. An unrestorable thread is leaked
+// rather than returned to the pool in the wrong namespace.
 func inSandboxNetNS(nsPath string, fn func() error) (err error) {
 	hostNS, err := netns.Get()
 	if err != nil {
@@ -349,10 +342,8 @@ func bringLoopbackUp() error {
 	return nil
 }
 
-// addDeniedRoutes installs blackhole routes for the denied CIDRs.
-// Blackholes drop matching packets silently inside the namespace, die
-// with the namespace (no rule teardown to forget), and cannot be
-// removed by the sandbox, which holds no capabilities.
+// addDeniedRoutes installs blackhole routes for the denied CIDRs. Blackholes
+// die with the namespace and cannot be removed by the capability-less sandbox.
 func addDeniedRoutes(denied []netip.Prefix) error {
 	for _, prefix := range denied {
 		masked := prefix.Masked()
@@ -386,7 +377,6 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 		return err
 	}
 	nctx := b.namespaced(ctx)
-	// A leftover container from a crashed step must never be reused.
 	_ = b.removeSandboxContainer(nctx, containerID)
 
 	opts, err := buildSandboxSpecOpts(sandboxSpecInput{
@@ -497,13 +487,10 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 	}
 }
 
-// killSandboxTask kills a sandbox task and waits for its exit with a
-// bound. The kill and the status checks run on a fresh context:
-// killing over the execution context after cancellation would fail
-// (a cancelled context fails the Kill RPC), and the wait channel of a
-// cancelled wait may never deliver, so an unbounded receive would
-// stall the worker past its timeout. Container removal stays in the
-// caller's deferred cleanup, which reaps the task either way.
+// killSandboxTask kills a sandbox task and waits for its exit with a bound.
+// Kill and status checks run on a fresh context: the execution context may be
+// cancelled, and a cancelled wait may never deliver. Container removal stays in
+// the caller's deferred cleanup.
 func (b *containerdSandboxBackend) killSandboxTask(task containerd.Task, containerID string) {
 	killCtx, killCancel := context.WithTimeout(context.Background(), sandboxKillTimeout)
 	defer killCancel()
@@ -526,8 +513,8 @@ func (b *containerdSandboxBackend) killSandboxTask(task containerd.Task, contain
 	}
 }
 
-// sandboxOverlayBytes measures bytes written to the sandbox root
-// filesystem, excluding the base image.
+// sandboxOverlayBytes measures bytes written to the sandbox rootfs, excluding
+// the base image.
 func (b *containerdSandboxBackend) sandboxOverlayBytes(ctx context.Context, containerID string) (int64, error) {
 	snapshots := b.client.SnapshotService(b.cfg.Snapshotter)
 	usage, err := snapshots.Usage(ctx, containerID)
@@ -547,8 +534,8 @@ func (b *containerdSandboxBackend) sandboxOverlayBytes(ctx context.Context, cont
 	return usage.Size, nil
 }
 
-// removeSandboxContainer kills and deletes a sandbox container and its
-// snapshot. Missing containers are success: removal is idempotent.
+// removeSandboxContainer kills and deletes a sandbox container and its snapshot.
+// Missing containers are success: removal is idempotent.
 func (b *containerdSandboxBackend) removeSandboxContainer(ctx context.Context, containerID string) error {
 	container, err := b.client.LoadContainer(ctx, containerID)
 	if err != nil {

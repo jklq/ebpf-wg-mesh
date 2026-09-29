@@ -511,8 +511,7 @@ func TestBuildSchedulerReleasesCapOnRunningTerminalPaths(t *testing.T) {
 				if err := d.RecoverExpiredBuilds(ctx); err != nil {
 					t.Fatalf("RecoverExpiredBuilds: %v", err)
 				}
-				// The newer build is queued behind the other service's build;
-				// cancel it so later subtests start from a clean queue.
+				// Cancel the queued build so later subtests start from a clean queue.
 				current := currentDeploymentForTest(t, store, ctx, serviceA.ID)
 				if current.BuildID != newer.ID {
 					t.Fatalf("current deployment build = %q, want newer build %q", current.BuildID, newer.ID)
@@ -569,8 +568,7 @@ func TestBuildSchedulerQueuedTerminalPaths(t *testing.T) {
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
 	d := schedulerTestDelivery(store, deliverycore.DefaultBuildSchedulerConfig())
 
-	// Cancelling a queued build finishes it immediately: no lease, no wait
-	// for a builder, and the queue keeps moving.
+	// Cancelling a queued build finishes it immediately; the queue keeps moving.
 	if err := seedReadySourceState(t, store, service, "commit-queued-cancel"); err != nil {
 		t.Fatal(err)
 	}
@@ -590,8 +588,7 @@ func TestBuildSchedulerQueuedTerminalPaths(t *testing.T) {
 		t.Fatalf("queued cancel = state %q finished %v, want cancelled with finished_at", cancelled.State, cancelled.FinishedAt)
 	}
 
-	// A build that waits longer than the maximum queue age fails instead of
-	// running stale.
+	// A build waiting past the maximum queue age fails instead of running stale.
 	if err := seedReadySourceState(t, store, service, "commit-queue-age"); err != nil {
 		t.Fatal(err)
 	}

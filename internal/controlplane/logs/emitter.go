@@ -13,9 +13,8 @@ import (
 	"ebof-wg-mesh/internal/logpipeline"
 )
 
-// Platform event names for structured control-plane log lines.
-// Customer output lines never carry these: the pipeline does not
-// parse customer output to derive events or attributes.
+// Platform event names for structured control-plane log lines. Customer output
+// never carries these.
 const (
 	EventBuildStarted  = "build.started"
 	EventBuildFinished = "build.finished"
@@ -33,8 +32,7 @@ type ServiceScope struct {
 
 type LogEmitter struct {
 	store Writer
-	// async queues synthetic lines for durable write with retry and
-	// shutdown drain; nil writes synchronously.
+	// async queues synthetic lines for durable write; nil writes synchronously.
 	async *AsyncIngester
 }
 
@@ -44,9 +42,8 @@ type Writer interface {
 	WriteGaps(context.Context, []GapInput) error
 }
 
-// EmitBuildDrops persists builder drop reports as explicit read gaps.
-// Service, build, and type come from the resolved scope, not the
-// producer's claim.
+// EmitBuildDrops persists builder drop reports as explicit read gaps. Service,
+// build, and type come from the resolved scope, not the producer's claim.
 func (e *LogEmitter) EmitBuildDrops(ctx context.Context, scope ServiceScope, buildID, builderID string, drops []*platformv1.LogDropSummary) error {
 	if !e.Enabled() || len(drops) == 0 {
 		return nil
@@ -90,15 +87,9 @@ func (e *LogEmitter) EmitBuildf(ctx context.Context, scope ServiceScope, buildID
 	e.EmitBuild(ctx, scope, buildID, stage, fmt.Sprintf(format, args...))
 }
 
-// EmitEvent writes one structured platform-event line. Identity and
-// observed_at derive from the caller's content-stable facts — event
-// name, build, lease attempt, and the recorded event time — so a
-// retried claim or report collapses into one event row instead of
-// duplicating (the log table keys on service, observed_at, and
-// line_id). Wall-clock report times must not be among the facts.
-// Attributes describe the known event; the human-readable line stays
-// exact. The pipeline never derives events or attributes from
-// customer output.
+// EmitEvent writes one structured platform-event line. Identity and observed_at derive
+// from content-stable facts — event, build, lease attempt, event time, never wall-clock
+// report times — so retried reports collapse into one row via (observed_at, line_id) dedup.
 func (e *LogEmitter) EmitEvent(ctx context.Context, scope ServiceScope, logType LogType, buildID string, leaseEpoch int64, at time.Time, event, line string, attrs map[string]string) {
 	stage := StageDeploy
 	if logType == LogTypeBuild {
@@ -199,9 +190,7 @@ func (e *LogEmitter) emit(_ context.Context, in LogLineInput) {
 	if e.async != nil {
 		switch e.async.EnqueueLines([]LogLineInput{in}) {
 		case AdmitAccepted:
-			// Queue the event like an agent batch: retry across backend
-			// outages, shed with gap accounting past the queue cap, and
-			// drain at shutdown instead of dying with the request.
+			// Queue the event like an agent batch: retry, shed with gaps, drain at shutdown.
 			return
 		case AdmitRetry:
 			slog.Warn("synthetic log line not journaled",

@@ -5,9 +5,8 @@ import (
 	"time"
 )
 
-// stressFault kinds intentionally span independent failure domains so that a
-// campaign can compound two of them without trivially cascading. Scope is used
-// only to pick companions from a different domain.
+// stressFault kinds span independent failure domains so a campaign can compound
+// two without trivially cascading. Scope picks companions from another domain.
 const (
 	faultScopeControlPlane = "controlplane"
 	faultScopeAgent        = "agent"
@@ -16,14 +15,11 @@ const (
 
 type stressFaultKind struct {
 	Name string
-	// Scope groups faults that share a failure domain and therefore should not
-	// be compounded with one another.
+	// Scope groups faults sharing a failure domain; companions come from elsewhere.
 	Scope string
-	// DataPlaneSafe is false when the fault targets an agent that a workload can
-	// be running on, so fault-window workload traffic is allowed to fail.
+	// DataPlaneSafe is false when the fault may break workload traffic.
 	DataPlaneSafe bool
-	// HostScope is the host a fault of this kind runs against; control-plane and
-	// database faults share the colocated control-plane host.
+	// HostScope is the host the fault runs against.
 	HostScope string
 }
 
@@ -41,9 +37,8 @@ var stressFaultKinds = []stressFaultKind{
 	{Name: "clock-skew", Scope: faultScopeAgent, DataPlaneSafe: true, HostScope: "agent"},
 }
 
-// stressCoreFaults are the original seven faults. They are scheduled first so a
-// default eight-stage campaign still covers every one of them; extended faults
-// only appear once the campaign runs longer.
+// stressCoreFaults are scheduled first so a default campaign covers them all;
+// extended faults only appear in longer campaigns.
 var stressCoreFaults = map[string]bool{
 	"controlplane-kill":  true,
 	"controlplane-pause": true,
@@ -63,9 +58,8 @@ func stressFaultKindByName(name string) (stressFaultKind, bool) {
 	return stressFaultKind{}, false
 }
 
-// stressFaultSteps resolves a stage's faults into concrete remote commands.
-// Heal is a function because clock repair must embed the current wall time at
-// heal time, not at injection time.
+// stressFaultSteps resolves a stage's faults into concrete remote commands. Heal
+// is a function so clock repair embeds the wall time at heal time.
 type stressFaultStep struct {
 	Kind   string `json:"kind"`
 	Host   string `json:"host"`
@@ -109,8 +103,7 @@ func stressFaultSteps(hosts map[string]hostInfo, ownerService string, faults []s
 				Inject: "systemctl kill --kill-whom=main --signal=SIGSTOP ebpf-wg-mesh-cockroach",
 				Heal:   constHeal("systemctl kill --kill-whom=main --signal=SIGCONT ebpf-wg-mesh-cockroach")})
 		case "database-restart":
-			// A real crash/restart of the durability backend, not a pause. The
-			// heal is idempotent because systemd may already have restarted it.
+			// A real crash/restart, not a pause; the heal is idempotent.
 			steps = append(steps, stressFaultStep{Kind: fault.Kind, Host: "controlplane",
 				Inject: "systemctl restart ebpf-wg-mesh-cockroach",
 				Heal:   constHeal("systemctl start ebpf-wg-mesh-cockroach"),
@@ -140,8 +133,7 @@ func stressFaultSteps(hosts map[string]hostInfo, ownerService string, faults []s
 				Inject: outgoing + " && " + incoming,
 				Heal:   constHeal("iptables -D " + ruleBody(outgoing) + "; e1=$?; iptables -D " + ruleBody(incoming) + "; e2=$?; test $e1 -eq 0 && test $e2 -eq 0")})
 		case "agent-wg-partition":
-			// Cut the agent's WireGuard data plane without touching its control
-			// channel or any other host, so the mesh must route around it.
+			// Cut the agent's data plane only, so the mesh must route around it.
 			host, err := stressFaultHost(hosts, fault.Target)
 			if err != nil {
 				return nil, err
@@ -156,8 +148,7 @@ func stressFaultSteps(hosts map[string]hostInfo, ownerService string, faults []s
 			if err != nil {
 				return nil, err
 			}
-			// Bounded skew: large enough to exercise time assumptions, small
-			// enough to stay inside TLS/JWT validity windows.
+			// Bounded skew: exercises time assumptions inside TLS/JWT windows.
 			steps = append(steps, stressFaultStep{Kind: fault.Kind, Host: host,
 				Inject: "timedatectl set-ntp false && date -u -s \"$(date -u -d '+5 seconds')\"",
 				Heal: func() string {
@@ -170,8 +161,7 @@ func stressFaultSteps(hosts map[string]hostInfo, ownerService string, faults []s
 	return steps, nil
 }
 
-// ruleBody strips the leading "iptables -I " so a heal can reuse the exact rule
-// text with "-D". Table and chain stay identical by construction.
+// ruleBody strips the leading "iptables -I " so a heal can reuse the rule with "-D".
 func ruleBody(insertCommand string) string {
 	const prefix = "iptables -I "
 	if len(insertCommand) > len(prefix) && insertCommand[:len(prefix)] == prefix {
@@ -184,8 +174,7 @@ func stressFaultHost(hosts map[string]hostInfo, target string) (string, error) {
 	if _, ok := hosts[target]; ok {
 		return target, nil
 	}
-	// Deterministic fallback if the schedule targeted an agent that is no longer
-	// present; pick the lexicographically smallest agent so runs stay replayable.
+	// Fallback to the lexicographically smallest agent so runs stay replayable.
 	best := ""
 	for name := range hosts {
 		if name == "controlplane" {

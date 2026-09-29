@@ -17,8 +17,7 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// syncPosition tracks the durable sync position; a diff may only follow at
-// exactly the accepted cursor, never across a gap.
+// syncPosition tracks the durable sync position; a diff may only follow at exactly the accepted cursor, never across a gap.
 type syncPosition struct {
 	epoch       uint64
 	cursor      int64
@@ -98,8 +97,7 @@ func recvSyncMessage(t *testing.T, ch <-chan *agentv1.AgentServerMessage, timeou
 	}
 }
 
-// drainSyncQuiet consumes messages until the stream stays quiet for quiet,
-// so the next phase observes only its own batches.
+// drainSyncQuiet consumes messages until the stream stays quiet, so the next phase observes only its own batches.
 func drainSyncQuiet(t *testing.T, ch <-chan *agentv1.AgentServerMessage, quiet time.Duration, track *syncPosition) {
 	t.Helper()
 	for {
@@ -168,9 +166,8 @@ func enrollSyncAgent(ctx context.Context, t *testing.T, address string, roots *x
 	return conn, stream
 }
 
-// TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep: a peer-only
-// desired_revision bump must still deliver a cursor-covering no-op diff, or
-// the follow-up diff is based on a cursor the agent never accepted.
+// TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep: a peer-only desired_revision bump must
+// still deliver a cursor-covering no-op diff, or the follow-up diff is based on a cursor the agent never accepted.
 func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -280,8 +277,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	environmentID := environments.GetEnvironments()[0].GetId()
 
-	// Each agent serves one pinned region so both hold an allocation in the
-	// shared environment (the peer-change bump fanout).
+	// Each agent serves one pinned region so both hold an allocation in the shared environment.
 	setAgent := func(id, name, region string) {
 		t.Helper()
 		if _, err := opsClient.UpdateAgent(userCtx, &platformv1.UpdateAgentRequest{
@@ -315,9 +311,8 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 		}
 	}
 
-	// Phase 1: one allocation per agent in the shared environment.
-	// Pinned digests: deploy-by-digest resolves mutable tags at create
-	// and release, which these allocation-sync tests do not exercise.
+	// Phase 1: one allocation per agent in the shared environment. Pinned digests: deploy-by-digest
+	// resolves mutable tags at create and release, which these tests do not exercise.
 	webA := newService("web-a", pinnedImage("1"), "region-a")
 	newService("web-b", pinnedImage("1"), "region-b")
 	release()
@@ -334,8 +329,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	drainSyncQuiet(t, messages, time.Second, track)
 
-	// Phase 2: renaming agent B changes A's node config and bumps its
-	// desired_revision without any allocation content change.
+	// Phase 2: renaming agent B changes A's node config and bumps its desired_revision without any allocation content change.
 	deliveredCursor := track.cursor
 	nodeConfigVersion := track.nodeConfig
 	setAgent(agentB, "renamed-"+agentB, "region-b")
@@ -361,7 +355,6 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	if len(noop.GetStarts())+len(noop.GetUpdates())+len(noop.GetStops())+len(noop.GetVolumeStarts())+len(noop.GetVolumeStops()) != 0 {
 		t.Fatalf("peer-only diff changed allocations: %+v", noop)
 	}
-	// The batch closes with its end marker.
 	batchesBefore := track.batches
 	end := recvSyncMessage(t, messages, 30*time.Second)
 	track.observe(t, end)
@@ -370,8 +363,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 	}
 	drainSyncQuiet(t, messages, time.Second, track)
 
-	// Phase 3: the follow-up allocation change must chain from the cursor
-	// the no-op diff delivered.
+	// Phase 3: the follow-up allocation change must chain from the cursor the no-op diff delivered.
 	webA2 := newService("web-a2", pinnedImage("2"), "region-a")
 	release()
 	sawAllocationA2 := false

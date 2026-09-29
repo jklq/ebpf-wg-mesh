@@ -77,13 +77,10 @@ func (s *catalogPersistence) listVolumes(ctx context.Context, user authz.User, e
 	return out, rows.Err()
 }
 
-// deleteVolume tombstones a volume. Deletion always requires a typed
-// confirmation matching the current name, and volumes are never restored:
-// until the stateful volume provider (06-stateful) owns the data lifecycle,
-// deletion is one-way but delayed by the grace period instead of instant.
-// A volume referenced by a live service is refused everywhere; a production
-// volume that was ever attached is refused as possibly non-empty, because
-// nothing can prove it empty yet.
+// deleteVolume tombstones a volume. Deletion needs typed confirmation, is never
+// restored, and is delayed by the grace period. A volume referenced by a live
+// service is refused; a production volume ever attached is refused as possibly
+// non-empty.
 func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, volumeID, confirmation string) error {
 	scope, err := s.authz.AuthorizeVolume(ctx, user, volumeID, authz.Write)
 	if err != nil {
@@ -124,9 +121,8 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, 
 	})
 }
 
-// requireVolumeDetachedTx refuses deletion while a live service references
-// the volume. References from tombstoned services do not block: their mounts
-// are already withdrawn.
+// requireVolumeDetachedTx refuses deletion while a live service references the
+// volume. Tombstoned services do not block: their mounts are withdrawn.
 func (s *catalogPersistence) requireVolumeDetachedTx(ctx context.Context, tx *sql.Tx, rec deliverycore.VolumeRecord) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT s.id, r.spec_json
@@ -157,9 +153,8 @@ func (s *catalogPersistence) requireVolumeDetachedTx(ctx context.Context, tx *sq
 	return rows.Err()
 }
 
-// requireVolumeNeverAttachedTx fails closed on production volumes: without a
-// volume provider there is no emptiness signal, so any service revision that
-// ever referenced the volume — current or historical — blocks deletion.
+// requireVolumeNeverAttachedTx fails closed on production volumes: any service
+// revision that ever referenced the volume blocks deletion.
 func (s *catalogPersistence) requireVolumeNeverAttachedTx(ctx context.Context, tx *sql.Tx, rec deliverycore.VolumeRecord) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT r.spec_json

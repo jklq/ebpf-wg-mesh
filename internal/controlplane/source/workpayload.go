@@ -9,22 +9,17 @@ import (
 	"ebof-wg-mesh/internal/controlplane/durablework"
 )
 
-// WorkLeaseTTL bounds how long one source-work claim may run before another
-// replica takes it over. Source handlers are a handful of GitHub reads plus
-// database transactions; five minutes is headroom, not a target.
+// WorkLeaseTTL bounds how long one source-work claim may run before another replica takes it
+// over. Five minutes is headroom for a few GitHub reads plus transactions.
 const WorkLeaseTTL = 5 * time.Minute
 
-// SourceWorkAttemptLimit bounds total claims per source-work record,
-// including lease takeovers after worker death. A record that fails this
-// often is dead-lettered for operator inspection instead of retrying
-// forever. Dead source rows heal the same way live ones arrive: the next
-// installation refresh, spec write, or push re-enqueues the same dedup key
-// and resurrects the record to pending.
+// SourceWorkAttemptLimit bounds total claims per record, including lease takeovers. Exhausted
+// records dead-letter for operator inspection; the next refresh, spec write, or push re-enqueues
+// the same dedup key and resurrects the record to pending.
 const SourceWorkAttemptLimit = 25
 
-// WorkPayload is the source-layer body carried opaquely in a durable-work
-// record's JSON payload. Field names match the retired source_work_items
-// columns so existing queries translate mechanically to payload accessors.
+// WorkPayload is the source-layer body carried opaquely in a durable-work record's JSON
+// payload. Field names match the retired source_work_items columns.
 type WorkPayload struct {
 	ServiceID                    string `json:"service_id,omitempty"`
 	SpecRevision                 int64  `json:"spec_revision,omitempty"`
@@ -56,10 +51,8 @@ func DecodeWorkPayload(raw []byte) (WorkPayload, error) {
 	return p, nil
 }
 
-// SourceSpecChangedParams builds the enqueue params for a service source
-// sync. The dedup key pins the service revision so concurrent writes to the
-// same revision converge; force appends a unique suffix for retries that
-// must run even while an identical key is active.
+// SourceSpecChangedParams builds the enqueue params for a service source sync. The dedup key
+// pins the service revision so concurrent writes converge; force adds a unique suffix for retries.
 func SourceSpecChangedParams(serviceID string, specRevision int64, force bool) durablework.EnqueueParams {
 	key := fmt.Sprintf("%s:%s:%d", SourceWorkKindSourceSpecChanged, serviceID, specRevision)
 	if force {
@@ -76,10 +69,8 @@ func SourceSpecChangedParams(serviceID string, specRevision int64, force bool) d
 	}
 }
 
-// SourceResyncParams builds the enqueue params for an unanchored service
-// resync after an installation refresh. Unlike SourceSpecChangedParams it
-// carries no spec revision: every refresh for the service converges on one
-// active record.
+// SourceResyncParams builds the enqueue params for an unanchored resync after an installation
+// refresh. It carries no spec revision: every refresh converges on one active record.
 func SourceResyncParams(serviceID string) durablework.EnqueueParams {
 	payload, _ := EncodeWorkPayload(WorkPayload{ServiceID: serviceID})
 	return durablework.EnqueueParams{
@@ -92,9 +83,8 @@ func SourceResyncParams(serviceID string) durablework.EnqueueParams {
 	}
 }
 
-// ProviderAccessChangedParams builds the enqueue params for a GitHub
-// installation refresh. Concurrent refreshes for one installation converge
-// on one active record.
+// ProviderAccessChangedParams builds the enqueue params for a GitHub installation refresh.
+// Concurrent refreshes for one installation converge on one active record.
 func ProviderAccessChangedParams(installationID int64) durablework.EnqueueParams {
 	scope := ScopeExternalID(installationID)
 	payload, _ := EncodeWorkPayload(WorkPayload{Provider: "github", ProviderScopeExternalID: scope})
@@ -108,15 +98,10 @@ func ProviderAccessChangedParams(installationID int64) durablework.EnqueueParams
 	}
 }
 
-// RevisionObservedParams builds the enqueue params for one observed
-// repository commit. Duplicate deliveries of one push transition
-// converge on one active record; the predecessor is part of the identity
-// because the same commit can arrive again through a force-push with a
-// different "before" — that is a different, valid transition and must
-// never be deduplicated into the older item's stale proof (its failed
-// freshness check would then skip the current head).
-// PreviousCommitSHA carries the push payload's "before" so the build can
-// prove its currency against observed history.
+// RevisionObservedParams builds the enqueue params for one observed commit. Duplicate
+// deliveries converge on one record; the predecessor is part of the identity because the same
+// commit can re-arrive via force-push with a different "before" — a different transition.
+// PreviousCommitSHA carries the push payload's "before" so the build can prove currency.
 func RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor string) durablework.EnqueueParams {
 	payload, _ := EncodeWorkPayload(WorkPayload{
 		Provider:                     "github",

@@ -458,8 +458,7 @@ func TestGitHubWorkLeaseExpiryAllowsTakeover(t *testing.T) {
 		t.Fatalf("claimed payload scope = %q, want %q", payload.ProviderScopeExternalID, source.ScopeExternalID(7))
 	}
 
-	// Bootstrap must leave live leases alone: no recovery scan requeues
-	// source work anymore.
+	// Bootstrap must leave live leases alone: no recovery scan requeues source work anymore.
 	if err := reconciler.Bootstrap(ctx); err != nil {
 		t.Fatalf("Bootstrap: %v", err)
 	}
@@ -601,13 +600,11 @@ func TestGitHubWebhookHandlerRejectsInvalidSignatureAndAcceptsValidSignature(t *
 }
 
 // TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain is the branch
-// recreation regression: GitHub sends an all-zero "before" when a tracked
-// ref is created or recreated while the binding still stores the
-// pre-deletion tip. That predecessor can never be observed, so the push
-// must prove currency by fetching the tracked head instead of pending as
-// an early successor until its retries run out — and when the fetch shows
-// a newer head than the pushed commit, the delivery is stale and must not
-// build at all.
+// recreation regression: GitHub sends an all-zero "before" when a tracked ref is created or
+// recreated while the binding still stores the pre-deletion tip. That predecessor can never be
+// observed, so the push must prove currency by fetching the tracked head instead of pending as an
+// early successor — and when the fetch shows a newer head than the pushed commit, the delivery is
+// stale and must not build at all.
 func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 	t.Parallel()
 
@@ -649,9 +646,8 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
-	// The binding holds the pre-deletion tip (commit-public-main) as its
-	// proven head. The branch is deleted and recreated at another commit;
-	// GitHub reports the recreate push with an all-zero before SHA.
+	// The binding holds the pre-deletion tip (commit-public-main) as its proven head. The branch is
+	// deleted and recreated at another commit; GitHub reports the recreate push with an all-zero before SHA.
 	const zeroSHA = "0000000000000000000000000000000000000000"
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
 	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", zeroSHA, "Public release commit", "Octocat Release"); err != nil {
@@ -673,9 +669,8 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 		t.Fatalf("proven head = %q, %v; the recreated ref head must advance the binding", head, err)
 	}
 
-	// A recreate push whose commit is no longer the tracked head is
-	// stale: a newer push already moved the ref on, so it must complete
-	// without building and without moving the head.
+	// A recreate push whose commit is no longer the tracked head is stale: a newer push already moved
+	// the ref on, so it must complete without building and without moving the head.
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
 	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-stale-recreate", zeroSHA, "Stale recreate", "Octocat"); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(stale): %v", err)
@@ -696,11 +691,9 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 		t.Fatalf("proven head = %q, %v; the stale recreate push must not move it", head, err)
 	}
 
-	// A stale create push arriving before the binding has any recorded
-	// head must not establish one either: history-only observations never
-	// become the head that a later current push would have to chain
-	// against. (Clearing the head stands in for a binding that has not
-	// proven one yet.)
+	// A stale create push arriving before the binding has any recorded head must not establish one
+	// either: history-only observations never become the head that a later current push would have to
+	// chain against. (Clearing the head stands in for a binding that has not proven one yet.)
 	if _, err := store.db.ExecContext(ctx, `UPDATE source_bindings SET head_commit_sha = '' WHERE id = $1`, binding.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -767,9 +760,8 @@ func TestPushWithUnobservedPredecessorFetchesTrackedHeadInsteadOfPending(t *test
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
 
-	// A push names a predecessor this binding has never observed — it is
-	// not zero (a recreated ref), just outside the recorded history. The
-	// successor must not pend until the binding expires: the tracked
+	// A push names a predecessor this binding has never observed — not zero (a recreated ref), just
+	// outside the recorded history. The successor must not pend until the binding expires: the tracked
 	// head is fetched and the commit builds because it is still current.
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
 	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-never-observed", "Successor commit", "Octocat"); err != nil {
@@ -795,9 +787,8 @@ func TestPushWithUnobservedPredecessorFetchesTrackedHeadInsteadOfPending(t *test
 		t.Fatalf("proven head = %q, %v; the tracked head must advance the binding", head, err)
 	}
 
-	// The same shape of push for a commit that is no longer the tracked
-	// head must not build that commit: a newer push already moved the ref
-	// on, and the fetch-verified sync queues only the commit still
+	// The same shape of push for a commit that is no longer the tracked head must not build that commit:
+	// a newer push already moved the ref on, and the fetch-verified sync queues only the commit still
 	// current (a fresh attempt at the head, superseding its predecessor).
 	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-main", "commit-never-observed", "Superseded push", "Octocat"); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(stale): %v", err)
@@ -864,9 +855,8 @@ func TestRecreatedBranchSuccessorBuildsViaTrackedHeadSync(t *testing.T) {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
 
-	// The branch is recreated and advances past its own tip before the
-	// recreate push is processed: the recreate (zero predecessor) is
-	// recorded as history and can never hold the head.
+	// The branch is recreated and advances past its own tip before the recreate push is processed:
+	// the recreate (zero predecessor) is recorded as history and can never hold the head.
 	const zeroSHA = "0000000000000000000000000000000000000000"
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
 	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-history-phantom", zeroSHA, "Recreated tip", "Octocat"); err != nil {
@@ -879,10 +869,9 @@ func TestRecreatedBranchSuccessorBuildsViaTrackedHeadSync(t *testing.T) {
 		t.Fatalf("proven head = %q, %v; a history-only observation must not hold the head", head, err)
 	}
 
-	// The successor push names that recorded-but-never-head commit as its
-	// predecessor, so the chain cannot prove currency — and that is not
-	// proof of staleness. The tracked head must be reconciled now and
-	// the successor builds because it is still current.
+	// The successor push names that recorded-but-never-head commit as its predecessor, so the chain
+	// cannot prove currency — and that is not proof of staleness. The tracked head must be reconciled
+	// now and the successor builds because it is still current.
 	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-history-phantom", "Release successor", "Octocat"); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(successor): %v", err)
 	}

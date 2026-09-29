@@ -74,9 +74,8 @@ func TestPolicyMintsExpiringPullCapability(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse capability: %v", err)
 	}
-	// The default pull lifetime exceeds the default client-certificate
-	// lifetime so agents holding credentials across session rotations keep
-	// pulling, and stays bounded so registry rotation can retire.
+	// The default pull lifetime exceeds the default client-cert lifetime so agents pulling
+	// across rotations keep working, and stays bounded so rotation can retire.
 	if claims.ExpiresAt == nil || !claims.ExpiresAt.Time.Equal(now.Add(48*time.Hour)) {
 		t.Fatalf("unexpected pull expiry: %+v", claims.RegisteredClaims)
 	}
@@ -172,9 +171,8 @@ func TestAuthRejectsExpiredOrAlteredCredentials(t *testing.T) {
 	}
 }
 
-// TestAuthSharesSigningIdentityAcrossReplicas proves two Auth components
-// over shared key state agree: a capability minted by one verifies on the
-// other, and both publish the same trust bundle for the registry.
+// TestAuthSharesSigningIdentityAcrossReplicas: two Auth components over shared key state
+// agree — one's capability verifies on the other, and both publish the same bundle.
 func TestAuthSharesSigningIdentityAcrossReplicas(t *testing.T) {
 	t.Parallel()
 
@@ -210,10 +208,8 @@ func TestAuthSharesSigningIdentityAcrossReplicas(t *testing.T) {
 	}
 }
 
-// TestAuthRotationAcceptsBothGenerations walks a registry rotation: the
-// token endpoint exchanges capabilities signed by either key through the
-// overlap, minted tokens chain to the published bundle, and the retiring
-// key stops verifying after finish.
+// TestAuthRotationAcceptsBothGenerations: through the overlap, either key's capabilities
+// exchange and minted tokens chain to the bundle; the retiring key stops after finish.
 func TestAuthRotationAcceptsBothGenerations(t *testing.T) {
 	t.Parallel()
 
@@ -255,8 +251,7 @@ func TestAuthRotationAcceptsBothGenerations(t *testing.T) {
 	tokenBefore := exchange(usernameBefore, passwordBefore)
 	tokenAfter := exchange(usernameAfter, passwordAfter)
 
-	// Both tokens chain to the published overlap bundle the way the
-	// registry daemon verifies them: x5c against rootcertbundle.
+	// Both tokens chain to the published overlap bundle as the registry daemon verifies them.
 	bundle, err := keys.PublicBundle(ctx, signkeys.ScopeRegistry)
 	if err != nil {
 		t.Fatal(err)

@@ -52,9 +52,8 @@ func (d *Delivery) SetBuildSchedulerConfigForTest(cfg BuildSchedulerConfig) {
 	d.buildScheduler = cfg.WithDefaults()
 }
 
-// SetImageResolver installs the direct-image tag resolver. Production
-// wires the HTTP resolver; tests install a static one. Nil resolves
-// digest-pinned references only.
+// SetImageResolver installs the direct-image tag resolver. Nil resolves digest-pinned
+// references only.
 func (d *Delivery) SetImageResolver(resolver registry.ImageResolver) {
 	if d == nil {
 		return
@@ -111,15 +110,9 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 	if err != nil {
 		return nil, err
 	}
-	// Direct-image tags resolve outside the product transaction and
-	// outside the scheduler lock: registry calls must never hold product
-	// locks, and a slow or unreachable registry must not stall other
-	// scheduler-serialized mutations (rollout, failover, agent status,
-	// deployment actions) while pins are fetched. Only the services this
-	// release selects are resolved, so an unchanged service's stale tag
-	// cannot block unrelated pending changes. A spec racing the pre-read
-	// retries with a fresh map: the release transaction re-verifies each
-	// input before using its pre-resolved digest.
+	// Direct-image tags resolve outside the product transaction and scheduler lock: registry
+	// calls must never hold product locks or stall other serialized mutations. Only selected
+	// services resolve, and a spec racing the pre-read retries with a fresh map.
 	var services []ReleasedService
 	var errRelease error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -143,8 +136,7 @@ func (d *Delivery) ReleaseEnvironment(ctx context.Context, user authz.User, envi
 }
 
 func (d *Delivery) releaseEnvironmentTx(ctx context.Context, scope authz.Environment, resolved map[string]resolvedDirectImage) ([]ReleasedService, error) {
-	// The scheduler lock serializes the mutation phase only; resolution
-	// and pre-reads run outside it (see ReleaseEnvironment).
+	// The scheduler lock serializes the mutation phase only; pre-reads run outside it.
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
 	var services []ReleasedService
@@ -389,9 +381,8 @@ func (d *Delivery) releaseServiceRevisionTx(ctx context.Context, tx *sql.Tx, env
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	// The release enumeration locks live services only; lock and re-check so
-	// the unbuilt-revision backfill and concurrent deletes cannot slip a
-	// release past a tombstone.
+	// The release enumeration locks live services only; lock and re-check so backfills and
+	// concurrent deletes cannot slip a release past a tombstone.
 	locked, err := d.store.lockServiceDeletionTx(ctx, tx, current.ID)
 	if err != nil {
 		return ServiceRecord{}, err

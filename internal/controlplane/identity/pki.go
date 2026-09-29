@@ -36,8 +36,7 @@ const (
 	serverCertFileName = "server.crt"
 	serverKeyFileName  = "server.key"
 	clientCertsDirName = "clients"
-	// legacyCAFileNames are the pre-2.3b file-based CA. The CA lives in
-	// shared signing keys now; NewTLSAuthority removes these so a stale
+	// legacyCAFileNames are the pre-2.3b file-based CA, removed so a stale
 	// file is never mistaken for authority.
 	legacyCACertFileName = "ca.crt"
 	legacyCAKeyFileName  = "ca.key"
@@ -47,12 +46,9 @@ const (
 // Handshakes fail closed when key state is unreachable.
 const handshakeKeyTimeout = 5 * time.Second
 
-// TLSAuthority issues and verifies internal mTLS identities. The CA key is
-// shared signing-key state: every replica signs with the active key and
-// verifies against the active plus retiring keys, so rotation never breaks
-// issuance or verification. The state directory holds only node-local cache
-// (this replica's server leaf and recently issued client identities), never
-// authority.
+// TLSAuthority issues and verifies internal mTLS identities from shared
+// signing-key state, so rotation never breaks issuance or verification. The
+// state directory holds only node-local cache, never authority.
 type TLSAuthority struct {
 	pkiDir         string
 	keys           signkeys.Provider
@@ -113,7 +109,6 @@ func removeLegacyCAFiles(pkiDir string) {
 	}
 }
 
-// ClientCertificateTTL is the lifetime of issued client certificates.
 func (a *TLSAuthority) ClientCertificateTTL() time.Duration {
 	if a == nil {
 		return 0
@@ -128,9 +123,8 @@ func (a *TLSAuthority) HTTPConfig() *tls.Config {
 	}
 }
 
-// tlsConfigForClient builds a per-handshake config with the current server
-// leaf and the current trust bundle, so a rotation takes effect on new
-// connections without a restart. Established sessions are unaffected.
+// tlsConfigForClient builds a per-handshake config with the current leaf and
+// trust bundle, so rotation takes effect without a restart.
 func (a *TLSAuthority) tlsConfigForClient(_ *tls.ClientHelloInfo) (*tls.Config, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), handshakeKeyTimeout)
 	defer cancel()
@@ -153,9 +147,8 @@ func (a *TLSAuthority) tlsConfigForClient(_ *tls.ClientHelloInfo) (*tls.Config, 
 		ClientAuth:   tls.VerifyClientCertIfGiven,
 		ClientCAs:    pool,
 		MinVersion:   tls.VersionTLS13,
-		// The handshake uses this config wholesale, so it must carry the
-		// ALPN protocols ServeTLS would otherwise negotiate: without h2
-		// the gRPC clients cannot connect.
+		// The handshake uses this config wholesale, so it must carry the ALPN
+		// protocols ServeTLS would otherwise negotiate.
 		NextProtos: []string{"h2", "http/1.1"},
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.PeerCertificates) == 0 {
@@ -167,11 +160,8 @@ func (a *TLSAuthority) tlsConfigForClient(_ *tls.ClientHelloInfo) (*tls.Config, 
 }
 
 // RefreshServerCertificate re-issues this replica's server leaf when it no
-// longer chains to a trusted CA or is near expiry. The leaf always chains
-// to the oldest trusted CA: through a rotation that is the retiring CA, so
-// agents holding either bundle verify it, and only after rotate-finish does
-// the leaf flip to the new CA. Replicas call this at startup and on a
-// ticker; rotation never requires a restart.
+// longer chains to a trusted CA or nears expiry. The leaf always chains to
+// the oldest trusted CA so agents holding either bundle verify it.
 func (a *TLSAuthority) RefreshServerCertificate(ctx context.Context) error {
 	mats, err := a.keys.Verifying(ctx, signkeys.ScopeInternalCA)
 	if err != nil {
@@ -180,8 +170,7 @@ func (a *TLSAuthority) RefreshServerCertificate(ctx context.Context) error {
 	if len(mats) == 0 || mats[0].Cert == nil || mats[0].Key == nil {
 		return errors.New("no active internal CA")
 	}
-	// Oldest trusted CA signs the leaf: the retiring key while a rotation
-	// overlaps, otherwise the active key.
+	// Oldest trusted CA signs the leaf: retiring during overlap, else active.
 	signer := mats[len(mats)-1]
 	if signer.Cert == nil || signer.Key == nil {
 		return fmt.Errorf("signing key %s has no CA material", signer.Record.ID)
@@ -259,7 +248,6 @@ func (a *TLSAuthority) RefreshServerCertificate(ctx context.Context) error {
 	return nil
 }
 
-// serverLeafTrusted reports whether the leaf chains to any trusted CA.
 func serverLeafTrusted(leaf *x509.Certificate, pool *x509.CertPool) bool {
 	if leaf == nil {
 		return false
@@ -272,8 +260,7 @@ func serverLeafTrusted(leaf *x509.Certificate, pool *x509.CertPool) bool {
 	return err == nil
 }
 
-// serverLeafRenewAt is the moment a still-trusted leaf is re-issued anyway,
-// one third of its validity before expiry.
+// serverLeafRenewAt is one third of validity before expiry.
 func serverLeafRenewAt(leaf *x509.Certificate, validity time.Duration) time.Time {
 	renewBefore := validity / 3
 	if renewBefore <= 0 {
@@ -306,15 +293,13 @@ func (a *TLSAuthority) PKIDir() string {
 	return a.pkiDir
 }
 
-// TrustBundle returns the CA certificates agents and dashboards pin: the
-// active CA first, then the retiring CA while a rotation overlaps.
+// TrustBundle returns the pinned CAs: active first, then retiring during overlap.
 func (a *TLSAuthority) TrustBundle(ctx context.Context) ([]byte, error) {
 	return a.keys.PublicBundle(ctx, signkeys.ScopeInternalCA)
 }
 
-// ClusterIdentity is the hash of the active CA. It flips at rotate-start;
-// VerifyClusterID accepts the retiring identity too, so pre-renewal agents
-// stay connected through the overlap.
+// ClusterIdentity is the hash of the active CA. VerifyClusterID also accepts
+// the retiring identity so pre-renewal agents stay connected.
 func (a *TLSAuthority) ClusterIdentity(ctx context.Context) (string, error) {
 	active, err := a.keys.Active(ctx, signkeys.ScopeInternalCA)
 	if err != nil {
@@ -323,8 +308,7 @@ func (a *TLSAuthority) ClusterIdentity(ctx context.Context) (string, error) {
 	return clusterIdentityOfCA(active.Record.PublicPEM), nil
 }
 
-// VerifyClusterID reports whether id is a trusted cluster identity: the
-// active CA, or the retiring CA while a rotation overlaps.
+// VerifyClusterID reports whether id is a trusted cluster identity.
 func (a *TLSAuthority) VerifyClusterID(ctx context.Context, id string) (bool, error) {
 	mats, err := a.keys.Verifying(ctx, signkeys.ScopeInternalCA)
 	if err != nil {
@@ -483,8 +467,7 @@ func (a *TLSAuthority) EnsureClientIdentity(ctx context.Context, class CallerCla
 			_ = cert
 			return ClientIdentityMaterial{CertPEM: certPEM, KeyPEM: keyPEM, CAPEM: append([]byte(nil), bundle...)}, nil
 		}
-		// The cached identity no longer chains to a trusted CA (its CA was
-		// retired and finished); fall through and re-issue.
+		// The cached identity no longer chains; fall through and re-issue.
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -538,9 +521,8 @@ func (a *TLSAuthority) EnsureClientIdentity(ctx context.Context, class CallerCla
 	}, nil
 }
 
-// IssueClientCertificate mints a fresh client identity from shared keys
-// without node-local state. The operator CLI uses it; replicas serving
-// dashboards and builders use the cached EnsureClientIdentity.
+// IssueClientCertificate mints a fresh client identity from shared keys. The
+// operator CLI uses it; replicas use the cached EnsureClientIdentity.
 func IssueClientCertificate(ctx context.Context, keys signkeys.Provider, class CallerClass, id string, ttl time.Duration) (ClientIdentityMaterial, error) {
 	switch class {
 	case CallerAgent, CallerBuilder, CallerDashboard:

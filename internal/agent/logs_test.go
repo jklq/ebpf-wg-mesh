@@ -150,9 +150,7 @@ func TestContainerLogWriterTruncatedLineStaysValidUTF8(t *testing.T) {
 		},
 		sink: func() LogSink { return sink },
 	}
-	// A long multibyte line crosses the size cap mid-rune; the
-	// emitted prefix must stay valid UTF-8 or protobuf rejects the
-	// whole line instead of just its tail.
+	// A line crossing the cap mid-rune must still emit valid UTF-8.
 	line := append([]byte{'x'}, bytes.Repeat([]byte("é"), logpipeline.MaxLogLineBytes)...)
 	if _, err := writer.Write(append(line, '\n')); err != nil {
 		t.Fatalf("Write: %v", err)

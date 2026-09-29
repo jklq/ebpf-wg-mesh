@@ -325,10 +325,7 @@ function DeletedRow({
 	);
 }
 
-/**
- * Groups by project and nests each resource under its nearest tombstoned
- * ancestor when that ancestor is listed, so a restore reads top-down.
- */
+/** Groups by project, nesting each resource under its nearest listed tombstoned ancestor. */
 function groupResources(resources: Array<DashboardDeletedResource>) {
 	const keys = new Set(resources.map(resourceKey));
 	const childrenOf = new Map<string, Array<DashboardDeletedResource>>();

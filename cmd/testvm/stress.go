@@ -79,11 +79,9 @@ type stressStage struct {
 	Updates     []int         `json:"update_order"`
 }
 
-// stressSchedule produces a seeded, replayable ramp. The first stage is
-// fault-free. Each later stage runs one primary fault. From the third stage on,
-// every third stage compounds a second fault from a different failure domain
-// (never two faults on the same host), so multi-fault recovery is exercised by
-// the default campaign.
+// stressSchedule produces a seeded, replayable ramp. The first stage is fault-free; each
+// later stage runs one primary fault. From the third stage on, every third stage compounds a
+// second fault from a different failure domain (never two faults on the same host).
 func stressSchedule(o stressOptions, agents []string) []stressStage {
 	rng := rand.New(rand.NewPCG(o.Seed, 0x737472657373))
 	agents = append([]string(nil), agents...)
@@ -132,8 +130,7 @@ func stressFaultTarget(kind stressFaultKind, agents []string, rng *rand.Rand) st
 	return agents[rng.IntN(len(agents))]
 }
 
-// stressFaultTargetAvoiding picks an agent-scoped target that is not the given
-// host so a companion fault lands in a different failure domain.
+// stressFaultTargetAvoiding picks an agent-scoped target other than the given host.
 func stressFaultTargetAvoiding(kind stressFaultKind, agents []string, avoid string, rng *rand.Rand) string {
 	if kind.HostScope != "agent" {
 		return "controlplane"
@@ -150,9 +147,8 @@ func stressFaultTargetAvoiding(kind stressFaultKind, agents []string, avoid stri
 	return candidates[rng.IntN(len(candidates))]
 }
 
-// stressFaultResolvedHost maps a fault and its target to the host it actually
-// runs against. Control-plane and database faults are colocated; agent faults
-// run on the specific target agent.
+// stressFaultResolvedHost maps a fault and its target to the host it runs against. Control-plane
+// and database faults are colocated; agent faults run on the target agent.
 func stressFaultResolvedHost(kind stressFaultKind, target string) string {
 	if kind.HostScope != "agent" || target == "" {
 		return "controlplane"
@@ -228,8 +224,7 @@ func (t *stressTrace) writeError() error {
 	return t.err
 }
 
-// A bounded histogram retains every sample without memory growth during saturation.
-// Buckets are 1ms through 60s; percentiles are rounded upward to the next millisecond.
+// stressStats is a bounded histogram: 1ms buckets through 60s, percentiles rounded up to the next millisecond.
 type stressStats struct {
 	Requests         int64            `json:"requests"`
 	Errors           int64            `json:"errors"`
@@ -249,8 +244,7 @@ func (s *stressStats) add(elapsed time.Duration, err error) {
 	s.addOperation("", elapsed, err)
 }
 
-// addOperation records a sample under an operation label so a latency or error
-// breaking point can be attributed to a specific RPC kind.
+// addOperation records a sample under an operation label, attributing breaking points to an RPC kind.
 func (s *stressStats) addOperation(operation string, elapsed time.Duration, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -280,8 +274,7 @@ func (s *stressStats) addWatchAnomaly(regression, foreign bool) {
 	}
 }
 
-// fold merges a remote workload report, including its histogram, so aggregated
-// percentiles are computed over every sample rather than over per-flow maxima.
+// fold merges a remote workload report, including its histogram, so percentiles cover every sample.
 func (s *stressStats) fold(report stressHTTPReport) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -387,8 +380,7 @@ func runStressScenario(ctx context.Context, o stressOptions, artifacts string, i
 	if len(agents) < 2 {
 		return fmt.Errorf("stress scenario requires at least two agent hosts, have %d", len(agents))
 	}
-	// Verify the configured data-plane path before attributing cross-agent
-	// failures to workload behavior.
+	// Verify the configured data-plane path before attributing cross-agent failures to workload behavior.
 	if err := verifyStressUnderlay(ctx, key, hosts, agents); err != nil {
 		return err
 	}
@@ -457,16 +449,14 @@ func runStressScenario(ctx context.Context, o stressOptions, artifacts string, i
 				return err
 			}
 			if stage.Number < o.StartStage {
-				// Provision-only stages exist so a later stage has the accumulated
-				// services; their load, fault, and invariant phases are skipped.
+				// Provision-only stages build up services for a later stage; their load, fault, and invariant phases are skipped.
 				trace.record(stage.Number, "stage-provisioned", map[string]any{"services": len(services)})
 				return nil
 			}
 			if err := verifyStress(ctx, o, rawClients, services, key, hosts); err != nil {
 				return fmt.Errorf("initial convergence: %w", err)
 			}
-			// Healthy window: RPC read/watch fanout and the workload data plane
-			// run together across every tenant.
+			// Healthy window: RPC read/watch fanout and the workload data plane run together across every tenant.
 			var loadWG sync.WaitGroup
 			loadWG.Add(1)
 			go func() {
@@ -504,8 +494,7 @@ func runStressScenario(ctx context.Context, o stressOptions, artifacts string, i
 					return fmt.Errorf("churn convergence: %w", err)
 				}
 			}
-			// Concurrent-writer contention on a dedicated service exercises
-			// revision conflicts without racing the per-service mutation oracle.
+			// Concurrent-writer contention on a dedicated service exercises revision conflicts without racing the mutation oracle.
 			contendIndex := len(services) - 1
 			if len(stage.Faults) == 0 {
 				if err := contendStressService(ctx, o, stage, clients, &services[contendIndex], trace); err != nil {
@@ -551,9 +540,8 @@ func runStressScenario(ctx context.Context, o stressOptions, artifacts string, i
 			if err := watchDeliveryProbe(ctx, o, stage, rawClients, clients[0], services, 0); err != nil {
 				return fmt.Errorf("watch delivery: %w", err)
 			}
-			// The probe stages its write; discarding it records another revision.
-			// Release so the durable revision the next check observes is applied
-			// rather than left pending.
+			// The probe stages its write; discarding it records another revision. Release so the durable
+			// revision the next check observes is applied rather than left pending.
 			if err := releaseStress(ctx, o, clients[0], environments); err != nil {
 				return err
 			}
@@ -582,9 +570,8 @@ func runStressScenario(ctx context.Context, o stressOptions, artifacts string, i
 	return nil
 }
 
-// verifyStressUnderlay waits for every configured WireGuard peer to complete a
-// handshake. This tests the actual endpoint family and UDP path selected by the
-// agent instead of using ICMP reachability as a proxy.
+// verifyStressUnderlay waits for every configured WireGuard peer to complete a handshake. This
+// tests the actual endpoint family and UDP path instead of using ICMP reachability as a proxy.
 func verifyStressUnderlay(ctx context.Context, key string, hosts map[string]hostInfo, agents []string) error {
 	sort.Strings(agents)
 	expectedPeers := len(agents) - 1
@@ -598,10 +585,9 @@ func verifyStressUnderlay(ctx context.Context, key string, hosts map[string]host
 	return nil
 }
 
-// runStressFault injects every fault in a stage, runs read/watch and workload
-// load plus per-service mutations and contention, heals, and waits for each
-// fault's readiness condition. Data-plane-safe faults must keep workload HTTP
-// within threshold; agent-targeting faults may disrupt it but must recover.
+// runStressFault injects every fault in a stage, runs read/watch and workload load plus mutations and
+// contention, heals, and waits for each fault's readiness condition. Data-plane-safe faults must keep
+// workload HTTP within threshold; agent-targeting faults may disrupt it but must recover.
 func runStressFault(ctx context.Context, o stressOptions, stage stressStage, clients []platformv1.PlatformServiceClient, services []stressService, environments []string, contendIndex int, key string, hosts map[string]hostInfo, controlPlaneIP string, trace *stressTrace, repoRoot string) (faultStats, faultHTTP *stressStats, err error) {
 	ownerService, err := stressOwnerService(ctx, key, controlPlaneIP)
 	if err != nil {
@@ -613,9 +599,8 @@ func runStressFault(ctx context.Context, o stressOptions, stage stressStage, cli
 			dataPlaneSafe = false
 		}
 	}
-	// Resolve the workload plan while the control plane is still healthy, then
-	// keep its source/target services out of the mutation set so the content
-	// check stays valid across the fault window.
+	// Resolve the workload plan while the control plane is still healthy, then keep its source/target
+	// services out of the mutation set so the content check stays valid.
 	httpServices := make([]stressService, 0, len(services)-1)
 	for i := range services {
 		if i != contendIndex {
@@ -654,8 +639,7 @@ func runStressFault(ctx context.Context, o stressOptions, stage stressStage, cli
 			return nil, nil, fmt.Errorf("inject %s on %s: %w: %s", step.Kind, step.Host, ierr, out)
 		}
 	}
-	// Keep the mutation oracle disjoint from the contended service and from the
-	// services carrying the workload content check.
+	// Keep the mutation oracle disjoint from the contended service and the workload content-check services.
 	mutationOrder := make([]int, 0, len(services))
 	for _, index := range stage.Updates {
 		if !reserved[index] {
@@ -743,8 +727,7 @@ func releaseStress(ctx context.Context, o stressOptions, client platformv1.Platf
 	return nil
 }
 
-// stressAmbiguous reports whether a read outcome is transient and worth
-// retrying: the operation may succeed on a later attempt.
+// stressAmbiguous reports whether a read outcome is transient and worth retrying.
 func stressAmbiguous(err error) bool {
 	switch status.Code(err) {
 	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Aborted, codes.Unknown, codes.ResourceExhausted, codes.Internal:
@@ -754,10 +737,9 @@ func stressAmbiguous(err error) bool {
 	}
 }
 
-// stressMayHaveCommitted reports whether a mutation outcome is genuinely
-// unknown: the write may have committed even though the call failed, so the
-// oracle must allow the attempted value. Aborted is excluded because it means
-// the write lost an optimistic-concurrency race and definitively did not commit.
+// stressMayHaveCommitted reports whether a mutation outcome is genuinely unknown: the write may
+// have committed even though the call failed, so the oracle must allow the attempted value. Aborted
+// is excluded: a lost optimistic-concurrency race definitively did not commit.
 func stressMayHaveCommitted(err error) bool {
 	switch status.Code(err) {
 	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled, codes.Unknown, codes.ResourceExhausted, codes.Internal:
@@ -768,8 +750,7 @@ func stressMayHaveCommitted(err error) bool {
 }
 
 func mutateStress(ctx context.Context, o stressOptions, stage stressStage, clients []platformv1.PlatformServiceClient, services []stressService, order []int, trace *stressTrace) error {
-	// One outstanding write per service. A lost response is ambiguous, never retried;
-	// reconciliation accepts only a prior value or an exact attempted value.
+	// One outstanding write per service. A lost response is ambiguous, never retried; reconciliation accepts only a prior value or an exact attempted value.
 	mutationCtx, cancel := context.WithTimeout(ctx, o.StageDuration)
 	defer cancel()
 	for n, index := range order {
@@ -788,9 +769,8 @@ func mutateStress(ctx context.Context, o stressOptions, stage stressStage, clien
 			s.Alternatives = nil
 			continue
 		}
-		// Preserve possibly-committed alternatives in the oracle until recovery
-		// resolves them through durable reads. An optimistic-concurrency loss is
-		// definitive: the write did not commit, so it is not a candidate value.
+		// Preserve possibly-committed alternatives in the oracle until recovery resolves them through
+		// durable reads. An optimistic-concurrency loss is definitive: the write did not commit.
 		if stressMayHaveCommitted(err) {
 			s.Alternatives = append(s.Alternatives, next)
 			continue
@@ -803,9 +783,8 @@ func mutateStress(ctx context.Context, o stressOptions, stage stressStage, clien
 	return nil
 }
 
-// contendStressService issues concurrent conflicting updates to a single service
-// from both replicas. Every attempt must either succeed or be ambiguous; after
-// convergence the committed marker must be one of the attempted values.
+// contendStressService issues concurrent conflicting updates to a single service from both replicas.
+// Every attempt must either succeed or be ambiguous; after convergence the committed marker must be one of the attempted values.
 func contendStressService(ctx context.Context, o stressOptions, stage stressStage, clients []platformv1.PlatformServiceClient, service *stressService, trace *stressTrace) error {
 	attempts := 4
 	markers := make([]string, attempts)
@@ -838,8 +817,7 @@ func contendStressService(ctx context.Context, o stressOptions, stage stressStag
 			return fmt.Errorf("contention update rejected unexpectedly: %w", err)
 		}
 	}
-	// The service may still serve its pre-contention marker until the durable
-	// readers converge; the prior marker stays an allowed value in the oracle.
+	// The service may still serve its pre-contention marker until durable readers converge; the prior marker stays allowed in the oracle.
 	return nil
 }
 
@@ -857,9 +835,8 @@ func stressLoad(ctx context.Context, o stressOptions, stage stressStage, clients
 				client := clients[(worker+iteration)%len(clients)]
 				env := environments[(worker+iteration)%len(environments)]
 				service := services[(worker+iteration)%len(services)]
-				// Bound each request by the scenario context, not the stage
-				// window: deriving from loadCtx would shrink the request deadline
-				// toward the window edge and produce spurious end-of-window
+				// Bound each request by the scenario context, not the stage window: deriving from loadCtx
+				// would shrink the request deadline toward the window edge and produce spurious end-of-window
 				// DeadlineExceeded samples.
 				callCtx, cancel := context.WithTimeout(ctx, o.RPCTimeout)
 				start := time.Now()

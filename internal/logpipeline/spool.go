@@ -24,9 +24,8 @@ const (
 	spoolCursorFile     = "cursor.json"
 )
 
-// Record is one spooled payload. Key attributes the record for drop
-// accounting (allocation ID on agents, build ID on builders); ID is
-// the stable line identity used for server-side deduplication.
+// Record is one spooled payload. Key attributes drop accounting;
+// ID is the stable identity for server-side deduplication.
 type Record struct {
 	Key        string
 	ID         string
@@ -34,8 +33,7 @@ type Record struct {
 	Payload    []byte
 }
 
-// Cursor is an opaque read position: the next unread byte offset in
-// the named segment.
+// Cursor is a read position: the next unread byte offset in a segment.
 type Cursor struct {
 	Segment uint64
 	Offset  int64
@@ -56,36 +54,26 @@ type SpoolStats struct {
 type SpoolConfig struct {
 	// Dir holds segment and cursor files. Required.
 	Dir string
-	// MaxBytes caps total spool size. Oldest segments are evicted
-	// past the cap; unshipped evicted records count as drops.
-	// Defaults to 256 MiB.
+	// MaxBytes caps total spool size; oldest segments are evicted past
+	// it and their unshipped records count as drops. Defaults to 256 MiB.
 	MaxBytes int64
 	// MaxSegmentBytes rotates the active segment past this size.
 	// Defaults to 8 MiB.
 	MaxSegmentBytes int64
 	// SyncWrites fsyncs every append. Disable only in tests.
 	SyncWrites bool
-	// RejectOnFull keeps unshipped records instead of evicting them
-	// past the byte cap: Append fails with ErrSpoolFull and the caller
-	// sheds with its own accounting. The control-plane ingest journal
-	// uses it: an accepted batch must survive outages instead of
-	// being silently evicted from under the durable queue.
+	// RejectOnFull fails Append with ErrSpoolFull instead of evicting
+	// unshipped records, for journals where an accepted batch must
+	// survive outages.
 	RejectOnFull bool
 	// Retention keeps committed sealed segments this long past their
-	// newest record so reconnect replay can re-send recently
-	// acknowledged records the backend may not have durably ingested
-	// (acknowledgement is queue admission on agents). Zero collects
-	// committed segments immediately.
+	// newest record for reconnect replay. Zero collects them immediately.
 	Retention time.Duration
 }
 
-// Spool is a bounded disk-backed FIFO queue. Appends are durable
-// (with SyncWrites) and survive crashes; reads replay from the last
-// commit; commits advance the durable cursor and garbage-collect
-// fully shipped segments past the retention horizon. When the byte
-// cap is exceeded the oldest
-// segments are evicted and their unshipped records counted per key
-// so callers can report explicit read gaps.
+// Spool is a bounded disk-backed FIFO queue. Appends are durable with
+// SyncWrites; reads replay from the last commit. Past the byte cap the
+// oldest segments are evicted and their unshipped records counted per key.
 type Spool struct {
 	mu           sync.Mutex
 	dir          string
@@ -103,9 +91,7 @@ type Spool struct {
 	segments []segmentInfo
 	cursor   Cursor
 
-	// inflight pins the segments spanned by the outstanding Read
-	// batch. Callers Commit or Release the batch before reading the
-	// next one.
+	// inflight pins the segments spanned by the outstanding Read batch.
 	inflight map[uint64]struct{}
 
 	records        int64
@@ -127,10 +113,8 @@ type segmentInfo struct {
 	pins           int
 }
 
-// OpenSpool opens or creates the spool in cfg.Dir, recovering segment
-// files and the durable cursor. Torn tail writes from a crash are
-// truncated; corrupt records are compacted out and counted as
-// attributable drops under their best-effort recovered key.
+// OpenSpool opens or creates the spool in cfg.Dir, truncating torn tails
+// and compacting corrupt records out as attributable drops.
 func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 	if cfg.Dir == "" {
 		return nil, errors.New("log spool directory is required")
@@ -143,10 +127,7 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 	if maxSeg <= 0 {
 		maxSeg = defaultSpoolMaxSegmentBytes
 	}
-	// The segment size is the rotation unit of the byte cap: a
-	// segment larger than the cap would let one active file blow past
-	// MaxBytes before eviction — which needs a sealed segment — can
-	// run.
+	// Eviction needs a sealed segment, so a segment can never exceed the cap.
 	if maxSeg > maxBytes {
 		maxSeg = maxBytes
 	}
@@ -165,8 +146,7 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		corruptIDs:   make(map[string]string),
 		inflight:     make(map[uint64]struct{}),
 	}
-	// Load before recovery: recovery may record its own corruption
-	// losses durably, and the maps must not count any loss twice.
+	// Load first so recovery-time losses are not counted twice.
 	s.loadDrops()
 	if err := s.recover(); err != nil {
 		return nil, err
@@ -234,16 +214,9 @@ func (s *Spool) recover() error {
 	return nil
 }
 
-// compactSegment drops corrupt records from one segment, truncates a
-// torn tail, and returns the resulting size, record count, newest
-// record timestamp, and the durable cursor offset remapped into the
-// compacted layout (the caller passes the saved offset of this
-// segment as cursorOff, or -1 when the cursor is elsewhere). The
-// remap keeps shipped and unshipped records on their proper sides:
-// compaction must never let the stale offset skip unshipped records.
-// Every
-// lost record is counted as an attributable drop where the damaged
-// frame still reveals its key.
+// compactSegment drops corrupt records and a torn tail from one segment,
+// remapping cursorOff into the compacted layout. The remap must never let
+// the stale offset skip unshipped records.
 func (s *Spool) compactSegment(id uint64, cursorOff int64) (int64, int64, time.Time, int64, error) {
 	path := s.segmentPath(id)
 	raw, err := os.ReadFile(path)
@@ -260,9 +233,7 @@ func (s *Spool) compactSegment(id uint64, cursorOff int64) (int64, int64, time.T
 	for off := int64(0); off < int64(len(raw)); {
 		rec, nextOff, ok := decodeRecordAt(raw, off)
 		if ok {
-			// A kept frame is shipped only when it ends at or before
-			// the saved cursor; a frame straddling the cursor is
-			// conservatively replayed (retries deduplicate).
+			// A frame straddling the cursor is replayed; retries deduplicate.
 			if cursorOff >= 0 && mapped < 0 && nextOff > cursorOff {
 				mapped = int64(len(kept))
 			}
@@ -287,8 +258,7 @@ func (s *Spool) compactSegment(id uint64, cursorOff int64) (int64, int64, time.T
 		mapped = int64(len(kept))
 	}
 	if rewrote {
-		// Save the shorter offset first. A crash before the segment
-		// rewrite can replay shipped records, but cannot skip pending ones.
+		// Save the shorter offset first so a crash replays instead of skipping.
 		if cursorOff >= 0 && mapped != cursorOff {
 			s.cursor.Offset = mapped
 			if err := s.persistCursorLocked(); err != nil {
@@ -327,10 +297,8 @@ func (s *Spool) replaceSegment(path string, data []byte) error {
 	return syncDir(s.dir)
 }
 
-// recordCorruptLocked counts one unreadable record as a loss. The key
-// is recovered best-effort from the damaged frame so the loss can
-// surface as an attributable corrupt_spool gap; frames whose key
-// bytes are gone count under the empty key and stay in stats only.
+// recordCorruptLocked counts one unreadable record as a loss under its
+// best-effort recovered key (empty when the key bytes are gone).
 func (s *Spool) recordCorruptLocked(raw []byte, off int64) {
 	s.corrupt++
 	s.droppedRecords++
@@ -344,9 +312,7 @@ func (s *Spool) recordCorruptLocked(raw []byte, off int64) {
 	}
 }
 
-// bestEffortRecordKey extracts the record key from a damaged frame
-// without trusting it for data: torn tails and checksum failures
-// usually leave the leading key field intact.
+// bestEffortRecordKey recovers the key from a damaged frame for attribution.
 func bestEffortRecordKey(raw []byte, off int64) string {
 	if off < 0 || off >= int64(len(raw)) {
 		return ""
@@ -375,22 +341,16 @@ func (s *Spool) segmentPath(id uint64) string {
 	return filepath.Join(s.dir, fmt.Sprintf(spoolSegmentPattern, id))
 }
 
-// Append durably enqueues one payload, evicting the oldest segments
-// past the byte cap. Evicted unshipped records are counted per key.
-// ErrSpoolFull rejects an append that cannot fit the byte cap
-// without evicting unshipped records (RejectOnFull spools).
+// ErrSpoolFull rejects an append that cannot fit without evicting
+// unshipped records (RejectOnFull spools).
 var ErrSpoolFull = errors.New("log spool is full")
 
-// ErrRecordTooLarge rejects a record that cannot fit the configured
-// spool bounds; callers count it as a dropped line instead of
-// oversizing a segment past the caps.
+// ErrRecordTooLarge rejects a record that cannot fit the spool bounds.
 var ErrRecordTooLarge = errors.New("log record exceeds the spool size cap")
 
+// Append durably enqueues one payload, evicting oldest segments past the cap.
 func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) error {
 	encoded := encodeRecord(key, id, observedAt, payload)
-	// A record must fit one segment (segments never exceed the total
-	// budget), so an oversized record can never be stored within the
-	// configured bounds and is rejected up front.
 	if int64(len(encoded)) > s.maxSeg {
 		return ErrRecordTooLarge
 	}
@@ -403,11 +363,7 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 		return errors.New("log spool has no writable segment")
 	}
 	if s.rejectOnFull {
-		// Reclaim capacity sized for the incoming record first:
-		// capacity belongs to unshipped data, and even a shipped
-		// single-segment spool (a queue cap below the segment size
-		// clamps the segment to the cap) must rotate and make room
-		// instead of rejecting.
+		// Reclaim shipped capacity first; only unshippable overflow rejects.
 		for s.bytes+int64(len(encoded)) > s.maxBytes {
 			if !s.evictOneLocked() {
 				break
@@ -446,11 +402,9 @@ func (s *Spool) Append(key, id string, observedAt time.Time, payload []byte) err
 	return nil
 }
 
-// discardPartialAppendLocked removes the bytes of a failed append from
-// the active segment so a torn frame can never hide later records
-// behind it. When the file cannot be repaired, the segment is sealed
-// and rotated: recovery keeps its readable prefix and every later
-// record lands in a fresh segment instead of behind the damage.
+// discardPartialAppendLocked removes a failed append's bytes so a torn frame
+// cannot hide later records. When the file cannot be truncated, the segment
+// is sealed and rotated instead.
 func (s *Spool) discardPartialAppendLocked() {
 	if err := s.active.Truncate(s.activeSize); err == nil {
 		return
@@ -460,8 +414,8 @@ func (s *Spool) discardPartialAppendLocked() {
 	_ = s.rotateLocked()
 }
 
-// Read returns up to maxRecords starting at the durable cursor. The
-// returned cursor commits the batch once the caller ships it.
+// Read returns up to maxRecords from the durable cursor. Pair every Read
+// with Commit or Release.
 func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -478,8 +432,7 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 		raw, segID, err := s.readSegmentLocked(cursor.Segment)
 		if err != nil {
 			if errors.Is(err, errSegmentMissing) {
-				// The cursor's segment was evicted; advance to the
-				// oldest surviving segment.
+				// The cursor's segment was evicted; advance to the oldest survivor.
 				next, ok := s.segmentAfterLocked(cursor.Segment)
 				if !ok {
 					cursor = Cursor{Segment: s.activeID, Offset: s.activeSize}
@@ -501,8 +454,6 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 		}
 		rec, nextOff, ok := decodeRecordAt(raw, cursor.Offset)
 		if !ok {
-			// Mid-file corruption after open: skip the record and
-			// count it once as an attributable drop.
 			skip := skipLength(raw, cursor.Offset)
 			if skip <= 0 {
 				next, hasNext := s.segmentAfterLocked(cursor.Segment)
@@ -527,8 +478,6 @@ func (s *Spool) Read(maxRecords int) ([]Record, Cursor, error) {
 	return out, cursor, nil
 }
 
-// pinLocked pins one segment against eviction for the outstanding
-// batch.
 func (s *Spool) pinLocked(id uint64) {
 	for i := range s.segments {
 		if s.segments[i].id == id {
@@ -539,7 +488,6 @@ func (s *Spool) pinLocked(id uint64) {
 	}
 }
 
-// releaseInflightLocked drops the outstanding batch's eviction pins.
 func (s *Spool) releaseInflightLocked() {
 	for id := range s.inflight {
 		for i := range s.segments {
@@ -552,12 +500,9 @@ func (s *Spool) releaseInflightLocked() {
 	s.inflight = make(map[uint64]struct{})
 }
 
-// Commit advances the durable cursor past a shipped batch,
-// releases its eviction pin, and collects fully shipped sealed
-// segments past the retention horizon. The cursor only moves once
-// it is durably saved: when saving fails, the read cursor is
-// unchanged and the batch re-reads and re-sends (deduplicated
-// server-side) instead of being skipped forever.
+// Commit advances the durable cursor past a shipped batch. The cursor moves
+// only once durably saved: on save failure the batch replays instead of
+// being skipped.
 func (s *Spool) Commit(c Cursor) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -579,21 +524,15 @@ func (s *Spool) Commit(c Cursor) error {
 	return nil
 }
 
-// Release gives the outstanding batch back without shipping it: the
-// records stay unshipped for the next Read and the eviction pin is
-// dropped. Every Read must be paired with either Commit or Release.
+// Release returns the outstanding batch unshipped for the next Read.
 func (s *Spool) Release() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.releaseInflightLocked()
 }
 
-// RewindForReplay moves the durable cursor back to the first record
-// with timestamp at or after t, so a reconnect re-sends recent
-// records the backend may not have durably ingested and retried
-// lines deduplicate server-side by line ID. It never moves the
-// cursor forward: records after the durable cursor were never
-// accepted and always replay, however old.
+// RewindForReplay moves the cursor back to the first record at or after t.
+// It never moves forward: unaccepted records always replay.
 func (s *Spool) RewindForReplay(t time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -630,8 +569,7 @@ func (s *Spool) RewindForReplay(t time.Time) error {
 					s.cursor = pos
 					return s.persistCursorLocked()
 				}
-				// The window starts past unshipped records; the
-				// cursor must not skip them.
+				// The window starts past unshipped records; never skip them.
 				return nil
 			}
 			off = nextOff
@@ -640,7 +578,6 @@ func (s *Spool) RewindForReplay(t time.Time) error {
 	return nil
 }
 
-// Stats reports spool health and lifetime counters.
 func (s *Spool) Stats() SpoolStats {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -655,8 +592,7 @@ func (s *Spool) Stats() SpoolStats {
 	}
 }
 
-// pendingLocked counts records at or after the commit cursor by
-// walking segment frames without decoding payloads.
+// pendingLocked counts records at or after the commit cursor.
 func (s *Spool) pendingLocked() int64 {
 	var pending int64
 	for _, seg := range s.segments {
@@ -683,11 +619,7 @@ func (s *Spool) pendingLocked() int64 {
 	return pending
 }
 
-// DrainDrops returns per-key drop counts accumulated since the last
-// drain and clears them. Evicted counts unshipped records lost to
-// the byte cap (spool_overflow); corrupt counts records lost to
-// unreadable frames (corrupt_spool). The empty key holds losses
-// whose record key could not be recovered.
+// DrainDrops returns per-key drop counts since the last drain and clears them.
 func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -701,9 +633,7 @@ func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 		s.corruptIDs = make(map[string]string)
 	}
 	if evicted != nil || corrupt != nil {
-		// The caller now owns these counts (its pending drop
-		// snapshot persists them synchronously); the durable copy
-		// clears with the handoff.
+		// The caller now owns these counts; clear the durable copy.
 		if err := s.persistDropsLocked(); err != nil {
 			slog.Warn("clear log spool drop counts", "error", err)
 		}
@@ -711,17 +641,13 @@ func (s *Spool) DrainDrops() (evicted, corrupt map[string]uint64) {
 	return evicted, corrupt
 }
 
-// CorruptDrop is a pending loss and its stable gap identity. The ID
-// stays the same through retries and restarts until the loss is
-// acknowledged; later losses under the same key get a new ID.
+// CorruptDrop is a pending loss with its stable gap identity.
 type CorruptDrop struct {
 	Count uint64
 	ID    string
 }
 
-// PendingCorruptDrops snapshots corruption losses without clearing
-// their durable copy. A sink acknowledges this snapshot only after
-// writing the corresponding gaps.
+// PendingCorruptDrops snapshots corruption losses without clearing them.
 func (s *Spool) PendingCorruptDrops() map[string]CorruptDrop {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -732,8 +658,7 @@ func (s *Spool) PendingCorruptDrops() map[string]CorruptDrop {
 	return out
 }
 
-// AcknowledgeCorruptDrops removes a written snapshot from durable
-// loss accounting. New counts added after the snapshot remain pending.
+// AcknowledgeCorruptDrops removes a written snapshot from loss accounting.
 func (s *Spool) AcknowledgeCorruptDrops(snapshot map[string]CorruptDrop) error {
 	if len(snapshot) == 0 {
 		return nil
@@ -751,8 +676,7 @@ func (s *Spool) AcknowledgeCorruptDrops(snapshot map[string]CorruptDrop) error {
 			delete(s.corruptDrops, key)
 			delete(s.corruptIDs, key)
 		} else {
-			// Counts recorded during the sink write start a new gap
-			// lineage; they must not replace the acknowledged row.
+			// Counts recorded during the write start a new gap lineage.
 			s.corruptIDs[key] = SyntheticLineID()
 		}
 	}
@@ -766,7 +690,6 @@ func (s *Spool) AcknowledgeCorruptDrops(snapshot map[string]CorruptDrop) error {
 	return nil
 }
 
-// Close flushes and closes the spool.
 func (s *Spool) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -811,14 +734,6 @@ func (s *Spool) rotateLocked() error {
 	return nil
 }
 
-// evictLocked deletes the oldest unpinned segments while the spool
-// exceeds its byte cap. Fully shipped segments vanish silently;
-// unshipped records are counted per key as drops. Segments pinned by
-// an in-flight batch are never evicted: the batch may already be
-// delivered, and evicting it would report a false gap and fail the
-// commit.
-// fullyShippedLocked reports whether every record in the segment is
-// behind the durable cursor.
 func (s *Spool) fullyShippedLocked(seg segmentInfo) bool {
 	if seg.id < s.cursor.Segment {
 		return true
@@ -832,15 +747,11 @@ type spoolDropsJSON struct {
 	CorruptIDs map[string]string `json:"corrupt_ids"`
 }
 
-// dropsPath holds the durable copy of eviction and corruption drop
-// counts between the eviction that created them and the DrainDrops
-// that hands them to the caller.
 func (s *Spool) dropsPath() string {
 	return filepath.Join(s.dir, "drops.json")
 }
 
-// persistDropsLocked durably records the drop counts before their
-// records are deleted, so a crash can never erase a counted loss.
+// persistDropsLocked records drop counts before their records are deleted.
 func (s *Spool) persistDropsLocked() error {
 	raw, err := json.Marshal(spoolDropsJSON{Evicted: s.evicted, Corrupt: s.corruptDrops, CorruptIDs: s.corruptIDs})
 	if err != nil {
@@ -874,7 +785,6 @@ func (s *Spool) persistDropsLocked() error {
 	return syncDir(s.dir)
 }
 
-// loadDrops recovers drop counts recorded before an unclean stop.
 func (s *Spool) loadDrops() {
 	raw, err := os.ReadFile(s.dropsPath())
 	if err != nil {
@@ -903,10 +813,8 @@ func (s *Spool) loadDrops() {
 	}
 }
 
-// evictOneLocked evicts the oldest evictable segment and counts its
-// unshipped records as drops, durably. It reports false when nothing
-// can be evicted (all pinned, or — in RejectOnFull mode — only
-// unshipped segments remain).
+// evictOneLocked evicts the oldest evictable segment, counting unshipped
+// records as drops. It reports false when nothing can be evicted.
 func (s *Spool) evictOneLocked() bool {
 	idx := -1
 	for i, seg := range s.segments {
@@ -924,8 +832,7 @@ func (s *Spool) evictOneLocked() bool {
 	}
 	oldest := s.segments[idx]
 	if oldest.id == s.activeID {
-		// Single-segment overflow: seal it so the writer keeps
-		// a live active segment, then evict the sealed data.
+		// Single-segment overflow: seal it, then evict the sealed data.
 		if err := s.rotateLocked(); err != nil {
 			return false
 		}
@@ -955,19 +862,17 @@ func (s *Spool) evictOneLocked() bool {
 	return true
 }
 
+// evictLocked deletes oldest unpinned segments while past the byte cap.
+// Pinned segments are never evicted; the overshoot is bounded by one batch.
 func (s *Spool) evictLocked() {
 	for s.bytes > s.maxBytes {
 		if !s.evictOneLocked() {
-			// Every segment is pinned by the in-flight batch. Hold
-			// eviction until it commits or releases; the overshoot
-			// is bounded by one batch.
 			return
 		}
 	}
 }
 
-// unshippedCountsLocked counts records in seg at or after the commit
-// cursor. Segments fully behind the cursor were shipped already.
+// unshippedCountsLocked counts records in seg at or after the commit cursor.
 func (s *Spool) unshippedCountsLocked(seg segmentInfo) (map[string]uint64, uint64) {
 	out := make(map[string]uint64)
 	if seg.id < s.cursor.Segment {
@@ -1022,11 +927,8 @@ func (s *Spool) removeSegmentLocked(seg segmentInfo) {
 	}
 }
 
-// collectLocked deletes sealed segments fully behind the commit
-// cursor once their newest record is older than the retention
-// horizon. Committed data was shipped, so no drop is counted; the
-// retained copy is what reconnect replay re-sends when the backend
-// acknowledged but did not durably ingest.
+// collectLocked deletes sealed segments fully behind the commit cursor
+// once past the retention horizon.
 func (s *Spool) collectLocked() {
 	cutoff := time.Now().Add(-s.retention)
 	for len(s.segments) > 0 {
@@ -1131,8 +1033,7 @@ func (s *Spool) persistCursorLocked() error {
 	return syncDir(s.dir)
 }
 
-// clampCursor pins a persisted cursor into the recovered segment
-// range. A cursor past the end means everything shipped.
+// clampCursor pins a persisted cursor into the recovered segment range.
 func (s *Spool) clampCursor(c Cursor) Cursor {
 	if len(s.segments) == 0 {
 		return Cursor{}
@@ -1174,8 +1075,7 @@ func syncDir(dir string) error {
 
 var spoolCRC = crc32.MakeTable(crc32.Castagnoli)
 
-// encodeRecord frames one record as uvarint(body length) + body +
-// CRC32C(body), where body carries key, ID, timestamp, and payload.
+// encodeRecord frames one record as uvarint(body length) + body + CRC32C(body).
 func encodeRecord(key, id string, observedAt time.Time, payload []byte) []byte {
 	body := make([]byte, 0, len(key)+len(id)+len(payload)+32)
 	body = binary.AppendUvarint(body, uint64(len(key)))
@@ -1194,8 +1094,7 @@ func encodeRecord(key, id string, observedAt time.Time, payload []byte) []byte {
 	return out
 }
 
-// decodeRecordAt decodes the record starting at off. ok=false means
-// the bytes there are corrupt or a torn tail, never a valid record.
+// decodeRecordAt decodes the record at off; ok=false means corrupt or torn.
 func decodeRecordAt(raw []byte, off int64) (Record, int64, bool) {
 	if off < 0 || off >= int64(len(raw)) {
 		return Record{}, off, false
@@ -1250,8 +1149,7 @@ func decodeRecordBody(body []byte) (Record, bool) {
 	return rec, true
 }
 
-// skipLength returns the framed length of the record at off without
-// verifying it, or -1 when the frame itself is unreadable.
+// skipLength returns the framed record length at off, or -1 when unreadable.
 func skipLength(raw []byte, off int64) int {
 	if off < 0 || off >= int64(len(raw)) {
 		return -1

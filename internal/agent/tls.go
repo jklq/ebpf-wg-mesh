@@ -145,11 +145,9 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 			return nil, errors.New("enroll client certificate: empty response")
 		}
 		if a.stateStore != nil {
-			// The server returns the CA bundle (active first, then the
-			// retiring CA through a rotation); the pinned identity is the
-			// active CA. Initial enrollment fails closed on mismatch;
-			// renewal runs over a channel authenticated by the pinned
-			// roots, so it adopts the rotated identity.
+			// The pinned identity is the bundle's active CA. Enrollment fails
+			// closed on mismatch; renewal adopts the rotated identity over a
+			// channel authenticated by the pinned roots.
 			incoming, err := activeCAIdentity([]byte(resp.GetCaPem()))
 			if err != nil {
 				return nil, err
@@ -178,10 +176,8 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 
 func (a *App) enrollmentCredentials(current *clientTLSMaterial) (credentials.TransportCredentials, error) {
 	if current != nil {
-		// Enrolled roots are always fresher than the bootstrap file: every
-		// renewal persists the server's current bundle, so renewal after a
-		// CA rotation verifies against roots that include the new CA. The
-		// bootstrap file is only for the first enrollment.
+		// Enrolled roots are always fresher than the bootstrap file: every renewal
+		// persists the server's current bundle. The bootstrap file is first-enrollment only.
 		config := &tls.Config{
 			RootCAs:    current.rootCAs,
 			ServerName: a.cfg.ControlPlane.TLS.ServerName,
@@ -241,10 +237,8 @@ func (a *App) loadClientTLSMaterial() (*clientTLSMaterial, error) {
 	}, nil
 }
 
-// pinnedClusterIdentity is the cluster identity hello sends: the value
-// adopted at enrollment, which survives CA rotations that replace the
-// bundle on disk. Without a state store (tests), it derives from the
-// bundle's active CA.
+// pinnedClusterIdentity is the hello identity adopted at enrollment, surviving
+// CA rotations. Without a state store (tests), it derives from the active CA.
 func (a *App) pinnedClusterIdentity(caPEM []byte) string {
 	if a.stateStore != nil {
 		if id := a.stateStore.clusterIdentity(); id != "" {
@@ -258,9 +252,8 @@ func (a *App) pinnedClusterIdentity(caPEM []byte) string {
 	return id
 }
 
-// activeCAIdentity hashes the bundle's first certificate — the active CA —
-// exactly as the control plane hashes it, so enrollment converges on the
-// same identity on both sides through a rotation.
+// activeCAIdentity hashes the bundle's first certificate exactly as the control
+// plane does, so both sides converge through a rotation.
 func activeCAIdentity(bundle []byte) (string, error) {
 	trimmed := bytes.TrimSpace(bundle)
 	if len(trimmed) == 0 {
@@ -270,8 +263,7 @@ func activeCAIdentity(bundle []byte) (string, error) {
 	if block == nil || block.Type != "CERTIFICATE" {
 		return "", errors.New("enrolled CA bundle holds no certificate")
 	}
-	// The first block's bytes, hashed exactly as the server hashes the
-	// active CA it encoded first.
+
 	first := bytes.TrimSpace(trimmed[:len(trimmed)-len(rest)])
 	digest := sha256.Sum256(first)
 	return hex.EncodeToString(digest[:]), nil

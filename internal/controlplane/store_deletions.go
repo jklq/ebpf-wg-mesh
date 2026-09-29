@@ -12,9 +12,8 @@ import (
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
-// lockProjectTx locks a user project row and loads it with its deletion
-// state. Managed projects do not resolve here: the kind filter keeps them
-// out, and authorization already denied them above.
+// lockProjectTx locks a user project row and loads it with its deletion state. Managed
+// projects never resolve here: the kind filter keeps them out.
 func (s *catalogPersistence) lockProjectTx(ctx context.Context, tx *sql.Tx, scope authz.Project) (deliverycore.ProjectRecord, error) {
 	row := tx.QueryRowContext(ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
@@ -35,8 +34,7 @@ func (s *catalogPersistence) clearProjectTombstoneTx(ctx context.Context, tx *sq
 	return clearTombstoneRowTx(ctx, tx, "projects", projectID)
 }
 
-// lockEnvironmentTx locks an environment row and loads it with its effective
-// deletion state.
+// lockEnvironmentTx locks an environment row and loads it with its effective deletion state.
 func (s *catalogPersistence) lockEnvironmentTx(ctx context.Context, tx *sql.Tx, scope authz.Environment) (deliverycore.EnvironmentRecord, error) {
 	row := tx.QueryRowContext(ctx, environmentSelect+`
 		 WHERE e.id = $1 AND e.project_id = $2 FOR UPDATE OF e`,
@@ -52,8 +50,7 @@ func (s *catalogPersistence) clearEnvironmentTombstoneTx(ctx context.Context, tx
 	return clearTombstoneRowTx(ctx, tx, "environments", environmentID)
 }
 
-// lockVolumeTx locks a volume row and loads it with its effective deletion
-// state plus the environment's production flag.
+// lockVolumeTx locks a volume row, its deletion state, and the environment's production flag.
 func (s *catalogPersistence) lockVolumeTx(ctx context.Context, tx *sql.Tx, scope authz.Volume) (deliverycore.VolumeRecord, bool, error) {
 	var rec deliverycore.VolumeRecord
 	var self, environment, project deliverycore.Tombstone
@@ -119,8 +116,7 @@ func clearTombstoneRowTx(ctx context.Context, tx *sql.Tx, table, id string) (boo
 	return affected > 0, nil
 }
 
-// quiesceEnvironmentServicesTx stops new work for every service in an
-// environment being deleted.
+// quiesceEnvironmentServicesTx stops new work for every service in an environment being deleted.
 func (s *catalogPersistence) quiesceEnvironmentServicesTx(ctx context.Context, tx *sql.Tx, environmentID, userID string) error {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM services WHERE environment_id = $1 ORDER BY id`, environmentID)
 	if err != nil {
@@ -147,8 +143,7 @@ func (s *catalogPersistence) quiesceEnvironmentServicesTx(ctx context.Context, t
 	return nil
 }
 
-// quiesceProjectServicesTx stops new work for every service in a project
-// being deleted.
+// quiesceProjectServicesTx stops new work for every service in a project being deleted.
 func (s *catalogPersistence) quiesceProjectServicesTx(ctx context.Context, tx *sql.Tx, projectID, userID string) error {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT s.id FROM services s
@@ -180,10 +175,8 @@ func (s *catalogPersistence) quiesceProjectServicesTx(ctx context.Context, tx *s
 	return nil
 }
 
-// dropEnvironmentAssignmentsTx deletes the placement records of every service
-// in an environment. Assignments reference the Removed deployment a delete
-// leaves behind, so they are dropped at delete time and the restore-time call
-// re-asserts the empty set; a release recreates them.
+// dropEnvironmentAssignmentsTx deletes the placement records of every service in an environment.
+// Assignments drop at delete time and re-assert empty at restore; a release recreates them.
 func dropEnvironmentAssignmentsTx(ctx context.Context, tx *sql.Tx, environmentID string) error {
 	_, err := tx.ExecContext(ctx,
 		`DELETE FROM allocation_assignments a USING services s
@@ -193,9 +186,8 @@ func dropEnvironmentAssignmentsTx(ctx context.Context, tx *sql.Tx, environmentID
 	return err
 }
 
-// dropProjectAssignmentsTx deletes the placement records of every service in
-// a project. Assignments are dropped at delete time and the restore-time call
-// re-asserts the empty set; a release recreates them.
+// dropProjectAssignmentsTx deletes the placement records of every service in a project.
+// Assignments drop at delete time and re-assert empty at restore; a release recreates them.
 func dropProjectAssignmentsTx(ctx context.Context, tx *sql.Tx, projectID string) error {
 	_, err := tx.ExecContext(ctx,
 		`DELETE FROM allocation_assignments a USING services s, environments e
@@ -205,9 +197,8 @@ func dropProjectAssignmentsTx(ctx context.Context, tx *sql.Tx, projectID string)
 	return err
 }
 
-// deleteProject tombstones a user project and quiesces its services.
-// Managed projects are refused: platform services cannot be deleted.
-// Repeats are idempotent; confirmation is only checked on the first delete.
+// deleteProject tombstones a user project and quiesces its services. Managed projects are
+// refused; repeats are idempotent and confirmation is checked only on the first delete.
 func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error) {
 	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
 	if err != nil {
@@ -223,8 +214,6 @@ func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User,
 		if rec.Deletion != nil {
 			return nil
 		}
-		// Managed projects never reach this point: authorization admits
-		// user projects only, and the row lock below filters by kind.
 		if err := deliverycore.CheckDeletionConfirmation(rec.Name, confirmation); err != nil {
 			return err
 		}
@@ -249,15 +238,13 @@ func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User,
 		if err != nil {
 			return err
 		}
-		// Drop after the agent query: the notifier set is derived from the
-		// assignments being removed.
+		// Drop after the agent query: the notifier set derives from the removed assignments.
 		return dropProjectAssignmentsTx(ctx, tx, rec.ID)
 	})
 	return agentIDs, err
 }
 
-// restoreProject clears a project's tombstone within the grace period.
-// Independently tombstoned children keep their tombstones.
+// restoreProject clears a project's own tombstone within the grace period.
 func (s *catalogPersistence) restoreProject(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error) {
 	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
 	if err != nil {

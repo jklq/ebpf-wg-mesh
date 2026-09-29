@@ -81,8 +81,7 @@ func TestLogShipperShipsAndCommits(t *testing.T) {
 			shipped += len(batch.GetEntries())
 		}
 		sender.mu.Unlock()
-		// The ship tick may fire between the appends; wait for both
-		// lines instead of the first batch.
+		// The ship tick may fire between the appends; wait for both lines.
 		if shipped >= 2 {
 			break
 		}
@@ -172,7 +171,6 @@ func TestLogShipperSpoolsWhileDetached(t *testing.T) {
 	defer cancel()
 	go func() { _ = shipper.Run(ctx) }()
 
-	// No attach: output accumulates on disk instead of dropping.
 	shipper.AppendLog(testEntry("alloc-1", "svc-1", "offline", 1))
 	time.Sleep(50 * time.Millisecond)
 	if stats := shipper.Stats(); stats.Unshipped != 1 {
@@ -215,7 +213,6 @@ func TestLogShipperRateLimitsPerAllocation(t *testing.T) {
 	for i := uint64(1); i <= 10; i++ {
 		shipper.AppendLog(testEntry("alloc-hot", "svc-1", "flood", i))
 	}
-	// A quiet allocation is unaffected.
 	shipper.AppendLog(testEntry("alloc-quiet", "svc-1", "hello", 1))
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -234,8 +231,7 @@ func TestLogShipperRateLimitsPerAllocation(t *testing.T) {
 			}
 		}
 		sender.mu.Unlock()
-		// Drop summaries and entries ride separate messages; wait
-		// for everything under assertion, not just the drop report.
+		// Summaries and entries ride separate messages; wait for everything asserted.
 		if drops >= 8 && quiet >= 1 && hot >= 2 {
 			break
 		}
@@ -344,8 +340,7 @@ func TestLogShipperPersistsDropAccountingAcrossShutdown(t *testing.T) {
 	for i := uint64(1); i <= 10; i++ {
 		shipper.AppendLog(testEntry("alloc-1", "svc-1", "flood", i))
 	}
-	// Shutdown without ever shipping: the rate-limited lines must
-	// survive as durable pending drop summaries.
+	// Shutdown without ever shipping: the limited lines must survive as durable summaries.
 	if err := shipper.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -417,10 +412,8 @@ func TestLogShipConfigFromAgentZeroRateDisablesLimiting(t *testing.T) {
 	}
 }
 
-// A control-plane outage must not grow the pending drop summaries
-// without bound: every failed flush cycle folds its drops into one
-// coalesced summary per identity, and one successful send carries
-// the whole accumulated accounting.
+// An outage must not grow pending summaries without bound: failed flushes coalesce
+// per identity, and one successful send carries the whole accounting.
 func TestLogShipperCoalescesPendingDropSummariesAcrossOutage(t *testing.T) {
 	t.Parallel()
 
@@ -468,7 +461,6 @@ func TestLogShipperCoalescesPendingDropSummariesAcrossOutage(t *testing.T) {
 		t.Fatalf("coalesced window does not span the outage: %+v", summary)
 	}
 
-	// Once the outage ends, one batch carries the whole accounting.
 	sender.mu.Lock()
 	sender.fail = nil
 	sender.mu.Unlock()
@@ -502,8 +494,7 @@ func TestLogShipperCapsBatchBytes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLogShipper: %v", err)
 	}
-	// A batch of permitted maximum-size lines must split at the wire
-	// budget instead of exceeding the transport's receive limit.
+	// Maximum-size lines must split at the wire budget.
 	big := strings.Repeat("x", logpipeline.MaxLogLineBytes)
 	for i := uint64(1); i <= 40; i++ {
 		shipper.AppendLog(testEntry("alloc-1", "svc-1", big, i))
@@ -536,7 +527,6 @@ func TestLogShipperCapsBatchBytes(t *testing.T) {
 		t.Fatalf("chunking lost lines: shipped %d of 40", total)
 	}
 
-	// Every chunk committed: nothing is re-sent.
 	shipper.flush()
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
@@ -562,9 +552,7 @@ func TestLogShipperPersistsDropsWhileDetached(t *testing.T) {
 	for i := uint64(1); i <= 10; i++ {
 		shipper.AppendLog(testEntry("alloc-1", "svc-1", "flood", i))
 	}
-	// Never attached and never closed: a flush while detached must
-	// still persist the rate-limited losses, so a crash cannot lose
-	// them without a gap.
+	// A detached flush must still persist the losses, so a crash keeps the gap.
 	shipper.flush()
 
 	drops, err := logpipeline.LoadDrops(dir)
@@ -603,8 +591,7 @@ func TestLogShipperAttachRewindSurvivesInflightFlush(t *testing.T) {
 	shipper.Detach()
 	shipper.AppendLog(testEntry("alloc-1", "svc-1", "line", 11))
 
-	// A flush holding a batch read from the old cursor races the
-	// reconnect: its commit must not swallow Attach's replay rewind.
+	// An in-flight flush's commit must not swallow Attach's replay rewind.
 	var enteredOnce sync.Once
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -661,9 +648,7 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newLogShipper: %v", err)
 	}
-	// Allocation churn must not leave one durable summary per
-	// allocation. The extra counts fold into the surviving identities
-	// and still ship.
+	// Allocation churn must not leave one durable summary per allocation.
 	now := time.Now().UTC()
 	for i := 0; i < 30000; i++ {
 		shipper.pending.Add(logpipeline.DropKey{
@@ -699,7 +684,6 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 		t.Fatalf("bounded summaries lost drop accounting: %d of 30000", dropped)
 	}
 
-	// Everything was sent and committed: nothing re-sends.
 	shipper.flush()
 	sender.mu.Lock()
 	defer sender.mu.Unlock()
@@ -710,15 +694,12 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 
 func TestShipAdmitRateNeverExceedsDrain(t *testing.T) {
 	t.Parallel()
-	// The default shipper must drain at least its allowed input
-	// rate, or sustained permitted traffic evicts lines even with a
-	// healthy backend.
+	// The default shipper must drain at least its allowed input rate.
 	drain := float64(defaultShipBatchSize) / defaultShipFlushInterval.Seconds()
 	if drain < 200 {
 		t.Fatalf("default drain %.0f/s is below the 200/s default admit rate", drain)
 	}
-	// A configured rate past what one tick drains clamps down to
-	// the drain rate; non-positive stays unlimited (0).
+	// A rate past what one tick drains clamps to the drain rate; non-positive stays unlimited.
 	if got := shipAdmitRate(5000, 100, time.Second); got != 100 {
 		t.Fatalf("admit %.0f, want the 100/s drain rate", got)
 	}
@@ -748,8 +729,7 @@ func TestLogShipperAggregateLimitCapsConcurrentAllocations(t *testing.T) {
 		shipper.AppendLog(testEntry("alloc-a", "svc-1", "a", i))
 		shipper.AppendLog(testEntry("alloc-b", "svc-1", "b", i))
 	}
-	// Each allocation's own burst would admit all 50. Together they
-	// stop at one flush batch.
+	// Each allocation's own burst would admit all 50; together they stop at one flush batch.
 	if got := shipper.Stats().Accepted; got != 4 {
 		t.Fatalf("accepted %d lines, one flush drains 4", got)
 	}

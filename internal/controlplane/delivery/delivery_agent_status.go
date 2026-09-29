@@ -69,8 +69,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		if err != nil {
 			return false, nil, err
 		}
-		// Only the desired generation renders into service status; stale
-		// generations never invalidate subscribers.
+		// Only the desired generation renders into status; stale ones never invalidate.
 		if outcome.StatusInvalidated && generation == assignment.DesiredRolloutGeneration {
 			statusInvalidated = true
 		}
@@ -108,11 +107,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		}
 	}
 	if statusInvalidated && !stateChanged {
-		// The rendered status changed but no transaction touched durable
-		// state (evidence-only updates, or a deployment/rollout evaluation
-		// that produced no transition, such as a terminal deployment), so
-		// no revision was bumped; publish an explicit invalidation, otherwise
-		// status subscribers keep showing the older rendered status.
+		// Rendered status changed but no transaction touched durable state, so no revision was
+		// bumped; publish an explicit invalidation or subscribers keep showing stale status.
 		if err := d.publishStatusInvalidation(ctx); err != nil {
 			return false, nil, fmt.Errorf("publish status invalidation: %w", err)
 		}
@@ -124,9 +120,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 	return ingressChanged, environmentIDs, nil
 }
 
-// publishStatusInvalidation wakes service-status subscribers after observation
-// changes that produced no durable state change. The live observation already
-// holds the fresh evidence; the revision bump is the invalidation signal.
+// publishStatusInvalidation wakes status subscribers after observation changes with no
+// durable state change. The revision bump is the invalidation signal.
 func (d *Delivery) publishStatusInvalidation(ctx context.Context) error {
 	if d.store == nil || d.store.withObservationTx == nil {
 		return nil
@@ -174,11 +169,9 @@ func domainForService(durable journal.DurableState, serviceID string) (journal.D
 	return journal.Domain{}, false
 }
 
-// evaluateObservedDeployment folds a live observation into the deployment
-// record and reports whether durable state changed. A terminal deployment
-// (or a stale observation) yields no transition, in which case the
-// transaction bumps no revision and the caller must invalidate status
-// subscribers explicitly.
+// evaluateObservedDeployment folds a live observation into the deployment record and reports
+// whether durable state changed. Terminal deployments yield no transition, so the caller must
+// invalidate status subscribers explicitly.
 func (d *Delivery) evaluateObservedDeployment(ctx context.Context, allocationID string) (bool, error) {
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()

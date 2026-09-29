@@ -47,8 +47,7 @@ func (w *containerLogWriter) Write(p []byte) (int, error) {
 			if !w.discarding {
 				w.appendLocked(p)
 				if len(w.buf) == logpipeline.MaxLogLineBytes {
-					// A stream may never send a newline. Ship the capped
-					// prefix now and discard the rest of this line.
+					// A stream may never send a newline: ship the capped prefix now.
 					w.truncated = true
 					w.emitLocked()
 					w.discarding = true
@@ -66,9 +65,8 @@ func (w *containerLogWriter) Write(p []byte) (int, error) {
 	return written, nil
 }
 
-// appendLocked accumulates the line prefix up to the documented size
-// limit. Bytes past the limit are discarded with the truncated flag
-// set; the retained prefix stays byte-exact.
+// appendLocked accumulates the line prefix up to the size limit. Bytes past the
+// limit are discarded with the truncated flag set; the prefix stays byte-exact.
 func (w *containerLogWriter) appendLocked(p []byte) {
 	room := logpipeline.MaxLogLineBytes - len(w.buf)
 	if room <= 0 {
@@ -88,10 +86,8 @@ func (w *containerLogWriter) emitLocked() {
 	line := w.buf
 	truncated := w.truncated
 	if truncated {
-		// The size cap can cut mid-rune; protobuf string fields
-		// reject invalid UTF-8 and would lose the whole line
-		// instead of just its tail. Trim back to the last rune
-		// boundary.
+		// The cap can cut mid-rune, and protobuf rejects invalid UTF-8; trim back
+		// to the last rune boundary so the line survives.
 		n := len(line)
 		for n > 0 && !utf8.RuneStart(line[n-1]) {
 			n--

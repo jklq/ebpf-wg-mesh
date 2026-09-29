@@ -80,7 +80,6 @@ func TestRecordAndDiffOrderedAndBounded(t *testing.T) {
 	if !ok || len(diffs) != 1 || diffs[0].Base != 1 || diffs[0].Target != 2 || len(diffs[0].Starts) != 1 {
 		t.Fatalf("incremental diff missing: %+v %v", diffs, ok)
 	}
-	// Reconnect at same revision sends nothing (no full resend).
 	if diffs, ok := sync.recordAndDiff("agent-1", second, 2); !ok || len(diffs) != 0 {
 		t.Fatalf("unchanged reconnect should send nothing: %+v %v", diffs, ok)
 	}
@@ -93,7 +92,6 @@ func TestCompactedHistoryRequiresCheckpoint(t *testing.T) {
 	if _, ok := sync.recordAndDiff("agent-1", base, 0); !ok {
 		t.Fatal("init should succeed")
 	}
-	// Push more revisions than retained history.
 	for i := int64(1); i <= MaxDiffEntriesPerAgent+5; i++ {
 		cur := testCheckpoint(i, testService("a", 1, i))
 		if _, ok := sync.recordAndDiff("agent-1", cur, i-1); !ok {
@@ -124,7 +122,6 @@ func TestFailoverLosesHistoryAndFallsBackToCheckpoint(t *testing.T) {
 	if _, ok := fresh.recordAndDiff("agent-1", cur, 1); ok {
 		t.Fatal("failover with lost history should require checkpoint")
 	}
-	// Unchanged reconnect after failover sends nothing once baseline exists.
 	if _, ok := fresh.recordAndDiff("agent-1", cur, 2); !ok {
 		t.Fatal("established cursor should send nothing")
 	}
@@ -194,8 +191,7 @@ func TestZeroContentRevisionBumpReturnsNoOpCursorDiff(t *testing.T) {
 	t.Parallel()
 	sync := newAllocSync()
 	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A peer-only bump must surface as an empty no-op diff so the accepted
-	// cursor advances in lockstep with the sent position.
+	// A peer-only bump is an empty no-op diff; the accepted cursor still advances in lockstep.
 	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
 	diffs, target, ok := sync.diffsFrom("agent-1", 1)
 	if !ok || target != 2 || len(diffs) != 1 {

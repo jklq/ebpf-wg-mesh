@@ -129,7 +129,6 @@ func TestSpoolEvictsOldestPastByteCapWithPerKeyDrops(t *testing.T) {
 	if evicted, _ := s.DrainDrops(); evicted != nil {
 		t.Fatal("drain did not clear drop accounting")
 	}
-	// Unshipped survivors are still readable.
 	recs, _, err := s.Read(100)
 	if err != nil {
 		t.Fatalf("Read: %v", err)
@@ -216,8 +215,7 @@ func TestSpoolTruncatesTornTail(t *testing.T) {
 	if stats := reopened.Stats(); stats.CorruptRecords == 0 {
 		t.Fatal("expected the torn tail to count as corrupt")
 	}
-	// The damaged frame still reveals its key, so the loss is
-	// attributable as a corrupt_spool drop.
+	// The damaged frame still reveals its key, so the loss stays attributable.
 	evicted, corrupt := reopened.DrainDrops()
 	if evicted != nil {
 		t.Fatalf("torn tail must not count as eviction: %v", evicted)
@@ -300,8 +298,7 @@ func TestSpoolRewindForReplayNeverSkipsUncommitted(t *testing.T) {
 			t.Fatalf("Append: %v", err)
 		}
 	}
-	// Ship and commit only the first two records; the rest are old
-	// but were never accepted by the backend.
+	// Ship and commit only the first two records; the rest were never accepted.
 	recs, cursor, err := s.Read(2)
 	if err != nil || len(recs) != 2 {
 		t.Fatalf("Read: %v %d", err, len(recs))
@@ -309,8 +306,7 @@ func TestSpoolRewindForReplayNeverSkipsUncommitted(t *testing.T) {
 	if err := s.Commit(cursor); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	// The window starts past every unshipped record: the cursor
-	// must not advance over them.
+	// A window past every unshipped record must not advance the cursor over them.
 	if err := s.RewindForReplay(base.Add(10 * time.Second)); err != nil {
 		t.Fatalf("RewindForReplay: %v", err)
 	}
@@ -321,8 +317,7 @@ func TestSpoolRewindForReplayNeverSkipsUncommitted(t *testing.T) {
 	if len(recs) != 4 || recs[0].Payload[0] != 2 {
 		t.Fatalf("rewind skipped unshipped records: got %d", len(recs))
 	}
-	// The window starting inside the unshipped range must not skip
-	// the older unshipped records either.
+	// A window inside the unshipped range must not skip older unshipped records either.
 	if err := s.RewindForReplay(base.Add(4 * time.Second)); err != nil {
 		t.Fatalf("RewindForReplay: %v", err)
 	}
@@ -364,7 +359,6 @@ func TestLimiterBurstsThenRefills(t *testing.T) {
 	if drops["a"] != 1+8 {
 		t.Fatalf("drained drops = %v", drops)
 	}
-	// Other keys are independent.
 	if !l.Allow("b") {
 		t.Fatal("independent key denied")
 	}
@@ -396,8 +390,7 @@ func TestLimiterRecyclesKeysPastTheCap(t *testing.T) {
 		t.Fatal("second key denied")
 	}
 	now = now.Add(time.Second)
-	// Cap reached: a new key must recycle the least recently used
-	// bucket instead of being rejected for the rest of the process.
+	// Cap reached: a new key must recycle the LRU bucket, not be rejected forever.
 	if !l.Allow("c") {
 		t.Fatal("new key permanently rejected past the key cap")
 	}
@@ -405,8 +398,7 @@ func TestLimiterRecyclesKeysPastTheCap(t *testing.T) {
 		t.Fatalf("key table must stay bounded, got %d", l.Keys())
 	}
 	now = now.Add(time.Second)
-	// The evicted key returns with a fresh bucket instead of being
-	// permanently rejected.
+	// The evicted key returns with a fresh bucket.
 	if !l.Allow("a") {
 		t.Fatal("recycled key permanently rejected")
 	}
@@ -501,9 +493,8 @@ func TestStableEventID(t *testing.T) {
 	}
 }
 
-// A cap below the default segment size must still bound the spool:
-// the segment size clamps to the cap so rotation and eviction keep
-// one active file from blowing past MaxBytes.
+// A cap below the default segment size still bounds the spool:
+// the segment clamps to the cap.
 func TestSpoolSmallCapBoundsActiveSegment(t *testing.T) {
 	t.Parallel()
 	s := openTestSpool(t, SpoolConfig{MaxBytes: 1000})
@@ -522,10 +513,8 @@ func TestSpoolSmallCapBoundsActiveSegment(t *testing.T) {
 	}
 }
 
-// Committed sealed segments survive for the retention horizon as the
-// replay copy: agents are acknowledged at queue admission, so a
-// backend crash before durable ingest must leave a reconnect
-// something to re-send (server-side dedup absorbs the overlap).
+// Committed sealed segments survive for the retention horizon as the replay copy:
+// a backend crash must leave a reconnect something to re-send; server-side dedup absorbs the overlap.
 func TestSpoolRetainsCommittedSegmentsForReplay(t *testing.T) {
 	t.Parallel()
 	s := openTestSpool(t, SpoolConfig{MaxSegmentBytes: 200, Retention: time.Hour})
@@ -546,7 +535,6 @@ func TestSpoolRetainsCommittedSegmentsForReplay(t *testing.T) {
 	if stats := s.Stats(); stats.Segments < 2 {
 		t.Fatalf("expected sealed segments to retain, got %+v", stats)
 	}
-	// The reconnect replay window re-sends the acknowledged records.
 	if err := s.RewindForReplay(now.Add(-time.Minute)); err != nil {
 		t.Fatalf("RewindForReplay: %v", err)
 	}
@@ -556,8 +544,7 @@ func TestSpoolRetainsCommittedSegmentsForReplay(t *testing.T) {
 	}
 }
 
-// Past the retention horizon, committed sealed segments collect so
-// the replay copy cannot grow without bound.
+// Past the retention horizon, committed sealed segments collect so the replay copy stays bounded.
 func TestSpoolCollectsCommittedSegmentsAfterRetention(t *testing.T) {
 	t.Parallel()
 	s := openTestSpool(t, SpoolConfig{MaxSegmentBytes: 200, Retention: 50 * time.Millisecond})
@@ -575,8 +562,7 @@ func TestSpoolCollectsCommittedSegmentsAfterRetention(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 	time.Sleep(150 * time.Millisecond)
-	// The next commit collects the sealed segments once their newest
-	// record is older than the horizon.
+	// The next commit collects sealed segments older than the horizon.
 	if err := s.Append("alloc-1", "id-late", time.Now().UTC(), payload); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -598,8 +584,7 @@ func TestSpoolDoesNotEvictInFlightBatch(t *testing.T) {
 	now := time.Now().UTC()
 	small := make([]byte, 8)
 	payload := make([]byte, 100)
-	// "in-flight" is the read batch; "kept" is unread but shares the
-	// pinned segment.
+	// "in-flight" is the read batch; "kept" is unread in the same pinned segment.
 	if err := s.Append("flight", "in-flight", now, small); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
@@ -613,10 +598,8 @@ func TestSpoolDoesNotEvictInFlightBatch(t *testing.T) {
 	if len(records) != 1 || records[0].ID != "in-flight" {
 		t.Fatalf("unexpected batch: %+v", records)
 	}
-	// Overflow the spool while the batch is in flight: eviction must
-	// skip the pinned segment even though older data normally goes
-	// first — the batch may already be delivered, and evicting the
-	// segment would report a false gap and skip the unread record.
+	// Overflow the spool while the batch is in flight: eviction must skip the
+	// pinned segment, or it would report a false gap and skip the unread record.
 	for i := 0; i < 20; i++ {
 		if err := s.Append("hot", fmt.Sprintf("id-%02d", i), now, payload); err != nil {
 			t.Fatalf("Append: %v", err)
@@ -657,8 +640,7 @@ func TestSpoolAppendRollsBackPartialFrames(t *testing.T) {
 	if err := s.Append("a", "id-a", now, []byte("whole")); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	// Simulate a failed append that left a partial frame in the
-	// active segment and repair it exactly as Append does.
+	// Simulate a failed append's partial frame and repair it exactly as Append does.
 	full := encodeRecord("b", "id-b", now, []byte("partial"))
 	if _, err := s.active.Write(full[:len(full)-3]); err != nil {
 		t.Fatalf("write partial frame: %v", err)
@@ -703,9 +685,8 @@ func TestSpoolAppendFailureSealsUnrepairableSegment(t *testing.T) {
 	if err := s.Append("a", "id-a", now, []byte("whole")); err != nil {
 		t.Fatalf("Append: %v", err)
 	}
-	// Make the active file unrepairable: appends fail and the partial
-	// frame cannot be rolled back, so the segment must be sealed and
-	// later records must land in a fresh one.
+	// Make the active file unrepairable: the segment must seal and later
+	// records must land in a fresh one.
 	_ = s.active.Close()
 	if err := s.Append("b", "id-b", now, []byte("lost")); err == nil {
 		t.Fatal("append to a broken segment must fail")
@@ -734,8 +715,7 @@ func TestSpoolCompactionKeepsUnshippedRecordsAfterCorruption(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "seg-0000000000.log"), segment, 0o600); err != nil {
 		t.Fatalf("write segment: %v", err)
 	}
-	// The durable cursor claims the corrupt record shipped; the
-	// record after it did not and must survive compaction.
+	// The durable cursor claims the corrupt record shipped; the next one must survive compaction.
 	cursor := fmt.Sprintf(`{"segment":0,"offset":%d}`, len(r1)+len(r2))
 	if err := os.WriteFile(filepath.Join(dir, "cursor.json"), []byte(cursor), 0o600); err != nil {
 		t.Fatalf("write cursor: %v", err)
@@ -747,8 +727,7 @@ func TestSpoolCompactionKeepsUnshippedRecordsAfterCorruption(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatalf("Close after compaction: %v", err)
 	}
-	// A second recovery must use the remapped durable cursor, even
-	// when no shipping commit followed the first recovery.
+	// A second recovery must use the remapped durable cursor even without a later shipping commit.
 	s, err = OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true})
 	if err != nil {
 		t.Fatalf("second OpenSpool: %v", err)
@@ -769,8 +748,7 @@ func TestSpoolCompactionKeepsUnshippedRecordsAfterCorruption(t *testing.T) {
 
 func TestSpoolRejectsOversizedRecords(t *testing.T) {
 	t.Parallel()
-	// A record that cannot fit one segment breaks the configured
-	// bounds; it must be rejected and counted as a drop instead.
+	// An oversized record must be rejected and counted as a drop.
 	s := openTestSpool(t, SpoolConfig{MaxBytes: 4096, MaxSegmentBytes: 4096})
 	err := s.Append("a", "huge", time.Now().UTC(), make([]byte, 8192))
 	if !errors.Is(err, ErrRecordTooLarge) {
@@ -802,8 +780,7 @@ func TestSpoolCommitKeepsCursorWhenSaveFails(t *testing.T) {
 	if err != nil || len(recs) != 2 {
 		t.Fatalf("Read: %d records, %v", len(recs), err)
 	}
-	// Make cursor persistence fail, then restore the path so reads
-	// work again.
+	// Make cursor persistence fail, then restore the path.
 	s.mu.Lock()
 	realDir := s.dir
 	s.dir = filepath.Join(dir, "missing")
@@ -851,7 +828,6 @@ func TestSpoolRejectOnFullKeepsUnshippedRecords(t *testing.T) {
 	if err := s.Commit(cur); err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
-	// Shipped segments are evictable again: appends resume.
 	if err := s.Append("a", "after", time.Now().UTC(), payload); err != nil {
 		t.Fatalf("Append after commit: %v", err)
 	}
@@ -859,9 +835,7 @@ func TestSpoolRejectOnFullKeepsUnshippedRecords(t *testing.T) {
 
 func TestTruncateLineKeepsValidUTF8(t *testing.T) {
 	t.Parallel()
-	// A cut mid-rune would produce invalid UTF-8, which protobuf
-	// string fields reject — the line would be silently dropped
-	// instead of truncated.
+	// A mid-rune cut would be invalid UTF-8, which protobuf rejects — silently dropping the line.
 	line := strings.Repeat("é", MaxLogLineBytes)
 	got, truncated := TruncateLine(line)
 	if !truncated {
@@ -892,8 +866,7 @@ func TestSpoolEvictionCountsSurviveReopen(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	// A crash before the producer's next ship tick: the counts must
-	// survive with the spool, not only in the evicted map.
+	// The counts must survive with the spool, not only in the evicted map.
 	reopened, err := OpenSpool(SpoolConfig{Dir: dir, SyncWrites: true, MaxBytes: 2400, MaxSegmentBytes: 800})
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
@@ -956,9 +929,8 @@ func TestSpoolRejectOnFullReclaimsShippedSegments(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	// Fully shipped segments must be reclaimed for the incoming
-	// record — capacity belongs to unshipped data, so a shipped
-	// segment must never trigger a premature reject.
+	// Fully shipped segments must be reclaimed: capacity belongs to unshipped
+	// data, so a shipped segment must never trigger a premature reject.
 	if err := s.Append("alloc", "c", now, payload); err != nil {
 		t.Fatalf("shipped capacity not reclaimed: %v", err)
 	}
@@ -973,9 +945,8 @@ func TestSpoolRejectOnFullReclaimsShippedSegments(t *testing.T) {
 
 func TestSpoolRejectOnFullRotatesShippedActiveSegment(t *testing.T) {
 	t.Parallel()
-	// A cap below the default segment size clamps the segment to the
-	// cap: one shipped segment fills the spool and must rotate out
-	// to make room instead of rejecting forever.
+	// A cap below the default segment size clamps the segment to the cap:
+	// one shipped segment fills the spool and must rotate out instead of rejecting forever.
 	s := openTestSpool(t, SpoolConfig{MaxBytes: 400, RejectOnFull: true})
 	payload := make([]byte, 200)
 	now := time.Now().UTC()

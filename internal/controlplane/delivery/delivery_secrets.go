@@ -15,16 +15,13 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 )
 
-// sealedNamePattern restricts sealed names to conventional environment
-// variable identifiers.
+// sealedNamePattern restricts sealed names to environment variable identifiers.
 var sealedNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// MaxSealedNameLength caps sealed secret names.
 const MaxSealedNameLength = 128
 
-// ValidateSealedSecretName rejects names that are not valid environment
-// identifiers, that collide with the platform's reserved PLATFORM_ prefix,
-// or that exceed the length cap.
+// ValidateSealedSecretName rejects names that are not valid identifiers,
+// collide with the reserved PLATFORM_ prefix, or exceed the length cap.
 func ValidateSealedSecretName(name string) error {
 	if len(name) == 0 || len(name) > MaxSealedNameLength || !sealedNamePattern.MatchString(name) {
 		return fmt.Errorf("%w: %q must match [A-Za-z_][A-Za-z0-9_]* and be 1-%d characters",
@@ -36,11 +33,9 @@ func ValidateSealedSecretName(name string) error {
 	return nil
 }
 
-// SealServiceSecret appends a new sealed version for a service's secret and
-// reports its version. Names must be disjoint from the service's public
-// environment keys: sealing a name that exists in the current spec fails,
-// and updating the spec with a sealed name fails. Values are write-only:
-// they are sealed into ciphertext here and never returned by any read.
+// SealServiceSecret appends a new sealed version and reports its version. Names
+// must be disjoint from public environment keys. Values are write-only: sealed
+// here, never returned by any read.
 func (d *Delivery) SealServiceSecret(ctx context.Context, user authz.User, serviceID, name string, value []byte) (int64, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
@@ -67,8 +62,7 @@ func (d *Delivery) SealServiceSecret(ctx context.Context, user authz.User, servi
 		if err != nil {
 			return err
 		}
-		// Sealed rows are not journaled (ciphertext is not product state
-		// the live view replays), but agents must still re-pull desired
+		// Sealed rows are not journaled, but agents must still re-pull desired
 		// state to pick up the new value.
 		journal.RecordService(ctx, scope.ID())
 		return nil
@@ -79,9 +73,8 @@ func (d *Delivery) SealServiceSecret(ctx context.Context, user authz.User, servi
 	return version, nil
 }
 
-// DeleteServiceSecret tombstones a sealed secret so current resolution
-// skips it. Pinned deployment reads keep resolving captured versions, so a
-// rollback to a deployment that captured the secret still restores it.
+// DeleteServiceSecret tombstones a sealed secret. Pinned deployment reads keep
+// resolving captured versions, so rollback still restores the secret.
 func (d *Delivery) DeleteServiceSecret(ctx context.Context, user authz.User, serviceID, name string) error {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
@@ -103,8 +96,7 @@ func (d *Delivery) DeleteServiceSecret(ctx context.Context, user authz.User, ser
 	})
 }
 
-// ListServiceSecrets returns masked existence records (names and versions,
-// never values) for a service's live secrets.
+// ListServiceSecrets returns masked existence records for live secrets.
 func (d *Delivery) ListServiceSecrets(ctx context.Context, user authz.User, serviceID string) ([]secretkeys.SecretMetadata, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Read)
 	if err != nil {
@@ -121,8 +113,7 @@ func (d *Delivery) ListServiceSecrets(ctx context.Context, user authz.User, serv
 	return metas, nil
 }
 
-// rejectSealedNameConflicts fails a public spec update whose environment
-// keys collide with the service's live sealed names.
+// rejectSealedNameConflicts fails spec updates colliding with sealed names.
 func (d *Delivery) rejectSealedNameConflicts(ctx context.Context, tx *sql.Tx, serviceID string, publicEnv map[string]string) error {
 	secrets := d.store.secrets
 	if secrets == nil || len(publicEnv) == 0 {
@@ -146,12 +137,9 @@ func (d *Delivery) rejectSealedNameConflicts(ctx context.Context, tx *sql.Tx, se
 		ErrSealedNameConflict, strings.Join(conflicts, ", "))
 }
 
-// resolveSealedEnv merges decrypted sealed values into an agent's already
-// assembled desired state. It is the only control-plane path that decrypts
-// sealed values, and it decrypts exactly the services assigned to this
-// agent. Deployments pin sealed versions: a service resolves the versions
-// captured by its assignment's deployment, falling back to current for
-// names the deployment predates.
+// resolveSealedEnv merges decrypted sealed values into an agent's desired
+// state. It is the only control-plane path that decrypts, and only for services
+// assigned to this agent. Deployments pin versions; unpinned names use current.
 func (d *Delivery) resolveSealedEnv(ctx context.Context, state *agentv1.DesiredNodeState) error {
 	secrets := d.store.secrets
 	if secrets == nil || state == nil {
@@ -203,12 +191,9 @@ func (d *Delivery) resolveSealedEnv(ctx context.Context, state *agentv1.DesiredN
 	return nil
 }
 
-// deploymentSealedPins loads sealed_versions_json for assignments'
-// deployments and returns the sealed name-to-version pins per service. This
-// column carries sealed names only, captured at deploy time, so it never
-// confuses public spec revisions with sealed versions: a name that moves
-// between public and sealed cannot collide. A deployment that predates a
-// sealed name simply has no pin for it, and the name resolves to current.
+// deploymentSealedPins loads sealed_versions_json per service. The column carries
+// sealed names only, so public/sealed moves cannot collide. Names a deployment
+// predates resolve to current.
 func (d *Delivery) deploymentSealedPins(ctx context.Context, deploymentIDs []string) (map[string]map[string]int64, error) {
 	out := map[string]map[string]int64{}
 	if len(deploymentIDs) == 0 {

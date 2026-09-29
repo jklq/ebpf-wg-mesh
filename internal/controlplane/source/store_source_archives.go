@@ -327,14 +327,10 @@ func (s *SQLStore) collectUnreferencedArchiveObjects(ctx context.Context, cutoff
 	return collected, nil
 }
 
-// collectClaimedArchiveObject deletes one claimed object. The row lock is held
-// across the object delete so a concurrent store of the same content-addressed
-// key blocks on its row upsert until this transaction commits: either the
-// store lands first and the guards below skip collection, or it lands after
-// and its Put follows our Delete. Deleting the object before the row is
-// confirmed would orphan a live snapshot when a re-store lands in between.
-// ArchiveStore Delete is idempotent in every backend, so re-running this
-// closure on a CockroachDB transaction retry is safe.
+// collectClaimedArchiveObject deletes one claimed object. The row lock is held across the
+// object delete so a concurrent store of the same content-addressed key serializes on it:
+// deleting the object before the row is confirmed would orphan a live snapshot on re-store.
+// Delete is idempotent in every backend, so CockroachDB transaction retries are safe.
 func (s *SQLStore) collectClaimedArchiveObject(ctx context.Context, key string, cutoff time.Time) (bool, error) {
 	collected := false
 	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -398,12 +394,9 @@ func (s *SQLStore) claimArchiveObjectsForCollection(ctx context.Context, cutoff 
 	var claimed []string
 	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		claimed = nil
-		// Rows already marked deleting are always re-claimed: a previous
-		// prune may have crashed or failed between the claim and the
-		// per-key collection, and only this claim can move a deleting row
-		// back to ready or finish collecting it. Collection re-verifies
-		// every guard under the row lock, so a concurrent collector or
-		// store cannot be harmed by the second claim.
+		// Rows already marked deleting are always re-claimed: a previous prune may have crashed
+		// mid-collection. Collection re-verifies every guard under the row lock, so a second claim
+		// harms no concurrent collector or store.
 		rows, err := tx.QueryContext(ctx,
 			`SELECT o.object_key
 			   FROM source_archive_objects o
@@ -442,8 +435,7 @@ func (s *SQLStore) claimArchiveObjectsForCollection(ctx context.Context, cutoff 
 			return err
 		}
 		for _, key := range claimed {
-			// The SELECT ... FOR UPDATE above already holds the row lock,
-			// so the flip is unconditional.
+			// The row lock above is already held, so the flip is unconditional.
 			if _, err := tx.ExecContext(ctx,
 				`UPDATE source_archive_objects SET state = $1 WHERE object_key = $2`,
 				ArchiveObjectStateDeleting, key,

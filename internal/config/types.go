@@ -63,13 +63,10 @@ type ClickHouseConfig struct {
 type LogCaptureConfig struct {
 	ClickHouse    ClickHouseConfig
 	RetentionDays int
-	// IngestQueueBytes caps the retained size of the durable ingest
-	// journal, so a backend outage can never make the queue hold a
-	// memory-limited control plane hostage. Past the budget whole
-	// batches shed with explicit gap rows.
+	// IngestQueueBytes caps the retained size of the durable ingest journal. Past the
+	// budget whole batches shed with explicit gap rows.
 	IngestQueueBytes int
-	// IngestRatePerSec and IngestBurst bound the per-allocation
-	// ingest guard, which sits above agent-side limits.
+	// IngestRatePerSec and IngestBurst bound the per-allocation ingest guard above agent-side limits.
 	IngestRatePerSec int
 	IngestBurst      int
 }
@@ -86,8 +83,7 @@ type BootstrapUser struct {
 }
 
 type IngressConfig struct {
-	// XDSListen is the address the control plane serves the xDS
-	// management API on for Envoy instances.
+	// XDSListen is the address the control plane serves the xDS management API on for Envoy instances.
 	XDSListen                string
 	ListenAddrs              []string
 	StaticRoutes             []StaticIngressRouteConfig
@@ -183,44 +179,35 @@ type SourceArchiveConfig struct {
 	S3            SourceArchiveS3Config
 }
 
-// SecretKeysConfig points at the provisioned master-key ring for sealed
-// service secrets. The same file contents must reach every control-plane
-// replica; the database holds ciphertext and key-version metadata only.
+// SecretKeysConfig points at the provisioned master-key ring for sealed service secrets. The
+// same file contents must reach every control-plane replica; the database holds ciphertext and key-version metadata only.
 type SecretKeysConfig struct {
-	// KeyringPath is the access-restricted keyring file. Development
-	// defaults it under the state directory and bootstraps first-install
-	// keys; production requires the operator to provision it.
+	// KeyringPath is the access-restricted keyring file. Development defaults it under the state
+	// directory and bootstraps first-install keys; production requires the operator to provision it.
 	KeyringPath string
 }
 
-// DeletionConfig tunes safe deletion: user deletes tombstone resources for
-// the grace period (restorable), then background garbage collection destroys
-// expired tombstones on its interval.
+// DeletionConfig tunes safe deletion: user deletes tombstone resources for the grace period
+// (restorable), then background garbage collection destroys expired tombstones on its interval.
 type DeletionConfig struct {
 	GracePeriodDays   int
 	GCIntervalSeconds int
 }
 
-// BuildArtifactConfig tunes deploy-by-digest artifact retention. Artifacts
-// referenced by a deployment, deployment transition, rollout, or the current
-// pointer are rollback material and survive any age. Only artifacts nothing
-// references age out past RetentionDays, beyond the newest KeepRecent per
-// service.
+// BuildArtifactConfig tunes deploy-by-digest artifact retention. Artifacts referenced by a
+// deployment, deployment transition, rollout, or the current pointer are rollback material and
+// survive any age. Only unreferenced artifacts age out past RetentionDays, beyond the newest KeepRecent per service.
 type BuildArtifactConfig struct {
 	RetentionDays int
 	KeepRecent    int
 }
 
-// DirectImageConfig governs how user-supplied direct-image references are
-// resolved against external registries.
+// DirectImageConfig governs how user-supplied direct-image references are resolved against external registries.
 type DirectImageConfig struct {
-	// AllowedPrivateRegistryHosts lists registry hosts (host[:port]) the
-	// control plane may resolve direct images from even when they live on
-	// loopback, private, link-local, or otherwise prohibited networks:
-	// internal registries the operator has declared reachable and
-	// trusted. Every other registry host must be a public destination, so
-	// a project writer cannot point the control plane at internal
-	// services.
+	// AllowedPrivateRegistryHosts lists registry hosts (host[:port]) the control plane may resolve
+	// direct images from even when they live on loopback, private, link-local, or otherwise prohibited
+	// networks: internal registries the operator has declared reachable and trusted. Every other registry
+	// host must be a public destination, so a project writer cannot point the control plane at internal services.
 	AllowedPrivateRegistryHosts []string
 }
 
@@ -317,26 +304,20 @@ type AgentConfig struct {
 	Logs         AgentLogShippingConfig
 }
 
-// AgentLogShippingConfig bounds the agent's durable log pipeline.
-// Zero values select documented defaults, except RatePerSec: zero
-// disables producer limiting (validation rejects negatives).
+// AgentLogShippingConfig bounds the agent's durable log pipeline. Zero values select documented
+// defaults, except RatePerSec: zero disables producer limiting (validation rejects negatives).
 type AgentLogShippingConfig struct {
-	// SpoolMaxBytes caps the disk spool under the runtime data dir.
-	// Past the cap the oldest unshipped lines shed with explicit gap
-	// rows. Defaults to 256 MiB.
+	// SpoolMaxBytes caps the disk spool under the runtime data dir. Past the cap the oldest
+	// unshipped lines shed with explicit gap rows. Defaults to 256 MiB.
 	SpoolMaxBytes int64
-	// RatePerSec and Burst bound accepted lines per allocation per
-	// second. Past the limit lines shed with explicit gap rows.
-	// Defaults to 200/s with bursts of 1000; zero RatePerSec
-	// disables producer limiting entirely.
+	// RatePerSec and Burst bound accepted lines per allocation per second. Past the limit lines
+	// shed with explicit gap rows. Defaults to 200/s with bursts of 1000; zero RatePerSec disables producer limiting entirely.
 	RatePerSec int
 	Burst      int
-	// FlushBatchSize and FlushIntervalSeconds pace Sync stream
-	// batches. Defaults to 100 lines and 1 second.
+	// FlushBatchSize and FlushIntervalSeconds pace Sync stream batches. Defaults to 100 lines and 1 second.
 	FlushBatchSize       int
 	FlushIntervalSeconds int
-	// ReplayWindowSeconds bounds the spool replay after a
-	// reconnect. Defaults to 300.
+	// ReplayWindowSeconds bounds the spool replay after a reconnect. Defaults to 300.
 	ReplayWindowSeconds int
 }
 
@@ -367,27 +348,21 @@ type BuilderConfig struct {
 	CleanupWorkDir           bool
 }
 
-// BuilderLogShippingConfig bounds the builder's durable build-log
-// pipeline. Zero values select documented defaults, except
-// RatePerSec: zero disables producer limiting (validation rejects
-// negatives).
+// BuilderLogShippingConfig bounds the builder's durable build-log pipeline. Zero values select
+// documented defaults, except RatePerSec: zero disables producer limiting (validation rejects negatives).
 type BuilderLogShippingConfig struct {
-	// SpoolMaxBytes caps the per-attempt disk spool under the
-	// builder work dir. Defaults to 64 MiB.
+	// SpoolMaxBytes caps the per-attempt disk spool under the builder work dir. Defaults to 64 MiB.
 	SpoolMaxBytes int64
-	// RatePerSec and Burst bound accepted lines per build per
-	// second. Defaults to 200/s with bursts of 1000; zero RatePerSec
-	// disables producer limiting entirely.
+	// RatePerSec and Burst bound accepted lines per build per second. Defaults to 200/s with
+	// bursts of 1000; zero RatePerSec disables producer limiting entirely.
 	RatePerSec int
 	Burst      int
-	// FlushBatchSize and FlushIntervalSeconds pace ReportBuildLogs
-	// calls. Defaults to 100 lines and 1 second.
+	// FlushBatchSize and FlushIntervalSeconds pace ReportBuildLogs calls. Defaults to 100 lines and 1 second.
 	FlushBatchSize       int
 	FlushIntervalSeconds int
 }
 
-// BuilderLimitsConfig carries the explicit per-execution resource
-// limits every build receives as executor input.
+// BuilderLimitsConfig carries the explicit per-execution resource limits every build receives as executor input.
 type BuilderLimitsConfig struct {
 	TimeoutSeconds    int
 	MemoryBytes       int64
@@ -397,67 +372,51 @@ type BuilderLimitsConfig struct {
 	MaxWorkspaceBytes int64
 }
 
-// BuilderNetworkConfig carries the restricted network policy every
-// build receives as executor input.
+// BuilderNetworkConfig carries the restricted network policy every build receives as executor input.
 type BuilderNetworkConfig struct {
-	// DenyGeneralEgress is inverted so the zero value preserves the
-	// current behavior of allowing dependency fetches during builds.
+	// DenyGeneralEgress is inverted so the zero value preserves allowing dependency fetches during builds.
 	DenyGeneralEgress bool
 	DeniedCIDRs       []string
 }
 
-// BuilderCacheConfig selects how build cache data persists between
-// executions. Mode "none" persists nothing; mode "content-addressed"
-// lets the hardened executor mount a host cache dir keyed purely by
-// build content (snapshot digest, recipe, toolchain), never by
-// project identity. Cache dirs accumulate under the builder work dir;
-// the operator prunes them. The development executor validates the
-// mode but exports no cache.
+// BuilderCacheConfig selects how build cache data persists between executions. Mode "none"
+// persists nothing; mode "content-addressed" lets the hardened executor mount a host cache dir
+// keyed purely by build content (snapshot digest, recipe, toolchain), never by project identity.
+// Cache dirs accumulate under the builder work dir; the operator prunes them. The development
+// executor validates the mode but exports no cache.
 type BuilderCacheConfig struct {
 	Mode string
 }
 
-// BuilderSandboxConfig selects the hardened executor's sandbox
-// backend. The development executor ignores it. Only the containerd
-// backend exists today; the operator selects the sandbox technology
-// through Runtime (the default runc runtime, gVisor's runsc, Kata, or
-// another installed OCI runtime) and the build CNI network. Unknown
-// backends fail validation: execution never silently falls back to a
-// weaker backend.
+// BuilderSandboxConfig selects the hardened executor's sandbox backend. The development executor
+// ignores it. Only the containerd backend exists today; the operator selects the sandbox technology
+// through Runtime (the default runc runtime, gVisor's runsc, Kata, or another installed OCI runtime)
+// and the build CNI network. Unknown backends fail validation: execution never silently falls back
+// to a weaker backend.
 type BuilderSandboxConfig struct {
 	// Backend is the sandbox backend. Only "containerd" exists.
 	Backend string
-	// Socket is the containerd socket the builder dials.
-	Socket string
-	// Namespace is the containerd namespace holding build sandboxes.
-	// It must not be the workload namespace: build sandboxes are
-	// one-shot and carry no mesh identity.
+	Socket  string
+	// Namespace is the containerd namespace holding build sandboxes. It must not be the workload
+	// namespace: build sandboxes are one-shot and carry no mesh identity.
 	Namespace string
-	// Image is the sandbox image. It must provide the build
-	// toolchain (buildctl, railpack when railpack builds run); the
-	// executor bind-mounts the execution workspace at /build. There
-	// is no default: the operator chooses the image builds run in.
-	Image string
-	// Runtime is the OCI runtime for build sandboxes.
-	Runtime string
-	// Snapshotter is the containerd snapshotter for sandbox roots.
+	// Image is the sandbox image. It must provide the build toolchain (buildctl, railpack when railpack
+	// builds run); the executor bind-mounts the execution workspace at /build. There is no default:
+	// the operator chooses the image builds run in.
+	Image       string
+	Runtime     string
 	Snapshotter string
-	// CNIPluginDir and CNIConfDir locate the CNI plugins and the
-	// build network configuration. The conf dir must contain exactly
-	// the CNINetwork: build sandboxes never join the workload mesh.
+	// CNIPluginDir and CNIConfDir locate the CNI plugins and the build network configuration. The
+	// conf dir must contain exactly the CNINetwork: build sandboxes never join the workload mesh.
 	CNIPluginDir string
 	CNIConfDir   string
 	CNINetwork   string
-	// Nameservers overrides the resolver configuration rendered
-	// into sandboxes. Empty inherits the builder host's
-	// non-loopback nameservers; loopback entries never survive the
-	// copy because a private network namespace cannot reach the
-	// host's loopback resolver.
+	// Nameservers overrides the resolver configuration rendered into sandboxes. Empty inherits the
+	// builder host's non-loopback nameservers; loopback entries never survive the copy because a private
+	// network namespace cannot reach the host's loopback resolver.
 	Nameservers []string
-	// BuildkitdBinary is the BuildKit daemon the hardened executor
-	// starts per execution. Each build gets a fresh daemon with an
-	// isolated root and socket so sibling builds share no cache,
-	// worker, or session state.
+	// BuildkitdBinary is the BuildKit daemon the hardened executor starts per execution. Each build
+	// gets a fresh daemon with an isolated root and socket so sibling builds share no cache, worker, or session state.
 	BuildkitdBinary string
 }
 

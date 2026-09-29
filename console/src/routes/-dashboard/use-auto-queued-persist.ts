@@ -47,8 +47,7 @@ export function useAutoQueuedPersist<T>({
 	const [saving, setSaving] = useState(false);
 	const draftKey = stableKey(draft);
 	const incomingKey = stableKey(incoming);
-	// Only a boolean `enabled` belongs in effect deps. Callers pass inline
-	// predicates, and those new function identities must not retrigger persist.
+	// Only a boolean `enabled` belongs in effect deps; inline predicates must not retrigger persist.
 	const enabledFlag = typeof enabled === "boolean" ? enabled : true;
 
 	useEffect(() => {
@@ -74,8 +73,7 @@ export function useAutoQueuedPersist<T>({
 			lastAckedRef.current = incomingKey;
 			return;
 		}
-		// A subscription refresh must never replace an edit which is waiting for
-		// its debounce or is queued behind another editor for this service.
+		// A subscription refresh must never replace an edit waiting for debounce or queued behind another editor.
 		if (
 			draftKey !== lastAckedRef.current ||
 			submittedKeysRef.current.size > 0

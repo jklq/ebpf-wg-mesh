@@ -159,12 +159,7 @@ export async function restoreResourceFromSession(
 	}
 }
 
-/**
- * Collects every tombstoned resource the user can see, newest first. Deleted
- * projects are listed without their contents: restoring the project brings
- * them back. Live projects are walked for tombstoned environments, services,
- * volumes, and domains.
- */
+/** Collects every tombstoned resource the user can see, newest first. Deleted projects list without contents. */
 export async function loadRecentlyDeletedFromSession(
 	runtime: DashboardRuntime,
 ): Promise<Array<DashboardDeletedResource>> {

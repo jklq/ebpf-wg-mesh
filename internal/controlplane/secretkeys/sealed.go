@@ -12,49 +12,39 @@ import (
 	"github.com/cockroachdb/cockroach-go/v2/crdb"
 )
 
-// SecretMetadata is the masked existence record listable through the API:
-// names and versions, never values.
+// SecretMetadata is the masked existence record listable through the API: names and versions, never values.
 type SecretMetadata struct {
 	Name      string
 	Version   int64
 	UpdatedAt time.Time
 }
 
-// SealedStore persists sealed service secrets. Each seal appends a new
-// immutable version; deployments capture name-to-version pins so rollback
-// restores the captured values. Deletion tombstones the name while retaining
-// history for pinned reads, so a rollback to a deployment that captured a
-// since-deleted secret still resolves.
+// SealedStore persists sealed service secrets. Each seal appends a new immutable
+// version; deployments capture name-to-version pins so rollback restores the
+// captured values. Deletion tombstones the name while retaining history for pinned reads.
 type SealedStore struct {
 	db   *sql.DB
 	deks *DEKStore
 }
 
-// NewSealedStore builds the sealed-secret inventory over db.
 func NewSealedStore(db *sql.DB, deks *DEKStore) *SealedStore {
 	return &SealedStore{db: db, deks: deks}
 }
 
-// sealVersionAttempts bounds version-allocation retries when concurrent
-// seals race for the same (service, name).
+// sealVersionAttempts bounds version-allocation retries when concurrent seals race.
 const sealVersionAttempts = 10
 
-// Seal appends a new sealed version for (serviceID, name) and returns its
-// version. Re-sealing a tombstoned name clears the tombstone: the name lives
-// again at a new version. Callers validate the name and its disjointness
-// from public environment keys before calling.
-//
-// Concurrent seals for one name race on max(version)+1; a loser that hits
-// the primary-key conflict recomputes and retries instead of surfacing a
-// raw duplicate-key error.
+// Seal appends a new sealed version for (serviceID, name) and returns it.
+// Re-sealing a tombstoned name clears the tombstone; callers validate the name and
+// its disjointness from public environment keys first. Concurrent seals race on
+// max(version)+1 and losers retry on primary-key conflict.
 func (s *SealedStore) Seal(ctx context.Context, q Querier, serviceID, environmentID, name string, plaintext []byte) (int64, error) {
 	if strings.TrimSpace(serviceID) == "" || strings.TrimSpace(environmentID) == "" || strings.TrimSpace(name) == "" {
 		return 0, errors.New("seal requires service id, environment id, and name")
 	}
 	var version int64
 	if err := withQuerierTx(ctx, s.db, q, func(ctx context.Context, tx Querier) error {
-		// Resolve the DEK inside the transaction so the mint and the
-		// sealed row share a snapshot.
+		// Resolve the DEK inside the transaction so the mint and the sealed row share a snapshot.
 		dek, dekID, err := s.deks.DEKForScope(ctx, tx, DEKScopeKindEnvironment, environmentID)
 		if err != nil {
 			return err
@@ -87,7 +77,6 @@ func (s *SealedStore) Seal(ctx context.Context, q Querier, serviceID, environmen
 				return fmt.Errorf("insert sealed secret version: %w", err)
 			}
 		}
-		// Re-sealing resurrects a deleted name.
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM service_secret_tombstones WHERE service_id = $1 AND name = $2`, serviceID, name); err != nil {
 			return fmt.Errorf("clear sealed secret tombstone: %w", err)
@@ -99,9 +88,8 @@ func (s *SealedStore) Seal(ctx context.Context, q Querier, serviceID, environmen
 	return version, nil
 }
 
-// Delete tombstones (serviceID, name) so current resolution skips it while
-// pinned deployment reads keep resolving captured versions. It reports
-// ErrNoSuchSecret when the name has no sealed versions.
+// Delete tombstones (serviceID, name) so current resolution skips it while pinned
+// reads keep resolving captured versions. It reports ErrNoSuchSecret when the name has no sealed versions.
 func (s *SealedStore) Delete(ctx context.Context, q Querier, serviceID, name string) error {
 	var versions int64
 	row := q.QueryRowContext(ctx,
@@ -121,8 +109,7 @@ func (s *SealedStore) Delete(ctx context.Context, q Querier, serviceID, name str
 	return nil
 }
 
-// ListMasked returns masked existence records for the service's live (not
-// tombstoned) secrets, ordered by name.
+// ListMasked returns masked existence records for the service's live secrets, ordered by name.
 func (s *SealedStore) ListMasked(ctx context.Context, q Querier, serviceID string) ([]SecretMetadata, error) {
 	rows, err := q.QueryContext(ctx,
 		`SELECT v.name, v.version, v.created_at
@@ -152,8 +139,7 @@ func (s *SealedStore) ListMasked(ctx context.Context, q Querier, serviceID strin
 	return out, nil
 }
 
-// CurrentVersions returns the live name-to-version map for one service,
-// excluding tombstoned names.
+// CurrentVersions returns the live name-to-version map for one service.
 func (s *SealedStore) CurrentVersions(ctx context.Context, q Querier, serviceID string) (map[string]int64, error) {
 	metas, err := s.ListMasked(ctx, q, serviceID)
 	if err != nil {
@@ -166,8 +152,7 @@ func (s *SealedStore) CurrentVersions(ctx context.Context, q Querier, serviceID 
 	return out, nil
 }
 
-// OpenVersion decrypts one pinned sealed version. Tombstoned names still
-// open: pinned reads exist so rollback resolves captured values.
+// OpenVersion decrypts one pinned sealed version; tombstoned names still open so rollback resolves.
 func (s *SealedStore) OpenVersion(ctx context.Context, q Querier, serviceID, name string, version int64) ([]byte, error) {
 	var dekID string
 	var nonce, ciphertext []byte
@@ -213,12 +198,10 @@ func (s *SealedStore) OpenCurrent(ctx context.Context, q Querier, serviceID, nam
 	return plaintext, version.Int64, nil
 }
 
-// ResolveMany decrypts the live secrets for each service, honoring pinned
-// versions where provided. pins maps service ID to a name-to-version map
-// captured by a deployment; names absent from pins resolve to current. It
-// returns service ID to decrypted name-to-value maps. Values are runtime
-// plaintext for assigned allocations only; callers must not log or persist
-// them.
+// ResolveMany decrypts the live secrets for each service, honoring pinned versions
+// where provided. pins maps service ID to a deployment-captured name-to-version map;
+// unpinned names resolve to current. Values are runtime plaintext for assigned
+// allocations only; callers must not log or persist them.
 func (s *SealedStore) ResolveMany(ctx context.Context, q Querier, serviceIDs []string, pins map[string]map[string]int64) (map[string]map[string]string, error) {
 	out := make(map[string]map[string]string, len(serviceIDs))
 	for _, serviceID := range serviceIDs {
@@ -233,9 +216,8 @@ func (s *SealedStore) ResolveMany(ctx context.Context, q Querier, serviceIDs []s
 		for name, version := range live {
 			wanted[name] = version
 		}
-		// Pinned names resolve to their captured version even when the
-		// name was later deleted or re-sealed; that is what makes
-		// rollback restore captured values.
+		// Pinned names resolve to their captured version even when later deleted or
+		// re-sealed; that is what makes rollback restore captured values.
 		for name, version := range pins[serviceID] {
 			if version > 0 {
 				wanted[name] = version
@@ -258,14 +240,12 @@ func (s *SealedStore) ResolveMany(ctx context.Context, q Querier, serviceIDs []s
 	return out, nil
 }
 
-// sealAAD binds a sealed value to its exact location so a row copied to
-// another service, name, or version does not decrypt.
+// sealAAD binds a sealed value to its exact location so a copied row does not decrypt.
 func sealAAD(serviceID, name string, version int64) []byte {
 	return []byte("sealed/v1\x00" + serviceID + "\x00" + name + "\x00" + strconv.FormatInt(version, 10))
 }
 
-// withQuerierTx runs fn in a transaction when q is the store DB, or reuses
-// the caller's transaction when q already is one.
+// withQuerierTx runs fn in a transaction, or reuses the caller's when q already is one.
 func withQuerierTx(ctx context.Context, db *sql.DB, q Querier, fn func(context.Context, Querier) error) error {
 	if tx, ok := q.(*sql.Tx); ok {
 		return fn(ctx, tx)

@@ -70,9 +70,8 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 		}
 		cancelRequested := build.CancelRequestedAt.Valid
 		if deleted != nil || cancelRequested || ok && (deploymentStateTerminal(dep.State) || !dep.IsCurrent) {
-			// A superseded build is not a cancelled one: the work finished
-			// but a newer build owns the rollout. Either way the late image
-			// is dropped here — no runtime identity update, no rollout.
+			// A superseded build is not a cancelled one: the work finished but a newer
+			// build owns the rollout, so the late image drops here.
 			targetState := BuildStateCancelled
 			attemptOutcome := BuildAttemptCancelled
 			reason := "cancelled; late builder completion ignored"
@@ -295,11 +294,9 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 	return BuildCompletion{Build: completed, Changed: changed, RolloutScheduled: rolloutScheduled}, nil
 }
 
-// scheduleSucceededArtifactTx adopts a build artifact as the service's
-// resolved image and schedules its rollout. Build completion and the
-// skip-rebuild path share it so a reused image rolls out exactly like a
-// freshly built one. depID carries the image to scheduling; empty skips
-// the deployment transition while still scheduling the rollout.
+// scheduleSucceededArtifactTx adopts a build artifact as the resolved image and schedules
+// its rollout. Completion and skip-rebuild share it so a reused image rolls out like a
+// fresh build. Empty depID skips the deployment transition but still schedules.
 func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, artifact BuildArtifactRecord, commitSHA, buildID, depID string, actor deploymentActor, reasonCode, detail string, now time.Time) (DeploymentRecord, bool, error) {
 	s := d.store
 	transition := func(input deploymentTransitionInput) (DeploymentRecord, error) {
@@ -452,21 +449,15 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 	return rec, err
 }
 
-// errSourceRevisionSuperseded reports a build request that cannot prove it
-// is current against the binding's observed history. No work is created.
+// errSourceRevisionSuperseded: an unproven build request. No work is created.
 var errSourceRevisionSuperseded = errors.New("source revision superseded by a newer observed revision")
 
-// errSourceRevisionChainUnproven refuses a build request whose push
-// transition chains to neither the binding's proven head nor a fetched
-// one. The predecessor may be unobserved (the successor's webhook beat
-// its predecessor's) or recorded without ever holding the head (a
-// recreated-branch push that lost to newer history): staleness is not
-// provable from that, so the tracked head must be reconciled instead of
-// dropping the push.
+// errSourceRevisionChainUnproven refuses a push chaining to neither the proven head nor a
+// fetched one. Staleness is not provable from that, so the tracked head is reconciled
+// instead of dropping the push.
 var errSourceRevisionChainUnproven = errors.New("source revision push chain cannot prove currency")
 
-// supersedeQueuedBuildsTx retires still-queued builds so only the newest
-// request proceeds to build or deploy.
+// supersedeQueuedBuildsTx retires still-queued builds so only the newest request proceeds.
 func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, now time.Time) error {
 	_, err := tx.ExecContext(ctx,
 		`UPDATE build_runs
@@ -480,14 +471,10 @@ func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, 
 	return err
 }
 
-// enqueueBuildFromSourceStateTx queues a build for verified source state, or
-// skips the build when the same source already produced an image: the
-// existing artifact rolls out with the service's current spec instead of
-// rebuilding. Only current requests are served (see source.BuildTransition):
-// a redelivered or retried older revision is refused with
-// errSourceRevisionSuperseded before it can supersede queued newer work or
-// regress the rollout. Reuse returns an empty build, the scheduled
-// deployment, and reused=true.
+// enqueueBuildFromSourceStateTx queues a build for verified source state, or skips the
+// build when the same source already produced an image: the artifact rolls out with the
+// current spec instead. Only current requests are served; older revisions are refused
+// before they can supersede newer work or regress the rollout. Reuse returns reused=true.
 func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor, transition source.BuildTransition) (BuildRunRecord, DeploymentRecord, bool, error) {
 	s := d.store
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
@@ -511,27 +498,18 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	}
 
 	now := time.Now().UTC()
-	// Freshness fence: before anything is superseded or created, the
-	// request must prove it is current — its revision is the binding's
-	// proven head commit, it advances from that head (an ordered push
-	// transition such as a force-push back to an older commit), or the
-	// caller just fetched the commit as the tracked head (see
-	// source.BuildTransition). A redelivered or retried older revision
-	// carries no proof and is refused: it must never supersede queued
-	// newer work or regress the rollout. Moving backward on purpose is
-	// the rollback and exact-redeploy actions' job. Arrival order is not
-	// push order, so currency is proven against the head established by
-	// proven transitions, never against "latest observed".
+	// Freshness fence: the request must prove currency — its revision is the proven head,
+	// advances from it, or was just fetched as the tracked head (see source.BuildTransition).
+	// Older revisions carry no proof and are refused. Arrival order is not push order, so
+	// currency is proven against the head, never against "latest observed".
 	head, err := s.sourceStore.SourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID)
 	if err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
 	if !transition.ProvesCurrent(revision.CommitSHA, head) {
 		if transition.PreviousCommit != "" {
-			// A push whose predecessor does not chain to the proven head
-			// cannot prove currency here at all — see
-			// errSourceRevisionChainUnproven. The coordinator reconciles
-			// the tracked head and queues the commit still current.
+			// A push that cannot prove currency here at all (see errSourceRevisionChainUnproven):
+			// the coordinator reconciles the head and queues the commit still current.
 			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionChainUnproven
 		}
 		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
@@ -626,16 +604,10 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	return rec, dep, false, nil
 }
 
-// reuseBuildArtifactTx deploys an already-built image for verified source
-// state without queueing builder work. The reuse is recorded as the
-// source revision's build: manual release asks whether the revision is
-// built to decide if a sync is needed, so an unrecorded reuse leaves
-// every later release syncing and reusing the same image again. When the
-// service already runs this exact artifact at the current spec revision,
-// no new deployment is created — identical bytes need no rollout, and a
-// refresh sync must not restart one. The deployment captures the
-// service's current spec, so a reused image always runs with current
-// variables rather than the original build's.
+// reuseBuildArtifactTx deploys an already-built image without queueing builder work. The
+// reuse is recorded as the revision's build so later releases don't re-sync forever; when
+// the service already runs this artifact at the current spec, no deployment is created.
+// The deployment captures the current spec, so reused images run with current variables.
 func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, artifact BuildArtifactRecord, actor deploymentActor, now time.Time) (DeploymentRecord, error) {
 	s := d.store
 	recipeJSON, err := source.MarshalBuildRecipe(artifact.BuildRecipe)
@@ -724,10 +696,8 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 		if err := d.recoverExpiredBuildsTx(ctx, tx, now, scheduler); err != nil {
 			return err
 		}
-		// Resuming an owned running build is not a new claim: a drained
-		// builder or a paused scheduler still hands back the builder's own
-		// work so running builds finish instead of stalling until the lease
-		// expires.
+		// Resuming an owned running build is not a new claim: a drained builder or paused
+		// scheduler still hands back its own work so running builds finish.
 		existing, err := scanBuildRunRow(tx.QueryRowContext(ctx, `SELECT `+buildRunSelectColumns+` FROM build_runs WHERE state = $1 AND builder_id = $2 ORDER BY started_at, id LIMIT 1`, BuildStateRunning, builderID))
 		if err == nil {
 			rec, err = s.buildRunByIDQuerier(ctx, tx, existing.ID)
@@ -1011,9 +981,8 @@ func (d *Delivery) expireQueuedBuildsTx(ctx context.Context, tx *sql.Tx, now tim
 	return nil
 }
 
-// timeoutRunningBuildsTx fails builds past their claim deadline. A timeout is
-// terminal even with retry budget left: a build that overruns once will
-// almost surely overrun again, so retry is an operator decision, not a loop.
+// timeoutRunningBuildsTx fails builds past their claim deadline. A timeout is terminal
+// even with retry budget left: overruns don't converge by retrying, so retry is manual.
 func (d *Delivery) timeoutRunningBuildsTx(ctx context.Context, tx *sql.Tx, now time.Time) error {
 	s := d.store
 	rows, err := tx.QueryContext(ctx,

@@ -349,9 +349,8 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 		cfg.RailpackFrontendImage = "ghcr.io/railwayapp/railpack-frontend:latest"
 	}
 	if cfg.Executor == "" {
-		// Production defaults to the isolating backend; development
-		// keeps the host-process executor so unprivileged checkouts
-		// can still build.
+		// Production defaults to the isolating backend; development keeps the host-process
+		// executor so unprivileged checkouts can still build.
 		if cfg.Profile.IsProduction() {
 			cfg.Executor = "hardened"
 		} else {
@@ -406,8 +405,7 @@ func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {
 	if cfg.Namespace == "" {
 		cfg.Namespace = "builder"
 	}
-	// Image has no default: the operator chooses the image builds
-	// run in, and validation requires it for the hardened executor.
+	// Image has no default: the operator chooses it, and validation requires it for the hardened executor.
 	if cfg.Runtime == "" {
 		cfg.Runtime = "io.containerd.runc.v2"
 	}

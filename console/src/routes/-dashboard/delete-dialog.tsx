@@ -24,12 +24,7 @@ import { ModalOverlay } from "./ui";
 
 export type DeleteDialogRecovery = "restorable" | "permanent";
 
-/**
- * Confirms a tombstoning delete. When `loadPreview` is set the dialog lists
- * what goes with the resource before allowing the delete. `requireName`
- * demands the current name typed back (project, production environment,
- * volume). Errors from the delete keep the dialog open.
- */
+/** Confirms a tombstoning delete, optionally previewing what goes with the resource. */
 export function DeleteDialog({
 	title,
 	name,

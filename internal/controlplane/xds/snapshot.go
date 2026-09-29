@@ -44,8 +44,7 @@ type Counts struct {
 type Snapshot struct {
 	Version string
 	Counts  Counts
-	// Inputs is the canonical hash preimage stored so any replica can
-	// rebuild this exact snapshot with BuildFromInputs.
+	// Inputs is the canonical hash preimage, so any replica can rebuild this exact snapshot.
 	Inputs []byte
 	cache  *cachev3.Snapshot
 }
@@ -63,11 +62,9 @@ type BuildInput struct {
 	ListenAddrs []string
 }
 
-// RequiredTypes reports the xDS types whose ACK the drain barrier requires.
-// CDS, LDS, and RDS always have standing Envoy subscriptions. EDS
-// subscriptions exist only for the EDS clusters CDS announces: with no
-// endpoints the dynamic clusters are gone from CDS, so requiring an EDS ACK
-// would wait forever.
+// RequiredTypes reports the xDS types whose ACK the drain barrier requires. CDS, LDS, and RDS
+// always have standing subscriptions; EDS subscriptions exist only for announced clusters, so with
+// no endpoints no EDS ACK is required (it would wait forever).
 func (s *Snapshot) RequiredTypes() []string {
 	types := []string{resourcev3.ListenerType, resourcev3.ClusterType, resourcev3.RouteType}
 	if s != nil && s.cache != nil {
@@ -78,9 +75,8 @@ func (s *Snapshot) RequiredTypes() []string {
 	return types
 }
 
-// Build computes a versioned snapshot from control-plane state. The version
-// is the hex SHA-256 of the canonical inputs. A bad listen address fails the
-// whole build; malformed backends are skipped.
+// Build computes a versioned snapshot from control-plane state. The version is the hex SHA-256
+// of the canonical inputs. A bad listen address fails the build; malformed backends are skipped.
 func Build(input BuildInput) (*Snapshot, error) {
 	canonical, err := canonicalize(input)
 	if err != nil {
@@ -93,8 +89,7 @@ func Build(input BuildInput) (*Snapshot, error) {
 	return buildCanonical(canonical, raw)
 }
 
-// BuildFromInputs rebuilds the exact snapshot from its canonical inputs.
-// Inputs from storage are treated as untrusted: anything malformed fails closed.
+// BuildFromInputs rebuilds from canonical inputs; malformed stored inputs fail closed.
 func BuildFromInputs(raw []byte) (*Snapshot, error) {
 	var canonical canonicalInput
 	if err := json.Unmarshal(raw, &canonical); err != nil {
@@ -543,8 +538,7 @@ func virtualHost(name string, domains []string, cluster string) *routev3.Virtual
 			Action: &routev3.Route_Route{
 				Route: &routev3.RouteAction{
 					ClusterSpecifier: &routev3.RouteAction_Cluster{Cluster: cluster},
-					// No L7 timeout policy: a 15s default would break
-					// long-lived responses.
+					// No L7 timeout: a 15s default would break long-lived responses.
 					Timeout: durationpb.New(0),
 				},
 			},
@@ -552,8 +546,7 @@ func virtualHost(name string, domains []string, cluster string) *routev3.Virtual
 	}
 }
 
-// matchDomains matches the bare hostname plus explicit host:port forms for
-// every listener port. Envoy does not strip ports from Host headers itself.
+// matchDomains matches bare hostnames plus host:port forms; Envoy doesn't strip ports itself.
 func matchDomains(domain string, ports []uint32) []string {
 	seen := map[string]struct{}{domain: {}}
 	out := []string{domain}

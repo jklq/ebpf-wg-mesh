@@ -88,8 +88,7 @@ func (osCommandRunner) Run(ctx context.Context, req commandRequest, onLine func(
 		}
 	}
 	waitErr := cmd.Wait()
-	// Report cancellation as the context error so callers can
-	// distinguish a cancelled build from a failed one.
+	// Report cancellation as the context error to distinguish cancelled from failed builds.
 	if ctx.Err() != nil {
 		return combined.Bytes(), ctx.Err()
 	}

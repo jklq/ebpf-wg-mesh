@@ -15,15 +15,13 @@ const (
 	ProjectKindManaged ProjectKind = "managed"
 )
 
-// Tombstone is the raw deletion marker stored on a resource row. A NULL
-// deleted_at means the row was never tombstoned.
+// Tombstone is the raw deletion marker stored on a resource row; NULL means never tombstoned.
 type Tombstone struct {
 	DeletedAt       sql.NullTime
 	DeletedByUserID string
 	ExpiresAt       sql.NullTime
 }
 
-// Active reports whether the tombstone is set.
 func (t Tombstone) Active() bool {
 	return t.DeletedAt.Valid
 }
@@ -37,9 +35,8 @@ type DeletionInfo struct {
 	Inherited       bool
 }
 
-// EffectiveDeletion resolves the deletion state from a resource's own
-// tombstone plus ancestor tombstones ordered nearest-first. The nearest
-// active tombstone wins; ancestors mark the result inherited.
+// EffectiveDeletion resolves deletion state from a resource's own tombstone plus ancestors
+// nearest-first. The nearest active tombstone wins; ancestors mark the result inherited.
 func EffectiveDeletion(self Tombstone, ancestors ...Tombstone) *DeletionInfo {
 	if self.Active() {
 		return &DeletionInfo{
@@ -74,8 +71,7 @@ type ProjectRecord struct {
 	SystemKey string
 	CreatedAt time.Time
 	Deletion  *DeletionInfo
-	// LogRetentionDays overrides the platform log-retention default.
-	// Zero means the platform default.
+	// LogRetentionDays overrides the platform log-retention default. Zero means the default.
 	LogRetentionDays int32
 }
 
@@ -117,8 +113,7 @@ type ServiceRecord struct {
 	RolloutGeneration       int64
 	AllocatedAgentID        string
 	LastSuccessfulCommitSHA string
-	// ResolvedArtifactID is the runtime identity; ResolvedImage is its
-	// pinned display form, always equal to the artifact's image ref.
+	// ResolvedArtifactID is the runtime identity; ResolvedImage is its pinned display form.
 	ResolvedArtifactID  string
 	ResolvedImage       string
 	LatestBuildID       string
@@ -172,8 +167,7 @@ type AgentRecord struct {
 	LastSeenAt              time.Time
 }
 
-// AgentAdministration is operator-owned intent. Runtime connectivity never
-// mutates this record; effective unavailability is composed with the live session.
+// AgentAdministration is operator-owned intent; runtime connectivity never mutates it.
 type AgentAdministration struct {
 	AgentID             string
 	LifecycleState      AgentLifecycleState
@@ -331,8 +325,7 @@ type DeploymentRecord struct {
 	IsCurrent         bool
 	RequestedByUserID string
 	BuildID           string
-	// ArtifactID is the runtime identity; ImageDigest mirrors the
-	// artifact's pinned image ref for display.
+	// ArtifactID is the runtime identity; ImageDigest mirrors the artifact's pinned image ref.
 	ArtifactID       string
 	ImageDigest      string
 	State            string
@@ -347,9 +340,8 @@ type DeploymentRecord struct {
 	Actions          []DeploymentActionRecord
 }
 
-// BuildReused reports whether the deployment reused an image built for an
-// earlier deployment instead of running a build. The creating transitions
-// carry BUILD_REUSED; later transitions overwrite the current reason code.
+// BuildReused reports whether the deployment reused an earlier deployment's image. Creating
+// transitions carry BUILD_REUSED; later transitions overwrite the reason code.
 func (d DeploymentRecord) BuildReused() bool {
 	if d.ReasonCode == reasonBuildReused {
 		return true

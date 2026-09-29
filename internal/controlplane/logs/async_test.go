@@ -185,7 +185,6 @@ func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
 		t.Fatalf("journal budget must keep some and shed some: %+v", stats)
 	}
 
-	// Draining the journal flushes the owed gap alongside the lines.
 	stop := runIngester(t, ingester)
 	defer stop()
 	waitForIngest(t, ingester, stats.AcceptedLines)
@@ -203,9 +202,8 @@ func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
 	}
 }
 
-// A journal that cannot store the batch or a gap for it must refuse
-// the batch. Accepting it would acknowledge lines whose only copy is
-// the producer's, and the caller must not fall through to ClickHouse.
+// A journal that fits neither the batch nor its gap must refuse it: accepting
+// would ack lines whose only copy is the producer's.
 func TestAsyncIngesterRefusesBatchWhenJournalCannotRecordLoss(t *testing.T) {
 	t.Parallel()
 
@@ -261,8 +259,7 @@ func TestAsyncIngesterIsNoOpWhenDisabled(t *testing.T) {
 func TestAsyncIngesterRunBlocksUntilContextEndsWhenDisabled(t *testing.T) {
 	t.Parallel()
 
-	// A disabled ingester must not return early: hosting servers
-	// treat any Run return as a shutdown signal.
+	// A disabled ingester must not return early: hosts treat any Run return as shutdown.
 	ingester := newTestIngester(t, &fakeFlushStore{}, AsyncIngesterConfig{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -284,13 +281,11 @@ func TestAsyncIngesterRunBlocksUntilContextEndsWhenDisabled(t *testing.T) {
 	}
 }
 
-// Past the detailed key cap, shed windows fold into service-level
-// aggregate gaps instead of vanishing: reads must surface every shed
-// line even when the overload explodes the distinct-key count.
+// Past the detailed key cap, shed windows fold into service-level aggregates
+// so every shed line still surfaces in reads.
 func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
 	t.Parallel()
 
-	// No Run loop: the journal fills and stays full.
 	store := &fakeFlushStore{enabled: true}
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{QueueBytes: 512})
 
@@ -305,8 +300,6 @@ func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
 	if stats.ShedLines == 0 {
 		t.Fatalf("tiny journal must shed: %+v", stats)
 	}
-	// Folding must bound the owed maps: past the detailed cap the
-	// overflow collapses into a handful of service aggregates.
 	if stats.OwedGaps > maxIngestOwedGaps+3 {
 		t.Fatalf("owed %d gaps, want at most %d detailed + 3 folded", stats.OwedGaps, maxIngestOwedGaps)
 	}
@@ -333,19 +326,16 @@ func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
 	for _, gap := range store.gaps {
 		total += gap.DroppedCount
 	}
-	// Every fed line is accounted exactly once: stored, shed into
-	// durable gap rows, or counted lost when not even the gap
-	// accounting could be journaled (those batches are rejected and
-	// retried by their producer, never silently dropped).
+	// Every fed line is accounted exactly once: stored, shed into gap rows,
+	// or counted lost (rejected batches are retried by their producer).
 	if stats.AcceptedLines+total+stats.GapsLost != uint64(2*totalKeys) {
 		t.Fatalf("%d accepted + %d gap lines + %d lost != %d fed: every count must be accounted",
 			stats.AcceptedLines, total, stats.GapsLost, 2*totalKeys)
 	}
 }
 
-// Shutdown must not discard batches the Sync loop already accepted:
-// Run drains the queued backlog and owed gap windows under a grace
-// deadline even when its context is already canceled.
+// Shutdown must not discard accepted batches: Run drains the backlog and owed
+// gaps under the grace deadline even when its context is already canceled.
 func TestAsyncIngesterDrainsAcceptedBacklogOnShutdown(t *testing.T) {
 	t.Parallel()
 
@@ -372,8 +362,6 @@ func TestAsyncIngesterDrainsAcceptedBacklogOnShutdown(t *testing.T) {
 	for _, gap := range store.gaps {
 		gapLines += gap.DroppedCount
 	}
-	// Every accepted line and every shed line must reach the store:
-	// kept lines as rows, shed lines as owed gap rows.
 	if len(store.lines) != int(stats.AcceptedLines) || gapLines != stats.ShedLines {
 		t.Fatalf("shutdown delivered %d of %d kept lines and %d of %d shed lines",
 			len(store.lines), stats.AcceptedLines, gapLines, stats.ShedLines)
@@ -383,10 +371,8 @@ func TestAsyncIngesterDrainsAcceptedBacklogOnShutdown(t *testing.T) {
 	}
 }
 
-// Shutdown must also keep the batch currently being retried: when the
-// run context ends mid-outage, the dequeued flush and its attached
-// gap windows are handed to the drain instead of vanishing with the
-// canceled retry.
+// Shutdown must also keep the batch mid-retry: the dequeued flush and its gaps
+// hand to the drain instead of vanishing with the canceled retry.
 func TestAsyncIngesterDrainsInFlightRetryOnShutdown(t *testing.T) {
 	t.Parallel()
 
@@ -398,8 +384,7 @@ func TestAsyncIngesterDrainsInFlightRetryOnShutdown(t *testing.T) {
 	go func() { done <- ingester.Run(ctx) }()
 
 	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3))
-	// Cancel only once the batch is dequeued and its first write has
-	// failed: the flush is now in flight inside flushWithRetry.
+	// Cancel only once the batch is dequeued and its first write failed (in flight).
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		store.mu.Lock()
@@ -430,9 +415,8 @@ func TestAsyncIngesterDrainsInFlightRetryOnShutdown(t *testing.T) {
 	}
 }
 
-// Once the shutdown drain finished, arrivals are rejected and loudly
-// accounted — never silently accepted into a dead queue — so callers
-// fall back to synchronous writes or producer replay.
+// After the drain, arrivals are rejected with loud accounting — never silently
+// accepted — so callers fall back to sync writes or producer replay.
 func TestAsyncIngesterRejectsArrivalsAfterDrain(t *testing.T) {
 	t.Parallel()
 
@@ -459,10 +443,8 @@ func TestAsyncIngesterRejectsArrivalsAfterDrain(t *testing.T) {
 	}
 }
 
-// Producers racing the shutdown drain never lose accounting: every
-// offered line is either admitted and flushed by the drain (as a
-// line or an owed gap row) or rejected and counted — never silently
-// dropped between the drain's last look and the seal.
+// Producers racing the drain never lose accounting: every line is admitted and
+// flushed, or rejected and counted.
 func TestAsyncIngesterAccountsForEveryLineAcrossShutdown(t *testing.T) {
 	t.Parallel()
 
@@ -511,9 +493,8 @@ func TestAsyncIngesterAccountsForEveryLineAcrossShutdown(t *testing.T) {
 	}
 }
 
-// The durable journal is the acceptance contract: batches queued
-// while no flusher runs survive a control-plane restart and land
-// after the next boot instead of vanishing past the replay window.
+// The journal is the acceptance contract: batches queued with no flusher survive
+// a restart and land after reboot.
 func TestAsyncIngesterJournalSurvivesRestart(t *testing.T) {
 	t.Parallel()
 
@@ -523,8 +504,7 @@ func TestAsyncIngesterJournalSurvivesRestart(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		ingester.EnqueueLines([]LogLineInput{{ID: fmt.Sprintf("sy:%d", i), Line: "kept"}})
 	}
-	// No flusher ran: the process "crashes" here. Acceptance already
-	// happened, so the ack contract demands these lines survive.
+	// No flusher ran: the process "crashes" here, but accepted lines must survive.
 	reopened := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
 	for i := 0; i < 6; i++ {
 		reopened.EnqueueLines([]LogLineInput{{ID: fmt.Sprintf("sy:late-%d", i), Line: "kept"}})
@@ -541,9 +521,8 @@ func TestAsyncIngesterJournalSurvivesRestart(t *testing.T) {
 	_ = ingester
 }
 
-// When the shutdown grace expires during a backend outage, the
-// accepted backlog stays journaled for the next boot: nothing is
-// abandoned, it just waits for a healthy store.
+// When the grace expires mid-outage, the accepted backlog stays journaled for
+// the next boot: nothing is abandoned.
 func TestAsyncIngesterKeepsAbandonedBacklogForNextBoot(t *testing.T) {
 	t.Parallel()
 
@@ -575,7 +554,6 @@ func TestAsyncIngesterKeepsAbandonedBacklogForNextBoot(t *testing.T) {
 		t.Fatalf("abandoned backlog must stay journaled: %+v", stats)
 	}
 
-	// The store recovers; the next boot writes everything.
 	store.mu.Lock()
 	store.failLines = nil
 	store.mu.Unlock()
@@ -648,9 +626,8 @@ func TestAsyncIngesterKeepsCorruptGapUntilStoreAcceptsIt(t *testing.T) {
 	}
 }
 
-// A shed flush keeps producer gap identity: the owed row must carry
-// the summary's stable ID so a replayed summary replaces the same
-// gap row instead of double-counting the loss.
+// A shed flush keeps producer gap identity: the owed row carries the summary's
+// stable ID so replays replace instead of double-counting.
 func TestAsyncIngesterShedProducerGapsKeepSummaryIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -694,8 +671,7 @@ func TestAsyncIngesterShedProducerGapsKeepSummaryIdentity(t *testing.T) {
 	t.Fatalf("shed producer gap lost its identity: %+v", store.gaps)
 }
 
-// The ingest guard surfaces its rate-limited lines as gaps itself, so
-// it must drain the limiter's denied map: allocation churn cannot
+// The ingest guard must drain the limiter's denied map: allocation churn cannot
 // grow process memory without a bound.
 func TestAsyncIngesterKeepsLimiterDeniedMapBounded(t *testing.T) {
 	t.Parallel()
@@ -710,9 +686,8 @@ func TestAsyncIngesterKeepsLimiterDeniedMapBounded(t *testing.T) {
 	}
 }
 
-// blockingFlushStore blocks the first write until released, then
-// fails every write — a backend outage whose first attempt spans
-// concurrent enqueues.
+// blockingFlushStore blocks the first write until released, then fails every
+// write: an outage spanning concurrent enqueues.
 type blockingFlushStore struct {
 	mu      sync.Mutex
 	flushes int
@@ -740,15 +715,11 @@ func (b *blockingFlushStore) WriteGaps(_ context.Context, gaps []GapInput) error
 	return errors.New("ingest down")
 }
 
-// When the shutdown grace expires during a backend outage, late
-// arrivals are rejected with loud accounting and the journaled
-// backlog stays queued for the next boot: nothing vanishes without a
-// gap or a retained record.
+// When the grace expires mid-outage, late arrivals are rejected with accounting
+// and the backlog stays journaled: nothing vanishes without a record.
 func TestDrainShutdownRejectsLateArrivalsAndKeepsBacklog(t *testing.T) {
 	store := &blockingFlushStore{blocked: make(chan struct{}), release: make(chan struct{})}
 	a := newTestIngester(t, store, AsyncIngesterConfig{ShutdownGrace: 250 * time.Millisecond})
-	// The first batch queues; the drain reads it and blocks in
-	// the failing store.
 	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 1)) != AdmitAccepted {
 		t.Fatal("expected the batch to queue")
 	}
@@ -758,8 +729,7 @@ func TestDrainShutdownRejectsLateArrivalsAndKeepsBacklog(t *testing.T) {
 		a.drainShutdown(context.Background())
 	}()
 	<-store.blocked
-	// While the drain retries, arrivals after the seal are rejected
-	// and accounted — never silently accepted and lost.
+	// Arrivals after the seal are rejected and accounted, never silently lost.
 	if a.EnqueueAgentBatch("agent-1", testAgentBatch("svc-2", "alloc-2", 1)) == AdmitAccepted {
 		t.Fatal("batch accepted after the drain sealed")
 	}
@@ -769,8 +739,7 @@ func TestDrainShutdownRejectsLateArrivalsAndKeepsBacklog(t *testing.T) {
 	close(store.release)
 	<-done
 
-	// The grace expired: the rejected arrivals surface as accounted
-	// loss, and the unflushed backlog stays journaled for recovery.
+	// Rejected arrivals surface as accounted loss; the backlog stays journaled.
 	stats := a.Stats()
 	if stats.GapsLost != 2 {
 		t.Fatalf("post-seal arrivals must be accounted, got %+v", stats)
@@ -783,9 +752,8 @@ func TestDrainShutdownRejectsLateArrivalsAndKeepsBacklog(t *testing.T) {
 func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
 	t.Parallel()
 
-	// No Run loop: the journal budget binds on real retained bytes,
-	// so maximum-size lines can never pile up in memory or on disk
-	// past the configured bound.
+	// No Run loop: the budget binds on real retained bytes, so maximum-size lines
+	// cannot pile past the bound.
 	store := &fakeFlushStore{enabled: true}
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{QueueBytes: 4096})
 
@@ -812,8 +780,6 @@ func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
 	if stats.ShedLines != 3 {
 		t.Fatalf("shed %d lines, want 3", stats.ShedLines)
 	}
-	// The shed loss is durable: its gap rows drain to the store and
-	// reach reads even though the lines themselves were too big.
 	stop := runIngester(t, ingester)
 	defer stop()
 	deadline := time.Now().Add(10 * time.Second)
@@ -840,8 +806,7 @@ func TestAsyncIngesterShedsByBytesPastQueueBudget(t *testing.T) {
 	}
 }
 
-// The flusher merges a bounded journal round per store write, so
-// writes stay bounded even when the backlog holds far more.
+// The flusher merges a bounded journal round per store write.
 func TestAsyncIngesterWriteRoundsStayBounded(t *testing.T) {
 	t.Parallel()
 
@@ -869,8 +834,7 @@ func TestAsyncIngesterWriteRoundsStayBounded(t *testing.T) {
 func TestAsyncIngesterByteBudgetCountsAttributes(t *testing.T) {
 	t.Parallel()
 
-	// Retained attribute maps count against the byte budget: tiny
-	// lines with fat attributes must not slip past the bound.
+	// Attribute maps count against the budget: tiny lines with fat attributes must shed.
 	store := &fakeFlushStore{enabled: true}
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{QueueBytes: 2000})
 
@@ -920,8 +884,7 @@ func TestAsyncIngesterByteBudgetCountsAttributes(t *testing.T) {
 func TestAsyncIngesterReplayedProducerGapsDoNotInflate(t *testing.T) {
 	t.Parallel()
 
-	// A producer re-reporting the same drop summary after a failed
-	// send must not double-count its loss when the batch sheds.
+	// A re-reported drop summary must not double-count its loss when the batch sheds.
 	store := &fakeFlushStore{enabled: true}
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{})
 	summary := func() *agentv1.LogBatch {
@@ -960,12 +923,8 @@ func TestAsyncIngesterReplayedProducerGapsDoNotInflate(t *testing.T) {
 func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 	t.Parallel()
 
-	// Gap rows are retained writes too: a producer spamming gap-only
-	// batches past the per-allocation guard never gets its accounting
-	// erased — denied reports coalesce per window and
-	// summary-identified reports keep their replace semantics — but
-	// the accounting rides the batch's journal record and is durable
-	// before the batch is acknowledged.
+	// Gap rows are retained writes too: denied reports coalesce per window (or by
+	// summary identity) and ride the batch's journal record, durable before ack.
 	store := &fakeFlushStore{enabled: true}
 	ingester := newTestIngester(t, store, AsyncIngesterConfig{RatePerSec: 1, Burst: 1})
 	summary := func(id string) *agentv1.LogBatch {
@@ -1005,8 +964,7 @@ func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Anonymous reports inside one batch coalesce into bounded rows:
-	// the guard limits retained rows without erasing accounting.
+	// Anonymous reports in one batch coalesce into bounded rows.
 	anonymous := &agentv1.LogBatch{AgentId: "agent-2"}
 	for i := 0; i < 5; i++ {
 		anonymous.Drops = append(anonymous.Drops, &platformv1.LogDropSummary{
@@ -1042,9 +1000,8 @@ func TestAsyncIngesterLimitsGapRows(t *testing.T) {
 	}
 }
 
-// A shed batch's loss accounting is durable: gap rows journaled at
-// shed time survive a restart and reach reads instead of dying with
-// the process that dropped the lines.
+// A shed batch's loss accounting is durable: gaps journaled at shed time survive
+// a restart and reach reads.
 func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 	t.Parallel()
 
@@ -1073,8 +1030,7 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 		t.Fatalf("expected the oversized batch to shed: %+v", first.Stats())
 	}
 
-	// Crash before any flush: the restart must surface the shed
-	// lines as gap rows from the journal.
+	// Crash before any flush: the restart must surface shed lines as gap rows.
 	second := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir, QueueBytes: 4096})
 	stop := runIngester(t, second)
 	defer stop()
@@ -1096,8 +1052,7 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 	}
 }
 
-// A corrupted journal record surfaces as attributed gap rows: an
-// accepted batch lost to corruption must never vanish from reads.
+// A corrupted journal record surfaces as attributed gap rows, never vanished.
 func TestAsyncIngesterSurfacesJournalCorruption(t *testing.T) {
 	t.Parallel()
 
@@ -1108,7 +1063,6 @@ func TestAsyncIngesterSurfacesJournalCorruption(t *testing.T) {
 		t.Fatal("enqueue must accept-or-shed, never fail")
 	}
 
-	// Corrupt the journaled frame on disk before recovery.
 	entries, err := os.ReadDir(spoolDir)
 	if err != nil {
 		t.Fatalf("read spool dir: %v", err)

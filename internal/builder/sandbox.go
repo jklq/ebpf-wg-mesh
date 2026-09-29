@@ -12,47 +12,28 @@ import (
 	"strings"
 )
 
-// sandboxBackendName is the only sandbox backend selection. Unknown
-// backends fail validation: execution never silently falls back to a
-// weaker backend.
+// sandboxBackendName is the only sandbox backend; unknown backends fail validation.
 const sandboxBackendName = "containerd"
 
-// sandboxBuildRoot is the guest path the execution workspace is
-// mounted at inside every build sandbox. Host paths under the
-// workspace root translate 1:1 beneath it (see guestWorkspacePath),
-// so the sandbox needs no knowledge of host layout.
+// sandboxBuildRoot is the guest path of the execution workspace in every sandbox.
 const sandboxBuildRoot = "/build"
 
-// SandboxBackend runs build steps inside one-shot sandboxes. It is the
-// narrow 2.4b backend seam: workspace lifecycle, snapshot handling,
-// credential scoping, and cleanup stay in the BuildExecutor; the
-// backend only provides containment primitives (namespaces, mounts,
-// limits, network policy) and reaps its own crashed state.
+// SandboxBackend runs build steps inside one-shot sandboxes: containment
+// primitives only, plus reaping its own crashed state.
 type SandboxBackend interface {
-	// SetupNet creates the execution network: a private network
-	// namespace that is loopback-only when policy denies general
-	// egress, or attached to the configured CNI network with
-	// denied-CIDR blackholes otherwise. It never falls back to the
-	// host network: setup failure aborts the build.
+	// SetupNet creates the execution network: loopback-only or CNI-attached with
+	// denied-CIDR blackholes. It never falls back to the host network.
 	SetupNet(ctx context.Context, buildID string, policy NetworkPolicy) (SandboxNet, error)
-	// RunStep runs one command in a fresh one-shot sandbox attached
-	// to net and streams output to step.OnLog. It kills the sandbox
-	// on context cancellation and removes the container and its
-	// snapshot afterwards.
+	// RunStep runs one command in a fresh one-shot sandbox attached to net.
 	RunStep(ctx context.Context, net SandboxNet, step SandboxStep) error
-	// TeardownNet removes execution network state. It is best
-	// effort and reports joined errors.
+	// TeardownNet removes execution network state. Best effort; reports joined errors.
 	TeardownNet(ctx context.Context, net SandboxNet) error
-	// ReapStale removes sandboxes and networks left behind by dead
-	// builders and returns the number reclaimed.
+	// ReapStale removes sandboxes and networks left behind by dead builders.
 	ReapStale(ctx context.Context) (int, error)
-	// Close releases backend resources.
 	Close() error
 }
 
-// SandboxBackendConfig carries the backend's explicit inputs. It
-// mirrors config.BuilderSandboxConfig plus the builder work dir,
-// which scopes netns state.
+// SandboxBackendConfig carries the backend's explicit inputs.
 type SandboxBackendConfig struct {
 	Socket          string
 	Namespace       string
@@ -67,49 +48,32 @@ type SandboxBackendConfig struct {
 	WorkDir         string
 }
 
-// SandboxNet is an execution-scoped network created by SetupNet.
 type SandboxNet struct {
 	BuildID string
-	// Path is the network namespace path sandboxes join.
-	Path string
-	// Attached reports whether the namespace is attached to the CNI
-	// network (general egress) or loopback-only.
+	Path    string
+	// Attached reports whether the namespace is CNI-attached or loopback-only.
 	Attached bool
 }
 
-// SandboxStep is one command run inside a sandbox.
 type SandboxStep struct {
-	// Name identifies the step for container naming and logs.
 	Name string
-	// Argv is the command and arguments, resolved inside the
-	// sandbox image.
 	Argv []string
-	// Env is the complete explicit environment. The backend never
-	// inherits the builder process environment.
-	Env []string
-	// Dir is the guest working directory.
-	Dir string
-	// Limits are the execution resource limits.
+	// Env is the complete explicit environment; the backend never inherits the host's.
+	Env    []string
+	Dir    string
 	Limits ResourceLimits
-	// Mounts are host-to-guest bind mounts. Every destination must
-	// be the sandbox build root, a path beneath it, or a resolver
-	// file; nothing else from the host may enter.
+	// Mounts are host-to-guest bind mounts confined to the build root and resolver files.
 	Mounts []SandboxMount
-	// OnLog receives streamed output lines.
-	OnLog func(commandOutputLine)
+	OnLog  func(commandOutputLine)
 }
 
-// SandboxMount is one host-to-guest bind mount.
 type SandboxMount struct {
 	Source   string
 	Dest     string
 	ReadOnly bool
 }
 
-// SandboxStepError reports a sandboxed step that ran and exited
-// nonzero. Tail carries the step's bounded output so the executor can
-// classify the failure (build vs push) the same way it classifies
-// host-child failures.
+// SandboxStepError reports a sandboxed step that exited nonzero, with bounded tail output.
 type SandboxStepError struct {
 	Step     string
 	ExitCode int
@@ -120,9 +84,7 @@ func (e *SandboxStepError) Error() string {
 	return fmt.Sprintf("sandbox step %q exited with code %d", e.Step, e.ExitCode)
 }
 
-// NewSandboxBackend opens the configured sandbox backend. Only the
-// containerd backend exists; unknown backends and unsupported
-// platforms fail closed.
+// NewSandboxBackend opens the configured sandbox backend. Only containerd exists.
 func NewSandboxBackend(cfg SandboxBackendConfig) (SandboxBackend, error) {
 	if strings.TrimSpace(cfg.Image) == "" {
 		return nil, errors.New("sandbox image is required for the hardened executor")
@@ -130,11 +92,8 @@ func NewSandboxBackend(cfg SandboxBackendConfig) (SandboxBackend, error) {
 	return newSandboxBackendPlatform(cfg)
 }
 
-// validateSandboxMounts rejects any mount that would expose host
-// state beyond the execution workspace and the rendered resolver
-// files. Destinations are confined to the sandbox build root (and
-// paths beneath it) plus /etc/resolv.conf and /etc/hosts; sources
-// must be absolute host paths that exist.
+// validateSandboxMounts rejects mounts exposing host state beyond the workspace
+// and resolver files. Sources must be absolute and exist.
 func validateSandboxMounts(mounts []SandboxMount) error {
 	if len(mounts) == 0 {
 		return errors.New("sandbox requires at least the workspace mount")
@@ -165,9 +124,7 @@ func validateSandboxMounts(mounts []SandboxMount) error {
 	return nil
 }
 
-// guestWorkspacePath translates a host path under the workspace root
-// to its guest path inside the sandbox. Paths outside the root are
-// rejected: the sandbox only ever sees the workspace.
+// guestWorkspacePath translates a host path under the workspace root to its guest path.
 func guestWorkspacePath(workspaceRoot, hostPath string) (string, error) {
 	root, err := filepath.EvalSymlinks(workspaceRoot)
 	if err != nil {
@@ -201,9 +158,7 @@ func guestWorkspacePath(workspaceRoot, hostPath string) (string, error) {
 	return sandboxBuildRoot + "/" + filepath.ToSlash(rel), nil
 }
 
-// sandboxContainerID derives a containerd-safe container ID from a
-// build ID and step name. Container IDs accept a narrower charset
-// than build IDs, so anything outside [A-Za-z0-9_.-] is replaced.
+// sandboxContainerID derives a containerd-safe container ID from a build ID and step name.
 func sandboxContainerID(buildID, step string) (string, error) {
 	raw := "build-" + strings.TrimSpace(buildID) + "-" + strings.TrimSpace(step)
 	if strings.TrimSpace(buildID) == "" || strings.TrimSpace(step) == "" {
@@ -222,9 +177,7 @@ func sandboxContainerID(buildID, step string) (string, error) {
 	return b.String(), nil
 }
 
-// deniedRoutePrefixes parses the execution's denied CIDRs into route
-// targets. Invalid CIDRs fail the build rather than silently
-// widening egress.
+// deniedRoutePrefixes parses the denied CIDRs into route targets. Invalid CIDRs fail the build.
 func deniedRoutePrefixes(policy NetworkPolicy) ([]netip.Prefix, error) {
 	out := make([]netip.Prefix, 0, len(policy.DeniedCIDRs))
 	for _, raw := range policy.DeniedCIDRs {
@@ -237,12 +190,9 @@ func deniedRoutePrefixes(policy NetworkPolicy) ([]netip.Prefix, error) {
 	return out, nil
 }
 
-// renderSandboxResolvConf renders the resolver configuration mounted
-// into sandboxes. Explicit nameservers win; otherwise the builder
-// host's resolvers are inherited with loopback entries dropped,
-// because a private network namespace cannot reach the host's
-// loopback resolver. Loopback-only inheritance with general egress
-// fails closed and tells the operator to configure nameservers.
+// renderSandboxResolvConf renders the resolver configuration for sandboxes.
+// Explicit nameservers win; otherwise host resolvers are inherited with loopback
+// entries dropped. Loopback-only inheritance with general egress fails closed.
 func renderSandboxResolvConf(hostResolvConf []byte, nameservers []string, allowEgress bool) ([]byte, error) {
 	if len(nameservers) > 0 {
 		var b strings.Builder
@@ -282,17 +232,13 @@ func renderSandboxResolvConf(hostResolvConf []byte, nameservers []string, allowE
 	return []byte(b.String()), nil
 }
 
-// renderSandboxHostsFile renders the minimal hosts file mounted into
-// sandboxes. It carries only loopback and the sandbox hostname: no
-// host entries leak in.
+// renderSandboxHostsFile renders the minimal hosts file: loopback and sandbox hostname only.
 func renderSandboxHostsFile() []byte {
 	return []byte("127.0.0.1 localhost\n::1 localhost\n127.0.0.1 build\n::1 build\n")
 }
 
-// selectCNIConfig finds the CNI configuration file for the named
-// network. Selection is by exact network name, never by directory
-// order, so a build sandbox can never accidentally join the workload
-// mesh (or any other network) because of file sort order.
+// selectCNIConfig finds the CNI configuration file for the named network by exact
+// name, never directory order.
 func selectCNIConfig(confDir, network string) (path string, isList bool, err error) {
 	network = strings.TrimSpace(network)
 	if network == "" {
@@ -313,9 +259,7 @@ func selectCNIConfig(confDir, network string) (path string, isList bool, err err
 		}
 	}
 	sort.Strings(candidates)
-	// Every candidate must parse, even ones past the match: a corrupt
-	// file in the conf dir is operator error and fails the build
-	// rather than being silently skipped.
+	// Every candidate must parse, even past the match: a corrupt file fails the build.
 	names := make(map[string]string, len(candidates))
 	for _, candidate := range candidates {
 		data, err := os.ReadFile(candidate)

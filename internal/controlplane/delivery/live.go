@@ -36,8 +36,8 @@ type AgentSession struct {
 	OfferedCursor  int64
 	AcceptedEpoch  int64
 	AcceptedCursor int64
-	// Offered versions accumulate per session: a cumulative ack may lag a
-	// later grant and must still validate against the batch it acknowledges.
+	// Offered versions accumulate per session: a lagging cumulative ack must
+	// still validate against the batch it acknowledges.
 	OfferedNodeConfig   []string
 	AcceptedNodeConfig  string
 	OfferedCredentials  []string
@@ -405,8 +405,7 @@ func (l *Live) BeginSession(agentID, sessionID string, inventory []string, assig
 	return nil
 }
 
-// InitSessionVersions seeds the accepted per-stream versions from hello;
-// offered stays empty until the first grant in this session.
+// InitSessionVersions seeds accepted per-stream versions from hello.
 func (l *Live) InitSessionVersions(agentID, sessionID string, accepted SyncVersions) {
 	if l == nil {
 		return
@@ -546,13 +545,9 @@ func (l *Live) AcceptReport(agentID, sessionID string, sequence uint64, inventor
 	session.LastContact = l.now().UTC()
 	session.Ready = ready
 	session.Reachable = true
-	// A session can begin before the agent has started every assigned
-	// allocation (for example immediately after a partition heals). The agent's
-	// latest status report is the authoritative inventory, so admission is
-	// promoted as soon as the inventory catches up instead of being frozen
-	// unreconciled until the next reconnect. It is never demoted here: an
-	// already-admitted agent keeps receiving work, exactly as before this
-	// report-driven check existed.
+	// The agent's latest status report is the authoritative inventory, so
+	// admission is promoted as soon as the inventory catches up. It is never
+	// demoted here: an admitted agent keeps receiving work.
 	session.Reconciled = session.Reconciled || inventoryReconciled(l.assignedIDsLocked(session.AgentID), inventory)
 	if session.Reconciled {
 		l.admitted[session.AgentID] = struct{}{}
@@ -584,15 +579,13 @@ func observationPhaseClass(phase string) int {
 	}
 }
 
-// ObservationOutcome describes how a recorded allocation observation affects
-// downstream work and status subscribers.
+// ObservationOutcome describes how a recorded observation affects downstream
+// work and status subscribers.
 type ObservationOutcome struct {
-	// Changed reports phase, health, or topology changes that require rollout
-	// or deployment work. Changed always implies StatusInvalidated.
+	// Changed reports changes requiring rollout work. It implies StatusInvalidated.
 	Changed bool
-	// StatusInvalidated reports that the rendered service status changed and
-	// status subscribers must refetch, even when no rollout work is needed
-	// (for example restart-only crash evidence updates).
+	// StatusInvalidated reports rendered status changed and subscribers must
+	// refetch, even when no rollout work is needed.
 	StatusInvalidated bool
 }
 
@@ -628,8 +621,7 @@ func (l *Live) RecordObservation(obs AllocationObservation) (ObservationOutcome,
 	return ObservationOutcome{Changed: true, StatusInvalidated: true}, nil
 }
 
-// observationStatusChanged reports whether any rendered status field differs,
-// including crash evidence and phase detail that do not trigger rollout work.
+// observationStatusChanged reports whether any rendered status field differs.
 func observationStatusChanged(previous, next AllocationObservation) bool {
 	return previous.AppliedSpecRevision != next.AppliedSpecRevision ||
 		previous.AppliedGeneration != next.AppliedGeneration ||

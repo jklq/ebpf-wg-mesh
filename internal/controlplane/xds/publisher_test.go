@@ -17,8 +17,7 @@ type fakeSource struct {
 	backends []Backend
 	calls    atomic.Int32
 	guardErr error
-	// firstStarted is closed when the first read starts; the read then
-	// waits for blockFirst to close so bursts queue behind it.
+	// The first read signals firstStarted, then waits for blockFirst so bursts queue behind it.
 	firstStarted chan struct{}
 	blockFirst   chan struct{}
 }
@@ -232,8 +231,7 @@ func TestPublisherRequestSyncCoalescesBurst(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("initial sync never started")
 	}
-	// The initial sync is blocked, so the whole burst must coalesce into
-	// the single queued request.
+	// The initial sync is blocked, so the whole burst must coalesce into the single queued request.
 	publisher.RequestSync()
 	publisher.RequestSync()
 	publisher.RequestSync()
@@ -250,8 +248,7 @@ func TestPublisherRequestSyncCoalescesBurst(t *testing.T) {
 func TestPublisherFollowAdoptsDurablePublication(t *testing.T) {
 	t.Parallel()
 
-	// The live owner computed and published this snapshot; this replica
-	// holds no live state at all.
+	// The live owner computed and published this snapshot; this replica holds no live state at all.
 	backends := []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}}
 	ownerSnap := mustBuild(t, BuildInput{Backends: backends, ListenAddrs: []string{":8080"}})
 	pubs := &fakePublications{pub: Publication{
@@ -268,8 +265,7 @@ func TestPublisherFollowAdoptsDurablePublication(t *testing.T) {
 		t.Fatalf("follower served %+v, want version %s", status, ownerSnap.Version)
 	}
 
-	// The follower must refuse storage whose inputs do not match the row
-	// version instead of serving a tampered snapshot.
+	// The follower must refuse mismatched storage instead of serving a tampered snapshot.
 	pubs.mu.Lock()
 	pubs.pub.Inputs = []byte(`{"tampered":true}`)
 	pubs.mu.Unlock()
@@ -295,15 +291,13 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 	}
 	version := server.Status().Version
 
-	// A disconnected Envoy that never fully applied keeps its stale version
-	// even after it disappears from the local server view.
+	// A disconnected Envoy that never fully applied keeps its stale version after disappearing.
 	nodes.nodes["envoy-stale"] = NodeObservation{NodeID: "envoy-stale", AppliedVersion: "older"}
 	if err := publisher.flushNodeObservations(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 
-	// A connected Envoy mid-apply (only EDS ACKed) must not report the new
-	// version: it may still route with the old listeners and endpoints.
+	// A connected Envoy mid-apply must not report the new version: it may still route with the old one.
 	if err := publisher.Replicate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -312,8 +306,7 @@ func TestPublisherFollowFlushesNodeObservations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Once every required type is ACKed at the served version the node is
-	// fully applied.
+	// Once every required type is ACKed at the served version the node is fully applied.
 	for _, typeURL := range server.Status().RequiredTypes {
 		server.observe(context.Background(), 0, "envoy-partial", typeURL, version, nil)
 	}
@@ -348,8 +341,7 @@ func TestPublisherConvergedRequiresEveryKnownNode(t *testing.T) {
 	}
 	version := server.Status().Version
 
-	// No observed nodes: nothing has ever subscribed, so nothing can route
-	// to withdrawn endpoints.
+	// No observed nodes: nothing ever subscribed, so nothing can route to withdrawn endpoints.
 	if converged, err := publisher.Converged(ctx); err != nil || !converged {
 		t.Fatalf("Converged = %v, %v; want true with no nodes", converged, err)
 	}
@@ -362,8 +354,7 @@ func TestPublisherConvergedRequiresEveryKnownNode(t *testing.T) {
 		t.Fatalf("Converged = %v, %v; want false while a node holds stale config", converged, err)
 	}
 
-	// An observed node that never fully applied also blocks: it is mid-apply
-	// and may still route with whatever it holds.
+	// A mid-apply observed node also blocks: it may still route with whatever it holds.
 	if err := nodes.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: "envoy-2", AppliedVersion: ""}}); err != nil {
 		t.Fatal(err)
 	}
@@ -396,9 +387,8 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	}
 	server.SetNodeStore(nodes)
 
-	// First contact durably registers the subscriber before any config can
-	// reach it. Only then may it receive the snapshot that routes to live
-	// allocations.
+	// First contact durably registers the subscriber before any config can reach it. Only then
+	// may it receive the snapshot that routes to live allocations.
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
 	if err := server.onFetchRequest(ctx, req); err != nil {
 		t.Fatal(err)
@@ -410,8 +400,7 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 		t.Fatalf("first contact observation = %+v (present=%t), want durable registration with empty version", got, ok)
 	}
 
-	// A subscriber that has applied nothing is mid-apply: it must block the
-	// drain barrier rather than be ignored as unknown.
+	// A subscriber that applied nothing is mid-apply and must block the drain barrier.
 	if converged, err := publisher.Converged(ctx); err != nil || converged {
 		t.Fatalf("Converged = %v, %v; want false while a fresh subscriber holds no applied version", converged, err)
 	}
@@ -500,8 +489,7 @@ func TestPublisherRefreshNeverServesMovedPastPublication(t *testing.T) {
 	server := NewServer(context.Background())
 	publisher := NewPublisher(PublisherConfig{Publications: pubs, Server: server})
 
-	// The adoption races a fresh publication. It must end on the moved
-	// row's version and never serve the stale build in between.
+	// A racing adoption must end on the moved row's version, never the stale build.
 	if err := publisher.Refresh(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -524,8 +512,7 @@ func (f *recordingNodeStore) UpsertNodeObservations(ctx context.Context, observa
 func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) {
 	t.Parallel()
 
-	// A lagging follower holds no snapshot yet while the durable row
-	// already carries the current publication.
+	// A lagging follower holds no snapshot yet while the durable row already carries the current publication.
 	published := mustBuild(t, BuildInput{
 		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
 		ListenAddrs: []string{":8080"},
@@ -543,8 +530,7 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 		return publisher.Refresh(ctx)
 	})
 
-	// First contact must register durably and then serve the durable
-	// publication, never the stale local cache.
+	// First contact must register durably and then serve the durable publication, never the stale local cache.
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
 	if err := server.onFetchRequest(context.Background(), req); err != nil {
 		t.Fatal(err)
@@ -591,9 +577,8 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	})
 
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-x"}, TypeUrl: resourcev3.EndpointType}
-	// First attempt hits a store outage: fail closed, but the node must not
-	// be considered handled — the next request has to run the full
-	// register-then-refresh sequence again.
+	// First attempt hits a store outage: fail closed, but the node must not count as handled —
+	// the next request reruns the full register-then-refresh sequence.
 	if err := server.onFetchRequest(context.Background(), req); err == nil {
 		t.Fatal("expected registration failure to fail the request closed")
 	}
@@ -622,9 +607,8 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 func TestPublisherConvergesWithoutEDSSubscription(t *testing.T) {
 	t.Parallel()
 
-	// A snapshot without endpoints leaves Envoy with no EDS cluster and
-	// therefore no EDS subscription to ACK. The drain barrier must still
-	// converge once the standing types apply.
+	// A snapshot without endpoints leaves Envoy with no EDS subscription to ACK. The drain
+	// barrier must still converge once the standing types apply.
 	pubs := &fakePublications{}
 	nodes := newFakeNodes()
 	publisher, server := testPublisherWithNodes(&fakeSource{}, pubs, nodes)

@@ -14,9 +14,8 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-// TestAgentSyncRepairsObservationOverlayOnConnectedSession: observation
-// overlay drift at a fixed cursor must reach the connected agent as a
-// same-cursor repair checkpoint, and the session goes quiet afterwards.
+// TestAgentSyncRepairsObservationOverlayOnConnectedSession: observation overlay drift at a fixed
+// cursor must reach the connected agent as a same-cursor repair checkpoint, and the session goes quiet afterwards.
 func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 240*time.Second)
 	defer cancel()
@@ -96,8 +95,7 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 	}
 	envID := productionEnvironmentID(t, server.store, projects[0].ID)
 
-	// Establish the session first so the repair is measured against the
-	// initial checkpoint.
+	// Establish the session first so the repair is measured against the initial checkpoint.
 	conn, stream := enrollSyncAgent(ctx, t, server.InternalAddr(), roots, agentID, tokenA, agentID, "[fd00:31::30]:51820", "fd00:31::30", "overlay-drift-key", clusterID)
 	defer conn.Close()
 	messages := syncMessageReader(stream)
@@ -110,9 +108,8 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 	}
 	drainSyncQuiet(t, messages, time.Second, track)
 
-	// A healthy serving allocation contributes an internal host entry.
-	// The image is a pinned digest: deploy-by-digest resolves mutable
-	// tags at create, which this repair test does not exercise.
+	// A healthy serving allocation contributes an internal host entry. The image is a pinned digest:
+	// deploy-by-digest resolves mutable tags at create, which this test does not exercise.
 	service, err := server.delivery.CreateService(ctx, testUser("user-1"), envID, "web", directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8080}), CpuMillis: 100, MemoryMebibytes: 64,
 	}), agentID)
@@ -188,8 +185,7 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 	case <-time.After(3 * time.Second):
 	}
 
-	// Flipping healthy again must repair again: the comparison runs on every
-	// sync check.
+	// Flipping healthy again must repair again: the comparison runs on every sync check.
 	condition = &agentv1.ServiceCondition{
 		AllocationId: unhealthy.AllocationId, ServiceId: unhealthy.ServiceId,
 		DesiredSpecRevision: unhealthy.DesiredSpecRevision, AppliedSpecRevision: unhealthy.AppliedSpecRevision,

@@ -40,8 +40,6 @@ func TestOSCommandRunnerCancellationClosesEscapedPipes(t *testing.T) {
 	}
 }
 
-// limitHelperRequest builds a helper invocation carrying extra
-// environment alongside the standard helper variables.
 func limitHelperRequest(mode string, limits *ProcessLimits, extraEnv ...string) commandRequest {
 	req := helperCommandRequest(mode)
 	req.Limits = limits
@@ -53,9 +51,8 @@ func limitHelperRequest(mode string, limits *ProcessLimits, extraEnv ...string) 
 func TestOSCommandRunnerEnforcesGenerousLimits(t *testing.T) {
 	t.Parallel()
 
-	// RLIMIT_NPROC counts every thread of the builder UID, not just the
-	// build child, so this must clear ambient per-user thread usage on
-	// the test machine (development boxes often run near a thousand).
+	// RLIMIT_NPROC counts every thread of the builder UID, so this must clear
+	// ambient per-user thread usage on the test machine.
 	limits := &ProcessLimits{
 		MemoryBytes:  4 << 30,
 		CPUSeconds:   60,
@@ -84,9 +81,7 @@ func TestOSCommandRunnerEnforcesCPULimit(t *testing.T) {
 func TestOSCommandRunnerEnforcesMemoryLimit(t *testing.T) {
 	t.Parallel()
 
-	// Go build children reserve ~1.2 GiB of virtual address space at
-	// startup, so the limit must clear that before the allocation
-	// under test can trip it.
+	// Go children reserve ~1.2 GiB of virtual space at startup; the limit must clear that first.
 	limits := &ProcessLimits{MemoryBytes: 2 << 30}
 	control := limitHelperRequest("streams", limits)
 	if _, err := (osCommandRunner{}).Run(context.Background(), control, nil); err != nil {
@@ -118,10 +113,7 @@ func TestOSCommandRunnerEnforcesFileSizeLimit(t *testing.T) {
 func TestOSCommandRunnerEnforcesProcessLimit(t *testing.T) {
 	t.Parallel()
 
-	// Any uid 0 bypasses RLIMIT_NPROC (verified for real root and
-	// user namespaces alike), so the capped expectation only holds
-	// unprivileged. The privileged suite covers PID containment at
-	// the sandbox instead.
+	// Uid 0 bypasses RLIMIT_NPROC, so the capped expectation only holds unprivileged.
 	if os.Geteuid() == 0 {
 		t.Skip("root bypasses RLIMIT_NPROC: the limit under test cannot bind here")
 	}

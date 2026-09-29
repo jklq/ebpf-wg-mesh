@@ -343,9 +343,8 @@ func (l *Live) AllocationsByService(serviceID string) []AllocationRecord {
 	return l.allocationsByServiceLocked(serviceID)
 }
 
-// AllocationsByServiceIfServing performs the live-role check and the read under
-// a single lock so a concurrent resign cannot return an empty slice with a nil
-// error.
+// AllocationsByServiceIfServing checks the live role and reads under one lock, so a
+// concurrent resign never yields an empty slice with a nil error.
 func (l *Live) AllocationsByServiceIfServing(serviceID string) ([]AllocationRecord, error) {
 	if l == nil {
 		return nil, ErrNotLiveOwner
@@ -358,9 +357,8 @@ func (l *Live) AllocationsByServiceIfServing(serviceID string) ([]AllocationReco
 	return l.allocationsByServiceLocked(serviceID), nil
 }
 
-// AllocationsByEnvironmentIfServing returns one consistent allocation view for
-// every service in an environment. Including services with no allocations lets
-// callers distinguish an empty live result from a missing lookup.
+// AllocationsByEnvironmentIfServing returns one consistent allocation view per environment
+// service. Empty services are included so callers can tell empty apart from missing.
 func (l *Live) AllocationsByEnvironmentIfServing(environmentID string) (map[string][]AllocationRecord, error) {
 	if l == nil {
 		return nil, ErrNotLiveOwner

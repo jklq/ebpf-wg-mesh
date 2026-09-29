@@ -16,16 +16,13 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// SignKeyWrapPurposeContext binds a wrapped signing key to its own row so
-// wrapped bytes copied to another row do not unwrap.
+// SignKeyWrapPurposeContext binds a wrapped signing key to its own row so copied bytes do not unwrap.
 const SignKeyWrapPurposeContext = "signkey-wrap/v1"
 
-// SignKeyWrapPurpose returns the wrap purpose binding a wrapped signing key
-// to its row.
+// SignKeyWrapPurpose returns the wrap purpose binding a wrapped signing key to its row.
 func SignKeyWrapPurpose(id string) string { return SignKeyWrapPurposeContext + "/" + id }
 
-// Record describes one signing key. It carries identifiers and public
-// material only: private bytes stay wrapped in the row until Unwrap.
+// Record describes one signing key; identifiers and public material only.
 type Record struct {
 	ID            string
 	Scope         string
@@ -39,9 +36,8 @@ type Record struct {
 	RetiredAt     *time.Time
 }
 
-// Material is a Record with its private bytes unwrapped into process memory.
-// For ECDSA keys Private is PKCS#8 DER with Key and Cert parsed; for HMAC
-// keys Private is the raw secret.
+// Material is a Record with its private bytes unwrapped into memory. For ECDSA keys
+// Private is PKCS#8 DER with Key and Cert parsed; for HMAC keys Private is the raw secret.
 type Material struct {
 	Record  Record
 	Private []byte
@@ -49,20 +45,16 @@ type Material struct {
 	Cert    *x509.Certificate
 }
 
-// Provider is the read path every signer and verifier uses: the active key
-// for signing, the active-plus-retiring set for verification, and the
-// public bundle for trust anchors. Service is the database-backed
-// implementation; tests substitute in-memory fakes behind this seam.
+// Provider is the read path every signer and verifier uses: active for signing,
+// active-plus-retiring for verification, public bundle for trust anchors.
 type Provider interface {
 	Active(ctx context.Context, scope string) (Material, error)
 	Verifying(ctx context.Context, scope string) ([]Material, error)
 	PublicBundle(ctx context.Context, scope string) ([]byte, error)
 }
 
-// Service is the shared signing-key inventory. All replicas read the same
-// rows; each replica unwraps into its own memory with its own keyring copy.
-// Reads are read-through on every call so a replica that starts mid-rotation
-// verifies with both keys without cache invalidation.
+// Service is the shared signing-key inventory. Reads go through to the database
+// on every call so mid-rotation replicas verify with both keys.
 type Service struct {
 	db   *sql.DB
 	keks *secretkeys.Registry
@@ -70,26 +62,19 @@ type Service struct {
 
 var _ Provider = (*Service)(nil)
 
-// New assembles a Service over an existing envelope key registry.
 func New(db *sql.DB, keks *secretkeys.Registry) *Service {
 	return &Service{db: db, keks: keks}
 }
 
-// Options configures Open.
 type Options struct {
-	// AllowGenerate permits creating missing scope keys automatically.
-	// Development only: production requires explicit `signing-keys init`
-	// and fails closed without an active key.
+	// AllowGenerate permits creating missing scope keys. Development only.
 	AllowGenerate bool
-	// RegistryEnabled requires the registry scope at startup. Scopes the
-	// control plane never uses in this deployment stay uninitialized.
+	// RegistryEnabled requires the registry scope at startup; unused scopes stay uninitialized.
 	RegistryEnabled bool
 }
 
-// Open builds the signing-key inventory. With AllowGenerate (development)
-// it ensures every scope has an active key so replicas converge at startup.
-// Without it (production) it requires explicitly initialized keys for the
-// scopes this replica serves and fails closed otherwise.
+// Open builds the signing-key inventory. With AllowGenerate it ensures every scope
+// has an active key; without it, keys must be explicitly initialized.
 func Open(ctx context.Context, db *sql.DB, keks *secretkeys.Service, opts Options) (*Service, error) {
 	if db == nil || keks == nil || keks.Registry() == nil {
 		return nil, errors.New("signing keys require a database and envelope key service")
@@ -111,9 +96,7 @@ func Open(ctx context.Context, db *sql.DB, keks *secretkeys.Service, opts Option
 		return svc, nil
 	}
 	for _, scope := range required {
-		// Verifying, not just Active: a replica that cannot unwrap the
-		// retiring key either (missing envelope material) must fail here,
-		// not on its first verification.
+		// Verifying, not just Active: fail here, not on first verification.
 		if _, err := svc.Verifying(ctx, scope); err != nil {
 			if errors.Is(err, ErrNoActiveKey) {
 				return nil, fmt.Errorf("%w for scope %q: initialize it with `controlplane signing-keys init --scope %s`: %w",
@@ -125,17 +108,13 @@ func Open(ctx context.Context, db *sql.DB, keks *secretkeys.Service, opts Option
 	return svc, nil
 }
 
-// EnsureOptions configures EnsureActiveKey.
 type EnsureOptions struct {
-	// RegistryIssuer names the token issuer embedded in a generated
-	// registry signer certificate. Empty selects the default.
+	// RegistryIssuer names the token issuer embedded in a generated registry signer certificate. Empty selects the default.
 	RegistryIssuer string
 }
 
-// EnsureActiveKey returns the scope's active key, generating the scope's
-// first key when none exists. Concurrent replicas racing to initialize
-// converge on one row; losers discard their candidate and load the winner.
-// Production servers never call this: Open requires explicit init there.
+// EnsureActiveKey returns the scope's active key, generating the first key when
+// none exists. Racing replicas converge on one row. Production never calls this.
 func (s *Service) EnsureActiveKey(ctx context.Context, scope string, opts EnsureOptions) (Material, error) {
 	if err := ValidateScope(scope); err != nil {
 		return Material{}, err
@@ -158,25 +137,20 @@ func (s *Service) EnsureActiveKey(ctx context.Context, scope string, opts Ensure
 		return Material{}, err
 	}
 	_ = rec
-	// Re-read through the shared row so the winner's material is
-	// authoritative even when this replica generated a loser candidate.
+	// Re-read through the shared row so the winner's material is authoritative.
 	return s.Active(ctx, scope)
 }
 
-// RotateOptions configures Init and RotateStart.
 type RotateOptions struct {
-	// HMACSecret provisions operator-supplied HMAC material for
-	// user-assertion and dashboard-session scopes instead of generating
-	// it. It lets the operator install the same secret the dashboard
-	// already holds from its host secret manager. Empty generates.
+	// HMACSecret provisions operator-supplied HMAC material for user-assertion and
+	// dashboard-session scopes instead of generating it. It lets the operator install
+	// the same secret the dashboard already holds. Empty generates.
 	HMACSecret []byte
-	// RegistryIssuer names the token issuer embedded in a generated
-	// registry signer certificate. Empty selects the default.
+	// RegistryIssuer names the token issuer embedded in a generated registry signer certificate. Empty selects the default.
 	RegistryIssuer string
 }
 
-// Init creates a scope's first active key. It fails when the scope already
-// has one: Init runs once per scope, then rotation takes over.
+// Init creates a scope's first active key; it runs once per scope, then rotation takes over.
 func (s *Service) Init(ctx context.Context, scope string, opts RotateOptions) (Record, error) {
 	if err := ValidateScope(scope); err != nil {
 		return Record{}, err
@@ -202,10 +176,8 @@ func (s *Service) Init(ctx context.Context, scope string, opts RotateOptions) (R
 	return rec, nil
 }
 
-// RotateStart demotes the scope's active key to retiring and activates a
-// fresh key. Both keys verify until rotate-finish deletes the retiring key
-// after the overlap elapsed. It fails while a rotation is already in
-// progress: finish that one first.
+// RotateStart demotes active to retiring and activates a fresh key. Both verify
+// until rotate-finish. It fails while a rotation is already in progress.
 func (s *Service) RotateStart(ctx context.Context, scope string, opts RotateOptions) (active, retiring Record, err error) {
 	if err := ValidateScope(scope); err != nil {
 		return Record{}, Record{}, err
@@ -224,8 +196,7 @@ func (s *Service) RotateStart(ctx context.Context, scope string, opts RotateOpti
 	} else if !errors.Is(err, ErrNoRotationInProgress) {
 		return Record{}, Record{}, err
 	}
-	// Generate outside the transaction: provider calls must not hold
-	// database locks.
+	// Generate outside the transaction: provider calls must not hold database locks.
 	mat, err := s.generate(ctx, scope, opts)
 	if err != nil {
 		return Record{}, Record{}, err
@@ -273,21 +244,17 @@ func (s *Service) RotateStart(ctx context.Context, scope string, opts RotateOpti
 	return newActive, retiring, nil
 }
 
-// FinishOptions configures RotateFinish.
 type FinishOptions struct {
 	// Now anchors overlap measurement. Zero selects the current time.
 	Now time.Time
-	// MinOverlap overrides the scope's default minimum overlap. Values
-	// below the default are ignored: the default is a floor, not a hint.
+	// MinOverlap overrides the scope's default minimum overlap; values below it are ignored.
 	MinOverlap time.Duration
-	// Force deletes the retiring key before the overlap elapsed. Tests
-	// and documented emergencies only; the runbook never uses it.
+	// Force deletes the retiring key before the overlap elapsed. Tests and documented emergencies only.
 	Force bool
 }
 
-// RotateFinish deletes a scope's retiring key after its overlap elapsed.
-// It refuses early deletion so verifiers keep accepting both keys for
-// longer than the longest credential lifetime.
+// RotateFinish deletes a scope's retiring key after its overlap elapsed. It refuses
+// early deletion so verifiers keep accepting both keys for longer than the longest credential lifetime.
 func (s *Service) RotateFinish(ctx context.Context, scope string, opts FinishOptions) (Record, error) {
 	if err := ValidateScope(scope); err != nil {
 		return Record{}, err
@@ -351,9 +318,8 @@ func (s *Service) Active(ctx context.Context, scope string) (Material, error) {
 	return s.materialize(ctx, rec)
 }
 
-// Verifying returns the keys verifiers accept: the active key first, then
-// the retiring key while a rotation overlaps. Every call reads through to
-// the database so replicas agree mid-rotation without cache invalidation.
+// Verifying returns the keys verifiers accept: active first, then retiring
+// during overlap. Every call reads through so replicas agree mid-rotation.
 func (s *Service) Verifying(ctx context.Context, scope string) ([]Material, error) {
 	if err := ValidateScope(scope); err != nil {
 		return nil, err
@@ -379,10 +345,8 @@ func (s *Service) Verifying(ctx context.Context, scope string) ([]Material, erro
 	return mats, nil
 }
 
-// PublicBundle returns the concatenated certificates verifiers trust for an
-// ECDSA scope: the active certificate first, then the retiring one while a
-// rotation overlaps. Each certificate is trimmed and newline-terminated in
-// a deterministic order shared by every replica.
+// PublicBundle returns the concatenated certificates verifiers trust: active
+// first, then retiring during overlap. Deterministic order, newline-terminated.
 func (s *Service) PublicBundle(ctx context.Context, scope string) ([]byte, error) {
 	mats, err := s.Verifying(ctx, scope)
 	if err != nil {
@@ -402,9 +366,8 @@ func (s *Service) PublicBundle(ctx context.Context, scope string) ([]byte, error
 	return bundle, nil
 }
 
-// ActiveSecret returns the active HMAC secret for dashboard-held scopes.
-// Only the export path and the local harness call this: the secret crosses
-// into operator or dashboard provisioning and never into logs.
+// ActiveSecret returns the active HMAC secret for dashboard-held scopes. The
+// secret never reaches logs.
 func (s *Service) ActiveSecret(ctx context.Context, scope string) ([]byte, error) {
 	mat, err := s.Active(ctx, scope)
 	if err != nil {
@@ -416,8 +379,7 @@ func (s *Service) ActiveSecret(ctx context.Context, scope string) ([]byte, error
 	return append([]byte(nil), mat.Private...), nil
 }
 
-// List returns every signing key, active first within each scope. It never
-// returns private bytes.
+// List returns every signing key, active first within each scope. It never returns private bytes.
 func (s *Service) List(ctx context.Context) ([]Record, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, scope, kid, state, key_type, wrapping_key_id, public_pem, created_at, updated_at, retired_at
@@ -446,9 +408,7 @@ func (s *Service) List(ctx context.Context) ([]Record, error) {
 	return out, nil
 }
 
-// WrappingCounts reports how many signing keys each envelope key currently
-// wraps. Envelope rotation consults it alongside DEK counts before deleting
-// a retired envelope key.
+// WrappingCounts reports how many signing keys each envelope key wraps.
 func (s *Service) WrappingCounts(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT wrapping_key_id, count(*) FROM platform_signing_keys GROUP BY wrapping_key_id`)
@@ -472,9 +432,7 @@ func (s *Service) WrappingCounts(ctx context.Context) (map[string]int64, error) 
 }
 
 // RewrapAll migrates every signing key's wrap onto the active envelope key.
-// It mirrors the DEK rewrap contract: idempotent, resumable per row, safe to
-// re-run until it reports zero. Run it from `keys rewrap` after activating
-// a new envelope key.
+// Idempotent and resumable per row; run from `keys rewrap` after activating.
 func (s *Service) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 	active, err := s.keks.ActiveKey(ctx)
 	if err != nil {
@@ -507,8 +465,7 @@ func (s *Service) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 		return 0, fmt.Errorf("list signing keys to rewrap: %w", err)
 	}
 	for _, item := range work {
-		// Unwrap outside the write transaction: provider calls must not
-		// hold database locks.
+		// Unwrap outside the write transaction: provider calls must not hold database locks.
 		raw, err := s.keks.Unwrap(ctx, item.wrappingKeyID, SignKeyWrapPurpose(item.id), item.wrapped)
 		if err != nil {
 			return rewrapped, fmt.Errorf("rewrap signing key %s: %w", item.id, err)
@@ -528,9 +485,7 @@ func (s *Service) RewrapAll(ctx context.Context) (rewrapped int, err error) {
 	return rewrapped, nil
 }
 
-// VerifyAll probe-unwraps every signing key with the envelope key its row
-// records and reports how many verified. Plaintext is discarded; only the
-// count crosses this boundary.
+// VerifyAll probe-unwraps every signing key and reports how many verified.
 func (s *Service) VerifyAll(ctx context.Context) (verified int, err error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, key_type, wrapping_key_id, wrapped_key, public_pem FROM platform_signing_keys`)
@@ -587,8 +542,7 @@ func (s *Service) VerifyAll(ctx context.Context) (verified int, err error) {
 	return verified, nil
 }
 
-// Ready reports whether every required scope holds an active key. Replicas
-// use it for readiness alongside the envelope key check.
+// Ready reports whether every required scope holds an active key.
 func (s *Service) Ready(ctx context.Context, required []string) bool {
 	if s == nil {
 		return false
@@ -601,8 +555,7 @@ func (s *Service) Ready(ctx context.Context, required []string) bool {
 	return true
 }
 
-// generatedMaterial is a fresh unwrapped key with its wrap already applied,
-// waiting for its row insert.
+// generatedMaterial is a fresh unwrapped key with its wrap applied, waiting for its row insert.
 type generatedMaterial struct {
 	id            string
 	kid           string
@@ -614,8 +567,7 @@ type generatedMaterial struct {
 	Record        Record
 }
 
-// generate mints fresh key material for scope and wraps it under the active
-// envelope key. It touches no signing-key rows: callers insert.
+// generate mints fresh key material for scope under the active envelope key.
 func (s *Service) generate(ctx context.Context, scope string, opts RotateOptions) (*generatedMaterial, error) {
 	keyType, err := KeyTypeForScope(scope)
 	if err != nil {
@@ -670,8 +622,6 @@ func (s *Service) generate(ctx context.Context, scope string, opts RotateOptions
 }
 
 // insertActiveRecord records generated material as a scope's active key.
-// Callers serialize on the scope's unique state: concurrent inserts collide
-// and the loser re-reads the winner.
 func (s *Service) insertActiveRecord(ctx context.Context, scope string, mat *generatedMaterial) (Record, error) {
 	var rec Record
 	var retiredAt sql.NullTime
@@ -691,7 +641,6 @@ func (s *Service) insertActiveRecord(ctx context.Context, scope string, mat *gen
 	return rec, nil
 }
 
-// activeRecord loads a scope's active row without unwrapping.
 func (s *Service) activeRecord(ctx context.Context, scope string) (Record, error) {
 	return s.stateRecord(ctx, scope, KeyStateActive, ErrNoActiveKey)
 }

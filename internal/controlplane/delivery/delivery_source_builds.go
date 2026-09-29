@@ -37,12 +37,9 @@ func (d *Delivery) QueueSourceBuild(ctx context.Context, binding source.SourceBi
 		var dep DeploymentRecord
 		build, dep, reused, err = d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, binding.BuildRecipe, deploymentActor{Kind: DeploymentCauseWebhook}, transition)
 		if errors.Is(err, errSourceRevisionSuperseded) || errors.Is(err, errSourceRevisionChainUnproven) {
-			// A late webhook or retried older revision creates no work:
-			// the binding has moved on to a newer commit. Deliberate
-			// redeploys of old images go through deployment actions.
-			// A push whose chain cannot prove currency is neither: report
-			// that so the coordinator reconciles the tracked head and only
-			// the commit still current builds.
+			// A late or retried older revision creates no work: the binding moved on. Deliberate
+			// redeploys go through deployment actions; an unprovable chain is reported so the
+			// coordinator reconciles the head and only the commit still current builds.
 			result = source.QueuedBuild{Superseded: true, ChainUnproven: errors.Is(err, errSourceRevisionChainUnproven)}
 			return nil
 		}

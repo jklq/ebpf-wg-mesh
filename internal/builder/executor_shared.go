@@ -18,10 +18,9 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// executorOwnerMarker is written into every execution workspace at
-// start and removed when the execution finishes. A workspace that
-// still carries it after a restart belongs to a dead worker and is
-// reclaimed by RecoverStaleWorkspaces.
+// executorOwnerMarker is written into every execution workspace at start and
+// removed when it finishes. A workspace still carrying it belongs to a dead
+// worker and is reclaimed by RecoverStaleWorkspaces.
 const executorOwnerMarker = ".executor-owner.json"
 
 type executorOwner struct {
@@ -29,10 +28,9 @@ type executorOwner struct {
 	BuildID string `json:"build_id"`
 }
 
-// executionWorkspace is the executor-owned directory layout for one
-// build. The repo directory holds the verified source snapshot and is
-// made read-only; scratch, tmp, and plan are the isolated writable
-// areas.
+// executionWorkspace is the executor-owned directory layout for one build. The
+// repo directory holds the verified source snapshot and is read-only; scratch,
+// tmp, and plan are the isolated writable areas.
 type executionWorkspace struct {
 	root         string
 	repoDir      string
@@ -43,10 +41,9 @@ type executionWorkspace struct {
 	markerPath   string
 }
 
-// mapExecutionError translates context errors into executor errors: a
-// cancelled parent context stays context.Canceled, and the executor's
-// own deadline becomes ErrBuildTimeout. Cancellation and timeout win
-// over a coincident build failure so callers can distinguish them.
+// mapExecutionError translates context errors into executor errors: a cancelled
+// parent stays context.Canceled, and the executor's own deadline becomes
+// ErrBuildTimeout. Cancellation and timeout win over a coincident build failure.
 func mapExecutionError(ctx, execCtx context.Context, spec ExecutionSpec, err error) error {
 	if err == nil {
 		return nil
@@ -113,8 +110,7 @@ func validSnapshotDigest(digest string) bool {
 	return err == nil
 }
 
-// validatePushCredentials requires push credentials scoped to exactly
-// the one repository named by the push reference.
+// validatePushCredentials requires push credentials scoped to the pushed repository.
 func validatePushCredentials(push PushCredentials) error {
 	host, repository, err := splitPushReference(push.Reference)
 	if err != nil {
@@ -129,8 +125,7 @@ func validatePushCredentials(push PushCredentials) error {
 	return nil
 }
 
-// splitPushReference parses host and repository out of a tagged or
-// digest-pinned push reference.
+// splitPushReference parses host and repository out of a tagged or digest-pinned reference.
 func splitPushReference(ref string) (host, repository string, err error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" || strings.Contains(ref, "://") {
@@ -157,8 +152,7 @@ func prepareExecutionWorkspace(workDir, buildID string) (executionWorkspace, err
 	if err != nil {
 		return executionWorkspace{}, err
 	}
-	// A leftover root from a dead worker must never be reused: a fresh
-	// execution starts from an empty directory.
+	// A dead worker's leftover root must never be reused.
 	if err := os.RemoveAll(root); err != nil {
 		return executionWorkspace{}, fmt.Errorf("clear stale workspace: %w", err)
 	}
@@ -197,10 +191,8 @@ func prepareExecutionWorkspace(workDir, buildID string) (executionWorkspace, err
 	return workspace, nil
 }
 
-// destroyExecutionWorkspace removes the workspace and verifies its
-// removal. A root-owned read-only snapshot bind is detached first
-// (deletion through it would fail), then write permission is
-// restored because the snapshot directory is read-only by design.
+// destroyExecutionWorkspace removes the workspace and verifies its removal. The
+// read-only snapshot bind is detached first, then write permission is restored.
 func destroyExecutionWorkspace(root string) error {
 	unmountSnapshot(filepath.Join(root, "repo"))
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -225,12 +217,9 @@ func destroyExecutionWorkspace(root string) error {
 	return nil
 }
 
-// recoverStaleWorkspaces reclaims workspaces whose owner marker names
-// a dead worker and verifies each removal. Workspaces without a
-// marker are not executor executions and are left alone, as are
-// markers owned by a live process. Markers from any executor backend
-// are reclaimed by the same rule: ownership is the (pid, marker)
-// pair, not the backend name.
+// recoverStaleWorkspaces reclaims workspaces whose owner marker names a dead
+// worker and verifies each removal. Unmarked directories and live owners are
+// left alone; ownership is the (pid, marker) pair, not the backend name.
 func recoverStaleWorkspaces(workDir string) (int, error) {
 	entries, err := os.ReadDir(workDir)
 	if err != nil {
@@ -286,8 +275,7 @@ func readExecutorOwner(path string) (executorOwner, bool, error) {
 	return owner, true, nil
 }
 
-// materializeSnapshot re-verifies the staged archive digest and
-// extracts it into a read-only snapshot directory.
+// materializeSnapshot re-verifies the staged archive digest and extracts it into a read-only snapshot.
 func materializeSnapshot(spec ExecutionSpec, repoDir string) error {
 	info, err := os.Stat(spec.SnapshotArchivePath)
 	if err != nil {
@@ -318,8 +306,7 @@ func materializeSnapshot(spec ExecutionSpec, repoDir string) error {
 	if err := makeSnapshotReadOnly(repoDir); err != nil {
 		return &buildFailureError{kind: failureKindFetch, err: err}
 	}
-	// After the permission verification: a read-only bind mount for
-	// root, for whom permission bits do not bind.
+	// Root bypasses permission bits: add a read-only bind mount, then verify.
 	if err := remountSnapshotReadOnly(repoDir); err != nil {
 		return &buildFailureError{kind: failureKindFetch, err: err}
 	}
@@ -329,9 +316,8 @@ func materializeSnapshot(spec ExecutionSpec, repoDir string) error {
 	return nil
 }
 
-// makeSnapshotReadOnly removes write permission from the extracted
-// snapshot and verifies that it cannot be written to. Root bypasses
-// permission bits, so as root the verification happens after the
+// makeSnapshotReadOnly removes write permission from the extracted snapshot and
+// verifies it cannot be written to. As root the verification happens after the
 // read-only bind mount instead (see materializeSnapshot).
 func makeSnapshotReadOnly(repoDir string) error {
 	if err := filepath.WalkDir(repoDir, func(path string, entry fs.DirEntry, err error) error {
@@ -358,9 +344,8 @@ func makeSnapshotReadOnly(repoDir string) error {
 	return verifySnapshotNotWritable(repoDir)
 }
 
-// verifySnapshotNotWritable proves the snapshot cannot be written
-// to. It runs after every enforcement layer (permissions for
-// non-root, plus the read-only bind mount for root).
+// verifySnapshotNotWritable proves the snapshot cannot be written to. It runs
+// after every enforcement layer.
 func verifySnapshotNotWritable(repoDir string) error {
 	probe, err := os.OpenFile(filepath.Join(repoDir, ".executor-write-probe"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err == nil {
@@ -371,8 +356,8 @@ func verifySnapshotNotWritable(repoDir string) error {
 	return nil
 }
 
-// dirBytes sums apparent file sizes under root. It fails closed:
-// an unreadable tree is an accounting failure, not zero bytes.
+// dirBytes sums apparent file sizes under root. It fails closed: an unreadable
+// tree is an accounting failure, not zero bytes.
 func dirBytes(root string) (int64, error) {
 	var total int64
 	if err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
@@ -394,8 +379,6 @@ func dirBytes(root string) (int64, error) {
 	return total, nil
 }
 
-// enforceWorkspaceDiskLimit accounts executor-managed workspace bytes
-// against the execution disk limit.
 func enforceWorkspaceDiskLimit(root string, maxBytes int64) error {
 	total, err := dirBytes(root)
 	if err != nil {
@@ -407,14 +390,10 @@ func enforceWorkspaceDiskLimit(root string, maxBytes int64) error {
 	return nil
 }
 
-// scopedDockerConfig writes a per-execution docker config holding the
-// push credentials for exactly the one repository named by pushRef. It
-// deliberately does not merge the host's docker config: ambient
-// credentials must never enter a build. When mirrorHostToolSupport is
-// true, docker tool plugins are linked in so the docker CLI keeps
-// working; docker contexts (ambient endpoint selection) are never
-// linked. The hardened executor passes false so no host path enters
-// the sandbox through the config directory.
+// scopedDockerConfig writes a per-execution docker config holding the push
+// credentials for exactly the repository named by pushRef. It never merges the
+// host's docker config (ambient credentials must not enter a build) nor links
+// docker contexts (ambient endpoint selection).
 func scopedDockerConfig(scratchDir, pushRef, username, password string, mirrorHostToolSupport bool) (dockerConfigDir string, cleanup func(), err error) {
 	host, _, err := splitPushReference(pushRef)
 	if err != nil {

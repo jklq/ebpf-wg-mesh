@@ -19,13 +19,11 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	if err != nil {
 		return nil, err
 	}
-	// Sealed values decrypt here, on the control plane, for exactly this
-	// agent's assignments. Agents receive runtime plaintext and never keys.
+	// Sealed values decrypt here for this agent's assignments only; agents never get keys.
 	if err := d.resolveSealedEnv(ctx, state); err != nil {
 		return nil, err
 	}
-	// Credentials travel in PullCredentialSet; checkpoints and diffs must
-	// never carry them.
+	// Credentials travel in PullCredentialSet only; checkpoints and diffs must never carry them.
 	for _, svc := range state.GetServices() {
 		svc.RegistryUsername = ""
 		svc.RegistryPassword = ""
@@ -37,8 +35,7 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	return state, nil
 }
 
-// AllocationDiffsFrom returns retained diffs from base to the latest recorded
-// revision. ok=false means send a checkpoint.
+// AllocationDiffsFrom returns retained diffs from base to latest. ok=false means send a checkpoint.
 func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*agentv1.AllocationDiff, target int64, ok bool) {
 	if d == nil || d.allocSync == nil {
 		return nil, 0, false
@@ -53,8 +50,7 @@ func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*age
 	return diffs, target, true
 }
 
-// RebaseAllocationDiffs moves the retained diff baseline to state after a
-// checkpoint delivered it to the agent.
+// RebaseAllocationDiffs moves the retained diff baseline to state after a delivered checkpoint.
 func (d *Delivery) RebaseAllocationDiffs(agentID string, state *agentv1.DesiredNodeState) {
 	if d == nil || d.allocSync == nil {
 		return

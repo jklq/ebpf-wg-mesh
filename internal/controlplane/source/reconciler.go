@@ -38,9 +38,8 @@ func (r *GitHubReconciler) Bootstrap(ctx context.Context) error {
 	if err := r.store.RecoverGitHubWebhookDeliveries(ctx, r.webhookStaleAfter); err != nil {
 		return err
 	}
-	// Source work needs no recovery scan: records are leased with expiry and
-	// the next claim transparently takes over whatever a dead worker left
-	// behind.
+	// Source work needs no recovery scan: records are leased with expiry and the next claim
+	// takes over whatever a dead worker left behind.
 	installationIDs, err := r.store.ListActiveGitHubInstallationIDs(ctx)
 	if err != nil {
 		return err
@@ -101,9 +100,8 @@ func (r *GitHubReconciler) ProcessNext(ctx context.Context) (bool, error) {
 	}
 	payload, err := DecodeWorkPayload(rec.Payload)
 	if err != nil {
-		// A corrupt payload can never succeed: fail it without retry so it
-		// lands in the failed state for inspection instead of burning the
-		// attempt budget.
+		// A corrupt payload can never succeed: fail it without retry so it lands failed for
+		// inspection instead of burning the attempt budget.
 		if failErr := r.coordinator.FailWorkItem(ctx, rec, err, false); failErr != nil {
 			return false, failErr
 		}
