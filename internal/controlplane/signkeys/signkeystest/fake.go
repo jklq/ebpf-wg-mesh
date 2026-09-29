@@ -1,7 +1,4 @@
 // Package signkeystest is an in-memory signkeys.Provider for unit tests.
-// Consumer packages (identity, registry, agent helpers) test rotation
-// behavior against it without a database; the database-backed Service has
-// its own integration suite.
 package signkeystest
 
 import (
@@ -47,7 +44,6 @@ func New(t TestingT) *Fake {
 	return f
 }
 
-// TestingT covers *testing.T without importing testing here.
 type TestingT interface {
 	Helper()
 	Fatalf(format string, args ...any)
@@ -55,7 +51,6 @@ type TestingT interface {
 
 var _ signkeys.Provider = (*Fake)(nil)
 
-// Active returns the scope's signing key.
 func (f *Fake) Active(_ context.Context, scope string) (signkeys.Material, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -66,8 +61,7 @@ func (f *Fake) Active(_ context.Context, scope string) (signkeys.Material, error
 	return s.active, nil
 }
 
-// Verifying returns the active key first, then the retiring key while a
-// rotation overlaps.
+// Verifying returns active first, then retiring during overlap.
 func (f *Fake) Verifying(_ context.Context, scope string) ([]signkeys.Material, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -82,7 +76,6 @@ func (f *Fake) Verifying(_ context.Context, scope string) ([]signkeys.Material, 
 	return out, nil
 }
 
-// PublicBundle concatenates the verifying certificates, active first.
 func (f *Fake) PublicBundle(ctx context.Context, scope string) ([]byte, error) {
 	mats, err := f.Verifying(ctx, scope)
 	if err != nil {
@@ -102,8 +95,7 @@ func (f *Fake) PublicBundle(ctx context.Context, scope string) ([]byte, error) {
 	return bundle, nil
 }
 
-// Rotate demotes the active key to retiring and activates a fresh key,
-// mirroring Service.RotateStart without overlap bookkeeping.
+// Rotate demotes active to retiring and activates a fresh key.
 func (f *Fake) Rotate(t TestingT, scope string) {
 	t.Helper()
 	f.mu.Lock()
@@ -127,7 +119,6 @@ func (f *Fake) Rotate(t TestingT, scope string) {
 	s.active = mat
 }
 
-// Finish drops the retiring key, mirroring Service.RotateFinish.
 func (f *Fake) Finish(t TestingT, scope string) {
 	t.Helper()
 	f.mu.Lock()
@@ -142,7 +133,6 @@ func (f *Fake) Finish(t TestingT, scope string) {
 	s.retiring = nil
 }
 
-// ActiveSecret returns the active HMAC secret for a dashboard-held scope.
 func (f *Fake) ActiveSecret(t TestingT, scope string) []byte {
 	t.Helper()
 	mat, err := f.Active(context.Background(), scope)

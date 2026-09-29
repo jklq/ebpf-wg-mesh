@@ -247,8 +247,7 @@ func TestSealedSecretsNoPlaintextAtRest(t *testing.T) {
 	if _, err := testDelivery(store).SealServiceSecret(ctx, testUser("owner"), service.ID, "TOKEN", []byte(canary)); err != nil {
 		t.Fatal(err)
 	}
-	// Sealed values must not appear in revision JSON, deployment rows, the
-	// journal, or their own ciphertext rows.
+	// Sealed values must not appear in revision JSON, deployments, journal, or ciphertext rows.
 	scoped := []string{
 		`SELECT spec_json::STRING FROM service_revisions WHERE service_id = $1`,
 		`SELECT resolved_spec_json::STRING FROM deployments WHERE service_id = $1`,
@@ -386,8 +385,7 @@ func TestSealedSecretsRPCWiring(t *testing.T) {
 	if len(listed.GetSecrets()) != 0 {
 		t.Fatalf("rpc list after delete = %+v", listed.GetSecrets())
 	}
-	// Oversize values are caller errors, not internal failures, and the
-	// value never appears in the error.
+	// Oversize values are caller errors, and the value never appears in the error.
 	oversize := strings.Repeat("S", secretkeys.MaxSealedValueSize+1)
 	if _, err := rpc.SealServiceSecret(userCtx, &platformv1.SealServiceSecretRequest{
 		ServiceId: service.ID, Name: "BIG", Value: oversize,
@@ -431,8 +429,7 @@ func TestSealedSecretsRollbackRejectsSealedNameConflict(t *testing.T) {
 		completeActionRollout(t, store, service.ID)
 		return currentDeploymentForTest(t, store, ctx, service.ID)
 	}
-	// First release keeps MOVED public; the second drops it; then MOVED
-	// moves to sealed.
+	// First release keeps MOVED public; the second drops it; then MOVED moves to sealed.
 	first := release(directImageServiceSpec(pinnedImage("b"), &platformv1.ServiceRuntime{
 		Env: map[string]string{"MOVED": "public"},
 	}))
@@ -440,10 +437,8 @@ func TestSealedSecretsRollbackRejectsSealedNameConflict(t *testing.T) {
 	if _, err := delivery.SealServiceSecret(ctx, testUser(userID), service.ID, "MOVED", []byte("sealed")); err != nil {
 		t.Fatal(err)
 	}
-	// Rolling back to the deployment whose spec still carries MOVED as
-	// public must fail closed: resurrecting it as public while the
-	// sealed value silently wins in desired state would lie to the
-	// operator about what is running.
+	// Rolling back to a spec that still carries MOVED as public must fail closed:
+	// resurrecting it while sealed silently wins would lie about what is running.
 	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID,
 		platformv1.DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK, "rollback-1", ""); !errors.Is(err, deliverycore.ErrSealedNameConflict) {
 		t.Fatalf("rollback with sealed conflict = %v, want ErrSealedNameConflict", err)
@@ -470,9 +465,8 @@ func TestSealedSecretsConcurrentSealSameName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Concurrent seals for one name race on max(version)+1; every caller
-	// must land a distinct version instead of one failing with a raw
-	// duplicate-key error.
+	// Concurrent seals for one name race on max(version)+1; every caller lands a
+	// distinct version instead of failing with a duplicate-key error.
 	const racers = 8
 	versions := make([]int64, racers)
 	errs := make([]error, racers)

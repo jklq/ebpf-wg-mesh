@@ -1,7 +1,6 @@
 import { z } from "zod";
 
-// Mirrors the control plane's sealed secret rules so input fails before the
-// RPC. Messages never echo the value: it must not reach logs or errors.
+// Mirrors the control plane's sealed secret rules so input fails before the RPC. Messages never echo the value.
 export const SEALED_SECRET_NAME_MAX_LENGTH = 128;
 export const SEALED_SECRET_VALUE_MAX_BYTES = 64 * 1024;
 

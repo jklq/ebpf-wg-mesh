@@ -11,13 +11,11 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-// DeletionGCStats reports one garbage-collection pass.
 type DeletionGCStats struct {
 	Collected int
 	ByKind    map[string]int
 }
 
-// DeletionGC removes expired tombstones, committing each removal separately.
 type DeletionGC struct {
 	store     *persistence
 	notifier  deliverycore.PlatformNotifier

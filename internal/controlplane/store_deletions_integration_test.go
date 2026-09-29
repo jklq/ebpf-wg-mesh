@@ -15,8 +15,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// deletionFixture bootstraps one owner with one project and returns the
-// project plus its production environment.
+// deletionFixture bootstraps one owner with one project and returns the project plus its production environment.
 func deletionFixture(t *testing.T, store *persistence, owner, projectName string) (deliverycore.ProjectRecord, deliverycore.EnvironmentRecord) {
 	t.Helper()
 	ctx := context.Background()
@@ -168,17 +167,15 @@ func TestDeletionEnvironmentConfirmationRestoreAndAncestry(t *testing.T) {
 		t.Fatalf("delete production with confirmation: %v", err)
 	}
 
-	// Restoring a child with no tombstone of its own under a tombstoned
-	// parent is refused: restore top-down.
+	// Restoring an untombstoned child under a tombstoned parent is refused: restore top-down.
 	if _, err := store.catalog.deleteProject(ctx, testUser("owner"), project.ID, "demo"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.catalog.restoreEnvironment(ctx, testUser("owner"), staging.ID); !errors.Is(err, deliverycore.ErrAncestorDeleted) {
 		t.Fatalf("restore environment under deleted project: %v", err)
 	}
-	// Clearing an independent child tombstone under a deleted parent is
-	// allowed; the child stays effectively deleted until the parent
-	// returns, and comes back live with it.
+	// Clearing an independent child tombstone under a deleted parent is allowed; the child stays
+	// effectively deleted until the parent returns, and comes back live with it.
 	if _, err := store.catalog.restoreEnvironment(ctx, testUser("owner"), production.ID); err != nil {
 		t.Fatalf("restore production under deleted project: %v", err)
 	}
@@ -238,8 +235,7 @@ func TestDeletionServiceWithdrawsWorkloadsAndRestores(t *testing.T) {
 	if err != nil || len(after.GetServices()) != 0 {
 		t.Fatalf("deleted service still desired: %#v: %v", after.GetServices(), err)
 	}
-	// Placements are dropped at delete time so durable rows stay consistent
-	// with the live view.
+	// Placements are dropped at delete time so durable rows stay consistent with the live view.
 	if count := assertLiveAllocationsMatchDurable(t, store, service.ID); count != 0 {
 		t.Fatalf("deleted service kept %d allocations", count)
 	}
@@ -254,7 +250,6 @@ func TestDeletionServiceWithdrawsWorkloadsAndRestores(t *testing.T) {
 	if restored.Deletion != nil {
 		t.Fatalf("restored service still deleted: %#v", restored.Deletion)
 	}
-	// New work resumes after restore: update, then release.
 	if _, _, err := updateService(ctx, store, "owner", service.ID, "web", directImageServiceSpec("example.test/web:2", nil)); err != nil {
 		t.Fatalf("update after restore: %v", err)
 	}
@@ -304,7 +299,6 @@ func TestDeletionEnvironmentDropsChildPlacements(t *testing.T) {
 	if _, err := store.catalog.restoreEnvironment(ctx, testUser("owner"), staging.ID); err != nil {
 		t.Fatal(err)
 	}
-	// New work resumes after restore: update, then release.
 	if _, _, err := updateService(ctx, store, "owner", service.ID, "web", directImageServiceSpec("example.test/web:2", nil)); err != nil {
 		t.Fatalf("update after restore: %v", err)
 	}
@@ -412,8 +406,7 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 		t.Fatalf("repeat delete volume: %v", err)
 	}
 
-	// A production volume that was ever attached is refused as possibly
-	// non-empty even after the referencing service is gone.
+	// A production volume that was ever attached is refused as possibly non-empty even after the referencing service is gone.
 	prodVolume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), production.ID, "pdata", 64<<20)
 	if err != nil {
 		t.Fatal(err)
@@ -495,8 +488,7 @@ func TestDeletionManagedProjectCannotBeDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Managed projects are refused by authorization, which admits user
-	// projects only.
+	// Managed projects are refused by authorization, which admits user projects only.
 	if _, err := store.catalog.deleteProject(ctx, testUser("owner"), managed.ID, managed.Name); !errors.Is(err, authz.ErrDenied) {
 		t.Fatalf("delete managed project: %v", err)
 	}

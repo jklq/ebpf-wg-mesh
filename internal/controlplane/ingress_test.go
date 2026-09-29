@@ -199,8 +199,7 @@ func TestXDSRemovesDrainingBackendsBeforeShutdown(t *testing.T) {
 		t.Fatalf("serving EDS endpoints = %v, want one", got)
 	}
 
-	// The replacement is ready and the predecessor starts draining while its
-	// container still exists: EDS must drop it before destructive shutdown.
+	// EDS must drop the draining predecessor before destructive shutdown.
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 			SET rollout_state = $1, updated_at = statement_timestamp()
@@ -346,8 +345,7 @@ func TestXDSFollowerServesPublicationWithoutLease(t *testing.T) {
 	}
 	published := serverA.Status()
 
-	// Replica B never held the live state and never ran the publish loop. It
-	// still serves the durable publication.
+	// Replica B never held live state, yet still serves the durable publication.
 	serverB := xds.NewServer(ctx)
 	publisherB := testXDSPublisher(store, serverB, "replica-b")
 	if err := publisherB.Replicate(ctx); err != nil {
@@ -380,9 +378,8 @@ func TestXDSFirstContactServesCurrentPublication(t *testing.T) {
 	}
 	published := serverA.Status()
 
-	// Replica B is lagging: it never ran its follow tick. A fresh
-	// subscriber must still receive the current durable publication at
-	// first contact — never the stale local cache.
+	// A fresh subscriber gets the current durable publication at first contact,
+	// never the stale local cache.
 	serverB := xds.NewServer(ctx)
 	publisherB := testXDSPublisher(store, serverB, "replica-b")
 	serverB.SetFirstContactHook(publisherB.Refresh)
@@ -411,8 +408,7 @@ func TestXDSRegistersSubscriberDurablyAtFirstContact(t *testing.T) {
 	addr := serveXDSServer(t, server)
 	subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)
 
-	// No follow loop has run: the observation exists only if first contact
-	// registered it.
+	// The observation exists only if first contact registered it.
 	nodes, err := store.routing.ListNodeObservations(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -431,9 +427,8 @@ func TestXDSNodeObservationRetention(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	// A node fully applies v2, then regresses to mid-apply: the stale
-	// version it may route with must be retained until a full apply lands
-	// again.
+	// A regressed node keeps routing with the stale version until a full apply
+	// lands again.
 	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
 		{NodeID: "envoy-1", AppliedVersion: "v2", NACKs: 1, LastNACK: "bad eds"},
 	}); err != nil {
@@ -452,8 +447,7 @@ func TestXDSNodeObservationRetention(t *testing.T) {
 		t.Fatalf("observations = %+v, want retained v2 with NACK", nodes)
 	}
 
-	// A disconnected Envoy keeps its row: it keeps routing with its
-	// last-known-good config until its ACK actually arrives.
+	// A disconnected Envoy keeps routing with last-known-good until its ACK arrives.
 	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
 		{NodeID: "envoy-2", AppliedVersion: "v2"},
 	}); err != nil {

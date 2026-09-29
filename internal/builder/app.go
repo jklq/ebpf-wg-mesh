@@ -39,10 +39,8 @@ const (
 type commandRequest struct {
 	Dir    string
 	Binary string
-	// Env is the child's complete environment. The runner never
-	// inherits the builder process environment: the executor supplies
-	// every variable explicitly so ambient host state cannot leak
-	// into a build.
+	// Env is the child's complete environment. The runner never inherits the
+	// builder process environment: every variable is explicit.
 	Env    []string
 	Args   []string
 	Limits *ProcessLimits
@@ -64,10 +62,8 @@ func (e *buildFailureError) Error() string {
 	return e.kind + ": " + e.err.Error()
 }
 
-// logDeliveryError means the attempt's transcript was not accepted.
-// The build stays non-terminal so the lease can expire and another
-// attempt can deliver the output. Marking it failed would end the
-// revision.
+// logDeliveryError means the attempt's transcript was not accepted. The build stays
+// non-terminal so the lease can expire and another attempt can deliver the output.
 type logDeliveryError struct {
 	err error
 }
@@ -101,10 +97,8 @@ func New(cfg config.BuilderConfig) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Defense in depth: config validation already refuses the
-	// development executor in production, but the builder must never
-	// run untrusted builds without isolation even if validation is
-	// bypassed.
+	// Defense in depth: production must never run untrusted builds without
+	// isolation even if config validation is bypassed.
 	if cfg.Profile.IsProduction() && !executor.Isolating() {
 		return nil, fmt.Errorf("builder executor %q does not isolate untrusted code: production requires the hardened executor", executor.Name())
 	}
@@ -126,9 +120,7 @@ func New(cfg config.BuilderConfig) (*App, error) {
 	}, nil
 }
 
-// newExecutorForConfig selects the build executor backend. Config
-// validation already rejects unknown executors; this fails closed
-// anyway.
+// newExecutorForConfig selects the build executor backend, failing closed on unknowns.
 func newExecutorForConfig(cfg config.BuilderConfig) (BuildExecutor, error) {
 	switch cfg.Executor {
 	case "", ExecutorDevelopment:
@@ -278,10 +270,8 @@ func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
 	if err != nil {
 		var undelivered *logDeliveryError
 		if errors.As(err, &undelivered) {
-			// The image or the failure is real, but the transcript
-			// never landed. A failed completion is terminal, so leave
-			// the build leased until it expires and another attempt
-			// can deliver the output.
+			// A failed completion is terminal, so leave the build leased until it
+			// expires and another attempt can deliver the output.
 			return err
 		}
 		_, completeErr := a.client.CompleteBuild(ctx, &platformv1.CompleteBuildRequest{
@@ -334,8 +324,7 @@ func (a *App) buildLogShipConfig(buildID string, leaseEpoch int64) buildLogShipC
 	return buildLogShipConfig{
 		SpoolDir:      buildLogSpoolDir(a.buildLogSpoolBase(), buildID, leaseEpoch),
 		SpoolMaxBytes: maxBytes,
-		// A non-positive rate disables producer limiting; zero is a
-		// deliberate operator choice, not an unset default.
+		// A non-positive rate disables producer limiting; zero is deliberate, not unset.
 		RatePerSec:    float64(ship.RatePerSec),
 		Burst:         burst,
 		BatchSize:     ship.FlushBatchSize,
@@ -351,17 +340,14 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 	defer os.Remove(archivePath)
 	reporter, err := newBuildLogReporter(ctx, a.client, a.cfg.ID, job.GetBuildId(), job.GetServiceId(), job.GetLeaseEpoch(), a.buildLogShipConfig(job.GetBuildId(), job.GetLeaseEpoch()))
 	if err != nil {
-		// Without a log pipeline the attempt's transcript would be
-		// lost, so the build must not run and complete without it.
+		// Without a log pipeline the transcript would be lost: the build must not run.
 		return "", err
 	}
 	defer func() { _ = reporter.Close() }()
 	spec := a.executionSpecForJob(ctx, job, archivePath, digest, reporter)
 	result, err := a.executor.Execute(ctx, spec)
-	// The transcript is part of the build's durable record. A failed
-	// delivery leaves the build non-terminal whether the command
-	// itself failed or the image is already pushed: completing either
-	// outcome without the output would drop the attempt's logs.
+	// The transcript is part of the build's durable record: a failed delivery
+	// leaves the build non-terminal whether the build failed or already pushed.
 	if closeErr := reporter.Close(); closeErr != nil {
 		return "", &logDeliveryError{err: closeErr}
 	}
@@ -405,11 +391,6 @@ func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob,
 			AllowGeneralEgress: !a.cfg.Network.DenyGeneralEgress,
 			DeniedCIDRs:        a.cfg.Network.DeniedCIDRs,
 		},
-		// The development executor exports no cache between
-		// executions. The hardened executor mounts a host cache dir
-		// namespaced by ContentCacheKey when the operator enables
-		// content-addressed mode, and refuses any key that does not
-		// match the build content.
 		Cache:   a.cachePolicyForJob(job, digest),
 		Cleanup: a.cfg.CleanupWorkDir,
 		OnLog: func(line commandOutputLine) {
@@ -418,9 +399,7 @@ func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob,
 	}
 }
 
-// cachePolicyForJob maps the configured cache mode to an execution
-// cache policy. Content-addressed keys derive purely from build
-// content so cached data cannot carry state between projects.
+// cachePolicyForJob maps the configured cache mode to an execution cache policy.
 func (a *App) cachePolicyForJob(job *platformv1.BuildJob, digest string) CachePolicy {
 	if a.cfg.Cache.Mode != string(CacheModeContentAddressed) {
 		return CachePolicy{Mode: CacheModeNone}
@@ -431,10 +410,8 @@ func (a *App) cachePolicyForJob(job *platformv1.BuildJob, digest string) CachePo
 	}
 }
 
-// downloadSourceSnapshot streams the verified snapshot archive into a
-// staging file and returns its path and verified digest. The caller
-// removes the file; the executor re-verifies the digest before
-// extracting.
+// downloadSourceSnapshot streams the snapshot archive into a staging file and
+// returns its path and verified digest. The caller removes the file.
 func (a *App) downloadSourceSnapshot(ctx context.Context, job *platformv1.BuildJob) (string, string, error) {
 	source := job.GetSource()
 	if source == nil || source.GetSourceSnapshotId() == "" {

@@ -99,8 +99,7 @@ func TestDurableLogsRetryDedupTruncationAndPagination(t *testing.T) {
 	allocID := allocationIDForService(t, store, svc.ID)
 	base := time.Now().UTC().Truncate(time.Second)
 
-	// Retry the identical batch: stable line IDs must collapse into
-	// one copy of each line.
+	// Retry the identical batch: stable line IDs must collapse into one copy of each line.
 	dedupEntries := []*agentv1.LogEntry{
 		durableLogEntry(svc.EnvironmentID, svc.ID, allocID, "retry-line-1", "dedup-marker-one", base, 1),
 		durableLogEntry(svc.EnvironmentID, svc.ID, allocID, "retry-line-2", "dedup-marker-two", base.Add(time.Second), 2),
@@ -147,8 +146,7 @@ func TestDurableLogsRetryDedupTruncationAndPagination(t *testing.T) {
 		t.Fatal("truncated prefix is not byte-exact")
 	}
 
-	// Cursor pagination walks the whole range newest-first without
-	// duplicates or omissions.
+	// Cursor pagination walks the whole range newest-first without duplicates or omissions.
 	userCtx := userContext(t, cp, ctx, "user-a")
 	var (
 		pagedIDs  []string
@@ -182,7 +180,6 @@ func TestDurableLogsRetryDedupTruncationAndPagination(t *testing.T) {
 		}
 		seen[id] = struct{}{}
 	}
-	// The first five in newest-first order are the page markers.
 	resp, err := cp.dashboard.ListServiceLogs(userCtx, &platformv1.ListServiceLogsRequest{ServiceId: svc.ID, Limit: 5000})
 	if err != nil {
 		t.Fatalf("full list: %v", err)
@@ -270,8 +267,7 @@ func TestDurableLogsProducerAndIngestGapsSurfaceInReads(t *testing.T) {
 		t.Fatalf("producer gap did not surface in reads: %v", err)
 	}
 
-	// An abusive batch past the ingest cap sheds its tail with an
-	// explicit gap instead of choking ClickHouse.
+	// An abusive batch past the ingest cap sheds its tail with an explicit gap instead of choking ClickHouse.
 	var flood []*agentv1.LogEntry
 	for i := 0; i < 2005; i++ {
 		seq := uint64(1000 + i)
@@ -362,7 +358,6 @@ func TestDurableLogsRetentionAndSafeDeletion(t *testing.T) {
 		t.Fatalf("restore retention: %v", err)
 	}
 
-	// The policy lands on the row expiry and tenant attribution.
 	now := time.Now().UTC().Truncate(time.Second)
 	retentionMarker := "retention-marker-" + now.Format("150405")
 	sendDurableBatch(t, stream, agentID, []*agentv1.LogEntry{
@@ -418,7 +413,6 @@ func TestDurableLogsRetentionAndSafeDeletion(t *testing.T) {
 		t.Fatalf("gap expires_at = %v, want ~%v", gapExpires, wantExpiry)
 	}
 
-	// Tenant B's logs must survive tenant A's deletion.
 	keepMarker := "keep-marker-" + now.Format("150405")
 	sendDurableBatch(t, stream, agentID, []*agentv1.LogEntry{
 		durableLogEntry(svcB.EnvironmentID, svcB.ID, allocB, "keep-line-1", keepMarker, now, 1),
@@ -525,8 +519,7 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 	})
 	pollServiceLogLines(t, ctx, cp, "user-a", svc.ID, 1, 30*time.Second)
 
-	// Stop the backend: the Sync stream must stay healthy and ingest
-	// must not fail the stream.
+	// Stop the backend: the Sync stream must stay healthy and ingest must not fail the stream.
 	if err := managed.Stop(ctx); err != nil {
 		t.Fatalf("stop clickhouse: %v", err)
 	}
@@ -544,7 +537,6 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 		t.Fatalf("heartbeat during ClickHouse outage failed: %v", err)
 	}
 
-	// Restart: the queued line flushes exactly once.
 	if err := managed.Start(ctx); err != nil {
 		t.Fatalf("start clickhouse: %v", err)
 	}
@@ -611,9 +603,8 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 	allocA := allocationIDForService(t, store, svcA.ID)
 	now := time.Now().UTC().Truncate(time.Second)
 
-	// A drop summary without producer metadata (the restart case)
-	// derives its service from the allocation owner and still lands
-	// as an explicit gap.
+	// A drop summary without producer metadata (the restart case) derives its service from the allocation
+	// owner and still lands as an explicit gap.
 	sendDurableBatch(t, stream, agentID, nil,
 		&platformv1.LogDropSummary{
 			AllocationId: allocA,
@@ -648,8 +639,7 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 		t.Fatalf("drop derivation leaked %d gaps to another tenant: %+v", len(respB.GetGaps()), respB.GetGaps())
 	}
 
-	// A drop summary claiming another tenant's service on this
-	// agent's allocation is excluded, never written anywhere.
+	// A drop summary claiming another tenant's service on this agent's allocation is excluded, never written anywhere.
 	spoof := &agentv1.LogBatch{
 		AgentId: agentID,
 		Drops: []*platformv1.LogDropSummary{{
@@ -668,9 +658,8 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 		t.Fatalf("mismatched drop claim survived scoping: %+v", spoof.GetDrops())
 	}
 
-	// A stale or foreign allocation must not reject the batch: its
-	// summaries are excluded individually so durable delivery keeps
-	// moving alongside the valid rows.
+	// A stale or foreign allocation must not reject the batch: its summaries are excluded individually
+	// so durable delivery keeps moving alongside the valid rows.
 	foreign := &agentv1.LogBatch{
 		AgentId: agentID,
 		Drops: []*platformv1.LogDropSummary{{
@@ -696,8 +685,7 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 		t.Fatalf("stale allocation summary must not reject the batch: %+v", foreign.GetDrops())
 	}
 
-	// Drop reports without an allocation cannot be attributed and
-	// never become gap rows.
+	// Drop reports without an allocation cannot be attributed and never become gap rows.
 	unattributable := &agentv1.LogBatch{
 		AgentId: agentID,
 		Drops: []*platformv1.LogDropSummary{{
@@ -751,8 +739,7 @@ func TestDurableLogsGapPagination(t *testing.T) {
 	allocID := allocationIDForService(t, store, svc.ID)
 	base := time.Now().UTC().Truncate(time.Second).Add(-time.Hour)
 
-	// More distinct gap rows than one response may carry must stay
-	// fully reachable through the gap cursor.
+	// More distinct gap rows than one response may carry must stay fully reachable through the gap cursor.
 	const totalGaps = 520
 	inputs := make([]logs.GapInput, 0, totalGaps)
 	for i := 0; i < totalGaps; i++ {

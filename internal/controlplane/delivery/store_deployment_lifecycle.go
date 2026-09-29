@@ -394,10 +394,8 @@ func (s *persistence) completeDrainedPredecessorsTx(ctx context.Context, tx *sql
 	return nil
 }
 
-// applyAgentDeploymentObservationTx applies an agent observation to the
-// deployment record and reports whether durable state changed. Terminal
-// records never transition, so callers must not assume that reaching this
-// path bumped the status revision.
+// applyAgentDeploymentObservationTx applies an agent observation and reports whether durable
+// state changed. Terminal records never transition.
 func (s *persistence) applyAgentDeploymentObservationTx(
 	ctx context.Context,
 	tx *sql.Tx,
@@ -430,9 +428,8 @@ func (s *persistence) applyAgentDeploymentObservationTx(
 	if err != nil {
 		return false, err
 	}
-	// Agent transitions always target a different state, so an applied
-	// transition is visible as a state change; an ignored one (for example a
-	// record that turned terminal) leaves the record untouched.
+	// An applied transition shows as a state change; an ignored one (e.g. a record that
+	// turned terminal) leaves the record untouched.
 	if updated.State == rec.State {
 		return false, nil
 	}

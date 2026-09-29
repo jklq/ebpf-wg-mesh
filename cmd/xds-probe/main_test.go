@@ -13,10 +13,8 @@ import (
 	"ebof-wg-mesh/internal/controlplane/xds"
 )
 
-// serveXDSEndpoint runs a publishing xDS server on a random loopback port and
-// returns its address, a publish function for later snapshots, and a stop
-// function that takes the endpoint down the way a lost control-plane replica
-// would.
+// serveXDSEndpoint runs a publishing xDS server on a random loopback port,
+// returning its address, a publish function, and a stop function.
 func serveXDSEndpoint(ctx context.Context, t *testing.T, backends []xds.Backend) (addr string, publish func([]xds.Backend), stop func()) {
 	t.Helper()
 	server := xds.NewServer(ctx)
@@ -41,7 +39,6 @@ func serveXDSEndpoint(ctx context.Context, t *testing.T, backends []xds.Backend)
 	}
 }
 
-// waitForSnapshot polls latest.json until every entry of want is present in it.
 func waitForSnapshot(t *testing.T, dir string, want probeSnapshot) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -63,8 +60,6 @@ func waitForSnapshot(t *testing.T, dir string, want probeSnapshot) {
 	}
 }
 
-// waitForSnapshotWithout polls latest.json until none of the given resources
-// appear anywhere in it.
 func waitForSnapshotWithout(t *testing.T, dir string, gone ...string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
@@ -179,9 +174,8 @@ func TestProbeRecordsUnionAcrossEndpoints(t *testing.T) {
 	}
 }
 
-// TestProbeDropsWithdrawnResources pins the state-of-the-world semantics the VM
-// presence waits rely on: a later response that no longer carries a route or
-// endpoint must remove it from latest.json instead of accumulating it.
+// TestProbeDropsWithdrawnResources: a response that no longer carries a route or
+// endpoint removes it from latest.json instead of accumulating it.
 func TestProbeDropsWithdrawnResources(t *testing.T) {
 	t.Parallel()
 
@@ -208,11 +202,9 @@ func TestProbeDropsWithdrawnResources(t *testing.T) {
 	waitForSnapshotWithout(t, dir, "a.example.com", "10.0.0.10:8080")
 }
 
-// TestProbeDropsResourcesOfDisconnectedEndpoints pins the takeover evidence
-// semantics: an endpoint whose subscription dies must stop contributing —
-// resources and versions alike — so a presence check cannot pass on data only
-// a dead endpoint ever advertised, and the harness can prove snapshot contents
-// are post-disconnect by requiring the dead endpoint's address to be absent.
+// TestProbeDropsResourcesOfDisconnectedEndpoints: a dead endpoint stops
+// contributing resources and versions, so presence checks cannot pass on data
+// only it advertised.
 func TestProbeDropsResourcesOfDisconnectedEndpoints(t *testing.T) {
 	t.Parallel()
 

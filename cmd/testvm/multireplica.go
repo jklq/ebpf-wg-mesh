@@ -28,16 +28,14 @@ type crossReplicaFixture struct {
 	Hostname      string
 }
 
-// crossReplicaClients pairs the two control-plane handles in the cross-replica
-// scenario. Delivery live state (agent sessions, allocations, health) is
-// owner-local, so it must be read through the owner; the second replica only
-// serves durable reads, which is what the blocking ListServices probe exercises.
+// crossReplicaClients pairs the two control-plane handles. Live state is
+// owner-local and read through the owner; the second replica serves durable
+// reads only.
 type crossReplicaClients struct {
 	owner   platformv1.PlatformServiceClient
 	replica platformv1.PlatformServiceClient
 }
 
-// liveReader returns the client that serves owner-local delivery live state.
 func (c crossReplicaClients) liveReader() platformv1.PlatformServiceClient {
 	return c.owner
 }
@@ -254,16 +252,11 @@ func waitForSingletonLease(ctx context.Context, keyPath, host, previousHolder st
 	return current, err
 }
 
-// waitForIngressTakeover waits until the probe's snapshot proves the ingress
-// publication survived the singleton takeover. The stopped primary's endpoint
-// must no longer contribute anything to latest.json — the probe drops an
-// endpoint's contribution when its subscription dies, so this pins the
-// snapshot as post-disconnect evidence — while the hostname stays advertised,
-// which then can only come from the surviving replica's live subscription.
-// Deliberately no response-count condition: a healthy takeover republishes
-// identical content, whose content-addressed version is unchanged and
-// suppressed from re-publication, so the follower never sends a fresh
-// response and counting responses would wait forever.
+// waitForIngressTakeover waits until the snapshot proves the ingress publication
+// survived takeover: the stopped primary contributes nothing while the hostname
+// stays advertised, which can only come from the survivor. No response-count
+// condition: identical republished content is version-suppressed, so counting
+// responses would wait forever.
 func waitForIngressTakeover(ctx context.Context, keyPath, host, hostname, stoppedProbeAddr string) error {
 	command := fmt.Sprintf(
 		"! grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json && grep -Fq %s /var/lib/ebpf-wg-mesh/xds-probe/latest.json",

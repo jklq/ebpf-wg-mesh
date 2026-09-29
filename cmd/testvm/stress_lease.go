@@ -53,7 +53,7 @@ func parseStressLease(output string) (stressLease, error) {
 }
 
 // waitForStressLease polls until exactly one live lease is held by a known
-// replica. Zero live leases during an election is transient.
+// replica. Zero during an election is transient.
 func waitForStressLease(ctx context.Context, key, controlPlaneIP string) (stressLease, error) {
 	known := map[string]bool{
 		controlPlaneIP + ":" + primaryControlPlanePort: true,
@@ -81,10 +81,9 @@ func waitForStressLease(ctx context.Context, key, controlPlaneIP string) (stress
 
 var errNoOwnerServing = errors.New("no replica served owner-local RPCs")
 
-// checkSingleOwner compares owner-gated RPC results to the lease observed
-// after those probes. A legitimate failover between the caller's pre-probe
-// snapshot and this check must not fail: only the post-probe lease is the
-// owner identity. Split brain (two servers) is always a hard failure.
+// checkSingleOwner compares owner-gated RPC results to the post-probe lease,
+// the only owner identity; a failover between snapshot and check must not
+// fail. Split brain is always a hard failure.
 func checkSingleOwner(owners []string, current, baseline stressLease) error {
 	if current.Token < baseline.Token {
 		return fmt.Errorf("fencing token regressed from %d to %d (holder %s)", baseline.Token, current.Token, current.Holder)
@@ -101,10 +100,9 @@ func checkSingleOwner(owners []string, current, baseline stressLease) error {
 	return nil
 }
 
-// assertSingleOwner calls an owner-gated RPC on both raw replicas. Exactly one
-// may serve it, and it must be the replica named by the lease. Both serving it
-// is split brain (a hard failure). Neither serving it is transient during an
-// election and is retried until the recovery deadline.
+// assertSingleOwner calls an owner-gated RPC on both replicas. Exactly the
+// leased replica may serve it; both serving is split brain. Neither serving
+// is transient during an election and is retried.
 func assertSingleOwner(ctx context.Context, o stressOptions, clients []platformv1.PlatformServiceClient, key, controlPlaneIP string, lease stressLease) error {
 	addresses := []string{controlPlaneIP + ":" + primaryControlPlanePort, controlPlaneIP + ":" + replicaControlPlanePort}
 	return assertSingleOwnerWith(ctx, o, clients, addresses, lease, func(ctx context.Context) (stressLease, error) {
@@ -115,9 +113,7 @@ func assertSingleOwner(ctx context.Context, o stressOptions, clients []platformv
 func assertSingleOwnerWith(ctx context.Context, o stressOptions, clients []platformv1.PlatformServiceClient, addresses []string, baseline stressLease, readLease func(context.Context) (stressLease, error)) error {
 	var lastErr error
 	err := testutil.Poll(ctx, testutil.PollConfig{Timeout: o.Recovery, Interval: time.Second}, func(ctx context.Context) (bool, error) {
-		// Probe first. A failover between the caller's pre-probe snapshot and
-		// these RPCs must be judged against the lease observed after the probes,
-		// not against a stale holder captured beforehand.
+		// Probe first: judge against the post-probe lease, not a stale holder.
 		var owners []string
 		for i, client := range clients {
 			callCtx, cancel := context.WithTimeout(ctx, o.RPCTimeout)
@@ -131,7 +127,7 @@ func assertSingleOwnerWith(ctx context.Context, o stressOptions, clients []platf
 					return false, fmt.Errorf("ListAgents on %s returned non-redirect FailedPrecondition: %w", addresses[i], err)
 				}
 			case codes.Unavailable, codes.DeadlineExceeded:
-				// Transient during elections.
+
 			default:
 				return false, fmt.Errorf("ListAgents on %s: %w", addresses[i], err)
 			}

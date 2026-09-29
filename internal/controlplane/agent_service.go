@@ -49,8 +49,7 @@ type AgentService struct {
 	credMu    sync.Mutex
 	credCache map[string]map[string]cachedPullCredential // agentID -> allocationID -> credential
 	credNow   func() time.Time
-	// credReuseHorizon is the interval until the next guaranteed credential
-	// refresh (session rotation), so cached tokens must outlive it.
+	// credReuseHorizon: cached tokens must outlive the next guaranteed credential refresh.
 	credReuseHorizon time.Duration
 }
 
@@ -116,9 +115,8 @@ func WithAgentRegistry(policy *registry.Policy) AgentServiceOption {
 	}
 }
 
-// WithLogIngester routes agent log batches through the async ingest
-// queue so a ClickHouse outage cannot stall the Sync loop. Without
-// it, batches write synchronously (used by focused tests).
+// WithLogIngester routes log batches through the async ingest queue so a
+// ClickHouse outage cannot stall the Sync loop.
 func WithLogIngester(ingester *logs.AsyncIngester) AgentServiceOption {
 	return func(service *AgentService) {
 		service.logIngester = ingester
@@ -255,9 +253,7 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if err != nil {
 		return status.Errorf(codes.Internal, "read agent authority: %v", err)
 	}
-	// The active cluster identity flips at CA rotate-start; the retiring
-	// identity stays accepted so pre-renewal agents stay connected
-	// through the overlap.
+	// The retiring identity stays accepted so pre-renewal agents stay connected.
 	trustedCluster, err := s.authority.VerifyClusterID(ctx, hello.GetClusterId())
 	if err != nil {
 		return status.Errorf(codes.Unavailable, "verify cluster identity: %v", err)
@@ -403,27 +399,19 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 				switch s.logIngester.EnqueueAgentBatch(hello.GetAgentId(), batch) {
 				case logs.AdmitAccepted:
 				case logs.AdmitRetry:
-					// The journal cannot store this batch or a gap for it.
-					// A synchronous ClickHouse write here would stall the
-					// Sync stream for the whole outage; the agent still
-					// holds the batch and retries when this stream ends.
+					// The journal fits neither batch nor gap; the agent holds the batch and retries.
 					return status.Error(codes.Unavailable, "log ingest backlog is full")
 				case logs.AdmitClosed:
 					writeSync = true
 				}
 			}
 			if writeSync && s.logStore != nil {
-				// No queue, or the shutdown drain already sealed it:
-				// fall back to a synchronous write while the store
-				// is still up.
+				// No queue, or the drain sealed it: fall back to a synchronous write.
 				if err := s.logStore.WriteAgentBatch(ctx, hello.GetAgentId(), batch); err != nil {
 					return status.Errorf(codes.Internal, "log batch: %v", err)
 				}
 			}
-			// Acceptance ack: the agent keeps its spool batch
-			// uncommitted until this arrives, so a batch lost
-			// before acceptance is always retried instead of being
-			// skipped past the replay window.
+			// Acceptance ack: the agent keeps its batch uncommitted until this arrives.
 			streamSendMu.Lock()
 			err := stream.Send(&agentv1.AgentServerMessage{
 				Payload: &agentv1.AgentServerMessage_LogBatchAck{LogBatchAck: &agentv1.LogBatchAck{BatchId: batch.GetBatchId()}},
@@ -436,17 +424,14 @@ func (s *AgentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 }
 
-// sendLocked serializes stream writes with the log-batch
-// acknowledgements sent from the message handler.
+// sendLocked serializes stream writes against the message handler's log-batch acks.
 func sendLocked(mu *sync.Mutex, stream agentv1.AgentControl_SyncServer, msg *agentv1.AgentServerMessage) error {
 	mu.Lock()
 	defer mu.Unlock()
 	return stream.Send(msg)
 }
 
-// syncSent is the position delivered on this session's sync stream: the
-// allocation cursor plus the content versions of the independently
-// delivered streams and the observation overlay.
+// syncSent is the position delivered on this session's sync stream.
 type syncSent struct {
 	alloc       int64
 	nodeConfig  string
@@ -496,9 +481,8 @@ func (s *AgentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 	}
 }
 
-// sendSyncBatch emits one fenced batch — node config, credentials,
-// allocations (checkpoint or ordered diffs), then replicas — terminated by a
-// batch-end marker. It returns the new sent position.
+// sendSyncBatch emits one fenced batch terminated by a batch-end marker,
+// returning the new position.
 func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	state, err := s.delivery.DesiredStateForAgent(ctx, agentID)
 	if err != nil {
@@ -532,8 +516,7 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		slog.Info("authority epoch changed; sending checkpoint", "agent_id", agentID, "hello_epoch", helloEpoch, "epoch", epoch)
 		needCheckpoint = true
 	} else if first && sent.overlay != currentOverlay {
-		// Observation-derived fields drift without a desired_revision bump;
-		// only a checkpoint covers them in full.
+		// Observation fields drift without a desired_revision bump; only a checkpoint covers them.
 		slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID)
 		needCheckpoint = true
 	} else if current.Cursor == sent.alloc {
@@ -541,15 +524,13 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			slog.Info("allocation inventory mismatch; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
 			needCheckpoint = true
 		} else if sent.overlay != currentOverlay {
-			// Live observations can move the overlay at a fixed cursor, so
-			// connected agents get the same repair as reconnects.
+			// Connected agents get the same repair: the overlay can move at a fixed cursor.
 			slog.Info("observation overlay drift; repairing with checkpoint", "agent_id", agentID, "cursor", current.Cursor)
 			needCheckpoint = true
 		}
 	} else {
-		// The retained chain must cover base->current: a revision with no
-		// allocation content (e.g. a peer-only bump) still sends an empty
-		// no-op diff so the accepted cursor advances in lockstep.
+		// A revision with no allocation content still sends an empty no-op diff so
+		// the accepted cursor advances in lockstep.
 		if stored, target, ok := s.delivery.AllocationDiffsFrom(agentID, sent.alloc); ok && target == current.Cursor && len(stored) > 0 {
 			diffs = stored
 		} else {
@@ -565,13 +546,11 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		slog.Info("desired state unchanged", "agent_id", agentID, "cursor", current.Cursor)
 		return sent, nil
 	}
-	// Single grant covers the whole batch with one expiry.
 	deadline, err := s.store.grantAgentCommand(ctx, agentID, sessionID, epoch, current)
 	if err != nil {
 		return sent, status.Errorf(codes.Internal, "desired state: %v", err)
 	}
-	// Order: policy/peers first (fail closed), then credentials, then
-	// allocations, then replica discovery.
+	// Order: policy/peers first (fail closed), then credentials, allocations, replica discovery.
 	if needNode && !needCheckpoint {
 		update := &agentv1.NodeConfigUpdate{
 			AgentId: agentID, NodeConfigVersion: current.NodeConfig,
@@ -634,7 +613,6 @@ func (s *AgentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	}); err != nil {
 		return sent, err
 	}
-	// Overlay drift is covered by the repair checkpoint or by the sent diffs.
 	return syncSent{
 		alloc:       current.Cursor,
 		nodeConfig:  current.NodeConfig,
@@ -652,11 +630,8 @@ func (s *AgentService) withReplicaAddresses(resp *agentv1.EnrollResponse) *agent
 	return resp
 }
 
-// validateAgentEndpointAgainstPeer validates the endpoint syntax and requires
-// same-family endpoints to match the authenticated connection's observed
-// source. A dual-stack host may dial over one family while advertising the
-// other; the agent's separately self-reported advertise address is not trusted
-// as proof for a conflicting address in the same family.
+// validateAgentEndpointAgainstPeer validates endpoint syntax and requires
+// same-family endpoints to match the observed source.
 func validateAgentEndpointAgainstPeer(ctx context.Context, hello *agentv1.AgentHello) error {
 	endpoint, err := deliverycore.CanonicalAgentWireGuardEndpoint(hello.GetWireguardEndpoint())
 	if err != nil {
@@ -705,13 +680,8 @@ func normalizeReplicaAddresses(addresses []string) []string {
 	return result
 }
 
-// crashLoopEventLine builds the platform event for one crash-loop
-// observation. Its identity and observed_at derive from
-// content-stable facts (allocation, rollout generation, restart
-// window), so an agent resending the same observation after a
-// reconnect — or a duplicated status report — collapses into one
-// event row via the log store's (observed_at, line_id) dedup instead
-// of accumulating duplicates.
+// crashLoopEventLine builds the crash-loop event from content-stable facts so
+// resent observations dedup into one row.
 func crashLoopEventLine(agentID, environmentID string, cond *agentv1.ServiceCondition) logs.LogLineInput {
 	restart := cond.GetRestart()
 	var onset time.Time
@@ -726,9 +696,7 @@ func crashLoopEventLine(agentID, environmentID string, cond *agentv1.ServiceCond
 		}
 	}
 	if onset.IsZero() {
-		// Synthetic conditions without restart timestamps cannot
-		// anchor an onset; the event stays retry-stable but
-		// re-observations may duplicate.
+		// Synthetic conditions without restart timestamps may duplicate on re-observation.
 		onset = time.Now().UTC()
 	}
 	message := cond.GetMessage()
@@ -789,13 +757,9 @@ func (s *AgentService) emitCrashLoopEvents(ctx context.Context, agentID string, 
 	s.deliverPlatformLines(ctx, agentID, lines)
 }
 
-// deliverPlatformLines routes platform-emitted lines through the
-// async ingest queue so they retry across backend outages, shed with
-// gap accounting, and drain at shutdown like agent batches — a
-// synchronous write here would block the agent Sync receive loop and
-// lose the event when ClickHouse is unavailable. Without an ingester,
-// or once the shutdown drain sealed the queue, it falls back to a
-// synchronous write.
+// deliverPlatformLines routes platform lines through the async queue so they
+// retry, shed, and drain like agent batches. Without an ingester, or once the
+// drain seals, it falls back to sync.
 func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string, lines []logs.LogLineInput) {
 	if s.logIngester != nil {
 		switch s.logIngester.EnqueueLines(lines) {
@@ -812,13 +776,11 @@ func (s *AgentService) deliverPlatformLines(ctx context.Context, agentID string,
 	}
 }
 
-// pullCredentialCacheTTL reuses minted pull credentials across syncs so the
-// credentials version stays stable (well within the 48h pull TTL).
+// pullCredentialCacheTTL reuses minted pull credentials so the version stays stable.
 const pullCredentialCacheTTL = time.Hour
 
-// pullCredentialsForAgent mints (with cache) the independently versioned pull
-// credentials for this agent's desired services. Only platform images need
-// entries.
+// pullCredentialsForAgent mints (with cache) the independently versioned pull credentials for
+// this agent's desired services. Only platform images need entries.
 func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID string, state *agentv1.DesiredNodeState) (*agentv1.PullCredentialSet, error) {
 	out := &agentv1.PullCredentialSet{AgentId: agentID}
 	if s == nil || s.registry == nil || !s.registry.Enabled() || state == nil {
@@ -866,8 +828,7 @@ func (s *AgentService) pullCredentialsForAgent(ctx context.Context, agentID stri
 		s.credMu.Lock()
 		cached, ok := cache[svc.GetAllocationId()]
 		s.credMu.Unlock()
-		// Reuse only while the token stays valid through the next session
-		// rotation (credReuseHorizon), which refreshes credentials anyway.
+		// Reuse only while the token outlives the next session rotation (which refreshes anyway).
 		if ok && cached.image == image && now.Sub(cached.mintedAt) < pullCredentialCacheTTL && cached.expiresAt.After(now.Add(s.credReuseHorizon)) {
 			if cached.username != "" || cached.password != "" {
 				out.Credentials = append(out.Credentials, &agentv1.AllocationCredential{

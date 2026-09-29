@@ -157,9 +157,8 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 		if cfg.Registry.CredentialTTLSeconds < 60 || cfg.Registry.CredentialTTLSeconds > 900 {
 			return errors.New("controlplane.registry.credentialTTLSeconds must be between 60 and 900")
 		}
-		// Pull capabilities refresh on every Sync stream, and agent
-		// sessions rotate at least every client-certificate lifetime, so
-		// the pull TTL must exceed it or steady-state pulls fail.
+		// Pull capabilities refresh on every Sync stream, and agent sessions rotate at least every
+		// client-certificate lifetime, so the pull TTL must exceed it or steady-state pulls fail.
 		if cfg.Registry.PullCredentialTTLSeconds <= cfg.InternalGRPC.TLS.ClientCertValidityHours*3600 {
 			return errors.New("controlplane.registry.pullCredentialTTLSeconds must exceed controlplane.internalGrpc.tls.clientCertValidityHours")
 		}

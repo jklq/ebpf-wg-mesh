@@ -45,9 +45,8 @@ func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Replica 2 shares the database and keyring file but holds its own
-	// caches. The new version is provisioned to the shared keyring first,
-	// then activated from replica 2.
+	// Replica 2 shares the database and keyring file but holds its own caches. The new version
+	// is provisioned to the shared keyring first, then activated from replica 2.
 	replica2 := secretkeys.New(store.db, store.secrets.Provider())
 	first, err := store.secrets.Registry().ActiveKey(ctx)
 	if err != nil {
@@ -61,8 +60,7 @@ func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 	if rotated.ID == first.ID {
 		t.Fatal("activation kept the same active key")
 	}
-	// New wraps use the new active key while the retired key still unwraps:
-	// rewrap from replica 1 converges the shared rows.
+	// New wraps use the new key while the retired key still unwraps; rewrap from replica 1 converges the shared rows.
 	rewrapped, err := store.secrets.DEKs().RewrapAll(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +87,6 @@ func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 	if counts[first.ID] != 0 || counts[rotated.ID] != 1 {
 		t.Fatalf("wrapped counts = %v", counts)
 	}
-	// The retired key deletes cleanly once nothing references it.
 	if err := store.secrets.Registry().DeleteKey(ctx, first.ID); err != nil {
 		t.Fatalf("delete retired key: %v", err)
 	}
@@ -121,8 +118,7 @@ func TestSecretEnvelopeRestartWithRetiredKey(t *testing.T) {
 	if _, err := store.secrets.Registry().Activate(ctx, version); err != nil {
 		t.Fatal(err)
 	}
-	// A restarted replica (cold caches) still unwraps through the retired
-	// key with no manual unlock.
+	// A restarted replica (cold caches) still unwraps through the retired key with no manual unlock.
 	restarted := secretkeys.New(store.db, store.secrets.Provider())
 	plaintext, _, err := restarted.Sealed().OpenCurrent(ctx, store.db, service.ID, "TOKEN")
 	if err != nil {
@@ -154,9 +150,8 @@ func TestSecretEnvelopeInterruptedRewrapResumes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Simulate a crash after the first row commits: advance one row to the
-	// active key exactly as one RewrapAll iteration would, then restart
-	// with cold caches.
+	// Simulate a crash after the first row commits: advance one row to the active key exactly
+	// as one RewrapAll iteration would, then restart with cold caches.
 	var dekID, wrappingKeyID string
 	var wrapped []byte
 	if err := store.db.QueryRowContext(ctx,
@@ -218,7 +213,6 @@ func TestSecretEnvelopeUnwrapDiagnostics(t *testing.T) {
 	if _, err := store.secrets.Registry().Unwrap(ctx, "kek-missing", "test/v1", []byte("x")); !isUnwrapReason(t, err, secretkeys.UnwrapReasonUnknownKey) {
 		t.Fatalf("unknown key unwrap = %v", err)
 	}
-	// Corrupt wrapped bytes fail authentication.
 	active, err := store.secrets.Registry().ActiveKey(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -227,8 +221,7 @@ func TestSecretEnvelopeUnwrapDiagnostics(t *testing.T) {
 	if _, err := store.secrets.Registry().Unwrap(ctx, active.ID, "test/v1", corrupt); !isUnwrapReason(t, err, secretkeys.UnwrapReasonCorruptCiphertext) {
 		t.Fatalf("corrupt unwrap = %v", err)
 	}
-	// Missing provider material (a keyring file never provisioned against
-	// the same shared database) is distinguished from corruption.
+	// Missing provider material (a keyring never provisioned against the same shared database) is distinguished from corruption.
 	keyring, err := secretkeys.NewKeyring(filepath.Join(t.TempDir(), "keys.json"), secretkeys.KeyringOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -269,9 +262,8 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Replica B provisions the SAME version ID with DIFFERENT random
-	// material: a split-brain keyring the operator must fix, never silently
-	// accept.
+	// Replica B provisions the SAME version ID with DIFFERENT random material: a split-brain
+	// keyring the operator must fix, never silently accept.
 	keyringB, err := secretkeys.NewKeyring(filepath.Join(t.TempDir(), "keys.json"), secretkeys.KeyringOptions{})
 	if err != nil {
 		t.Fatal(err)
@@ -280,8 +272,7 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 		t.Fatal(err)
 	}
 	replicaB := secretkeys.New(store.db, keyringB)
-	// Presence checks pass (the version exists) but every unwrap fails
-	// authentication: wrong material is corruption, not a fallback.
+	// Presence checks pass but every unwrap fails authentication: wrong material is corruption, not a fallback.
 	if err := replicaB.Registry().VerifyLocalCoverage(ctx); err != nil {
 		t.Fatalf("coverage with wrong material: %v", err)
 	}
@@ -291,9 +282,8 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 	if _, err := replicaB.DEKs().VerifyAll(ctx); !isUnwrapReason(t, err, secretkeys.UnwrapReasonCorruptCiphertext) {
 		t.Fatalf("inconsistent verify = %v", err)
 	}
-	// Activate a new version through the healthy replica: replica B's
-	// rewrap then fails unwrapping the still-old row with its wrong
-	// material instead of migrating anything.
+	// Activate a new version through the healthy replica: replica B's rewrap then fails unwrapping
+	// the still-old row with its wrong material.
 	healthyVersion := provisionVersion(t, store.secrets)
 	if _, err := store.secrets.Registry().Activate(ctx, healthyVersion); err != nil {
 		t.Fatal(err)
@@ -301,7 +291,6 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 	if _, err := replicaB.DEKs().RewrapAll(ctx); !isUnwrapReason(t, err, secretkeys.UnwrapReasonCorruptCiphertext) {
 		t.Fatalf("inconsistent rewrap = %v", err)
 	}
-	// The healthy replica is unaffected.
 	if _, err := store.secrets.DEKs().VerifyAll(ctx); err != nil {
 		t.Fatalf("healthy verify: %v", err)
 	}
@@ -410,8 +399,7 @@ func dekIDForScope(t *testing.T, store *persistence, ctx context.Context, enviro
 	return id
 }
 
-// provisionVersion mints a keyring version through the service's own
-// keyring, as `controlplane keys provision` would before activation.
+// provisionVersion mints a keyring version through the service's own keyring, as `controlplane keys provision` would.
 func provisionVersion(t *testing.T, svc *secretkeys.Service) string {
 	t.Helper()
 	version, err := svc.Provider().GenerateKey(context.Background(), "")

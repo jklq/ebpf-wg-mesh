@@ -14,10 +14,8 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-// prepareDaemonRoot creates the per-execution buildkitd root outside
-// the workspace with an owner marker, clearing any leftover from a
-// dead run first. It returns the root and the build's daemon
-// directory.
+// prepareDaemonRoot creates the per-execution buildkitd root outside the workspace
+// with an owner marker, clearing any dead-run leftover first.
 func prepareDaemonRoot(workDir, buildID string) (root, buildDir string, err error) {
 	roots, err := safeChildPath(workDir, sandboxDaemonRootsDirName)
 	if err != nil {
@@ -51,8 +49,7 @@ func prepareDaemonRoot(workDir, buildID string) (root, buildDir string, err erro
 	return root, buildDir, nil
 }
 
-// reapStaleDaemonRoots removes per-execution daemon roots whose owner
-// marker names a dead worker.
+// reapStaleDaemonRoots removes per-execution daemon roots whose owner marker names a dead worker.
 func reapStaleDaemonRoots(workDir string) (int, error) {
 	roots, err := safeChildPath(workDir, sandboxDaemonRootsDirName)
 	if err != nil {
@@ -98,42 +95,33 @@ func reapStaleDaemonRoots(workDir string) (int, error) {
 }
 
 const (
-	// sandboxPathEnv is the fixed PATH inside build sandboxes. Build
-	// tool binaries resolve from the sandbox image, never the host.
+	// sandboxPathEnv is the fixed PATH inside sandboxes; tools resolve from the image, never the host.
 	sandboxPathEnv = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 	sandboxGuestCache   = "/build/cache"
 	sandboxGuestScratch = "/build/scratch"
 	sandboxGuestTmp     = "/build/tmp"
 
-	// sandboxSocketDirName is the workspace child holding the
-	// per-execution buildkitd socket. Only the socket lives in the
-	// workspace (the sandboxed buildctl client needs it there); the
-	// daemon root lives outside the workspace (see
-	// sandboxDaemonRootsDirName) so daemon state and disk use are
-	// neither visible to the hostile build nor counted against the
-	// execution's disk budget. The name stays short because Unix
-	// socket paths are limited to 108 bytes.
+	// sandboxSocketDirName is the workspace child holding the per-execution
+	// buildkitd socket. Only the socket lives in the workspace; the daemon root
+	// stays outside it so daemon state is neither visible to the hostile build nor
+	// charged to its disk budget. The name stays short: Unix socket paths cap at
+	// 108 bytes.
 	sandboxSocketDirName = "s"
 
-	// sandboxDaemonRootsDirName is the work-dir child holding
-	// per-execution buildkitd roots. Each build gets
-	// <workdir>/bk/<buildID>/ with an owner marker for stale
-	// recovery; the sandbox never mounts it.
+	// sandboxDaemonRootsDirName is the work-dir child holding per-execution
+	// buildkitd roots (<workdir>/bk/<buildID>/); the sandbox never mounts it.
 	sandboxDaemonRootsDirName = "bk"
 )
 
-// daemonProc is a started per-execution BuildKit daemon.
 type daemonProc interface {
 	waitReady(ctx context.Context) error
 	Stop() error
 }
 
-// hardenedExecutor is the production BuildExecutor: every build step
-// runs inside a one-shot sandbox with private namespaces, zero
-// capabilities, cgroup limits, and enforced egress policy, against a
-// per-execution BuildKit daemon with isolated state. It holds against
-// hostile builds rather than merely uncooperative ones.
+// hardenedExecutor is the production BuildExecutor: every build step runs inside
+// a one-shot sandbox with private namespaces, cgroup limits, and enforced
+// egress, against a per-execution BuildKit daemon with isolated state.
 type hardenedExecutor struct {
 	workDir         string
 	backend         SandboxBackend
@@ -152,8 +140,6 @@ func newHardenedExecutor(workDir string, backend SandboxBackend, buildkitdBinary
 	}
 }
 
-// defaultStartBuildkitd adapts the platform buildkitd starter to the
-// executor's daemon seam.
 func defaultStartBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error) {
 	return startBuildkitd(ctx, netnsPath, binary, sockPath, rootDir, env)
 }
@@ -209,17 +195,15 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 			return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("mkdir build cache dir: %w", err)})
 		}
 	}
-	// The content cache is shared across builds, so only its growth
-	// during this build is attributable to it. Measure before the
-	// daemon starts; the post-build check charges the delta.
+	// Only the content cache's growth during this build is attributable to it;
+	// the post-build check charges the delta against this pre-build measurement.
 	var cacheBytesBefore int64
 	if cacheDir != "" {
 		if cacheBytesBefore, err = dirBytes(cacheDir); err != nil {
 			return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("account build cache bytes: %w", err)})
 		}
 	}
-	// No host tool mirroring: no host path may enter the sandbox
-	// through the config directory.
+	// No host tool mirroring: no host path may enter the sandbox via the config dir.
 	configDir, cleanup, err := scopedDockerConfig(workspace.scratchDir, spec.Push.Reference, spec.Push.Username, spec.Push.Password, false)
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindPush, err: err})
@@ -285,9 +269,6 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if err != nil {
 		return ExecutionResult{}, &buildFailureError{kind: failureKindBuild, err: err}
 	}
-	// The hardened executor ignores the shared BuildKit address from
-	// the spec: every build gets its own daemon on a per-execution
-	// socket, so sibling builds share no daemon state.
 	buildkitAddr := "unix://" + guestSock
 
 	mounts := []SandboxMount{
@@ -316,14 +297,10 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	return ExecutionResult{ImageDigestRef: ref}, nil
 }
 
-// enforceHardenedDiskLimit accounts every byte attributable to the
-// build against the disk budget: the workspace, the per-execution
-// daemon root, and the content-cache growth during the build. The
-// daemon root is fully attributable (it is cleared before the build),
-// while only the cache delta is charged — pre-existing cache bytes
-// were written by earlier builds with identical content. Concurrent
-// builds sharing one cache key may each observe the shared growth;
-// that fails closed in the safe direction.
+// enforceHardenedDiskLimit accounts every byte attributable to the build: the
+// workspace, the per-execution daemon root (fully attributable; cleared before
+// the build), and the content-cache growth during the build. Pre-existing cache
+// bytes were written by earlier builds and are not charged.
 func enforceHardenedDiskLimit(workspaceRoot, daemonBuildDir, cacheDir string, cacheBytesBefore, maxBytes int64) error {
 	total, err := dirBytes(workspaceRoot)
 	if err != nil {
@@ -349,9 +326,8 @@ func enforceHardenedDiskLimit(workspaceRoot, daemonBuildDir, cacheDir string, ca
 	return nil
 }
 
-// renderSandboxIdentity writes the resolver files bind-mounted into
-// sandboxes. They carry only resolver addresses and loopback names:
-// no host identity leaks in.
+// renderSandboxIdentity writes the resolver files bind-mounted into sandboxes:
+// resolver addresses and loopback names only, no host identity.
 func (e *hardenedExecutor) renderSandboxIdentity(workspace executionWorkspace, policy NetworkPolicy) (resolvHost, hostsHost string, err error) {
 	hostResolv, _ := os.ReadFile("/etc/resolv.conf")
 	rendered, err := renderSandboxResolvConf(hostResolv, e.nameservers, policy.AllowGeneralEgress)
@@ -369,11 +345,9 @@ func (e *hardenedExecutor) renderSandboxIdentity(workspace executionWorkspace, p
 	return resolvHost, hostsHost, nil
 }
 
-// resolveExecutionCacheDir verifies the content-addressed cache key
-// and returns its host directory. The key must exactly equal the key
-// derived from build content (snapshot digest, recipe, toolchain):
-// any caller-supplied project, service, or build identity in the key
-// is refused, so cache mounts can never carry state between projects.
+// resolveExecutionCacheDir verifies the content-addressed cache key and returns
+// its host directory. The key must exactly equal the content-derived key, so
+// cache mounts can never carry state between projects.
 func resolveExecutionCacheDir(workDir string, spec ExecutionSpec) (string, error) {
 	if spec.Cache.Mode == CacheModeNone {
 		return "", nil
@@ -382,8 +356,6 @@ func resolveExecutionCacheDir(workDir string, spec ExecutionSpec) (string, error
 	if spec.Cache.Key != expected {
 		return "", errors.New("content-addressed cache key does not match build content: refusing project-keyed cache")
 	}
-	// The key matched our own derivation, so the digest suffix is a
-	// fixed 64 hex characters; safeChildPath contains it regardless.
 	digest := strings.TrimPrefix(expected, "sha256:")
 	cacheRoot, err := safeChildPath(workDir, "cache")
 	if err != nil {
@@ -456,8 +428,6 @@ func (e *hardenedExecutor) invokeRailpackBuild(ctx context.Context, spec Executi
 	return buildDigestRefFromMetadata(spec.Push.Reference, workspace.metadataFile)
 }
 
-// guestBuildPaths translates the host paths embedded in build commands
-// to their guest paths inside the sandbox.
 type guestBuildPathsResult struct {
 	contextDir      string
 	repoDir         string
@@ -485,10 +455,8 @@ func (e *hardenedExecutor) guestBuildPaths(workspace executionWorkspace, dockerC
 	return guest, nil
 }
 
-// appendCacheFlags points the build at the execution's content-keyed
-// cache dir. Import and export share the directory: it is the
-// standard local-cache round trip, namespaced by content so it cannot
-// carry state between projects.
+// appendCacheFlags points the build at the execution's content-keyed cache dir,
+// shared by import and export as a standard local-cache round trip.
 func (e *hardenedExecutor) appendCacheFlags(spec ExecutionSpec, req *commandRequest) {
 	if spec.Cache.Mode != CacheModeContentAddressed {
 		return
@@ -523,9 +491,9 @@ func (e *hardenedExecutor) runSandboxStep(ctx context.Context, sandboxNet Sandbo
 	return &buildFailureError{kind: failureKindBuild, err: err}
 }
 
-// sandboxEnv returns the complete explicit environment for a sandboxed
-// build step: a fixed PATH, HOME and TMPDIR under the guest build
-// root, and the scoped docker config when one is present.
+// sandboxEnv returns the complete explicit environment for a sandboxed build step:
+// a fixed PATH, HOME and TMPDIR under the guest build root, and the scoped
+// docker config when one is present.
 func (e *hardenedExecutor) sandboxEnv(dockerConfigGuest string) []string {
 	env := []string{
 		"PATH=" + sandboxPathEnv,
@@ -538,8 +506,7 @@ func (e *hardenedExecutor) sandboxEnv(dockerConfigGuest string) []string {
 	return env
 }
 
-// RecoverStaleWorkspaces reclaims workspaces, daemon roots, and
-// sandboxes left behind by dead workers and verifies each removal.
+// RecoverStaleWorkspaces reclaims workspaces, daemon roots, and sandboxes left by dead workers.
 func (e *hardenedExecutor) RecoverStaleWorkspaces(ctx context.Context) (int, error) {
 	reclaimed, err := recoverStaleWorkspaces(e.workDir)
 	roots, rootsErr := reapStaleDaemonRoots(e.workDir)

@@ -430,10 +430,8 @@ function allocationsForDeployment(
 		}
 	};
 	push(allocation);
-	// Crash evidence is only meaningful for allocations that belong to this
-	// deployment's rollout generation. There is deliberately no fallback to
-	// other generations: a failed rollout that leaves the previous generation
-	// serving must not display that generation's crashes as its own evidence.
+	// Crash evidence only covers this deployment's rollout generation: no fallback to other
+	// generations, so a failed rollout never displays the previous generation's crashes.
 	if (record.rolloutGeneration > 0) {
 		for (const entry of allocations) {
 			if (

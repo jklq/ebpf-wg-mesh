@@ -71,17 +71,13 @@ func (s *Store) Execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 	return s.execute(ctx, fn, nil)
 }
 
-// ExecuteWithMutation runs one journal command and then lets afterChanges react
-// to the exact rows the command changed (for example, to bump affected agent
-// revisions). afterChanges receives the pre-command prefix and the resolved
-// batch, and runs in the same transaction before the command is serialized;
-// any rows it changes through the Recorder are included in the command payload.
+// ExecuteWithMutation runs one journal command, then lets afterChanges react to
+// the exact rows changed. afterChanges runs in the same transaction before
+// serialization; rows it changes through the Recorder join the command payload.
 //
-// fn must contain only transactional work and must record every durable product
-// row it changes through the Recorder carried by the context it receives.
-// Planning happens outside the cluster_journal_heads lock; the lock is taken
-// only to append the command and its head update. The command is retried on
-// serialization conflicts; no attempted state is published.
+// fn must contain only transactional work and record every durable row it
+// changes. Planning happens outside the heads lock; the command retries on
+// serialization conflicts and publishes no attempted state.
 func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
 	return s.execute(ctx, fn, afterChanges)
 }
@@ -235,8 +231,8 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 			return Entry{}, nil
 		}
 	}
-	// Even an apparently failed COMMIT may have succeeded. Resolve against the
-	// same command ID using a fresh context; absence/error never permits publish.
+	// A failed COMMIT may have succeeded. Resolve against the same command ID on
+	// a fresh context; absence/error never permits publish.
 	resolveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	committed, resolveErr := lookup(resolveCtx, s.db, s.clusterID, id)
@@ -285,7 +281,7 @@ func (s *Store) catchUp(ctx context.Context) error {
 }
 
 // Read builds an external snapshot from the same database snapshot as the
-// applied journal prefix. The result must not be published inside fn.
+// applied prefix. The result must not be published inside fn.
 func (s *Store) Read(ctx context.Context, fn func(*sql.Tx, DurableState) error) error {
 	s.mu.Lock()
 	err := s.read(ctx, fn)

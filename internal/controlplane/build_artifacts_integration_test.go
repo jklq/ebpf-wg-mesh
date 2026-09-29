@@ -24,11 +24,8 @@ func testPinnedRef(repository, nibble string) string {
 	return repository + "@" + testDigest(nibble)
 }
 
-// TestBuildCompletionRecordsImmutableArtifact proves every successful build
-// records the immutable artifact contract: source snapshot digest, commit
-// SHA, build recipe and builder version, image manifest digest, build
-// actor, and timestamps — and that the artifact, not an image string, is
-// the deployment's runtime identity.
+// TestBuildCompletionRecordsImmutableArtifact proves successful builds record the
+// full artifact contract, and the artifact is the deployment's runtime identity.
 func TestBuildCompletionRecordsImmutableArtifact(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -104,9 +101,8 @@ func TestBuildCompletionRecordsImmutableArtifact(t *testing.T) {
 	}
 }
 
-// TestDirectImageTagMutationAfterResolveKeepsStoredDigest is the required
-// deploy-by-digest regression: a mutable tag resolves to a digest at deploy
-// time, and moving the tag afterwards never changes what runs.
+// TestDirectImageTagMutationAfterResolveKeepsStoredDigest: moving a tag after
+// deploy never changes what runs; a fresh release re-pins.
 func TestDirectImageTagMutationAfterResolveKeepsStoredDigest(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -159,8 +155,6 @@ func TestDirectImageTagMutationAfterResolveKeepsStoredDigest(t *testing.T) {
 		t.Fatalf("desired image = %q, want pinned %q", got, pinnedA)
 	}
 
-	// The registry tag moves. Nothing on the platform re-resolves it: the
-	// stored digest still runs.
 	resolver.Tags[tagInput] = testDigest("b")
 	state, err = desiredStateForAgent(ctx, store, "node-1")
 	if err != nil {
@@ -170,8 +164,6 @@ func TestDirectImageTagMutationAfterResolveKeepsStoredDigest(t *testing.T) {
 		t.Fatalf("tag mutation changed the running image: got %q, want stored digest %q", got, pinnedA)
 	}
 
-	// A fresh release resolves the tag anew and pins the new digest; the
-	// superseded deployment keeps running its own stored digest.
 	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec(tagInput, &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8080}), Env: map[string]string{"STAGE": "two"},
 	})); err != nil {
@@ -203,10 +195,8 @@ func TestDirectImageTagMutationAfterResolveKeepsStoredDigest(t *testing.T) {
 	}
 }
 
-// TestSameSourceReusesBuiltImageWithCurrentVariables proves the skip-rebuild
-// contract: when the same source has already produced an image, no builder
-// work is queued and the existing image deploys with the service's current
-// variables instead of the original build's.
+// TestSameSourceReusesBuiltImageWithCurrentVariables: the same source reuses the
+// built image with current variables and queues no builder work.
 func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -229,7 +219,6 @@ func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
 		t.Fatalf("artifacts after build = %v, %v", artifacts, err)
 	}
 
-	// The user changes variables; the source is unchanged.
 	updated := repositoryServiceSpec(
 		&platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8080}), Env: map[string]string{"STAGE": "two"}},
 		&platformv1.ServiceSourceSpec{
@@ -243,8 +232,6 @@ func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
 		t.Fatalf("updateService: %v", err)
 	}
 
-	// The same commit is queued again (webhook redelivery). The build is
-	// skipped and the existing image rolls out.
 	binding, err := store.source.SourceBindingByServiceID(ctx, service.ID)
 	if err != nil {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
@@ -286,9 +273,8 @@ func TestSameSourceReusesBuiltImageWithCurrentVariables(t *testing.T) {
 	}
 }
 
-// TestReleaseEnvironmentSkipsUnchangedDirectImageTags proves one
-// service's stale or unavailable tag cannot block releasing unrelated
-// pending changes: only the services a release selects resolve tags.
+// TestReleaseEnvironmentSkipsUnchangedDirectImageTags: one service's stale tag
+// cannot block releasing unrelated pending changes.
 func TestReleaseEnvironmentSkipsUnchangedDirectImageTags(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -325,8 +311,6 @@ func TestReleaseEnvironmentSkipsUnchangedDirectImageTags(t *testing.T) {
 		t.Fatalf("CreateService svc-b: %v", err)
 	}
 
-	// svc-a's image disappears from the registry while svc-b has pending
-	// changes. The release must never resolve svc-a's unchanged tag.
 	delete(resolver.Tags, "example.test/a:1")
 	if _, _, err := updateService(ctx, store, "user-1", serviceB.ID, "", directImageServiceSpec("example.test/b:1", &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8081}), Env: map[string]string{"STAGE": "two"},
@@ -350,10 +334,8 @@ func TestReleaseEnvironmentSkipsUnchangedDirectImageTags(t *testing.T) {
 	}
 }
 
-// TestReleaseEnvironmentResolvesOutsideSchedulerLock proves a slow or
-// unreachable registry cannot stall scheduler-serialized mutations:
-// tag resolution runs outside the scheduler lock and only the release
-// transaction serializes with other scheduler work.
+// TestReleaseEnvironmentResolvesOutsideSchedulerLock: tag resolution runs outside
+// the scheduler lock so a slow registry cannot stall mutations.
 func TestReleaseEnvironmentResolvesOutsideSchedulerLock(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -391,8 +373,6 @@ func TestReleaseEnvironmentResolvesOutsideSchedulerLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateService svc-b: %v", err)
 	}
-	// The pending change deploys the blocking tag, so the release
-	// resolves it and hangs in the "registry".
 	if _, _, err := updateService(ctx, store, "user-1", serviceB.ID, "", directImageServiceSpec(slowTag, &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8081}), Env: map[string]string{"STAGE": "two"},
 	})); err != nil {
@@ -410,8 +390,6 @@ func TestReleaseEnvironmentResolvesOutsideSchedulerLock(t *testing.T) {
 		t.Fatal("release never reached the registry")
 	}
 
-	// While the registry is slow, scheduler-serialized mutations still
-	// run: creating another service must not wait for the resolver.
 	created := make(chan error, 1)
 	go func() {
 		_, err := delivery.CreateService(ctx, testUser("user-1"), environmentID, "svc-a",
@@ -439,10 +417,8 @@ func TestReleaseEnvironmentResolvesOutsideSchedulerLock(t *testing.T) {
 	}
 }
 
-// TestCreateServiceResolvesOutsideSchedulerLock proves service creation
-// resolves direct-image tags outside the scheduler lock as well: a slow
-// or unreachable registry must not stall unrelated scheduler work while
-// a create waits on its pin.
+// TestCreateServiceResolvesOutsideSchedulerLock: service creation also resolves
+// tags outside the scheduler lock.
 func TestCreateServiceResolvesOutsideSchedulerLock(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -509,8 +485,7 @@ func TestCreateServiceResolvesOutsideSchedulerLock(t *testing.T) {
 	}
 }
 
-// blockingTagResolver hangs on one tag until released, simulating a slow
-// or unreachable registry during resolution.
+// blockingTagResolver simulates a slow registry for one tag.
 type blockingTagResolver struct {
 	registry.StaticResolver
 	block   string
@@ -531,9 +506,8 @@ func (r *blockingTagResolver) Resolve(ctx context.Context, ref string) (registry
 	return r.StaticResolver.Resolve(ctx, ref)
 }
 
-// TestLateWebhookRevisionDoesNotRegressDeployedImage proves an out-of-order
-// or redelivered older revision can neither overwrite a newer deployment's
-// artifact and rollout nor supersede the newer revision's queued build.
+// TestLateWebhookRevisionDoesNotRegressDeployedImage: an older redelivered
+// revision overwrites neither the newer deployment nor its queued build.
 func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -564,8 +538,6 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
 
-	// A redelivered older revision must not supersede the newer build
-	// that is still queued.
 	redelivered, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-parent"})
 	if err != nil || !redelivered.Superseded || redelivered.BuildID != "" || redelivered.DeploymentID != "" {
 		t.Fatalf("redelivered older revision = %+v, %v, want superseded no-op", redelivered, err)
@@ -580,8 +552,6 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 		t.Fatalf("completeBuild commit-2: %v", err)
 	}
 
-	// After commit-2 is deployed, its reuse of commit-1's image must not
-	// roll the service back.
 	redelivered, err = testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-parent"})
 	if err != nil || !redelivered.Superseded {
 		t.Fatalf("redelivered older revision after deploy = %+v, %v, want superseded no-op", redelivered, err)
@@ -601,9 +571,7 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 		t.Fatalf("build_runs rows = %d, want 2 (no work for the late revision)", buildCount)
 	}
 
-	// An ordered push transition may deliberately move backward: a
-	// force-push of commit-1 over commit-2 carries before=commit-2 and
-	// proves its currency, so commit-1's artifact rolls out again.
+	// A force-push proves currency via before=commit-2, so commit-1 rolls out again.
 	forced, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, source.BuildTransition{PreviousCommit: "commit-2"})
 	if err != nil || !forced.Reused || forced.BuildID != build1.ID {
 		t.Fatalf("force-push transition = %+v, %v, want reuse of %q", forced, err, build1.ID)
@@ -613,11 +581,8 @@ func TestLateWebhookRevisionDoesNotRegressDeployedImage(t *testing.T) {
 	}
 }
 
-// TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync is the
-// delayed-sync regression: a tracked-head sync that fetched before a
-// newer push landed carries a stale fetch basis. It must neither move the
-// proven head backward nor retire the newer revision's work — while a
-// sync whose fetch basis is the current head still advances it.
+// TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync: a sync with a stale
+// fetch basis moves neither the head nor newer work; a current one advances.
 func TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync(t *testing.T) {
 	ctx := context.Background()
 	store, _, service := newRepoBuildTestService(t)
@@ -633,9 +598,6 @@ func TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync(t *testing.T) {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
 
-	// The sync fetched commit-1 over no established head, and commit-2's
-	// push advanced the binding before the sync applied. Its observation
-	// is history only: it must not roll the head back or supersede work.
 	stale := source.BuildTransition{TrackedHead: true}
 	superseded, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-1", source.SourceSnapshotRecord{}, stale)
 	if err != nil || !superseded.Superseded || superseded.ChainUnproven {
@@ -646,8 +608,6 @@ func TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync(t *testing.T) {
 		t.Fatalf("proven head = %q, %v; the stale sync must not move it backward", head, err)
 	}
 
-	// A sync whose fetch started over the current head is the real thing:
-	// it advances the head to the fetched commit.
 	fresh := source.BuildTransition{TrackedHead: true, FetchedFromHead: "commit-2"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-3", "", "", fresh); err != nil {
 		t.Fatalf("seedReadySourceState commit-3: %v", err)
@@ -658,10 +618,8 @@ func TestEnqueueBuildSourceStateRejectsStaleTrackedHeadSync(t *testing.T) {
 	}
 }
 
-// TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild is the
-// late-webhook regression without a reusable image: a redelivered older
-// revision whose build never produced an artifact must not retire the
-// newer revision's queued build or queue stale work in its place.
+// TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild: without a
+// reusable image, the older revision retires nothing and queues nothing.
 func TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -711,12 +669,8 @@ func TestRedeliveredRevisionWithoutArtifactDoesNotSupersedeQueuedBuild(t *testin
 	}
 }
 
-// TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence is the
-// out-of-order regression for revisions that were never seen before: a
-// delayed webhook for an older commit records it as history, but recording
-// must not make it the freshest state. It may neither supersede the newer
-// revision's queued build nor block the next real push, and it never
-// demands build work of its own.
+// TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence: a delayed webhook for
+// a never-seen older commit records history only — never freshest, never queued.
 func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -745,15 +699,7 @@ func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
 
-	// A delayed webhook for an older commit that was never observed before
-	// records it with its push transition (before=commit-1). The
-	// record is history only: it must not become the freshest state just
-	// because it arrived last. Its push transition names commit-1 —
-	// recorded but no longer the proven head — which is not proof of
-	// staleness (a recreated-branch predecessor can be recorded without
-	// ever holding the head), so the request reports an unproven chain:
-	// the tracked head gets reconciled and only the commit still current
-	// builds. The late revision itself creates no work.
+	// The delayed webhook records history only; only the still-current commit builds.
 	lateTransition := source.BuildTransition{PreviousCommit: "commit-1"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-late", "", "", lateTransition); err != nil {
 		t.Fatalf("seedReadySourceState commit-late: %v", err)
@@ -773,9 +719,7 @@ func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
 		t.Fatalf("build_runs rows = %d, want 2 (no work for the late revision)", buildCount)
 	}
 
-	// The next real push (before=commit-2) lands even though the stale
-	// observation arrived after it: a refused observation must not fence
-	// out the tracked ref's actual successor.
+	// The next real push still lands; a refused observation fences nothing.
 	nextTransition := source.BuildTransition{PreviousCommit: "commit-2"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-3", "", "", nextTransition); err != nil {
 		t.Fatalf("seedReadySourceState commit-3: %v", err)
@@ -786,14 +730,8 @@ func TestUnseenLateWebhookRevisionCannotPassTheFreshnessFence(t *testing.T) {
 	}
 }
 
-// TestSuccessorPushWithUnobservedPredecessorReportsUnprovenChain: a
-// webhook for a successor push — its transition names a commit the
-// binding has not observed yet — can arrive before its predecessor's
-// webhook is processed. That request is early, not stale, and dropping
-// it would lose the push forever. QueueSourceBuild reports an unproven
-// chain so the coordinator reconciles the tracked head instead of
-// completing, and once the predecessor lands and advances the proven
-// head, the successor proves currency and builds.
+// TestSuccessorPushWithUnobservedPredecessorReportsUnprovenChain: an early
+// successor webhook waits for its predecessor instead of dropping or completing.
 func TestSuccessorPushWithUnobservedPredecessorReportsUnprovenChain(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -807,8 +745,6 @@ func TestSuccessorPushWithUnobservedPredecessorReportsUnprovenChain(t *testing.T
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
 
-	// The successor's webhook lands first: its push transition names
-	// commit-mid, which is not observed yet.
 	earlyTransition := source.BuildTransition{PreviousCommit: "commit-mid"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-successor", "", "", earlyTransition); err != nil {
 		t.Fatalf("seedReadySourceState commit-successor: %v", err)
@@ -825,7 +761,6 @@ func TestSuccessorPushWithUnobservedPredecessorReportsUnprovenChain(t *testing.T
 		t.Fatalf("build_runs rows = %d, want 0 (the early successor creates no work yet)", buildCount)
 	}
 
-	// The predecessor lands and advances the proven head.
 	midTransition := source.BuildTransition{PreviousCommit: "commit-1"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-mid", "", "", midTransition); err != nil {
 		t.Fatalf("seedReadySourceState commit-mid: %v", err)
@@ -835,8 +770,6 @@ func TestSuccessorPushWithUnobservedPredecessorReportsUnprovenChain(t *testing.T
 		t.Fatalf("predecessor = %+v, %v, want queued build", mid, err)
 	}
 
-	// The requeued successor now proves currency (before == head) and
-	// builds: the out-of-order pair converges on the real ref tip.
 	requeued, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-successor", source.SourceSnapshotRecord{}, earlyTransition)
 	if err != nil || requeued.Superseded || requeued.BuildID == "" {
 		t.Fatalf("requeued successor = %+v, %v, want queued build", requeued, err)
@@ -857,10 +790,8 @@ func seedArtifactForRetentionTest(t *testing.T, store *persistence, ctx context.
 	}
 }
 
-// TestSupersededBuildArtifactAgesOutWithRetention proves a build that
-// finishes after newer work was queued does not pin its never-deployed
-// image as rollback material: the superseded deployment keeps its
-// history, but retention may age the undeployed artifact out.
+// TestSupersededBuildArtifactAgesOutWithRetention: a late-finishing build does
+// not pin its never-deployed image as rollback material.
 func TestSupersededBuildArtifactAgesOutWithRetention(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -880,9 +811,6 @@ func TestSupersededBuildArtifactAgesOutWithRetention(t *testing.T) {
 	if _, err := enqueueBuildForTest(ctx, store, "user-1", service.ID, "commit-2"); err != nil {
 		t.Fatalf("enqueueBuildForTest commit-2: %v", err)
 	}
-	// Stand in for the in-flight window the finding describes: the older
-	// build's deployment is still the current one when its late completion
-	// lands after newer work was queued.
 	if _, err := store.db.ExecContext(ctx,
 		`UPDATE deployments SET is_current = FALSE WHERE service_id = $1 AND build_id <> $2`, service.ID, build1.ID); err != nil {
 		t.Fatal(err)
@@ -936,10 +864,8 @@ func TestSupersededBuildArtifactAgesOutWithRetention(t *testing.T) {
 	}
 }
 
-// TestPruneBuildArtifactsKeepsRollbackMaterial proves retention: artifacts
-// any deployment, transition, rollout, or current pointer references
-// survive any age, recent artifacts are kept, and only aged-out
-// unreferenced artifacts beyond the newest keep-recent are deleted.
+// TestPruneBuildArtifactsKeepsRollbackMaterial: referenced and recent artifacts
+// survive; only aged-out unreferenced ones past keep-recent are deleted.
 func TestPruneBuildArtifactsKeepsRollbackMaterial(t *testing.T) {
 	t.Parallel()
 	store, ctx, _, _, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
@@ -998,11 +924,8 @@ func TestPruneBuildArtifactsKeepsRollbackMaterial(t *testing.T) {
 	}
 }
 
-// TestRepeatedBuildsOfSameImageKeepOwnProvenance: when a later build of a
-// different revision reports the same manifest digest, each successful
-// build keeps its own artifact row so provenance (commit, build, actor)
-// stays with the build that produced the image instead of collapsing into
-// the first artifact recorded for that image.
+// TestRepeatedBuildsOfSameImageKeepOwnProvenance: each successful build keeps its
+// own artifact row even when the digest matches an earlier build.
 func TestRepeatedBuildsOfSameImageKeepOwnProvenance(t *testing.T) {
 	t.Parallel()
 	store, _, service := newRepoBuildTestService(t)
@@ -1062,10 +985,8 @@ func TestRepeatedBuildsOfSameImageKeepOwnProvenance(t *testing.T) {
 	}
 }
 
-// TestDirectImagePinnedInputRecordsNoMutableSourceRef pins the proto
-// contract for source_image_ref: it keeps the user's original input only
-// when that input was not digest-pinned. An already-pinned reference must
-// not round-trip to clients as mutable user input.
+// TestDirectImagePinnedInputRecordsNoMutableSourceRef: source_image_ref keeps
+// user input only when it was not already digest-pinned.
 func TestDirectImagePinnedInputRecordsNoMutableSourceRef(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -1122,8 +1043,6 @@ func TestSourceBuildReuseRecordsRevisionAndSkipsRedundantRollout(t *testing.T) {
 	}
 	firstDeployment := currentDeploymentForTest(t, store, ctx, service.ID)
 
-	// A later commit with identical source bytes: the built image is the
-	// right image for the new revision too.
 	if err := seedReadySourceState(t, store, service, "commit-2"); err != nil {
 		t.Fatalf("seedReadySourceState commit-2: %v", err)
 	}
@@ -1145,9 +1064,7 @@ func TestSourceBuildReuseRecordsRevisionAndSkipsRedundantRollout(t *testing.T) {
 		t.Fatalf("reused queue = %+v, want the image reused without a rollout beyond %q", queued, firstDeployment.ID)
 	}
 
-	// The reuse must be recorded against the source revision: manual
-	// release asks whether the latest revision is built to decide if a
-	// sync is needed, and an unrecorded reuse keeps it syncing forever.
+	// Reuse must be recorded per revision, or manual release keeps syncing forever.
 	unbuilt, err := store.source.ServiceHasUnbuiltSourceRevisionTx(ctx, store.db, service.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -1178,8 +1095,6 @@ func TestSourceBuildReuseRecordsRevisionAndSkipsRedundantRollout(t *testing.T) {
 		t.Fatalf("latest_build_id = %q, want reuse run %q", latestBuildID, reuseRunID)
 	}
 
-	// A later refresh sync of the same head reuses again and must not
-	// restart the rollout or duplicate the record.
 	again, err := testDelivery(store).QueueSourceBuild(ctx, binding, "commit-2", source.SourceSnapshotRecord{}, source.BuildTransition{TrackedHead: true, FetchedFromHead: "commit-2"})
 	if err != nil {
 		t.Fatalf("QueueSourceBuild repeat: %v", err)
@@ -1217,7 +1132,6 @@ func TestDirectImageArtifactProvenanceFollowsEachInput(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Two different tags resolve to the same image.
 	sameDigest := testDigest("a")
 	resolver := &registry.StaticResolver{Tags: map[string]string{
 		"example.test/web:one": sameDigest,
@@ -1233,9 +1147,7 @@ func TestDirectImageArtifactProvenanceFollowsEachInput(t *testing.T) {
 	}
 	pinned := testPinnedRef("example.test/web", "a")
 
-	// The later release names a different tag for the same image: its
-	// provenance must follow the new input instead of inheriting the
-	// older tag's record.
+	// Provenance follows the new tag input, not the older tag's record.
 	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec("example.test/web:two", &platformv1.ServiceRuntime{
 		Ports: runtimePortsFromInts([]int32{8080}), Env: map[string]string{"STAGE": "two"},
 	})); err != nil {
@@ -1279,16 +1191,11 @@ func TestPushCannotInstallTheFirstHeadWithoutAFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SourceBindingByServiceID: %v", err)
 	}
-	// A binding that has not proven a head yet — the pre-fetch state of
-	// a fresh binding.
 	if _, err := store.db.ExecContext(ctx, `UPDATE source_bindings SET head_commit_sha = '' WHERE id = $1`, binding.ID); err != nil {
 		t.Fatal(err)
 	}
 
-	// A delayed push with a nonzero predecessor must not install itself
-	// as the first head: its chain anchors to nothing and the ref has
-	// usually moved on already. Recording it and queueing it are both
-	// refused for currency; only a fetch establishes the first head.
+	// A delayed push must not install itself as the first head; only a fetch does.
 	push := source.BuildTransition{PreviousCommit: "commit-parent"}
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-delayed", "Delayed push", "Octocat", push); err != nil {
 		t.Fatalf("seedReadySourceState commit-delayed: %v", err)
@@ -1301,9 +1208,6 @@ func TestPushCannotInstallTheFirstHeadWithoutAFetch(t *testing.T) {
 		t.Fatalf("head = %q, %v; a push must not install the first head", head, err)
 	}
 
-	// The tracked-head fetch over the empty basis still establishes the
-	// real first head and builds it — the delayed push must not have
-	// displaced its proof.
 	if err := seedReadySourceStateWithMetadata(t, store, service, "commit-real", "Real head", "Octocat", source.BuildTransition{History: true}); err != nil {
 		t.Fatalf("seedReadySourceState commit-real: %v", err)
 	}

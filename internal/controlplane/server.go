@@ -88,8 +88,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	secrets, err := secretkeys.Open(ctx, store.db, cfg.SecretKeys, secretkeys.Options{
-		// Production never generates missing keys: the keyring file is
-		// explicitly provisioned and Open fails closed without it.
+		// Production never generates keys: the keyring is explicitly provisioned, Open fails closed.
 		AllowGenerate: !cfg.Profile.IsProduction(),
 	})
 	if err != nil {
@@ -98,9 +97,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	store.attachSecrets(secrets)
 	signKeys, err := signkeys.Open(ctx, store.db, secrets, signkeys.Options{
-		// Production never generates missing keys: each scope is
-		// initialized explicitly via the signing-keys CLI, and Open fails
-		// closed without an active key.
+		// Production never generates keys; scopes initialize via the signing-keys CLI.
 		AllowGenerate:   !cfg.Profile.IsProduction(),
 		RegistryEnabled: strings.TrimSpace(cfg.Registry.Host) != "",
 	})
@@ -169,10 +166,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if logStore != nil {
 		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	}
-	// Each replica journals into its own directory: replicas share the
-	// state volume but never the spool files, so failover can never
-	// race two drainers over one journal. The replica identity is its
-	// advertise address (the field that already separates replicas).
+	// Each replica journals into its own directory: replicas share the state volume but never
+	// the spool files, so failover can't race two drainers over one journal.
 	replicaID := strings.NewReplacer(":", "_", "/", "_").Replace(cfg.AdvertiseAddr)
 	if replicaID == "" {
 		replicaID = "default"
@@ -429,10 +424,8 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Follow(runCtx) }()
 	}
-	// Per-replica as well: every replica ingests the agent streams it
-	// terminates. Its Run drains accepted batches before returning,
-	// and Run waits for that drain below: Close tears down the log
-	// store as soon as runDone closes.
+	// Per-replica as well: every replica ingests the agent streams it terminates. Run drains
+	// accepted batches before returning; Close tears down the log store once runDone closes.
 	var logIngestDone chan error
 	if s.logIngester != nil {
 		done := make(chan error, 1)
@@ -465,9 +458,8 @@ func (s *Server) Run(ctx context.Context) error {
 	if result == nil {
 		result = leaseErr
 	}
-	// The shutdown drain flushes accepted log batches into the log
-	// store; Close closes that store right after runDone, so Run must
-	// not return until the drain finished.
+	// The shutdown drain flushes accepted batches into the log store; Close closes that store
+	// right after runDone, so Run must not return until the drain finished.
 	if logIngestDone != nil {
 		if err := <-logIngestDone; result == nil {
 			result = err
@@ -625,11 +617,8 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 	}
 }
 
-// buildArtifactRetentionLoop prunes unreferenced build artifacts past the
-// retention window. Artifacts any deployment, transition, rollout, or the
-// current pointer references are rollback material and never pruned; only
-// artifacts nothing references (a superseded image that never deployed) age
-// out, beyond the newest keep-recent per service.
+// buildArtifactRetentionLoop prunes unreferenced build artifacts past the retention window.
+// Referenced artifacts are rollback material and never pruned; only unreferenced ones age out.
 func (s *Server) buildArtifactRetentionLoop(ctx context.Context) {
 	prune := func() {
 		now, err := dbtx.DatabaseTime(ctx, s.store.db)
@@ -674,11 +663,9 @@ func (s *Server) Close() error {
 		runCancel()
 	}
 	if s.internalGRPC != nil {
-		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP.
-		// Stop the gRPC server before the shutdown waits below for two
-		// reasons: active Sync streams are torn down so the log ingest
-		// drain is not racing new batch admissions, and the later HTTP
-		// Shutdown does not wait the full deadline for streams to go idle.
+		// All gRPC traffic is multiplexed through internalHTTP via ServeHTTP. Stop the gRPC server
+		// first: active Sync streams tear down so the ingest drain races no new admissions, and HTTP
+		// Shutdown doesn't wait the full deadline for idle streams.
 		s.internalGRPC.Stop()
 	}
 	if runStarted {
@@ -775,8 +762,7 @@ func (s *Server) RegistryAuthBundlePath() string {
 	return s.registryAuth.BundlePath()
 }
 
-// SigningKeys exposes the shared signing-key inventory for operator tooling
-// and provisioning flows (dashboard secret export).
+// SigningKeys exposes the shared signing-key inventory for operator tooling.
 func (s *Server) SigningKeys() *signkeys.Service {
 	if s == nil {
 		return nil
@@ -801,9 +787,8 @@ func (s *Server) EnsureBuilderClientIdentity(ctx context.Context, id string) (id
 	return s.authority.EnsureBuilderClientIdentity(ctx, id)
 }
 
-// userAssertionSecrets verifies dashboard user assertions against the
-// shared user-assertion key: active first, then the retiring key while a
-// rotation overlaps.
+// userAssertionSecrets verifies dashboard user assertions against the shared user-assertion
+// key: active first, then the retiring key while a rotation overlaps.
 func userAssertionSecrets(keys *signkeys.Service) identity.UserAssertionSecrets {
 	return func(ctx context.Context) ([][]byte, error) {
 		mats, err := keys.Verifying(ctx, signkeys.ScopeUserAssertion)

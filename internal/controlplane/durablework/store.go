@@ -16,22 +16,19 @@ import (
 // Transaction runs fn inside a retried coordination transaction.
 type Transaction func(context.Context, func(context.Context, *sql.Tx) error) error
 
-// Store is a CockroachDB-backed durable work queue. EnqueueTx joins the
-// caller's transaction; every other method manages its own.
+// Store is a CockroachDB-backed durable work queue. EnqueueTx joins the caller's transaction; every other method manages its own.
 type Store struct {
 	db     *sql.DB
 	withTx Transaction
 	ready  chan struct{}
 }
 
-// NewStore builds a queue over db. withTx runs coordination transactions
-// with serializable retries; it must not advance the product journal.
+// NewStore builds a queue over db. withTx runs coordination transactions with serializable retries; it must not advance the product journal.
 func NewStore(db *sql.DB, withTx Transaction) *Store {
 	return &Store{db: db, withTx: withTx, ready: make(chan struct{}, 1)}
 }
 
-// Ready is closed-signalled whenever an enqueue makes work available. Like
-// all wakeups it is best-effort: receivers must also poll.
+// Ready is signalled whenever an enqueue makes work available. Like all wakeups it is best-effort: receivers must also poll.
 func (s *Store) Ready() <-chan struct{} { return s.ready }
 
 func (s *Store) signal() {
@@ -54,10 +51,9 @@ func scanRecord(row interface{ Scan(...any) error }) (Record, error) {
 	return rec, err
 }
 
-// Enqueue inserts params, deduplicating on the dedup key while a record is
-// active and resurrecting it to pending when it is terminal. It reports
-// whether the queue accepted the work. Prefer EnqueueTx: enqueue in the same
-// transaction as the product-state mutation that requires the work.
+// Enqueue inserts params, deduplicating on the dedup key while a record is active and
+// resurrecting it to pending when it is terminal. It reports whether the queue accepted
+// the work. Prefer EnqueueTx: enqueue in the same transaction as the product-state mutation that requires the work.
 func (s *Store) Enqueue(ctx context.Context, params EnqueueParams) (bool, error) {
 	var err error
 	if params, err = params.validated(); err != nil {
@@ -126,12 +122,10 @@ func (s *Store) EnqueueTx(ctx context.Context, tx *sql.Tx, params EnqueueParams)
 	return enqueued, nil
 }
 
-// CancelPendingForResourceTx deletes pending records for one resource inside
-// the caller's transaction. Deletion quiesce uses it to stop new work for a
-// tombstoned resource atomically with the tombstone write. Leased records
-// are left alone: their owners finish into guards that drop tombstoned
-// resources, and deleting a leased row would strand the owner on a lease it
-// can never commit. Terminal records are history and are never cancelled.
+// CancelPendingForResourceTx deletes pending records for one resource inside the caller's
+// transaction. Deletion quiesce uses it to stop new work for a tombstoned resource atomically
+// with the tombstone write. Leased records are left alone: deleting one would strand its owner
+// on a lease it can never commit. Terminal records are history and are never cancelled.
 func (s *Store) CancelPendingForResourceTx(ctx context.Context, tx *sql.Tx, resourceType, resourceID string) error {
 	_, err := tx.ExecContext(ctx,
 		`DELETE FROM durable_work_items
@@ -141,17 +135,14 @@ func (s *Store) CancelPendingForResourceTx(ctx context.Context, tx *sql.Tx, reso
 	return err
 }
 
-// maxClaimSweeps bounds how many exhausted records one Claim dead-letters
-// before either leasing a live record or reporting no work.
+// maxClaimSweeps bounds how many exhausted records one Claim dead-letters before leasing a live record or reporting no work.
 const maxClaimSweeps = 8
 
-// Claim leases one due record to ownerID for leaseTTL. It considers pending
-// records whose available-at time has passed and leased records whose lease
-// has expired, oldest first, optionally restricted to kinds. Every claim
-// increments the owner epoch and the attempt count; the guarded UPDATE is
-// the compare-and-swap, so concurrent replicas converge on a single winner.
-// Records that exhausted their attempt limit are moved to dead instead of
-// leased. An empty Record with a nil error means no work is due.
+// Claim leases one due record to ownerID for leaseTTL: pending records past available-at and
+// expired leases, oldest first, optionally restricted to kinds. Every claim increments the owner
+// epoch and the attempt count; the guarded UPDATE is the compare-and-swap, so concurrent replicas
+// converge on a single winner. Records that exhausted their attempt limit move to dead instead.
+// An empty Record with a nil error means no work is due.
 func (s *Store) Claim(ctx context.Context, ownerID string, leaseTTL time.Duration, kinds ...string) (Record, error) {
 	ownerID = strings.TrimSpace(ownerID)
 	if ownerID == "" {
@@ -230,9 +221,8 @@ func selectClaimCandidateTx(ctx context.Context, tx *sql.Tx, now time.Time, kind
 	return scanRecord(tx.QueryRowContext(ctx, query.String(), args...))
 }
 
-// markDeadExhaustedTx moves an attempt-exhausted record to dead. The UPDATE
-// is guarded on the observed (state, owner, epoch): a concurrent claim that
-// won the row first makes this a no-op reported as moved=false.
+// markDeadExhaustedTx moves an attempt-exhausted record to dead. The UPDATE is guarded on
+// the observed (state, owner, epoch): a concurrent claim that won first makes this a no-op reported as moved=false.
 func markDeadExhaustedTx(ctx context.Context, tx *sql.Tx, now time.Time, rec Record) (bool, error) {
 	result, err := tx.ExecContext(ctx,
 		`UPDATE durable_work_items
@@ -255,10 +245,9 @@ func markDeadExhaustedTx(ctx context.Context, tx *sql.Tx, now time.Time, rec Rec
 	return rows == 1, nil
 }
 
-// leaseRecordTx claims the candidate row. CockroachDB does not support SKIP
-// LOCKED; the SELECT FOR UPDATE row lock plus this guarded UPDATE preserves
-// a single winner under serializable retries. sql.ErrNoRows reports a lost
-// race.
+// leaseRecordTx claims the candidate row. CockroachDB does not support SKIP LOCKED; the SELECT
+// FOR UPDATE row lock plus this guarded UPDATE preserves a single winner under serializable retries.
+// sql.ErrNoRows reports a lost race.
 func leaseRecordTx(ctx context.Context, tx *sql.Tx, now time.Time, rec Record, ownerID string, leaseTTL time.Duration) (Record, error) {
 	expiresAt := now.Add(leaseTTL)
 	return scanRecord(tx.QueryRowContext(ctx,
@@ -288,8 +277,7 @@ func returningColumns(alias string) string {
 	return strings.Join(parts, ", ")
 }
 
-// Heartbeat extends rec's lease by leaseTTL. It is a single CAS on the
-// claimed (owner, epoch): a superseded owner gets ErrLeaseLost.
+// Heartbeat extends rec's lease by leaseTTL. It is a single CAS on the claimed (owner, epoch): a superseded owner gets ErrLeaseLost.
 func (s *Store) Heartbeat(ctx context.Context, rec Record, leaseTTL time.Duration) error {
 	if rec.ID == "" || rec.OwnerID == "" {
 		return errors.New("durable work heartbeat requires a claimed record")
@@ -310,9 +298,8 @@ func (s *Store) Heartbeat(ctx context.Context, rec Record, leaseTTL time.Duratio
 	return requireLeaseRow(result, rec)
 }
 
-// Complete marks rec succeeded. It is a single CAS on the claimed (owner,
-// epoch): a superseded owner gets ErrLeaseLost and the record stays with
-// its current owner.
+// Complete marks rec succeeded. It is a single CAS on the claimed (owner, epoch):
+// a superseded owner gets ErrLeaseLost.
 func (s *Store) Complete(ctx context.Context, rec Record) error {
 	if rec.ID == "" || rec.OwnerID == "" {
 		return errors.New("durable work complete requires a claimed record")
@@ -332,12 +319,10 @@ func (s *Store) Complete(ctx context.Context, rec Record) error {
 	return requireLeaseRow(result, rec)
 }
 
-// Fail dispositions a leased record after a failed attempt. Non-retryable
-// failures move it to failed at once; retryable failures with attempts
-// remaining move it back to pending with a jittered backoff available-at
-// time, and retryable failures on the last attempt move it to dead. The
-// whole transition is one CAS on the claimed (owner, epoch): a superseded
-// owner gets ErrLeaseLost.
+// Fail dispositions a leased record after a failed attempt. Non-retryable failures move it
+// to failed at once; retryable failures with attempts remaining move it back to pending with
+// a jittered backoff, and on the last attempt to dead. The whole transition is one CAS on
+// the claimed (owner, epoch): a superseded owner gets ErrLeaseLost.
 func (s *Store) Fail(ctx context.Context, rec Record, processErr error, opts FailOptions) error {
 	if rec.ID == "" || rec.OwnerID == "" {
 		return errors.New("durable work fail requires a claimed record")
@@ -400,8 +385,7 @@ func (s *Store) Get(ctx context.Context, id string) (Record, error) {
 		`SELECT `+recordColumns+` FROM durable_work_items WHERE id = $1`, id))
 }
 
-// ListDead returns dead records, newest first, optionally restricted to one
-// kind. Limit <= 0 means a bounded default.
+// ListDead returns dead records, newest first, optionally restricted to one kind. Limit <= 0 means a bounded default.
 func (s *Store) ListDead(ctx context.Context, kind string, limit int) ([]Record, error) {
 	if limit <= 0 {
 		limit = 100
@@ -433,9 +417,8 @@ func (s *Store) ListDead(ctx context.Context, kind string, limit int) ([]Record,
 	return out, rows.Err()
 }
 
-// QueueLag reports the age of the oldest pending record that is due now,
-// optionally restricted to kinds. Zero means no record is waiting. Export
-// this value as the durable_work_queue_lag_seconds gauge.
+// QueueLag reports the age of the oldest pending record that is due now, optionally restricted
+// to kinds. Zero means no record is waiting. Export this value as the durable_work_queue_lag_seconds gauge.
 func (s *Store) QueueLag(ctx context.Context, kinds ...string) (time.Duration, error) {
 	kinds = cleanKinds(kinds)
 	query := `SELECT COALESCE(EXTRACT(EPOCH FROM (statement_timestamp() - MIN(available_at))), 0)
@@ -460,10 +443,9 @@ func (s *Store) QueueLag(ctx context.Context, kinds ...string) (time.Duration, e
 	return time.Duration(seconds * float64(time.Second)), nil
 }
 
-// PruneTerminal deletes terminal records completed before cutoff, up to
-// limit rows, and reports how many it removed. Nothing prunes
-// automatically; operators and future retention loops call this explicitly.
-// Limit <= 0 means a bounded default.
+// PruneTerminal deletes terminal records completed before cutoff, up to limit rows, and
+// reports how many it removed. Nothing prunes automatically; operators and future retention
+// loops call this explicitly. Limit <= 0 means a bounded default.
 func (s *Store) PruneTerminal(ctx context.Context, cutoff time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		limit = 1000

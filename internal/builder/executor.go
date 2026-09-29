@@ -1,5 +1,4 @@
-// Package builder executes builds with isolated production and local
-// development executors.
+// Package builder executes builds with isolated production and local development executors.
 package builder
 
 import (
@@ -16,43 +15,25 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-// ExecutorDevelopment runs builds as host child processes. It does not
-// isolate hostile code; production refuses it at config validation
-// time.
+// ExecutorDevelopment runs builds as host children without isolation; production refuses it.
 const ExecutorDevelopment = "development"
 
-// ExecutorHardened runs every build step inside a one-shot OCI sandbox
-// with its own mount, PID, network, IPC, UTS, and cgroup namespaces,
-// a private network namespace with enforced egress policy, and a
-// per-execution BuildKit daemon. It is the production backend.
+// ExecutorHardened runs every build step in a one-shot OCI sandbox with private namespaces and enforced egress.
 const ExecutorHardened = "hardened"
 
-// ErrBuildTimeout reports a build that exceeded its executor time limit.
 var ErrBuildTimeout = errors.New("build timed out")
 
-// BuildExecutor runs one customer build inside an explicitly described
-// boundary. Implementations own workspace lifecycle: they destroy the
-// execution workspace and verify its removal on completion,
-// cancellation, and (via RecoverStaleWorkspaces after a restart)
-// worker death.
+// BuildExecutor runs one customer build inside an explicitly described boundary
+// and owns workspace lifecycle, verifying removal on completion and death.
 type BuildExecutor interface {
-	// Name identifies the executor selection, e.g. "development".
 	Name() string
-	// Isolating reports whether the executor holds against hostile
-	// code. The development executor returns false.
 	Isolating() bool
-	// Execute runs a single build to completion and returns the
-	// digest-pinned runtime reference of the pushed image.
+	// Execute runs a single build and returns the pushed image's digest-pinned reference.
 	Execute(ctx context.Context, spec ExecutionSpec) (ExecutionResult, error)
-	// RecoverStaleWorkspaces removes workspaces left behind by dead
-	// workers and verifies each removal. It returns the number of
-	// workspaces reclaimed.
 	RecoverStaleWorkspaces(ctx context.Context) (int, error)
 }
 
 // ExecutionSpec is the complete explicit input to one build execution.
-// Nothing about the source, credentials, endpoint, limits, or policy
-// may be read from ambient host state.
 type ExecutionSpec struct {
 	BuildID string
 
@@ -70,79 +51,52 @@ type ExecutionSpec struct {
 	Network NetworkPolicy
 	Cache   CachePolicy
 
-	// Cleanup destroys and verifies workspace removal when true.
-	// Disable only to debug a failed build.
+	// Cleanup destroys and verifies workspace removal; disable only to debug a failed build.
 	Cleanup bool
 
-	// OnLog receives streamed build output lines.
 	OnLog func(commandOutputLine)
 }
 
-// ExecutionResult is the outcome of one build execution.
 type ExecutionResult struct {
-	// ImageDigestRef is the digest-pinned runtime reference of the
-	// pushed image (repository@digest).
+	// ImageDigestRef is the digest-pinned runtime reference (repository@digest).
 	ImageDigestRef string
 }
 
-// PushCredentials are registry credentials scoped to exactly the one
-// repository named by Reference. The executor writes them into a
-// per-execution docker config containing no other credential and
-// refuses to run when they are missing or do not match Reference.
+// PushCredentials are registry credentials scoped to exactly the repository named by Reference.
 type PushCredentials struct {
 	Reference string
 	Username  string
 	Password  string
 }
 
-// BuildkitEndpoint is the BuildKit endpoint isolated to this execution.
-// The development executor receives the single configured endpoint
-// explicitly rather than reading it from ambient state. The hardened
-// executor ignores the shared address and starts a per-execution
-// daemon with an isolated root and socket instead, so sibling builds
-// share no daemon state.
+// BuildkitEndpoint is the BuildKit endpoint for this execution. The hardened executor starts its own daemon.
 type BuildkitEndpoint struct {
 	Binary  string
 	Address string
 }
 
-// RailpackToolchain locates the plan binary and frontend image for
-// railpack builds.
 type RailpackToolchain struct {
 	Binary        string
 	FrontendImage string
 }
 
-// ResourceLimits are explicit per-execution CPU/memory/disk/PID/time
-// limits. Zero values mean unset and are rejected by Validate; the
-// caller supplies effective defaults from builder configuration.
+// ResourceLimits are explicit per-execution limits; zero values are rejected by Validate.
 type ResourceLimits struct {
 	// Timeout bounds total execution time including snapshot setup.
 	Timeout time.Duration
-	// MemoryBytes caps child-process virtual address space
-	// (RLIMIT_AS) under the development executor. Virtual, not
-	// resident: Go-based build tools reserve over a gigabyte at
-	// startup, so this needs generous headroom and bounds runaway
-	// reservation rather than containing RSS. The hardened executor
-	// additionally enforces it as a hard cgroup resident-set cap.
+	// MemoryBytes caps child virtual address space (RLIMIT_AS), not resident set; it
+	// needs headroom for Go toolchains. The hardened executor also enforces an RSS cap.
 	MemoryBytes int64
 	// CPUSeconds caps child-process CPU time (RLIMIT_CPU).
 	CPUSeconds int64
-	// MaxFileBytes caps any single file a build child writes
-	// (RLIMIT_FSIZE).
+	// MaxFileBytes caps any single file a build child writes (RLIMIT_FSIZE).
 	MaxFileBytes int64
-	// MaxProcesses caps the number of processes a build child may
-	// fork (RLIMIT_NPROC).
+	// MaxProcesses caps the number of processes a build child may fork (RLIMIT_NPROC).
 	MaxProcesses int64
-	// MaxWorkspaceBytes caps total build-attributable bytes,
-	// accounted after the build. The development executor counts
-	// the workspace; the hardened executor additionally counts
-	// the per-execution daemon root and content-cache growth.
+	// MaxWorkspaceBytes caps total build-attributable bytes, accounted after the build.
 	MaxWorkspaceBytes int64
 }
 
-// DefaultResourceLimits returns the effective defaults used when the
-// operator configures no explicit limits.
 func DefaultResourceLimits() ResourceLimits {
 	limits := config.DefaultBuilderLimits()
 	return ResourceLimits{
@@ -155,7 +109,6 @@ func DefaultResourceLimits() ResourceLimits {
 	}
 }
 
-// Validate rejects unset or nonsensical limits.
 func (l ResourceLimits) Validate() error {
 	if l.Timeout <= 0 {
 		return errors.New("build timeout must be greater than 0")
@@ -178,8 +131,7 @@ func (l ResourceLimits) Validate() error {
 	return nil
 }
 
-// ProcessLimits is the subset of ResourceLimits applied to spawned
-// build child processes.
+// ProcessLimits is the subset of ResourceLimits applied to spawned build children.
 type ProcessLimits struct {
 	MemoryBytes  int64
 	CPUSeconds   int64
@@ -187,8 +139,6 @@ type ProcessLimits struct {
 	MaxProcesses int64
 }
 
-// ProcessLimits derives the child-process limits from the execution
-// limits.
 func (l ResourceLimits) ProcessLimits() ProcessLimits {
 	return ProcessLimits{
 		MemoryBytes:  l.MemoryBytes,
@@ -198,14 +148,8 @@ func (l ResourceLimits) ProcessLimits() ProcessLimits {
 	}
 }
 
-// NetworkPolicy is the restricted network policy for one build
-// execution, expressed as input rather than ambient host state. The
-// development executor validates the policy, scrubs ambient
-// network-shaping environment (proxy variables, docker contexts) from
-// build children, and honestly reports itself non-isolating. The
-// hardened executor enforces the policy at the data plane: a private
-// network namespace that is loopback-only when general egress is
-// denied, or CNI-attached with denied-CIDR blackholes otherwise.
+// NetworkPolicy is the restricted network policy for one build execution:
+// loopback-only or CNI-attached with denied-CIDR blackholes.
 type NetworkPolicy struct {
 	AllowGeneralEgress bool
 	DeniedCIDRs        []string
@@ -219,7 +163,6 @@ func DefaultRestrictedNetworkPolicy() NetworkPolicy {
 	}
 }
 
-// Validate parses every denied CIDR.
 func (p NetworkPolicy) Validate() error {
 	for _, raw := range p.DeniedCIDRs {
 		if _, err := netip.ParsePrefix(strings.TrimSpace(raw)); err != nil {
@@ -229,27 +172,20 @@ func (p NetworkPolicy) Validate() error {
 	return nil
 }
 
-// CacheMode selects how an executor may persist build cache data.
 type CacheMode string
 
 const (
-	// CacheModeNone persists no cache between executions.
 	CacheModeNone CacheMode = "none"
-	// CacheModeContentAddressed persists cache only under keys
-	// derived from build content (see ContentCacheKey), never under
-	// project, service, or build identity.
+	// CacheModeContentAddressed persists cache only under content-derived keys.
 	CacheModeContentAddressed CacheMode = "content-addressed"
 )
 
-// CachePolicy carries the cache mode and, for content-addressed mode,
-// the execution's cache key.
 type CachePolicy struct {
 	Mode CacheMode
 	Key  string
 }
 
-// Validate requires an explicit mode and, for content-addressed mode,
-// a key.
+// Validate requires an explicit mode and, for content-addressed mode, a key.
 func (p CachePolicy) Validate() error {
 	switch p.Mode {
 	case CacheModeNone:
@@ -264,11 +200,8 @@ func (p CachePolicy) Validate() error {
 	}
 }
 
-// ContentCacheKey derives a cache key purely from build content —
-// source snapshot digest, recipe, and toolchain — so cached data
-// cannot carry state between projects. Project, service, environment,
-// and build identity are deliberately excluded: identical content
-// shares entries safely because the key is the content.
+// ContentCacheKey derives a cache key purely from build content, so cached data
+// cannot carry state between projects.
 func ContentCacheKey(snapshotDigest string, recipe *platformv1.BuildRecipe, frontendImage string) string {
 	var parts []string
 	parts = append(parts, "snapshot="+strings.TrimSpace(snapshotDigest))

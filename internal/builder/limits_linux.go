@@ -8,16 +8,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// applyProcessLimits enforces the execution's process limits on an
-// already-started build child via prlimit(2). Limits are checked by the
-// kernel at allocation time (address-space growth, CPU accounting,
-// file growth, fork), so applying them immediately after Start bounds
-// everything the child does afterwards. The development executor can
-// only bound its direct build children this way; the BuildKit daemon
-// doing the actual build work is shared host state until 2.4b.
-// RLIMIT_NPROC counts every thread of the builder UID, so the process
-// limit must be sized for the machine's total usage, not one build;
-// per-execution PID containment is 2.4b work.
+// applyProcessLimits enforces the execution's process limits on an already-started
+// build child via prlimit(2). The kernel checks limits at allocation time, so
+// applying them immediately after Start bounds everything the child does after.
+// RLIMIT_NPROC counts every thread of the builder UID, so the process limit must
+// be sized for the machine's total usage, not one build.
 func applyProcessLimits(pid int, limits ProcessLimits) error {
 	targets := []struct {
 		name     string
@@ -41,8 +36,7 @@ func applyProcessLimits(pid int, limits ProcessLimits) error {
 	return nil
 }
 
-// processAlive reports whether pid refers to a live process. EPERM
-// means the process exists but belongs to another user.
+// processAlive reports whether pid refers to a live process. EPERM means the process exists but belongs to another user.
 func processAlive(pid int) bool {
 	if pid <= 0 {
 		return false

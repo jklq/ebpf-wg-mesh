@@ -105,10 +105,8 @@ func TestManagedDashboardSameAgentSyncRequiresNewGenerationObservation(t *testin
 	}
 }
 
-// TestManagedEnsureResolvesOutsideSchedulerLock proves managed
-// reconciliation resolves changed-spec images outside the scheduler
-// lock: a slow or unreachable registry must not stall unrelated
-// scheduler-serialized mutations while the sync waits on its pin.
+// TestManagedEnsureResolvesOutsideSchedulerLock: managed reconciliation resolves
+// changed-spec images outside the scheduler lock.
 func TestManagedEnsureResolvesOutsideSchedulerLock(t *testing.T) {
 	t.Parallel()
 
@@ -231,10 +229,8 @@ func TestManagedDashboardTrustedAgentChangeStartsRollingReplacement(t *testing.T
 	}
 }
 
-// TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged proves managed
-// reconciliation never consults the registry for an unchanged spec: a
-// no-op sync and a placement-only migration keep the stored artifact even
-// after the tag moves, while a real spec change re-resolves at deploy time.
+// TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged: an unchanged spec
+// never consults the registry; only a real spec change re-resolves.
 func TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged(t *testing.T) {
 	t.Parallel()
 
@@ -264,15 +260,13 @@ func TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged(t *testing.T) {
 	}
 	pinnedA := testPinnedRef("example.test/dashboard", "a")
 
-	// The image disappears from the registry. A no-op sync must not
-	// consult the registry at all.
+	// A no-op sync never consults the registry, even when the image is gone.
 	delete(resolver.Tags, tagInput)
 	if _, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, oldTrusted.AgentId); err != nil {
 		t.Fatalf("unchanged sync consulted the registry: %v", err)
 	}
 
-	// The tag comes back pointing at a different digest. A placement-only
-	// migration keeps the stored artifact: the image cannot change under it.
+	// A placement-only migration keeps the stored artifact when the tag moves.
 	resolver.Tags[tagInput] = testDigest("b")
 	moved, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", spec, newTrusted.AgentId)
 	if err != nil {
@@ -295,8 +289,6 @@ func TestManagedDashboardKeepsStoredArtifactWhenSpecUnchanged(t *testing.T) {
 		t.Fatalf("migration deployment image = %q, want stored %q", got, pinnedA)
 	}
 
-	// A real spec change resolves the tag at deploy time and records the
-	// new digest.
 	changed := directImageServiceSpec(tagInput, &platformv1.ServiceRuntime{Env: map[string]string{"STAGE": "two"}})
 	updated, _, err := delivery.EnsureManagedService(ctx, project.ID, "dashboard", changed, newTrusted.AgentId)
 	if err != nil {

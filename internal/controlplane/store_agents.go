@@ -13,26 +13,14 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
-// scopeAgentLogBatch resolves the authoritative owner of every
-// allocation referenced by one agent log batch and scopes the batch
-// onto it. Claimed service and environment IDs must match the
-// allocation owner when present; empty claims (drop summaries whose
-// producer metadata is gone after a restart) are filled from the
-// owner, so a compromised or buggy agent cannot attribute output or
-// loss to another tenant. Agent-supplied event metadata is cleared
-// the same way: structured platform events are server-generated
-// only. Lines referencing an allocation this agent
-// does not own — including a stale one removed while its lines sat in
-// the durable spool — or claiming a mismatched owner are excluded
-// individually with a warning: one bad line must never reject the
-// whole durable batch and wedge delivery behind it, and an
-// unverifiable line cannot carry a gap row either.
-// Entries and drop summaries without an allocation cannot be
-// attributed and are removed.
+// scopeAgentLogBatch resolves the authoritative owner of every allocation in one agent log
+// batch and scopes the batch onto it. Claims must match the owner when present; empty claims
+// are filled from the owner and agent-supplied event metadata is cleared (platform events are
+// server-generated), so a compromised agent can't attribute output or loss to another tenant.
+// Lines for unowned or mismatched allocations are excluded individually with a warning: one bad
+// line must never wedge delivery behind it, and an unverifiable line carries no gap row either.
 func (s *fleetPersistence) scopeAgentLogBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	for _, entry := range batch.GetEntries() {
-		// Event and attributes are claims about structured platform
-		// events, which only the control plane may synthesize.
 		entry.Event = ""
 		entry.Attributes = nil
 	}

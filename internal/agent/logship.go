@@ -19,18 +19,13 @@ const (
 	defaultShipBatchSize     = 256
 	defaultShipFlushInterval = time.Second
 	defaultShipReplayWindow  = 5 * time.Minute
-	// pendingDropsFile durably holds unreported drop summaries next
-	// to the spool so drop accounting survives a restart.
+	// pendingDropsFile durably holds unreported drop summaries next to the spool.
 	pendingDropsFile = "pending-drops.json"
-	// maxAgentPendingDrops caps distinct gap identities saved beside
-	// the spool. Allocation churn folds into the largest identity of
-	// the same service and reason past this point.
+	// maxAgentPendingDrops caps distinct gap identities saved beside the spool.
 	maxAgentPendingDrops = 256
 )
 
-// shipAdmitRate caps one allocation at the shipper's drain rate
-// (one batch per flush interval). Non-positive rates disable
-// limiting and return 0.
+// shipAdmitRate caps one allocation at the shipper's drain rate. Non-positive rates disable limiting.
 func shipAdmitRate(ratePerSec float64, batch int, interval time.Duration) float64 {
 	if ratePerSec <= 0 {
 		return 0
@@ -44,10 +39,8 @@ func shipAdmitRate(ratePerSec float64, batch int, interval time.Duration) float6
 	return ratePerSec
 }
 
-// aggregateAdmitRate caps every allocation together at one batch per
-// flush. Separate per-allocation buckets can each admit the drain
-// rate and overfill the spool while the ship loop reads one batch.
-// A disabled per-allocation limit disables the aggregate too.
+// aggregateAdmitRate caps every allocation together at one batch per flush, so
+// separate buckets cannot overfill the spool.
 func aggregateAdmitRate(ratePerSec float64, batch int, interval time.Duration) float64 {
 	if ratePerSec <= 0 || batch <= 0 || interval <= 0 {
 		return 0
@@ -55,9 +48,8 @@ func aggregateAdmitRate(ratePerSec float64, batch int, interval time.Duration) f
 	return float64(batch) / interval.Seconds()
 }
 
-// logShipConfig bounds one agent log shipper. Zero values select
-// defaults, except RatePerSec: a non-positive rate disables
-// producer limiting.
+// logShipConfig bounds one agent log shipper. Zero values select defaults, except a
+// non-positive RatePerSec disables producer limiting.
 type logShipConfig struct {
 	SpoolDir      string
 	SpoolMaxBytes int64
@@ -81,19 +73,11 @@ type logShipStats struct {
 	Unshipped    int64
 }
 
-// logShipper is the agent's durable log pipeline. Container output
-// funnels through per-allocation rate limiting into a bounded
-// disk-backed spool, and a ship loop forwards batches over the
-// current Sync stream with retry. It outlives any single session:
-// while detached the spool absorbs output, and on attach the recent
-// window replays alongside everything unshipped so a reconnect
-// loses nothing the spool still holds. Retried lines reuse their
-// stable IDs and collapse server-side. Every shed line is counted
-// per allocation and reported as an explicit read gap; pending
-// drop summaries persist next to the spool so shutdown and restart
-// keep the accounting, and coalesce by identity so a sustained
-// outage holds one entry per identity instead of one per flush
-// interval.
+// logShipper is the agent's durable log pipeline: rate-limited container output
+// funnels into a bounded disk spool, and a ship loop forwards batches over the
+// Sync stream with retry. It outlives any session: while detached the spool
+// absorbs output, and on attach the recent window replays. Shed lines are
+// counted per allocation and reported as explicit read gaps.
 type logShipper struct {
 	agentID          string
 	spoolDir         string
@@ -105,10 +89,8 @@ type logShipper struct {
 	flushInterval time.Duration
 	replayWindow  time.Duration
 
-	// shipMu serializes flush cycles with attach rewinds: a batch
-	// read before the rewind must not commit past it and swallow the
-	// replay window. It never guards AppendLog, so logging never
-	// blocks on the network.
+	// shipMu serializes flush cycles with attach rewinds. It never guards
+	// AppendLog, so logging never blocks on the network.
 	shipMu sync.Mutex
 
 	mu               sync.Mutex
@@ -142,10 +124,8 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 		Dir:        cfg.SpoolDir,
 		MaxBytes:   cfg.SpoolMaxBytes,
 		SyncWrites: true,
-		// Acknowledgement is queue admission at the control plane, so
-		// committed sealed segments stay for the replay window: a
-		// reconnect after a control-plane crash re-sends what the
-		// backend acknowledged but did not durably ingest.
+		// Acknowledgement is queue admission, so committed segments stay for the
+		// replay window: a reconnect re-sends what was acknowledged but not ingested.
 		Retention: cfg.ReplayWindow,
 	})
 	if err != nil {
@@ -172,8 +152,7 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 	}, nil
 }
 
-// AppendLog rate-limits and spools one container line. It never
-// blocks on the network: the ship loop forwards asynchronously.
+// AppendLog rate-limits and spools one container line. It never blocks on the network.
 func (s *logShipper) AppendLog(entry *agentv1.LogEntry) {
 	if s == nil || entry == nil {
 		return
@@ -228,15 +207,9 @@ func (s *logShipper) countOverflow(key string, count uint64) {
 	s.overflow[key] += count
 }
 
-// Attach connects the ship loop to a session's send function and
-// replays the recent window plus everything unshipped for
-// at-least-once delivery across reconnects. The send function
-// delivers one batch and returns once the server accepted it — the
-// session waits for the server's per-batch acceptance ack — so the
-// spool commit can never outrun acceptance; on error the batch stays
-// unshipped and retries. The rewind is serialized
-// against in-flight flushes and takes effect before the next batch
-// is read, so no batch can commit past it.
+// Attach connects the ship loop to a session's send function and replays the
+// recent window plus everything unshipped. The send function returns once the
+// server accepted the batch; on error the batch stays unshipped and retries.
 func (s *logShipper) Attach(send func(*agentv1.AgentClientMessage) error) {
 	if s == nil {
 		return
@@ -261,7 +234,6 @@ func (s *logShipper) Detach() {
 	s.send = nil
 }
 
-// Run ships spooled batches until ctx ends.
 func (s *logShipper) Run(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -278,12 +250,8 @@ func (s *logShipper) Run(ctx context.Context) error {
 	}
 }
 
-// Close waits for an in-flight flush, drains drop counters into
-// durable pending summaries, and closes the spool. Waiting matters:
-// a flush takes summaries out of the pending set for the send, and
-// saving before that send restores a failure would replace the
-// durable gap report with an empty file. Unshipped records and
-// pending drop summaries survive the restart.
+// Close waits for an in-flight flush, drains drop counters into durable pending
+// summaries, and closes the spool.
 func (s *logShipper) Close() error {
 	if s == nil {
 		return nil
@@ -297,7 +265,6 @@ func (s *logShipper) Close() error {
 	return s.spool.Close()
 }
 
-// Stats reports shipper counters and unshipped depth.
 func (s *logShipper) Stats() logShipStats {
 	if s == nil {
 		return logShipStats{}
@@ -321,9 +288,7 @@ func (s *logShipper) flush() {
 	s.shipMu.Lock()
 	defer s.shipMu.Unlock()
 	now := time.Now().UTC()
-	// Drop accounting is collected and persisted even while detached:
-	// a crash before the next attach must not lose counted losses that
-	// never reached a summary.
+	// Drop accounting persists even while detached: a crash must not lose counted losses.
 	s.collectDrops(now)
 	s.mu.Lock()
 	s.pending.Bound(maxAgentPendingDrops)
@@ -358,11 +323,8 @@ func (s *logShipper) flush() {
 		}
 		entries = append(entries, &entry)
 	}
-	// Every message stays within the wire budget: a batch of
-	// maximum-size lines must never exceed the transport's receive
-	// limit, which would wedge delivery permanently. Drop summaries
-	// ride their own bounded messages — an accumulated set can
-	// exceed the budget too and must never block line delivery.
+	// Every message stays within the wire budget. Drop summaries ride their own
+	// bounded messages and must never block line delivery.
 	dropChunks := logpipeline.ChunkByBytes(taken, func(d *platformv1.LogDropSummary) int { return proto.Size(d) }, logpipeline.MaxBatchBytes)
 	entryChunks := logpipeline.ChunkByBytes(entries, func(e *agentv1.LogEntry) int { return proto.Size(e) }, logpipeline.MaxBatchBytes)
 	for i, chunk := range dropChunks {
@@ -401,9 +363,7 @@ func (s *logShipper) flush() {
 	s.mu.Unlock()
 }
 
-// restorePending merges unsent summaries back into the pending set
-// so a failed send keeps its accounting; coalescing folds them into
-// newer windows for the same identity.
+// restorePending merges unsent summaries back so a failed send keeps its accounting.
 func (s *logShipper) restorePending(taken []*platformv1.LogDropSummary) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -411,8 +371,7 @@ func (s *logShipper) restorePending(taken []*platformv1.LogDropSummary) {
 	s.persistPendingLocked()
 }
 
-// loadPendingDrops reads drop summaries persisted by an earlier
-// process so shutdown-time accounting reports after the restart.
+// loadPendingDrops reads drop summaries persisted by an earlier process.
 func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
 	rows, err := logpipeline.LoadDrops(dir)
 	if err != nil {
@@ -423,9 +382,7 @@ func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
 	return pending, nil
 }
 
-// persistPendingLocked snapshots the pending drop summaries next to
-// the spool. The snapshot is advisory: retried summaries collapse
-// server-side by gap identity, so a stale copy only re-reports.
+// persistPendingLocked snapshots the pending drop summaries next to the spool.
 func (s *logShipper) persistPendingLocked() {
 	s.pending.Bound(maxAgentPendingDrops)
 	s.pruneMetaLocked()
@@ -434,10 +391,7 @@ func (s *logShipper) persistPendingLocked() {
 	}
 }
 
-// pruneMetaLocked drops allocation metadata nothing pending still
-// needs. The next line from a live allocation records it again, and
-// the control plane attributes a gap from the allocation owner when
-// the local claim is gone.
+// pruneMetaLocked drops allocation metadata nothing pending still needs.
 func (s *logShipper) pruneMetaLocked() {
 	if len(s.meta) == 0 {
 		return
@@ -453,11 +407,8 @@ func (s *logShipper) pruneMetaLocked() {
 	}
 }
 
-// collectDrops drains limiter, spool, and overflow counters into the
-// pending gap summaries reported with the next batch, coalescing by
-// identity so repeated collections during an outage cannot grow the
-// pending set, then durably snapshots them so shutdown or crash
-// keeps the accounting.
+// collectDrops drains limiter, spool, and overflow counters into the pending gap
+// summaries, coalescing by identity, then durably snapshots them.
 func (s *logShipper) collectDrops(now time.Time) {
 	windowStart := now.Add(-s.flushInterval)
 	limited := s.limiter.DrainDrops()
@@ -494,13 +445,8 @@ func (s *logShipper) collectDrops(now time.Time) {
 	s.persistPendingLocked()
 }
 
-// notePendingLocked attributes one drop count to its allocation and
-// coalesces it into the pending entry for that identity. The service
-// ID is advisory: the control plane derives authoritative service
-// attribution from the allocation owner, so counts surface even when
-// local metadata is gone after a restart. Counts without a
-// recoverable key cannot appear in reads and stay in the shipper
-// counters only.
+// notePendingLocked attributes one drop count to its allocation's pending entry.
+// The service ID is advisory; counts surface even when local metadata is gone.
 func (s *logShipper) notePendingLocked(key string, count uint64, reason string, windowStart, windowEnd time.Time) {
 	if key == "" {
 		return

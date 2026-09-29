@@ -16,31 +16,21 @@ import (
 	"time"
 )
 
-// This file is the shared adversarial suite for 2.4b: the same six
-// hostile-build cases run against the development executor's host
-// containment and the hardened executor's sandbox containment. Each
-// case asserts per-backend expectations: the sandbox must contain the
-// probe, while the development backend is expected to fail open in
-// documented ways — the suite proves the development executor is
-// honestly labeled rather than silently weaker.
-//
-// Cases that need no network run with denied egress so they exercise
-// the loopback-only sandbox path without CNI. Only the denied-CIDR
-// enforcement proof (Linux, privileged) attaches CNI.
+// The shared adversarial suite: six hostile-build cases run against both the
+// development executor's host containment and the hardened executor's sandbox.
+// The sandbox must contain each probe; the development backend fails open in
+// documented ways. Cases needing no network run with denied egress.
 
 // probeBackend runs a hostile probe through one containment backend.
 type probeBackend interface {
 	name() string
-	// isolating reports whether the backend claims to hold hostile
-	// code. Cases pick expectations from it.
+	// isolating reports whether the backend claims to hold hostile code.
 	isolating() bool
 	runProbe(ctx context.Context, t *testing.T, env *probeEnv, spec probeSpec) probeResult
 }
 
-// probeSpec is one hostile probe. Scripts address workspace files by
-// relative path (both backends run with the workspace root as the
-// working directory) and address unmounted host paths through
-// absolute variables, which resolve only where no isolation exists.
+// probeSpec is one hostile probe. Scripts address workspace files by relative
+// path and unmounted host paths through absolute variables.
 type probeSpec struct {
 	Script string
 	// Files are fixtures written to the workspace root before the run.
@@ -50,25 +40,18 @@ type probeSpec struct {
 	Limits  ResourceLimits
 	Policy  NetworkPolicy
 	Timeout time.Duration
-	// NprocHeadroom sizes the development backend's process limit
-	// above the machine's current UID-wide thread count (RLIMIT_NPROC
-	// counts every thread of the UID, so an absolute limit would
-	// fork-fail on a busy machine or prove nothing on an idle one).
-	// Zero means a generous default. The sandbox ignores it: cgroup
-	// PIDs are per-execution either way.
+	// NprocHeadroom sizes the development backend's process limit above the
+	// machine's UID-wide thread count. Zero means a generous default. The
+	// sandbox ignores it.
 	NprocHeadroom int64
-	// ExtraMounts are sandbox-only mounts. The development backend
-	// ignores them because its children see the whole host.
+	// ExtraMounts are sandbox-only mounts.
 	ExtraMounts []SandboxMount
 }
 
-// defaultNprocHeadroom lets ordinary probes fork freely above the
-// machine's UID-wide thread count.
+// defaultNprocHeadroom lets ordinary probes fork freely.
 const defaultNprocHeadroom = 4096
 
-// devProcessLimits sizes the development backend's process limits for
-// the machine: the process count floats above the UID-wide thread
-// count, exactly as a builder operator must size RLIMIT_NPROC.
+// devProcessLimits sizes development process limits for this machine.
 func devProcessLimits(t *testing.T, spec probeSpec) ProcessLimits {
 	t.Helper()
 	limits := spec.Limits
@@ -84,16 +67,13 @@ func devProcessLimits(t *testing.T, spec probeSpec) ProcessLimits {
 	return limits.ProcessLimits()
 }
 
-// probeResult is the observed probe outcome.
 type probeResult struct {
 	ExitCode int
 	Output   string
 }
 
-// probeEnv lays out identical fixtures for both backends: a workspace
-// root with a read-only snapshot, scratch, and tmp, plus a sibling
-// build's files and host files outside the workspace that no sandbox
-// mounts.
+// probeEnv lays out identical fixtures for both backends: workspace root,
+// sibling build files, and host files outside the workspace.
 type probeEnv struct {
 	root    string
 	repo    string
@@ -129,10 +109,7 @@ func setupProbeEnv(t *testing.T) *probeEnv {
 			t.Fatal(err)
 		}
 	}
-	// The snapshot is read-only in both executors (chmod in the
-	// development executor plus a read-only bind for root,
-	// read-only bind in the sandbox), so the fixture matches either
-	// way.
+	// The snapshot is read-only in both executors, so one fixture matches either.
 	if err := filepath.WalkDir(env.repo, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -168,11 +145,8 @@ func setupProbeEnv(t *testing.T) *probeEnv {
 func probeLimits() ResourceLimits {
 	return ResourceLimits{
 		Timeout: time.Minute,
-		// Generous virtual headroom: one probe re-executes the Go
-		// test binary, which reserves multi-gigabyte virtual arenas
-		// at startup (the documented 2.4a RLIMIT_AS caveat). The
-		// sandbox additionally enforces this as a resident-set cap
-		// the probes never approach.
+		// Generous virtual headroom: one probe re-executes the Go test binary,
+		// which reserves multi-gigabyte virtual arenas at startup.
 		MemoryBytes:       16 << 30,
 		CPUSeconds:        60,
 		MaxFileBytes:      1 << 30,
@@ -191,10 +165,8 @@ func nextProbeID() string {
 	return fmt.Sprintf("%d-%d", os.Getpid(), atomic.AddUint64(&probeIDSalt, 1))
 }
 
-// devProbeBackend runs probes as host children through the same path
-// the development executor uses: osCommandRunner with explicit
-// environment and process limits. It is the honest baseline the
-// sandbox must beat.
+// devProbeBackend runs probes as host children through the development
+// executor's path: the honest baseline the sandbox must beat.
 type devProbeBackend struct{}
 
 func (devProbeBackend) name() string    { return "development" }
@@ -214,8 +186,7 @@ func (devProbeBackend) runProbe(ctx context.Context, t *testing.T, env *probeEnv
 		}
 	}
 	probeID := nextProbeID()
-	// Probes that touch the shared /tmp namespace it per probe; the
-	// host side cleans up (the sandbox side is tmpfs).
+	// Probes sharing /tmp namespace it per probe; the host side cleans up.
 	t.Cleanup(func() { _ = os.RemoveAll(filepath.Join(os.TempDir(), "probe-"+probeID)) })
 	probeEnv := []string{
 		"PATH=/usr/bin:/bin",
@@ -272,8 +243,7 @@ func requireProbeMarker(t *testing.T, backend probeBackend, output, marker, want
 	t.Fatalf("%s backend: marker %s missing (output:\n%s)", backend.name(), marker, output)
 }
 
-// adversarialCases is the whole suite. TestAdversarialDevelopment
-// and TestAdversarialSandbox run this identical list.
+// adversarialCases is the whole suite, run identically by both backends.
 var adversarialCases = []struct {
 	name string
 	run  func(t *testing.T, backend probeBackend)
@@ -298,9 +268,8 @@ func TestAdversarialDevelopment(t *testing.T) {
 	}
 }
 
-// adversarialFilesystemEscape probes reads and writes outside the
-// workspace: a sibling build's files, host files outside the
-// workspace, and the read-only snapshot.
+// adversarialFilesystemEscape probes reads and writes outside the workspace:
+// a sibling build, host files, and the read-only snapshot.
 func adversarialFilesystemEscape(t *testing.T, backend probeBackend) {
 	t.Helper()
 	env := setupProbeEnv(t)
@@ -325,9 +294,7 @@ func adversarialFilesystemEscape(t *testing.T, backend probeBackend) {
 		requireProbeMarker(t, backend, result.Output, "repo_write", "NO")
 		return
 	}
-	// The development executor documents host containment only: the
-	// probe sees the sibling build, the host files, and the writable
-	// host view. The snapshot stays read-only through permissions.
+	// The probe sees sibling and host files; the snapshot stays read-only.
 	requireProbeMarker(t, backend, result.Output, "workspace", "WORKSPACE-SECRET")
 	requireProbeMarker(t, backend, result.Output, "sibling", "SIBLING-SECRET")
 	requireProbeMarker(t, backend, result.Output, "outside", "OUTSIDE-SECRET")
@@ -335,9 +302,8 @@ func adversarialFilesystemEscape(t *testing.T, backend probeBackend) {
 	requireProbeMarker(t, backend, result.Output, "repo_write", "NO")
 }
 
-// adversarialHostSocketAccess probes for host sockets. The sandbox
-// must hide them all; the development probe must see exactly the
-// host's own view, proving no filesystem isolation is claimed.
+// adversarialHostSocketAccess probes for host sockets. The sandbox must hide
+// them all; the development probe sees the host's own view.
 func adversarialHostSocketAccess(t *testing.T, backend probeBackend) {
 	t.Helper()
 	env := setupProbeEnv(t)
@@ -377,19 +343,14 @@ func adversarialHostSocketAccess(t *testing.T, backend probeBackend) {
 	}
 }
 
-// adversarialForkBomb runs two concurrent capped process spawns. The
-// sandbox gives each execution its own PID budget (both probes spawn
-// fully); the development backend shares the UID-wide rlimit budget,
-// so the two probes cannot both spawn fully — the pigeonhole
-// principle, not machine load, guarantees it.
+// adversarialForkBomb runs two concurrent capped process spawns. The sandbox
+// gives each execution its own PID budget; the development backend shares one
+// UID-wide budget, so both probes cannot spawn fully.
 func adversarialForkBomb(t *testing.T, backend probeBackend) {
 	t.Helper()
 	const spawns = 300
-	// The loop and the spawn count use shell builtins only (while,
-	// read, set): under an exhausted fork budget even seq, cat, and
-	// wc cannot start, which would hide the count the case asserts
-	// on. A probe that cannot fork at all aborts before printing;
-	// the counter below reads that as zero.
+	// Shell builtins only: under an exhausted fork budget even seq cannot
+	// start, which would hide the asserted count.
 	script := `
 		i=0
 		while [ "$i" -lt 300 ]; do i=$((i+1)); sleep 5 & done
@@ -402,11 +363,8 @@ func adversarialForkBomb(t *testing.T, backend probeBackend) {
 	`
 	limits := probeLimits()
 	limits.MaxProcesses = 512
-	// The two concurrent probes spawn 600 processes against 128
-	// above the UID baseline: the shared budget cannot fit both, so
-	// at least one development probe is capped no matter how busy or
-	// idle the machine is. Each sandbox holds its own 512 budget, so
-	// both sandboxed probes spawn fully.
+	// Two probes spawn 600 processes against 128 above baseline: the shared
+	// budget cannot fit both, so at least one development probe is capped.
 	run := func(env *probeEnv) probeResult {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
@@ -417,9 +375,7 @@ func adversarialForkBomb(t *testing.T, backend probeBackend) {
 	go func() { firstCh <- run(envFirst) }()
 	second := run(envSecond)
 	first := <-firstCh
-	// count parses the spawn count. A shell whose fork budget runs
-	// out aborts before printing; that is a capped spawn, reported
-	// as aborted rather than a literal zero.
+	// count parses the spawn count; a fork-starved shell reports aborted.
 	count := func(result probeResult) (int, bool) {
 		for _, line := range strings.Split(result.Output, "\n") {
 			if value, ok := strings.CutPrefix(strings.TrimSpace(line), "spawned="); ok {
@@ -446,11 +402,8 @@ func adversarialForkBomb(t *testing.T, backend probeBackend) {
 		return
 	}
 	if os.Geteuid() == 0 {
-		// Any uid 0 (real root or a user namespace) bypasses
-		// RLIMIT_NPROC — verified: a sub-baseline nproc limit still
-		// spawns freely — so as root the development backend has no
-		// fork budget at all, shared or otherwise. Both probes must
-		// spawn fully, which is the honest statement of that.
+		// As uid 0 RLIMIT_NPROC is bypassed, so the development backend has no
+		// fork budget at all: both probes must spawn fully.
 		if firstAborted || secondAborted || firstN < spawns-5 || secondN < spawns-5 {
 			t.Fatalf("root development probes bypass the process budget: expected ~%d each, got %d and %d", spawns, firstN, secondN)
 		}
@@ -463,10 +416,8 @@ func adversarialForkBomb(t *testing.T, backend probeBackend) {
 	}
 }
 
-// adversarialDiskExhaustion fills the workspace temp dir and /tmp far
-// past the disk limit. Bind-mounted writes are detected post-hoc in
-// both backends; only the sandbox also prevents /tmp writes via its
-// sized tmpfs.
+// adversarialDiskExhaustion fills workspace temp and /tmp past the disk limit.
+// Both backends detect post-hoc; only the sandbox also prevents via tmpfs.
 func adversarialDiskExhaustion(t *testing.T, backend probeBackend) {
 	t.Helper()
 	env := setupProbeEnv(t)
@@ -501,9 +452,7 @@ func adversarialDiskExhaustion(t *testing.T, backend probeBackend) {
 	}
 	const want = int64(256 << 20)
 	if backend.isolating() {
-		// The workspace bind fill is detected post-hoc like the
-		// development backend; the /tmp fill is prevented by the
-		// 16m tmpfs derived from the 32m disk budget.
+		// The /tmp fill is prevented by the 16m tmpfs derived from the 32m budget.
 		if got := bytesOf("slash_tmp_wrote"); got >= 32<<20 {
 			t.Fatalf("sandbox /tmp fill wrote %d bytes, exceeding the tmpfs cap (output:\n%s)", got, result.Output)
 		}
@@ -515,15 +464,12 @@ func adversarialDiskExhaustion(t *testing.T, backend probeBackend) {
 			t.Fatalf("development /tmp fill wrote %d, want %d (output:\n%s)", got, want, result.Output)
 		}
 	}
-	// Both executors account the workspace afterwards: the 256m bind
-	// fill must fail the 32m budget.
 	if err := enforceWorkspaceDiskLimit(env.root, limits.MaxWorkspaceBytes); err == nil || !strings.Contains(err.Error(), "exceeding") {
 		t.Fatalf("%s backend: expected post-hoc disk accounting to fail, got %v", backend.name(), err)
 	}
 }
 
-// startLoopbackListener listens on host loopback and reports the
-// first received payload.
+// startLoopbackListener listens on host loopback and reports the first payload.
 func startLoopbackListener(t *testing.T) (port string, received chan string) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -549,10 +495,8 @@ func startLoopbackListener(t *testing.T) (port string, received chan string) {
 	return port, received
 }
 
-// TestProbeDialHelper is a test-binary helper, not a test: the
-// development loopback probe re-executes the test binary with
-// GO_ADVERSARIAL_DIAL set to dial host loopback through the same
-// host-child path the development executor uses.
+// TestProbeDialHelper is a re-exec helper, not a test: the development probe
+// dials host loopback through the host-child path with GO_ADVERSARIAL_DIAL set.
 func TestProbeDialHelper(t *testing.T) {
 	addr := os.Getenv("GO_ADVERSARIAL_DIAL")
 	if addr == "" {
@@ -570,9 +514,8 @@ func TestProbeDialHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-// adversarialNetworkDenial checks whether the probe reaches a host
-// loopback listener. The sandbox's private loopback must not reach
-// it; the development child shares the host network and must.
+// adversarialNetworkDenial checks whether the probe reaches a host loopback
+// listener. The sandbox must not; the development child must.
 func adversarialNetworkDenial(t *testing.T, backend probeBackend) {
 	t.Helper()
 	env := setupProbeEnv(t)
@@ -628,9 +571,8 @@ func adversarialNetworkDenial(t *testing.T, backend probeBackend) {
 	}
 }
 
-// adversarialCrossProjectCache gives the probe two content-keyed
-// cache dirs but mounts only its own. The sandbox must hide the
-// sibling key; the development child sees the whole host.
+// adversarialCrossProjectCache mounts only the probe's own cache dir. The
+// sandbox must hide the sibling key; the development child sees the host.
 func adversarialCrossProjectCache(t *testing.T, backend probeBackend) {
 	t.Helper()
 	env := setupProbeEnv(t)

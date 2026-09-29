@@ -28,9 +28,8 @@ type NodeStatus struct {
 	LastNACK string
 }
 
-// FullyApplied reports whether this node ACKed version across every required
-// type. A node mid-apply, holding an older version, or holding a rejection
-// for any type is not fully applied.
+// FullyApplied reports whether this node ACKed version across every required type. A node
+// mid-apply, holding an older version, or holding a rejection is not fully applied.
 func (n NodeStatus) FullyApplied(version string, required []string) bool {
 	for _, typeURL := range required {
 		if n.Applied[typeURL] != version {
@@ -49,9 +48,8 @@ type Status struct {
 	Nodes         map[string]NodeStatus
 }
 
-// Server is the xDS management server. It serves the latest published
-// snapshot over ADS (plus per-type SotW), tracks per-node ACK/NACK, and
-// retains the last-known-good snapshot across NACKs and reconnects.
+// Server is the xDS management server. It serves the latest published snapshot over ADS (plus
+// per-type SotW), tracks per-node ACK/NACK, and retains last-known-good across reconnects.
 type Server struct {
 	cache cachev3.SnapshotCache
 	xds   serverv3.Server
@@ -72,14 +70,12 @@ type nodeState struct {
 	applied  map[string]string
 	nacks    int64
 	lastNACK string
-	// registered marks that durable registration and the pre-serve
-	// refresh have succeeded for this node. Every request retries them
-	// until then.
+	// registered marks that durable registration and the pre-serve refresh succeeded for this
+	// node. Every request retries them until then.
 	registered bool
 }
 
-// NewServer builds an xDS server with no snapshot published yet. Streams
-// opened before the first Publish block until a snapshot exists.
+// NewServer builds an xDS server with no snapshot yet. Streams opened before Publish block.
 func NewServer(ctx context.Context) *Server {
 	s := &Server{
 		streams:    make(map[int64]string),
@@ -110,8 +106,7 @@ func (s *Server) SetNodeStore(store NodeStore) {
 	s.nodeStore = store
 }
 
-// SetFirstContactHook installs the refresh that runs at first contact, after
-// durable registration and before the request is answered.
+// SetFirstContactHook installs the refresh that runs at first contact, after registration.
 func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	if s == nil {
 		return
@@ -130,8 +125,7 @@ func (s *Server) GRPCServer() *grpc.Server {
 	return grpcServer
 }
 
-// Publish atomically replaces the served snapshot for every connected node.
-// Publishing the same version twice is a no-op.
+// Publish atomically replaces the served snapshot; republishing the same version is a no-op.
 func (s *Server) Publish(ctx context.Context, snapshot *Snapshot) {
 	if s == nil || snapshot == nil {
 		return
@@ -216,9 +210,8 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 	return s.atFirstContact(ctx, nodeID)
 }
 
-// atFirstContact durably registers a subscriber and refreshes from the
-// durable publication before the request is answered. Both steps repeat on
-// every request until they succeed once. Failure fails the request closed.
+// atFirstContact durably registers a subscriber and refreshes from the durable publication
+// before answering. Both steps repeat on every request until they succeed; failure fails closed.
 func (s *Server) atFirstContact(ctx context.Context, nodeID string) error {
 	s.mu.Lock()
 	state := s.nodes[nodeID]
@@ -268,7 +261,6 @@ func (s *Server) observe(ctx context.Context, streamID int64, nodeID, typeURL, v
 		}
 	}
 	if errDetail != nil {
-		// NACK: record the rejection and keep serving the published snapshot.
 		state.nacks++
 		state.lastNACK = errDetail.GetMessage()
 		if typeURL != "" {

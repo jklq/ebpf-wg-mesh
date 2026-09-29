@@ -9,16 +9,13 @@ import (
 	"strings"
 )
 
-// repositoryComponentPattern mirrors the Docker distribution name-component
-// grammar: lowercase alphanumeric runs joined by single dots, single or
-// double underscores, or runs of dashes.
+// repositoryComponentPattern mirrors the Docker distribution name-component grammar:
+// lowercase alphanumeric runs joined by dots, underscores, or dashes.
 var repositoryComponentPattern = regexp.MustCompile(`^[a-z0-9]+(?:(?:__|[._]|[-]+)[a-z0-9]+)*$`)
 
-// ParsedReference is a normalized OCI image reference. Repository always
-// carries an explicit host (default docker.io, with the library/ prefix
-// applied to single-component Docker Hub paths). Exactly one of Tag and
-// Digest identifies the image; when the input carries both
-// (repository:tag@digest) the digest wins and the tag is dropped.
+// ParsedReference is a normalized OCI image reference. Repository always carries an
+// explicit host (default docker.io, with the library/ prefix on single-component Hub
+// paths). Exactly one of Tag/Digest identifies the image; with both, the digest wins.
 type ParsedReference struct {
 	Repository string
 	Tag        string
@@ -30,8 +27,7 @@ func (r ParsedReference) Pinned() bool {
 	return r.Digest != ""
 }
 
-// PinnedRef returns the digest-pinned runtime form repository@digest.
-// It is empty when the reference is not pinned.
+// PinnedRef returns the digest-pinned form repository@digest, or empty when unpinned.
 func (r ParsedReference) PinnedRef() string {
 	if r.Digest == "" {
 		return ""
@@ -39,8 +35,8 @@ func (r ParsedReference) PinnedRef() string {
 	return r.Repository + "@" + r.Digest
 }
 
-// Familiar returns the human-readable form: repository:tag, or the pinned
-// form when no tag survives.
+// Familiar returns the human-readable form: repository:tag, or the pinned form
+// when no tag survives.
 func (r ParsedReference) Familiar() string {
 	if r.Tag != "" {
 		return r.Repository + ":" + r.Tag
@@ -48,12 +44,9 @@ func (r ParsedReference) Familiar() string {
 	return r.PinnedRef()
 }
 
-// ParseReference normalizes an image reference the way the Docker/OCI
-// tooling does: an absent host becomes docker.io, a bare Docker Hub name
-// gains the library/ prefix, a missing tag becomes latest, and whitespace
-// around a digest is normalized away. Pinned references must carry a full
-// sha256 manifest digest; anything else is rejected so a malformed digest
-// can never become runtime identity.
+// ParseReference normalizes an image reference the way Docker/OCI tooling does: absent
+// host becomes docker.io, a bare Hub name gains library/, a missing tag becomes latest.
+// Pinned references need a full sha256 digest; malformed digests can never become identity.
 func ParseReference(ref string) (ParsedReference, error) {
 	trimmed := strings.TrimSpace(ref)
 	if trimmed == "" {
@@ -66,9 +59,8 @@ func ParseReference(ref string) (ParsedReference, error) {
 	repository := trimmed
 	var digest string
 	if at := strings.LastIndexByte(trimmed, '@'); at >= 0 {
-		// Whitespace and hex case around the digest are normalized away so
-		// a pasted "repo@ sha256:..." or uppercase hex can never smuggle a
-		// non-canonical identity into the stored runtime reference.
+		// Whitespace and hex case around the digest normalize away so a pasted
+		// non-canonical digest can never become the stored runtime reference.
 		repository = strings.TrimSpace(trimmed[:at])
 		digest = strings.ToLower(strings.TrimSpace(trimmed[at+1:]))
 		if repository == "" {
@@ -106,10 +98,8 @@ func ParseReference(ref string) (ParsedReference, error) {
 	return ParsedReference{Repository: normalized, Tag: tag, Digest: digest}, nil
 }
 
-// SplitPinnedReference splits a digest-pinned runtime reference into
-// repository and manifest digest without applying registry defaults. It is
-// the structural parse for values the platform already pinned (builder
-// completions, stored artifacts); user input goes through ParseReference.
+// SplitPinnedReference splits a digest-pinned reference without registry defaults, for
+// values the platform already pinned. User input goes through ParseReference.
 func SplitPinnedReference(ref string) (repository, digest string, err error) {
 	trimmed := strings.TrimSpace(ref)
 	at := strings.LastIndexByte(trimmed, '@')
@@ -126,17 +116,14 @@ func SplitPinnedReference(ref string) (repository, digest string, err error) {
 	return repository, digest, nil
 }
 
-// IsDigestPinned reports whether ref is a structurally valid digest-pinned
-// reference with a full sha256 digest.
+// IsDigestPinned reports whether ref is a structurally valid digest-pinned reference.
 func IsDigestPinned(ref string) bool {
 	_, _, err := SplitPinnedReference(ref)
 	return err == nil
 }
 
-// ValidateManifestDigest requires a full sha256 digest in canonical
-// lowercase hex: stops a truncated or mistyped digest from pinning a
-// deployment to an image that can never be pulled (containerd rejects
-// non-canonical digests), and keeps stored runtime identities canonical.
+// ValidateManifestDigest requires a full sha256 digest in canonical lowercase hex, so a
+// truncated digest can never pin a deployment to an unpullable image.
 func ValidateManifestDigest(digest string) error {
 	const prefix = "sha256:"
 	hexPart, ok := strings.CutPrefix(strings.TrimSpace(digest), prefix)
@@ -168,7 +155,6 @@ func normalizeRepository(repository string) (string, error) {
 	}
 	host, path, _ := strings.Cut(repository, "/")
 	if !strings.Contains(host, ".") && !strings.Contains(host, ":") && !strings.EqualFold(host, "localhost") {
-		// No explicit host: the whole input is a Docker Hub path.
 		path = repository
 		host = "docker.io"
 	}
@@ -207,14 +193,11 @@ func validateRepositoryComponent(component string) error {
 	return nil
 }
 
-// registryHostNamePattern is RFC 1123 host syntax: labels of alphanumerics
-// and inner hyphens, dot-separated.
+// registryHostNamePattern is RFC 1123 host syntax.
 var registryHostNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*$`)
 
-// validateRegistryHostSyntax rejects hosts no registry can be pulled from
-// before a reference is stored. Digest-pinned inputs skip registry I/O at
-// resolution, so without this an unpullable host — an invalid name or
-// port — is stored and only fails on the agent at deploy time.
+// validateRegistryHostSyntax rejects unpullable hosts before a reference is stored:
+// pinned inputs skip registry I/O, so without this they would fail only at deploy time.
 func validateRegistryHostSyntax(host string) error {
 	name := host
 	if strings.HasPrefix(host, "[") {

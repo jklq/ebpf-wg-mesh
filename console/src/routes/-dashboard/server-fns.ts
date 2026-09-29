@@ -296,8 +296,7 @@ export const fetchServiceSecrets = createServerFn({ method: "POST" })
 		),
 	);
 
-// The value is write-only: it is validated here, passed to the RPC, and never
-// returned, logged, or echoed in an error.
+// The value is write-only: validated here, passed to the RPC, never returned, logged, or echoed.
 export const doSealServiceSecret = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) =>
 		z

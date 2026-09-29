@@ -5,11 +5,7 @@ export interface DashboardUser {
 
 export type DashboardProjectKind = "PROJECT_KIND_USER" | "PROJECT_KIND_MANAGED";
 
-/**
- * A tombstoned resource. Absent while the resource is live. `inherited` means
- * an ancestor was deleted and the timestamps identify that ancestor's
- * tombstone.
- */
+/** A tombstoned resource. Absent while live; `inherited` means an ancestor was deleted. */
 export interface DashboardDeletionState {
 	deletedAt?: Date;
 	deleteExpiresAt?: Date;
@@ -63,11 +59,7 @@ export type DashboardRestorableKind =
 
 export type DashboardDeletedResourceKind = DashboardRestorableKind | "volume";
 
-/**
- * One tombstoned resource on the recently deleted view. `id` is the hostname
- * for domains. `deletedWith` names the nearest tombstoned ancestor: such a
- * resource comes back with (or only after) that ancestor.
- */
+/** One tombstoned resource on the recently deleted view. `deletedWith` names the nearest tombstoned ancestor. */
 export interface DashboardDeletedResource {
 	kind: DashboardDeletedResourceKind;
 	id: string;
@@ -390,10 +382,7 @@ export interface DashboardResolvedSourceBinding {
 	buildRecipe?: DashboardBuildRecipe;
 }
 
-/**
- * Immutable deploy-by-digest identity. `imageRef` is what runs; a tag only
- * appears as `sourceImageRef`, the user input it was resolved from.
- */
+/** Immutable deploy-by-digest identity. `imageRef` is what runs. */
 export interface DashboardBuildArtifact {
 	id: string;
 	kind: "build" | "direct_image";
@@ -600,10 +589,7 @@ export interface DashboardServiceLogGap {
 	windowEnd?: Date;
 }
 
-/**
- * One page of the log timeline. Lines and gaps paginate independently and
- * only move toward older entries.
- */
+/** One page of the log timeline. Lines and gaps paginate independently toward older entries. */
 export interface DashboardServiceLogPage {
 	lines: Array<DashboardServiceLogLine>;
 	nextPageToken?: string;
@@ -713,10 +699,7 @@ export interface DashboardConfig {
 	devUsers: Array<DevLoginIdentity>;
 	sessionMaxAgeSeconds: number;
 	jwtSecret: string;
-	/**
-	 * The previous session signing secret during a rotation overlap. Tokens
-	 * verify against it after the active secret; nothing is signed with it.
-	 */
+	/** Previous session signing secret during rotation overlap. Verifies only, never signs. */
 	jwtSecretPrevious?: string;
 	githubInstallURL?: string;
 	operatorGitHubLogin?: string;

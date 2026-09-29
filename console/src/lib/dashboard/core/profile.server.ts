@@ -77,12 +77,8 @@ export function assertProductionDashboardConfig(input: {
 	);
 }
 
-/**
- * Refuses secret sets where one secret could stand in for another. During a
- * rotation this checks the new pair: the active and previous session secrets
- * must differ, and neither may equal the user-assertion secret or the GitHub
- * token encryption key.
- */
+/** Refuses secret sets where one secret could stand in for another: the pair must differ,
+ * and neither may equal the user-assertion secret or token encryption key. */
 export function assertDistinctDashboardSecrets(input: {
 	jwtSecret: string;
 	jwtSecretPrevious?: string;

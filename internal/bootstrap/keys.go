@@ -17,13 +17,11 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// keysSchemaVersion is the minimum control-plane schema version carrying the
-// envelope key and platform signing-key tables. The operator CLI refuses to
-// run against older databases instead of failing mid-rotation.
+// keysSchemaVersion is the minimum schema version carrying the envelope key and signing-key
+// tables. The operator CLI refuses older databases instead of failing mid-rotation.
 const keysSchemaVersion = 26
 
-// RunKeys implements `controlplane keys`, the operator command surface for
-// envelope key lifecycle:
+// RunKeys implements `controlplane keys`, the operator command surface for envelope key lifecycle:
 //
 //	list                 show key IDs, states, wrapped DEK counts, and local material
 //	provision            mint a new master-key version into the local keyring file
@@ -32,12 +30,10 @@ const keysSchemaVersion = 26
 //	delete --key-id ID   delete a retired, unreferenced key
 //	check                verify this replica holds every recorded version and every DEK unwraps
 //
-// Rotation is provision, then activate, then rewrap until it reports zero:
-// provision mints the version into one keyring file, the operator copies
-// that file to every replica (and runs `check --key-id` on each), activate
-// retires the previous key for new writes, and rewrap migrates wrapped DEKs
-// resumably. Retired keys keep unwrapping, so workloads are unaffected
-// between the steps.
+// Rotation is provision, then activate, then rewrap until it reports zero: provision mints
+// the version into one keyring file, the operator copies that file to every replica (and runs
+// `check --key-id` on each), activate retires the previous key for new writes, and rewrap migrates
+// wrapped DEKs resumably. Retired keys keep unwrapping, so workloads are unaffected between the steps.
 func RunKeys(args []string) error {
 	if len(args) == 0 {
 		return keysUsageError()
@@ -78,8 +74,7 @@ func runKeysCommand(command string, args []string) error {
 		keysCfg.KeyringPath = filepath.Join(stateDir, "secret-keys", "keys.json")
 	}
 
-	// Provision touches only the local keyring file: it needs no database
-	// and never generates database state as a side effect.
+	// Provision touches only the local keyring file: no database, no database state as a side effect.
 	if command == "provision" {
 		return keysProvision(keysCfg, keyID)
 	}
@@ -111,8 +106,7 @@ func runKeysCommand(command string, args []string) error {
 		return fmt.Errorf("controlplane keys: database schema v%d is older than envelope keys v%d; start the control plane first",
 			version, keysSchemaVersion)
 	}
-	// The CLI never auto-generates: provision is the explicit command for
-	// that, and every other command fails closed on missing material.
+	// The CLI never auto-generates: provision is the explicit command for that, and every other command fails closed.
 	provider, err := secretkeys.OpenProvider(keysCfg, secretkeys.Options{})
 	if err != nil {
 		return fmt.Errorf("controlplane keys: %w", err)

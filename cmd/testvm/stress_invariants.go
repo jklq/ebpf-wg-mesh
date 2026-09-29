@@ -47,10 +47,8 @@ func checkStressService(expected stressService, actual *platformv1.Service) erro
 }
 
 // retainStressError keeps the most recent meaningful failure across poll
-// retries. The final attempt of a timing-out poll usually fails with the poll
-// context's DeadlineExceeded, which must not mask the persistent cause, so a
-// non-transient error replaces any prior error (including another
-// non-transient one) while a transient error only fills an empty slot.
+// retries: a non-transient error replaces any prior error while a transient
+// one only fills an empty slot, so DeadlineExceeded never masks the cause.
 func retainStressError(current *error, err error) {
 	if err == nil {
 		return
@@ -82,9 +80,8 @@ func environmentSet(services []stressService) []string {
 	return environments
 }
 
-// stressHealthyAllocation requires exactly one healthy serving allocation for a
-// service at convergence and returns it. Two serving allocations are a
-// scheduling split-brain bug; a non-serving allocation may still be draining.
+// stressHealthyAllocation requires exactly one healthy serving allocation at
+// convergence. Two serving is a scheduling split-brain bug.
 func stressHealthyAllocation(ctx context.Context, o stressOptions, clients []platformv1.PlatformServiceClient, serviceID string, revision int64) (*platformv1.AllocationStatus, error) {
 	var lastErr error
 	for _, client := range clients {
@@ -119,9 +116,8 @@ func stressHealthyAllocation(ctx context.Context, o stressOptions, clients []pla
 	return nil, lastErr
 }
 
-// stressLiveAllocations returns every allocation the control plane still tracks
-// for a service so draining and withdrawing resources are not mistaken for
-// leaks before teardown completes.
+// stressLiveAllocations returns every allocation still tracked for a service, so
+// draining resources are not mistaken for leaks before teardown completes.
 func stressLiveAllocations(ctx context.Context, o stressOptions, clients []platformv1.PlatformServiceClient, serviceID string) ([]*platformv1.AllocationStatus, error) {
 	var lastErr error
 	for _, client := range clients {
@@ -245,9 +241,8 @@ func verifyStress(ctx context.Context, o stressOptions, clients []platformv1.Pla
 				return false, nil
 			}
 		}
-		// Verify cross-project isolation with a successful source-side control
-		// and a positive target-side control, so denial cannot pass merely
-		// because the target is unreachable.
+		// Positive controls on both sides, so denial cannot pass merely because
+		// the target is unreachable.
 		if len(services) >= 2 {
 			source := allocations[0]
 			sourceHost := hosts[source.GetAgentId()]
@@ -287,9 +282,9 @@ func verifyStress(ctx context.Context, o stressOptions, clients []platformv1.Pla
 	return nil
 }
 
-// verifyStressWatch validates blocking-watch invariants that do not require a
-// concurrent mutation: the returned index never regresses, not_modified implies
-// an unchanged index, and a watch never leaks services from another environment.
+// verifyStressWatch validates blocking-watch invariants without concurrent
+// mutation: index never regresses, not_modified implies unchanged index, and no
+// cross-environment leaks.
 func verifyStressWatch(ctx context.Context, o stressOptions, clients []platformv1.PlatformServiceClient, services []stressService) error {
 	environments := environmentSet(services)
 	recoveryCtx, cancel := context.WithTimeout(ctx, o.Recovery)
@@ -346,8 +341,8 @@ func verifyStressWatch(ctx context.Context, o stressOptions, clients []platformv
 	return nil
 }
 
-// watchDeliveryProbe writes one service and requires an owner-following
-// blocking watch to observe the acknowledged revision.
+// watchDeliveryProbe writes one service and requires an owner-following watch
+// to observe the acknowledged revision.
 func watchDeliveryProbe(ctx context.Context, o stressOptions, stage stressStage, rawClients []platformv1.PlatformServiceClient, mutationClient platformv1.PlatformServiceClient, services []stressService, index int) error {
 	if index < 0 || index >= len(services) {
 		return fmt.Errorf("watch probe service index %d is out of range", index)
@@ -407,9 +402,8 @@ func watchDeliveryProbe(ctx context.Context, o stressOptions, stage stressStage,
 	if err != nil {
 		return fmt.Errorf("blocking watch did not observe acknowledged update: %w", err)
 	}
-	// When the update was staged rather than applied, discard it. Discarding
-	// records a further durable revision, so the caller releases afterwards to
-	// apply it before the next convergence check.
+	// Discard staged updates; discarding records a revision, so the caller
+	// releases afterwards to apply it before the next convergence check.
 	if updated.GetPendingChanges() {
 		callCtx, cancel = context.WithTimeout(ctx, o.RPCTimeout)
 		_, err = mutationClient.DiscardServiceChanges(callCtx, &platformv1.DiscardServiceChangesRequest{ServiceId: service.ID, DiscardAll: true})
@@ -425,9 +419,8 @@ func captureStressResources(ctx context.Context, key string, hosts map[string]ho
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 
-	// Cross-agent HTTP depends on the WireGuard data plane between the VMs'
-	// advertised public addresses. Capture tunnel, routing, and namespace state
-	// so a data-plane failure can be classified without another run.
+	// Capture tunnel, routing, and namespace state so a data-plane failure can
+	// be classified without another run.
 	var peerPings []string
 	for _, host := range hosts {
 		if addr := strings.TrimSpace(host.PublicIPv4); addr != "" {
@@ -498,8 +491,8 @@ func stressOwnerService(ctx context.Context, key, host string) (string, error) {
 	return "", fmt.Errorf("no live owner in lease query: %s", out)
 }
 
-// Delete and recreate one seeded service at each load level. This exercises
-// tombstones, reuse of names, allocation teardown, and increasing rollout churn.
+// Delete and recreate one seeded service at each load level: tombstones, name
+// reuse, teardown, and increasing rollout churn.
 func churnStressService(ctx context.Context, o stressOptions, stage stressStage, clients []platformv1.PlatformServiceClient, services []stressService, trace *stressTrace) error {
 	index := stage.Updates[len(stage.Updates)-1]
 	old := services[index]

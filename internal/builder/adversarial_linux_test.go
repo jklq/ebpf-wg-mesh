@@ -19,9 +19,8 @@ import (
 
 const sandboxProbeImage = "docker.io/library/busybox:1.36.1"
 
-// sandboxProbeBackend runs adversarial probes through the real
-// containerd sandbox backend: private namespaces, zero capabilities,
-// cgroup limits, and enforced egress policy.
+// sandboxProbeBackend runs adversarial probes through the real containerd
+// sandbox backend.
 type sandboxProbeBackend struct {
 	t       *testing.T
 	backend SandboxBackend
@@ -112,8 +111,8 @@ func (b *sandboxProbeBackend) runProbe(ctx context.Context, t *testing.T, env *p
 	return result
 }
 
-// requireSandboxProbeBackend opens a real sandbox backend or skips.
-// It needs root, a reachable containerd, and the probe image.
+// requireSandboxProbeBackend opens a real sandbox backend or skips. It needs
+// root, a reachable containerd, and the probe image.
 func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 	t.Helper()
 	if os.Geteuid() != 0 {
@@ -152,7 +151,6 @@ func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 		if err := backend.Close(); err != nil {
 			t.Errorf("probe backend Close: %v", err)
 		}
-		// No sandbox container or namespace may survive its test.
 		leftover := sandboxProbeLeftovers(t, socket, backend.(*containerdSandboxBackend).cfg.Namespace)
 		if leftover != "" {
 			t.Errorf("leftover sandbox state: %s", leftover)
@@ -161,11 +159,9 @@ func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 	return &sandboxProbeBackend{t: t, backend: backend, workDir: workDir}
 }
 
-// ensureSandboxProbeImage makes the probe image available in the
-// test's containerd namespace, pulling when it is missing. Image
-// metadata is namespaced (blobs are content-shared, so the pull is
-// cheap when CI already pulled into another namespace); a missing
-// image without a working pull skips instead of failing.
+// ensureSandboxProbeImage makes the probe image available in the test's
+// containerd namespace, pulling when missing. A missing image without a
+// working pull skips instead of failing.
 func ensureSandboxProbeImage(t *testing.T, socket, namespace string) {
 	t.Helper()
 	client, err := containerd.New(socket)
@@ -211,13 +207,10 @@ func TestAdversarialSandbox(t *testing.T) {
 	}
 }
 
-// TestSandboxTrueForkBombContained detonates the classic fork bomb
-// inside a sandbox with a tight PID budget. The sandbox must survive
-// and a neighbor probe must be unaffected. There is deliberately no
-// development-backend counterpart: detonating a fork bomb as a host
-// child would spend the whole machine's UID-wide fork budget, while
-// the capped-spawn case already proves the development backend lacks
-// per-execution PID containment.
+// TestSandboxTrueForkBombContained detonates the classic fork bomb in a sandbox
+// with a tight PID budget. The sandbox must survive and a neighbor probe must
+// be unaffected. No development-backend counterpart: a host-child fork bomb
+// would spend the whole machine's fork budget.
 func TestSandboxTrueForkBombContained(t *testing.T) {
 	backend := requireSandboxProbeBackend(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -233,13 +226,10 @@ func TestSandboxTrueForkBombContained(t *testing.T) {
 
 	limits := probeLimits()
 	limits.MaxProcesses = 64
-	// The wait after detonation is a builtin-only spin: once the
-	// bomb fills the PID budget, even sleep cannot fork, so any
-	// external wait would abort the shell before the marker. The
-	// fork-failure noise in the output proves the bomb actually
-	// raged against the cap instead of fizzling on shell syntax.
-	// (Busybox sh rejects the classic :(){ :|:& };: spelling with
-	// "bad function name", hence the ordinary function name.)
+	// Builtin-only spin: once the bomb fills the PID budget even sleep cannot
+	// fork. Fork-failure noise proves the bomb raged against the cap instead
+	// of fizzling on shell syntax. (Busybox sh rejects the classic spelling
+	// with "bad function name", hence the ordinary function name.)
 	bomb := backend.runProbe(ctx, t, setupProbeEnv(t), probeSpec{
 		Script: `
 			bomb(){ bomb|bomb& };bomb
@@ -265,8 +255,7 @@ func TestSandboxTrueForkBombContained(t *testing.T) {
 	requireProbeMarker(t, backend, after.Output, "victim", "WORKSPACE-SECRET")
 }
 
-// cniPluginDirForTest locates the CNI bridge plugin, skipping when it
-// is not installed.
+// cniPluginDirForTest locates the CNI bridge plugin, skipping when missing.
 func cniPluginDirForTest(t *testing.T) string {
 	t.Helper()
 	for _, dir := range []string{"/usr/lib/cni", "/opt/cni/bin"} {
@@ -280,11 +269,9 @@ func cniPluginDirForTest(t *testing.T) string {
 	return ""
 }
 
-// TestSandboxDeniedCIDREnforced proves data-plane egress enforcement:
-// with no denies the sandbox reaches the CNI gateway; with the
-// gateway's own /32 denied, the same address is unreachable. The
-// gateway is on-link either way, so only the blackhole explains the
-// difference.
+// TestSandboxDeniedCIDREnforced: with no denies the sandbox reaches the CNI
+// gateway; with the gateway's /32 denied, the same on-link address is
+// unreachable. Only the blackhole explains the difference.
 func TestSandboxDeniedCIDREnforced(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("sandbox CNI test needs root")
@@ -338,9 +325,8 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 	defer cancel()
 	probe := &sandboxProbeBackend{t: t, backend: backend}
 
-	// The gateway address exists once the first CNI attach creates
-	// the bridge. Bind the control listener then and keep it for
-	// both probes.
+	// The gateway exists once the first attach creates the bridge; bind the
+	// control listener then and keep it for both probes.
 	firstNet, err := backend.SetupNet(ctx, "gateway-control", NetworkPolicy{AllowGeneralEgress: true})
 	if err != nil {
 		t.Fatalf("control SetupNet: %v", err)
@@ -400,7 +386,6 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 	case <-time.After(3 * time.Second):
 	}
 
-	// The platform metadata addresses stay unreachable too.
 	metadata := probe.runProbe(ctx, t, setupProbeEnv(t), probeSpec{
 		Script: `echo x | nc -w 3 169.254.169.254 80 && echo "reached=yes" || echo "reached=no"`,
 		Limits: probeLimits(),

@@ -61,8 +61,7 @@ func TestBuildIsDeterministic(t *testing.T) {
 	wantVersion := first.Version
 	wantBytes := snapshotBytes(t, first)
 
-	// Rebuild from reversed inputs: racing replicas must produce identical
-	// bytes and converge on one version.
+	// Rebuild from reversed inputs: racing replicas must produce identical bytes and converge on one version.
 	reversed := testInput()
 	for i, j := 0, len(reversed.Backends)-1; i < j; i, j = i+1, j-1 {
 		reversed.Backends[i], reversed.Backends[j] = reversed.Backends[j], reversed.Backends[i]
@@ -95,8 +94,7 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 	if len(snap.Inputs) == 0 {
 		t.Fatal("Build must record its canonical inputs")
 	}
-	// A replica that never saw the live state rebuilds the exact snapshot
-	// from the published preimage.
+	// A replica that never saw the live state rebuilds the exact snapshot from the published preimage.
 	rebuilt, err := BuildFromInputs(snap.Inputs)
 	if err != nil {
 		t.Fatal(err)
@@ -125,8 +123,7 @@ func TestBuildGoldenVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A fixed input must hash to a fixed version across processes and
-	// replicas.
+	// A fixed input must hash to a fixed version across processes and replicas.
 	const want = "12210c47172b093efdcad005bd745cec1283ab3c1e32638678ff36e7f29decc9"
 	if snap.Version != want {
 		t.Fatalf("version = %s, want %s", snap.Version, want)
@@ -350,9 +347,8 @@ func keys[V any](m map[string]V) []string {
 func TestRequiredTypesOmitEndpointsWithoutEndpoints(t *testing.T) {
 	t.Parallel()
 
-	// Envoy opens EDS subscriptions only for the EDS clusters CDS announces.
-	// With no endpoints the drain barrier must not wait for an EDS ACK that
-	// can never arrive.
+	// Envoy opens EDS subscriptions only for the EDS clusters CDS announces. With no endpoints
+	// the drain barrier must not wait for an EDS ACK that can never arrive.
 	snap := mustBuild(t, BuildInput{ListenAddrs: []string{":8080"}})
 	if got := snap.RequiredTypes(); len(got) != 3 {
 		t.Fatalf("RequiredTypes without endpoints = %v, want LDS/CDS/RDS only", got)

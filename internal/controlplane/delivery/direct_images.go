@@ -13,8 +13,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/registry"
 )
 
-// preResolveDirectImage pins a creation spec's direct image before the
-// product transaction. Empty when the spec carries no direct image.
+// preResolveDirectImage pins a creation spec's direct image, or empty when it has none.
 func (d *Delivery) preResolveDirectImage(ctx context.Context, spec *platformv1.ServiceSpec) (resolvedDirectImage, error) {
 	input := strings.TrimSpace(directImageRef(spec))
 	if input == "" {
@@ -27,25 +26,20 @@ func (d *Delivery) preResolveDirectImage(ctx context.Context, spec *platformv1.S
 	return resolvedDirectImage{input: input, resolved: pinned}, nil
 }
 
-// errDirectImageChanged aborts a deploy whose spec raced tag resolution.
-// The caller retries with a fresh pre-read instead of deploying a stale
-// tag or a stale stored artifact.
+// errDirectImageChanged aborts a deploy whose spec raced tag resolution. The caller
+// retries with a fresh pre-read instead of deploying a stale tag.
 var errDirectImageChanged = errors.New("direct image changed during release")
 
-// resolvedDirectImage pairs a pre-read direct-image input with the pinned
-// resolution the release deploys. keepStored marks a spec whose image
-// input has not changed: the existing artifact stays the runtime identity
-// and the registry is never consulted.
+// resolvedDirectImage pairs a pre-read direct-image input with the pinned resolution the
+// release deploys. keepStored means the input didn't change: no registry consult.
 type resolvedDirectImage struct {
 	input      string
 	resolved   registry.ResolvedImage
 	keepStored bool
 }
 
-// preResolveManagedImage pins a managed spec's direct image before the
-// product transaction. An unchanged spec keeps the stored artifact —
-// including placement-only migrations — so reconciliation never blocks on
-// registry I/O and a moved tag can never swap the image under it.
+// preResolveManagedImage pins a managed spec's direct image pre-transaction. An unchanged
+// spec keeps its stored artifact, so reconciliation never blocks on registry I/O.
 func (d *Delivery) preResolveManagedImage(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec) (resolvedDirectImage, error) {
 	input := strings.TrimSpace(directImageRef(spec))
 	if input == "" {
@@ -65,13 +59,9 @@ func (d *Delivery) preResolveManagedImage(ctx context.Context, projectID, name s
 	return resolvedDirectImage{input: input, resolved: pinned}, nil
 }
 
-// pendingDirectImageInputs lists the current direct-image refs of live
-// services the release will actually select — those whose current rollout
-// does not carry the current spec revision — without taking locks. Tags
-// of unchanged services are never resolved: a stale or unavailable image
-// must not block releasing unrelated pending changes. The release
-// transaction re-verifies each input before using its pre-resolved
-// digest.
+// pendingDirectImageInputs lists the current direct-image refs of live services the release
+// will actually select, without locks. Unchanged services' tags are never resolved — a stale
+// image must not block unrelated changes — and the transaction re-verifies each input.
 func (s *persistence) pendingDirectImageInputs(ctx context.Context, env authz.Environment) (map[string]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT s.id, rev.spec_json
@@ -134,11 +124,9 @@ func (d *Delivery) resolveOneDirectImage(ctx context.Context, input string) (reg
 	return registry.ResolvedImage{Repository: parsed.Repository, ManifestDigest: parsed.Digest, Ref: parsed.PinnedRef()}, nil
 }
 
-// directImageArtifactTx records the pre-resolved digest as this service's
-// artifact, reusing the row when an earlier release already pinned the
-// same digest. The spec input must still match the pre-read: a concurrent
-// update retries the release rather than deploying a stale tag, and a
-// keepStored pre-read never records a fresh resolution.
+// directImageArtifactTx records the pre-resolved digest as this service's artifact, reusing
+// the row for an already-pinned digest. The spec must still match the pre-read: races retry
+// rather than deploying a stale tag.
 func (d *Delivery) directImageArtifactTx(ctx context.Context, tx *sql.Tx, serviceID, input string, pre resolvedDirectImage, actor deploymentActor, now time.Time) (BuildArtifactRecord, error) {
 	if strings.TrimSpace(input) == "" {
 		return BuildArtifactRecord{}, errors.New("direct image is required")
@@ -146,9 +134,8 @@ func (d *Delivery) directImageArtifactTx(ctx context.Context, tx *sql.Tx, servic
 	if pre.keepStored || pre.resolved.Ref == "" || pre.input != strings.TrimSpace(input) {
 		return BuildArtifactRecord{}, errDirectImageChanged
 	}
-	// The proto contract keeps source_image_ref for input that was not
-	// digest-pinned: an already-pinned reference is its own original
-	// input and must not round-trip to clients as mutable user input.
+	// The proto keeps source_image_ref for unpinned input only: an already-pinned reference
+	// must not round-trip as mutable user input.
 	sourceImageRef := strings.TrimSpace(input)
 	if parsed, err := registry.ParseReference(sourceImageRef); err == nil && parsed.Pinned() {
 		sourceImageRef = ""

@@ -459,8 +459,7 @@ describe("DashboardPage", () => {
 			expect(source).toBeTruthy();
 			return source;
 		});
-		// A delayed duplicate of the loader snapshot must not clear the
-		// badge once the newer revision has applied.
+		// A delayed duplicate snapshot must not clear the badge once the newer revision applied.
 		environmentSource?.emit("services", {
 			services: [service, worker],
 			revision: 1,

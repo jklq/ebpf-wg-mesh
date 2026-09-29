@@ -22,9 +22,8 @@ import (
 	"ebof-wg-mesh/internal/testdb"
 )
 
-// testSchema mirrors the durable_work_items table in
-// internal/controlplane/store_schema.go. The control-plane suite exercises
-// the migrated DDL; this file keeps the package suite self-contained.
+// testSchema mirrors the durable_work_items table so the package suite stays
+// self-contained; the control-plane suite exercises the migrated DDL.
 const testSchema = `CREATE TABLE durable_work_items (
 	id STRING PRIMARY KEY,
 	kind STRING NOT NULL,
@@ -380,9 +379,8 @@ func TestStalledOwnerCannotCommitAfterTakeover(t *testing.T) {
 	}
 }
 
-// runEffectfulHandler simulates the documented external-effect pattern: the
-// worker persists an intent row before the effect and marks it completed
-// after, so a takeover never repeats an effect the dead worker performed.
+// runEffectfulHandler simulates the external-effect pattern: persist an intent
+// row before the effect, mark completed after, so takeovers never repeat it.
 func runEffectfulHandler(ctx context.Context, t *testing.T, db *sql.DB, queue *Store, owner, dedup string) (claimed bool) {
 	t.Helper()
 	rec, err := queue.Claim(ctx, owner, time.Minute)
@@ -428,8 +426,7 @@ func TestWorkerDeathBeforeAndAfterTheExternalEffect(t *testing.T) {
 	db, queue := openTestStore(t)
 	ctx := context.Background()
 
-	// Death before the effect: the first worker claims and vanishes without
-	// touching the effect. The takeover runs the handler exactly once.
+	// Death before the effect: the takeover runs the handler exactly once.
 	if _, err := queue.Enqueue(ctx, testParams("death-before")); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -445,9 +442,8 @@ func TestWorkerDeathBeforeAndAfterTheExternalEffect(t *testing.T) {
 		t.Fatalf("effect ran %d times, want once", got)
 	}
 
-	// Death after the effect but before completion: the first worker
-	// performs the effect and records the outcome, then vanishes. The
-	// takeover observes the completed intent and does not repeat it.
+	// Death after the effect: the takeover observes the completed intent and
+	// does not repeat it.
 	if _, err := queue.Enqueue(ctx, testParams("death-after")); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -648,8 +644,7 @@ func TestPruneTerminalDeletesOnlyOldTerminalRows(t *testing.T) {
 	db, queue := openTestStore(t)
 	ctx := context.Background()
 
-	// Complete two records, then enqueue a third that stays live and must
-	// survive pruning.
+	// Two completed records prune; a third live one must survive.
 	for _, dedup := range []string{"prune-old", "prune-recent"} {
 		if _, err := queue.Enqueue(ctx, testParams(dedup)); err != nil {
 			t.Fatalf("enqueue %s: %v", dedup, err)

@@ -24,9 +24,8 @@ import (
 const (
 	localBaseImageName       = "noble-server-cloudimg-amd64.img"
 	localPreparedImagePrefix = "noble-prepared-"
-	// localImageBuilderVersion invalidates every cached prepared image when the
-	// build procedure changes, independently of its inputs. It does not capture
-	// qemu/virt-customize or apt package versions; bump it when those matter.
+	// localImageBuilderVersion invalidates every cached image when the build
+	// procedure changes. Bump it when qemu/apt versions matter.
 	localImageBuilderVersion = 2
 )
 
@@ -37,9 +36,8 @@ var (
 func localBaseImageURL() string { return localBaseImageDir + localBaseImageName }
 func localChecksumsURL() string { return localBaseImageDir + "SHA256SUMS" }
 
-// localImagePackages is the single source of truth for what the local prepared
-// image contains. It is a superset of every role's cloud-init package list; a
-// test enforces that the cloud-init templates never drift from it.
+// localImagePackages is the source of truth for the prepared image contents: a
+// superset of every role's cloud-init package list, enforced by a test.
 var localImagePackages = []string{
 	"containerd",
 	"containernetworking-plugins",
@@ -54,9 +52,7 @@ var localImagePackages = []string{
 var localImageServices = []string{"containerd"}
 
 // imageRecipe is the complete input to a prepared image. Its key is the cache
-// identity: any change to the base image, package set, services, apt mirror, or
-// builder procedure produces a different image instead of silently reusing a
-// stale one.
+// identity: any change produces a different image instead of reusing a stale one.
 type imageRecipe struct {
 	BaseSHA   string   `json:"base_sha"`
 	Packages  []string `json:"packages"`
@@ -94,15 +90,12 @@ type imageMeta struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// imageBuilder turns a base image and recipe into a prepared image at dest.
 type imageBuilder interface {
 	Build(ctx context.Context, recipe imageRecipe, base, dest string) error
 }
 
-// virtCustomizeBuilder bakes the recipe into a copy of the base image with
-// libguestfs, without ever booting the guest: no sshd wait, no cloud-init, no
-// poweroff. The prepared image also has its identity reset so every VM cloned
-// from it gets a fresh machine-id and host keys.
+// virtCustomizeBuilder bakes the recipe into a base-image copy with libguestfs,
+// without booting the guest, and resets identity so clones get fresh ids.
 type virtCustomizeBuilder struct{}
 
 func (virtCustomizeBuilder) Build(ctx context.Context, recipe imageRecipe, base, dest string) error {
@@ -128,14 +121,13 @@ func virtCustomizeArgs(recipe imageRecipe, dest string) ([]string, error) {
 		if err := validateAptMirror(recipe.AptMirror); err != nil {
 			return nil, err
 		}
-		// Mirror is validated to a URL charset that cannot break this sed, then
-		// passed as a sed replacement (not interpolated into an unquoted shell).
+		// Mirror is charset-validated, then passed as a sed replacement.
 		rewrite := "sed -i -E 's#https?://(archive|security)\\.ubuntu\\.com/ubuntu#" + recipe.AptMirror + "#g' /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true"
 		args = append(args, "--run-command", rewrite)
 	}
 	args = append(args, "--run-command", "apt-get update", "--run-command", install)
-	// Do not use `systemctl enable` in the libguestfs chroot; it can no-op.
-	// Pin the multi-user wants symlink so cloned VMs start containerd.
+	// Never `systemctl enable` in the libguestfs chroot (it can no-op); pin the
+	// wants symlink directly.
 	args = append(args, "--mkdir", "/etc/systemd/system/multi-user.target.wants")
 	for _, service := range recipe.Services {
 		unit := service + ".service"
@@ -152,9 +144,8 @@ func virtCustomizeArgs(recipe imageRecipe, dest string) ([]string, error) {
 	return args, nil
 }
 
-// imageManager owns the prepared-image cache: provenance checks, validation,
-// and atomic publication. The builder and validator are injected so the cache
-// logic is exercised without libguestfs.
+// imageManager owns the prepared-image cache. Builder and validator are
+// injected so cache logic is exercised without libguestfs.
 type imageManager struct {
 	mu       sync.Mutex
 	cacheDir string
@@ -172,9 +163,8 @@ func newLocalImageManager(cacheDir string) *imageManager {
 	}
 }
 
-// ensure returns a prepared image for the given base image and recipe, building
-// it only when the cached one is missing, has different inputs, or fails
-// validation.
+// ensure returns a prepared image, building only on cache miss, input change,
+// or validation failure.
 func (m *imageManager) ensure(ctx context.Context, basePath string, recipe imageRecipe) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -290,7 +280,7 @@ func (m *imageManager) reusable(ctx context.Context, dest, metaPath, key string)
 }
 
 // cacheRebuildable reports whether a reusable() error is a stale/missing cache
-// rather than a hard I/O or permission failure that should abort.
+// rather than a hard failure that should abort.
 func cacheRebuildable(err error) bool {
 	if err == nil || os.IsNotExist(err) {
 		return true
@@ -356,10 +346,9 @@ func writeFileAtomic(path string, data []byte) error {
 	return os.Rename(file.Name(), path)
 }
 
-// ensureLocalBaseImage returns the SHA-256 digest of path. When managed is
-// false the file is an explicit -local-base-image: it is hashed in place and
-// never fetched or overwritten. When managed is true the default cache file is
-// verified against the current upstream SHA256SUMS and downloaded on miss.
+// ensureLocalBaseImage returns the SHA-256 digest of path. Unmanaged files are
+// hashed in place; managed files are verified against upstream SHA256SUMS and
+// downloaded on miss.
 func ensureLocalBaseImage(ctx context.Context, path string, managed bool) (string, error) {
 	if !managed {
 		actual, err := sha256File(path)

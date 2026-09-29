@@ -36,8 +36,7 @@ func TestValidateSandboxMounts(t *testing.T) {
 	if err := validateSandboxMounts(good); err != nil {
 		t.Fatalf("valid mounts must pass: %v", err)
 	}
-	// Order must not matter: the nested read-only snapshot sorts
-	// after the writable root at OCI conversion time.
+	// Order must not matter: the nested snapshot sorts after the root at conversion.
 	reversed := append([]SandboxMount(nil), good...)
 	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
 		reversed[i], reversed[j] = reversed[j], reversed[i]
@@ -77,8 +76,7 @@ func TestValidateSandboxMounts(t *testing.T) {
 		}
 	}
 
-	// Host runtime paths must never be mountable destinations: prove
-	// the destination rule rejects them with an existing source.
+	// Host runtime paths must never be mountable destinations.
 	if err := validateSandboxMounts([]SandboxMount{
 		{Source: root, Dest: "/build"},
 		{Source: root, Dest: "/run/sandbox-escape"},
@@ -222,8 +220,7 @@ func TestSelectCNIConfig(t *testing.T) {
 	dir := t.TempDir()
 	mesh := `{"cniVersion":"1.0.0","name":"mesh-cni","plugins":[{"type":"bridge"}]}`
 	build := `{"cniVersion":"1.0.0","name":"build-sandbox","plugins":[{"type":"bridge"}]}`
-	// The mesh config sorts first: selection must be by exact name,
-	// never by directory order.
+	// The mesh config sorts first: selection must be by exact name, never directory order.
 	if err := os.WriteFile(filepath.Join(dir, "10-mesh-cni.conflist"), []byte(mesh), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -9,9 +9,8 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-// Service is the sealed-secret backend: the in-process key manager, the
-// shared key registry, per-environment DEKs, and sealed versions behind one
-// handle.
+// Service is the sealed-secret backend: the key manager, key registry,
+// per-environment DEKs, and sealed versions behind one handle.
 type Service struct {
 	provider *Keyring
 	registry *Registry
@@ -21,18 +20,15 @@ type Service struct {
 
 // Options configures Service.Open.
 type Options struct {
-	// AllowGenerate permits creating a missing keyring file and
-	// auto-activating its first key. Development only: production must
-	// provision the keyring explicitly and activate via the keys CLI, and
-	// Open fails closed when the active key or any recorded version's
-	// material is missing on this replica.
+	// AllowGenerate permits creating a missing keyring file and auto-activating its
+	// first key. Development only: production provisions explicitly and activates via
+	// the keys CLI, and Open fails closed when any material is missing.
 	AllowGenerate bool
 }
 
-// Open builds the sealed-secret backend from control-plane configuration.
-// With AllowGenerate (development) it ensures the installation's active key
-// exists so every replica converges on shared key state at startup.
-// Without it (production) it requires an explicitly activated key and
+// Open builds the sealed-secret backend from control-plane configuration. With
+// AllowGenerate (development) it ensures the active key exists so replicas converge
+// at startup. Without it (production) it requires an explicitly activated key and
 // verifies this replica's keyring covers every recorded version.
 func Open(ctx context.Context, db *sql.DB, cfg config.SecretKeysConfig, opts Options) (*Service, error) {
 	provider, err := OpenProvider(cfg, opts)
@@ -62,14 +58,13 @@ func Open(ctx context.Context, db *sql.DB, cfg config.SecretKeysConfig, opts Opt
 	return svc, nil
 }
 
-// New assembles a Service over an existing keyring.
 func New(db *sql.DB, provider *Keyring) *Service {
 	registry := NewRegistry(db, provider)
 	deks := NewDEKStore(db, registry)
 	return &Service{provider: provider, registry: registry, deks: deks, sealed: NewSealedStore(db, deks)}
 }
 
-// Close releases provider resources.
+// Close clears cached DEKs and releases provider resources.
 func (s *Service) Close() error {
 	if s == nil || s.provider == nil {
 		return nil
@@ -84,7 +79,6 @@ func (s *Service) Close() error {
 	return s.provider.Close()
 }
 
-// ProviderName reports the configured backend name.
 func (s *Service) ProviderName() string {
 	if s == nil || s.provider == nil {
 		return ""
@@ -92,8 +86,7 @@ func (s *Service) ProviderName() string {
 	return s.provider.Name()
 }
 
-// Provider exposes the wrap/unwrap backend, e.g. so tests can build a
-// second replica handle over shared provider state.
+// Provider exposes the wrap/unwrap backend, e.g. so tests can build a second replica handle.
 func (s *Service) Provider() *Keyring {
 	if s == nil {
 		return nil
@@ -110,9 +103,8 @@ func (s *Service) DEKs() *DEKStore { return s.deks }
 // Sealed exposes sealed-secret reads and writes.
 func (s *Service) Sealed() *SealedStore { return s.sealed }
 
-// Ready reports whether the shared key state is readable and this replica
-// holds every recorded version's material. Replicas use it for readiness:
-// key state must be complete on every replica before serving.
+// Ready reports whether shared key state is readable and this replica holds every
+// recorded version's material. Replicas use it for readiness: key state must be complete before serving.
 func (s *Service) Ready(ctx context.Context) bool {
 	if s == nil || s.registry == nil {
 		return false
@@ -123,9 +115,8 @@ func (s *Service) Ready(ctx context.Context) bool {
 	return s.registry.VerifyLocalCoverage(ctx) == nil
 }
 
-// OpenProvider builds the configured wrap/unwrap backend without touching
-// key state. The operator CLI uses it to compose commands that must not
-// provision keys as a side effect.
+// OpenProvider builds the configured wrap/unwrap backend without touching key state.
+// The operator CLI uses it for commands that must not provision keys as a side effect.
 func OpenProvider(cfg config.SecretKeysConfig, opts Options) (*Keyring, error) {
 	return NewKeyring(cfg.KeyringPath, KeyringOptions{AllowGenerate: opts.AllowGenerate})
 }

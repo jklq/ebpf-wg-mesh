@@ -33,17 +33,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// TestCARotationAcrossLiveSessionRenewalAndRestart walks a full internal-CA
-// rotation against live servers: an established agent session survives,
-// pre- and post-renewal agents connect through the overlap, a replica that
-// starts mid-rotation accepts both generations, and the retiring identity
-// stops working after finish while a restarted replica serves the new CA.
+// TestCARotationAcrossLiveSessionRenewalAndRestart walks a full internal-CA rotation against live
+// servers: sessions survive, pre- and post-renewal agents connect through the overlap, and the
+// retiring identity stops after finish while a restarted replica serves the new CA.
 func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 
-	// Three agents: one holds a pre-rotation session open through the
-	// whole rotation, one renews mid-rotation, one stays stale.
+	// Three agents: one holds a pre-rotation session open, one renews mid-rotation, one stays stale.
 	const liveAgentID, renewedAgentID, staleAgentID = "agent-rotation-live", "agent-rotation-renewed", "agent-rotation-stale"
 	cp1 := startSystemControlPlane(t, systemControlPlaneOptions{
 		withDashboard: true,
@@ -115,8 +112,7 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 	defer staleCancel()
 	recvDesiredState(t, staleStream)
 
-	// The pre-rotation live session keeps receiving: the server echoes the
-	// hello's verified identity, so the rotation mid-stream is invisible.
+	// The pre-rotation live session keeps receiving: the server echoes the hello's verified identity.
 	userCtx := userContext(t, cp1, ctx, "rotation-user")
 	project, err := cp1.dashboard.CreateProject(userCtx, &platformv1.CreateProjectRequest{Name: "rotation-live"})
 	if err != nil {
@@ -163,10 +159,9 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 	if ok, err := cp1.server.authority.VerifyClusterID(ctx, clusterBefore); err != nil || ok {
 		t.Fatalf("retiring identity still trusted: ok=%v err=%v", ok, err)
 	}
-	// Every replica flips its server leaf to the new CA on its own; the
-	// test triggers the same refresh the per-minute loop runs. Until a
-	// replica flips, post-finish clients holding active-only roots cannot
-	// dial it (agents retry through the sub-minute window).
+	// Every replica flips its server leaf to the new CA on its own; the test triggers the same
+	// refresh the per-minute loop runs. Until a replica flips, post-finish clients holding active-only
+	// roots cannot dial it (agents retry through the sub-minute window).
 	if err := cp1.server.authority.RefreshServerCertificate(ctx); err != nil {
 		t.Fatalf("RefreshServerCertificate: %v", err)
 	}
@@ -175,9 +170,8 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 		t.Fatalf("mid-rotation replica identity = %q, %v; want %q", fresh, err, clusterAfter)
 	}
 
-	// Post-finish, the stale generation cannot connect: the trust bundle
-	// no longer contains its CA, so the server rejects the client
-	// certificate on every handshake and the dial never establishes.
+	// Post-finish, the stale generation cannot connect: the trust bundle no longer contains its CA,
+	// so the server rejects the client certificate and the dial never establishes.
 	staleIdentity, err := cp1.server.EnsureDashboardClientIdentity(ctx, systemTestDashboardID)
 	if err != nil {
 		t.Fatalf("dashboard identity for CA: %v", err)
@@ -200,8 +194,7 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 		_ = staleConn.Close()
 		t.Fatal("post-finish stale client certificate connected")
 	}
-	// A valid certificate paired with a stale cluster identity is
-	// rejected at hello.
+	// A valid certificate paired with a stale cluster identity is rejected at hello.
 	wrongIDStream, wrongIDCancel := openAgentSync(t, cp1.server, certAfter, rotationHello(renewedAgentID, "rotation-wrong-id-session", clusterBefore))
 	defer wrongIDCancel()
 	if _, err := wrongIDStream.Recv(); status.Code(err) != codes.FailedPrecondition {
@@ -209,9 +202,8 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 	}
 	_ = activeCA
 
-	// A replica that restarts after finish serves the new generation. The
-	// mid-rotation witness stops first so the restarted replica wins the
-	// singleton lease; starting it non-standby waits for that lease.
+	// A replica that restarts after finish serves the new generation. The mid-rotation witness
+	// stops first so the restarted replica wins the singleton lease.
 	cp1.stop()
 	cp2.stop()
 	cp3 := startSystemControlPlane(t, systemControlPlaneOptions{
@@ -223,17 +215,15 @@ func TestCARotationAcrossLiveSessionRenewalAndRestart(t *testing.T) {
 	recvDesiredState(t, postRestart)
 }
 
-// TestRegistryRotationAcrossTokenExchange walks a registry rotation through
-// the token endpoint: capabilities signed by either key exchange through
-// the overlap, minted tokens chain to the refreshed bundle, and the
+// TestRegistryRotationAcrossTokenExchange walks a registry rotation through the token endpoint:
+// either key exchanges through the overlap, minted tokens chain to the refreshed bundle, and the
 // retiring key stops verifying after finish.
 func TestRegistryRotationAcrossTokenExchange(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	cp1 := startSystemControlPlane(t, systemControlPlaneOptions{withDashboard: true})
-	// The harness boots without a registry, so its scope is uninitialized;
-	// initialize it the way the operator does when enabling the registry.
+	// The harness boots without a registry; initialize its scope the way the operator does.
 	if _, err := cp1.server.SigningKeys().EnsureActiveKey(ctx, signkeys.ScopeRegistry, signkeys.EnsureOptions{}); err != nil {
 		t.Fatalf("EnsureActiveKey(registry): %v", err)
 	}
@@ -247,8 +237,7 @@ func TestRegistryRotationAcrossTokenExchange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewAuth: %v", err)
 	}
-	// A second service handle over the same database is a second replica's
-	// view of the shared key state.
+	// A second service handle over the same database is a second replica's view.
 	replicaKeys := signkeys.New(cp1.server.store.db, cp1.server.store.secrets.Registry())
 	replicaAuth, err := registry.NewAuth(ctx, cfg, replicaKeys, t.TempDir())
 	if err != nil {
@@ -272,8 +261,7 @@ func TestRegistryRotationAcrossTokenExchange(t *testing.T) {
 	tokenBefore := exchangeRegistryToken(t, replicaAuth, userBefore, passBefore, cfg.TokenService, "repository:"+repository+":pull")
 	tokenAfter := exchangeRegistryToken(t, replicaAuth, userAfter, passAfter, cfg.TokenService, "repository:"+repository+":pull")
 
-	// Minted tokens chain to the refreshed bundle the way the registry
-	// daemon verifies them against its rootcertbundle.
+	// Minted tokens chain to the refreshed bundle the way the registry daemon verifies them.
 	if err := auth.RefreshTrustBundle(ctx); err != nil {
 		t.Fatalf("RefreshTrustBundle: %v", err)
 	}
@@ -333,11 +321,9 @@ func TestRegistryRotationAcrossTokenExchange(t *testing.T) {
 	exchangeRegistryTokenExpect(t, replicaAuth, userBefore, passBefore, cfg.TokenService, http.StatusUnauthorized)
 }
 
-// TestDashboardSecretRotationAcrossLiveRPCs walks the dashboard-held scopes:
-// user assertions verify against both secrets through the overlap over live
-// RPCs, and the session scope exports both generations with its 31-day
-// floor. The console verifies sessions itself; this test proves the
-// exported data supports dual-secret verification per the handoff contract.
+// TestDashboardSecretRotationAcrossLiveRPCs walks the dashboard-held scopes: user assertions verify
+// against both secrets through the overlap over live RPCs, and the session scope exports both
+// generations with its 31-day floor.
 func TestDashboardSecretRotationAcrossLiveRPCs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -382,8 +368,7 @@ func TestDashboardSecretRotationAcrossLiveRPCs(t *testing.T) {
 		t.Fatalf("post-finish retiring RPC = %v, want Unauthenticated", err)
 	}
 
-	// Sessions: the control plane never verifies, so the test mirrors the
-	// console's HS256 check against both exported generations.
+	// Sessions: the control plane never verifies, so the test mirrors the console's HS256 check against both generations.
 	sessionBefore, err := keys.ActiveSecret(ctx, signkeys.ScopeDashboardSession)
 	if err != nil {
 		t.Fatalf("ActiveSecret: %v", err)
@@ -427,9 +412,8 @@ func TestDashboardSecretRotationAcrossLiveRPCs(t *testing.T) {
 	}
 }
 
-// TestEnvelopeDeleteRefusesSigningKeyWrapping proves envelope rotation stays
-// safe: a retired envelope key that still wraps signing keys cannot be
-// deleted until rewrap moves them.
+// TestEnvelopeDeleteRefusesSigningKeyWrapping proves a retired envelope key that still wraps
+// signing keys cannot be deleted until rewrap moves them.
 func TestEnvelopeDeleteRefusesSigningKeyWrapping(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -461,8 +445,7 @@ func TestEnvelopeDeleteRefusesSigningKeyWrapping(t *testing.T) {
 	}
 }
 
-// renewAgentCertificate exercises the real renewal path: a fresh CSR over a
-// connection authenticated by the current client certificate.
+// renewAgentCertificate exercises the real renewal path: a fresh CSR over a connection authenticated by the current client certificate.
 func renewAgentCertificate(t *testing.T, server *Server, agentID string, current tls.Certificate) tls.Certificate {
 	t.Helper()
 	identity, err := server.EnsureDashboardClientIdentity(context.Background(), systemTestDashboardID)

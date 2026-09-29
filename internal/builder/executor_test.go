@@ -376,8 +376,7 @@ func TestExecuteCancellationDestroysWorkspace(t *testing.T) {
 	}
 }
 
-// blockingCommandRunner blocks until the context ends, like a build
-// step that never finishes on its own.
+// blockingCommandRunner blocks until the context ends, like a build step that never finishes.
 type blockingCommandRunner struct {
 	started       chan commandRequest
 	fillWorkspace bool
@@ -424,8 +423,6 @@ func TestExecuteEnforcesWorkspaceDiskLimit(t *testing.T) {
 			if metadata == "" {
 				return nil, errors.New("missing --metadata-file")
 			}
-			// Simulate a build that fills the executor-managed
-			// workspace beyond its disk limit.
 			if err := os.WriteFile(filepath.Join(filepath.Dir(metadata), "scratch", "bulk.dat"), make([]byte, 1<<20), 0o644); err != nil {
 				return nil, err
 			}
@@ -517,9 +514,7 @@ func TestContentCacheKey(t *testing.T) {
 	if first != second || first == "" {
 		t.Fatalf("cache key must be deterministic, got %q and %q", first, second)
 	}
-	// The key is a pure function of content: project, service, and
-	// build identity are not inputs, so identical content can never
-	// carry per-project state.
+	// The key is a pure function of content: identity is not an input.
 	changed := map[string]string{
 		"snapshot":   ContentCacheKey("sha256:bbb", recipe, "frontend:latest"),
 		"context":    ContentCacheKey("sha256:aaa", &platformv1.BuildRecipe{Builder: platformv1.BuilderKind_BUILDER_KIND_DOCKERFILE, ContextDir: "app", DockerfilePath: "Dockerfile"}, "frontend:latest"),

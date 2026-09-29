@@ -17,8 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
-// DropKey identifies one gap summary identity — the fields a gap row
-// is keyed on.
+// DropKey is the identity one gap row is keyed on.
 type DropKey struct {
 	ServiceID    string
 	AllocationID string
@@ -28,21 +27,15 @@ type DropKey struct {
 	Reason       string
 }
 
-// DropSet coalesces producer drop windows by identity: counts sum and
-// the covered window widens, so the set stays bounded at one entry
-// per identity however long a backend outage lasts. A send Takes the
-// pending summaries and Restores them on failure, keeping accounting
-// exact while new drops keep folding in. Every entry carries a stable
-// summary ID preserved across retries and growth, so at-least-once
-// gap reports replace their row server-side instead of
-// double-counting. It is not safe for concurrent use; callers
-// serialize access.
+// DropSet coalesces producer drop windows by identity: counts sum, the window
+// widens, and every entry keeps a stable summary ID so at-least-once gap
+// reports replace their row server-side. Take removes pending summaries for
+// a send; Restore folds unsent ones back on failure. Not safe for concurrent use.
 type DropSet struct {
 	drops map[DropKey]*dropWindow
 }
 
-// dropWindow is one coalesced drop window: a summed count over the
-// covered time range under a stable identity.
+// dropWindow is one coalesced drop window.
 type dropWindow struct {
 	id     string
 	count  uint64
@@ -51,8 +44,7 @@ type dropWindow struct {
 	pinned bool
 }
 
-// NewSummaryID mints a stable identity for one coalesced drop
-// lineage. Retries and expansions keep it.
+// NewSummaryID mints the stable identity kept across retries and expansions.
 func NewSummaryID() string {
 	var buf [16]byte
 	// rand.Read never fails on supported platforms.
@@ -60,12 +52,10 @@ func NewSummaryID() string {
 	return hex.EncodeToString(buf[:])
 }
 
-// NewDropSet builds an empty drop set.
 func NewDropSet() *DropSet {
 	return &DropSet{drops: make(map[DropKey]*dropWindow)}
 }
 
-// Add folds one drop window into the entry for key.
 func (s *DropSet) Add(key DropKey, count uint64, start, end time.Time) {
 	s.addWindow(key, "", count, start, end)
 }
@@ -78,8 +68,7 @@ func (s *DropSet) Len() int {
 	return len(s.drops)
 }
 
-// Summaries renders the pending set as wire summaries in a stable
-// order without emptying it.
+// Summaries renders pending summaries in a stable order without emptying the set.
 func (s *DropSet) Summaries() []*platformv1.LogDropSummary {
 	if s == nil {
 		return nil
@@ -108,9 +97,8 @@ func (s *DropSet) Summaries() []*platformv1.LogDropSummary {
 	return summaries
 }
 
-// Take empties the set and returns the pending summaries in a stable
-// order. A send takes them out; Restore folds unsent ones back so a
-// failed send keeps its accounting exact.
+// Take empties the set, returning pending summaries in a stable order;
+// Restore folds unsent ones back on failure.
 func (s *DropSet) Take() []*platformv1.LogDropSummary {
 	summaries := s.Summaries()
 	if s != nil {
@@ -119,10 +107,9 @@ func (s *DropSet) Take() []*platformv1.LogDropSummary {
 	return summaries
 }
 
-// Restore merges previously taken summaries back into the set. The
-// restored identity wins on collision: the restored entry was in
-// flight and may already be persisted server-side, while an entry
-// created during the flight cannot have been sent yet.
+// Restore merges taken summaries back. On collision the restored entry wins:
+// it was in flight and may be persisted server-side, while an entry created
+// during the flight was never sent.
 func (s *DropSet) Restore(summaries []*platformv1.LogDropSummary) {
 	for _, summary := range summaries {
 		if summary == nil {
@@ -140,9 +127,8 @@ func (s *DropSet) Restore(summaries []*platformv1.LogDropSummary) {
 	}
 }
 
-// addWindow folds one drop window into the entry for key, optionally
-// under an existing stable identity. The identity never changes once
-// minted unless id names a previously sent lineage being restored.
+// addWindow folds one window into key's entry. The identity never changes
+// once minted, except when id restores a previously sent lineage.
 func (s *DropSet) addWindow(key DropKey, id string, count uint64, start, end time.Time) {
 	if s == nil || count == 0 {
 		return
@@ -158,8 +144,7 @@ func (s *DropSet) addWindow(key DropKey, id string, count uint64, start, end tim
 		}
 		s.drops[key] = window
 	} else if id != "" {
-		// A restored send keeps the identity the server may already
-		// have stored. Bound must not fold that lineage away.
+		// Keep the restored identity the server may already have stored.
 		window.id = id
 		window.pinned = true
 	}
@@ -172,12 +157,10 @@ func (s *DropSet) addWindow(key DropKey, id string, count uint64, start, end tim
 	}
 }
 
-// Bound caps the set at max identities. Extra identities in the same
-// service, build, stream, log type, and reason fold into the largest
-// survivor, keeping that survivor's summary ID and the total count.
-// Identities restored from an in-flight send stay put. Distinct
-// groups are not merged across tenants; a set of different groups may
-// remain above max, while allocation churn inside one group cannot.
+// Bound caps the set at max identities. Extras in one group (service, build,
+// stream, log type, reason) fold into the largest survivor, keeping its
+// summary ID; restored in-flight identities stay put. Groups never merge,
+// so churn across tenants can remain above max.
 func (s *DropSet) Bound(max int) {
 	if s == nil || max < 1 || len(s.drops) <= max {
 		return
@@ -246,9 +229,8 @@ func compareDropKeys(a, b DropKey) int {
 	)
 }
 
-// PendingDropsFile durably holds unreported drop summaries next to
-// the producer's spool so they report after a restart — or, for
-// builders, after a retried attempt takes them over.
+// PendingDropsFile holds unreported drop summaries next to the spool so they
+// report after a restart, or after a retried builder attempt takes them over.
 const PendingDropsFile = "pending-drops.json"
 
 // persistedDrop is the durable form of one pending drop summary.
@@ -265,9 +247,7 @@ type persistedDrop struct {
 	SummaryID    string    `json:"summary_id"`
 }
 
-// LoadDrops reads drop summaries persisted by an earlier process so
-// shutdown-time accounting reports after the restart. A missing file
-// yields no summaries.
+// LoadDrops reads summaries persisted by an earlier process; a missing file yields none.
 func LoadDrops(dir string) ([]*platformv1.LogDropSummary, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, PendingDropsFile))
 	if os.IsNotExist(err) {
@@ -298,9 +278,8 @@ func LoadDrops(dir string) ([]*platformv1.LogDropSummary, error) {
 	return out, nil
 }
 
-// SaveDrops snapshots drop summaries next to the spool. The snapshot
-// is advisory: retried summaries collapse server-side by gap
-// identity, so a stale copy only re-reports.
+// SaveDrops snapshots summaries next to the spool. The snapshot is advisory:
+// retries collapse server-side by gap identity, so a stale copy only re-reports.
 func SaveDrops(dir string, summaries []*platformv1.LogDropSummary) error {
 	rows := make([]persistedDrop, 0, len(summaries))
 	for _, summary := range summaries {
@@ -331,9 +310,8 @@ func SaveDrops(dir string, summaries []*platformv1.LogDropSummary) error {
 		_ = os.Remove(tmpName)
 		return fmt.Errorf("write pending log drop summaries: %w", err)
 	}
-	// Drop summaries are the only record of rate-limited and overflowed
-	// lines: sync the snapshot and its directory entry before reporting
-	// it durable, like the spool cursor.
+	// Drop summaries are the only record of shed lines: sync the snapshot
+	// and its directory entry, like the spool cursor.
 	if err := tmp.Sync(); err != nil {
 		_ = tmp.Close()
 		_ = os.Remove(tmpName)

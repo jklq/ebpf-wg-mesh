@@ -10,10 +10,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Incremental per-node allocation sync: checkpoint-plus-diff over the
-// monotonic per-node allocation revision. Diffs are an optimization, never a
-// correctness requirement: any gap, compaction, or regression falls back to
-// a full checkpoint.
+// Incremental per-node allocation sync: checkpoint-plus-diff over the monotonic
+// per-node revision. Diffs are an optimization; any gap falls back to a
+// full checkpoint.
 
 const (
 	MaxDiffEntriesPerAgent      = 32
@@ -47,8 +46,7 @@ type agentSyncHistory struct {
 	used            uint64 // LRU order for MaxTrackedAgents eviction
 }
 
-// allocSync resets on live resign/become so a new live owner falls back to
-// checkpoints rather than replaying diffs it never saw.
+// allocSync resets on live resign/become so a new owner falls back to checkpoints.
 type allocSync struct {
 	mu      sync.Mutex
 	history map[string]*agentSyncHistory
@@ -90,9 +88,8 @@ func (s *allocSync) reset() {
 	s.history = make(map[string]*agentSyncHistory)
 }
 
-// recordAndDiff records current and returns diffs from base to it.
-// ok=false when a checkpoint is required (uninitialized base, compacted
-// history, or gap).
+// recordAndDiff records current and returns diffs from base to it. ok=false
+// when a checkpoint is required (uninitialized base, compacted history, gap).
 func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeState, base int64) (diffs []storedDiff, ok bool) {
 	if s == nil || current == nil {
 		return nil, false
@@ -140,9 +137,8 @@ func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeSt
 	return h.diffsFromBase(base)
 }
 
-// diffsFromBase collects the contiguous retained chain from base to the
-// latest revision, within the per-payload caps. ok=false when a checkpoint
-// is required.
+// diffsFromBase collects the contiguous retained chain from base to latest
+// within the per-payload caps. ok=false when a checkpoint is required.
 func (h *agentSyncHistory) diffsFromBase(base int64) (diffs []storedDiff, ok bool) {
 	if base == h.lastRevision {
 		return nil, true
@@ -176,8 +172,7 @@ func (h *agentSyncHistory) diffsFromBase(base int64) (diffs []storedDiff, ok boo
 	return out, true
 }
 
-// recordCurrent tracks durable revisions even when no agent is connected to
-// observe the intermediate bumps.
+// recordCurrent tracks durable revisions even with no agent connected.
 func (s *allocSync) recordCurrent(agentID string, current *agentv1.DesiredNodeState) {
 	if s == nil || current == nil {
 		return
@@ -185,10 +180,9 @@ func (s *allocSync) recordCurrent(agentID string, current *agentv1.DesiredNodeSt
 	_, _ = s.recordAndDiff(agentID, current, current.GetReconciliationCursor())
 }
 
-// rebase moves the diff baseline to current after a checkpoint, which
-// travels outside the retained diff chain. Without this the next diff would
-// compare against a stale baseline and silently skip fields the checkpoint
-// changed.
+// rebase moves the diff baseline to current after a checkpoint, which travels
+// outside the retained chain. Without this the next diff would silently skip
+// fields the checkpoint changed.
 func (s *allocSync) rebase(agentID string, current *agentv1.DesiredNodeState) {
 	if s == nil || current == nil {
 		return
@@ -217,8 +211,7 @@ func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, t
 	return out, h.lastRevision, ok
 }
 
-// stripForDiff keeps allocations+volumes only; credentials, node config, and
-// transport metadata are excluded from diff comparison.
+// stripForDiff keeps allocations+volumes only for diff comparison.
 func stripForDiff(state *agentv1.DesiredNodeState) *agentv1.DesiredNodeState {
 	if state == nil {
 		return &agentv1.DesiredNodeState{}
@@ -348,8 +341,7 @@ func diffPayloadSize(d *storedDiff) int {
 }
 
 // InventoriesMatch checks hello allocations cover current desired IDs with
-// matching generations, ignoring stopped extras. Unowned runtime containers
-// are handled by runtime prune, not allocation sync.
+// matching generations, ignoring stopped extras.
 func InventoriesMatch(hello []*agentv1.ServiceCondition, current []*agentv1.DesiredService) bool {
 	desired := make(map[string]*agentv1.DesiredService, len(current))
 	for _, svc := range current {
@@ -380,8 +372,7 @@ func InventoriesMatch(hello []*agentv1.ServiceCondition, current []*agentv1.Desi
 		if strings.EqualFold(strings.TrimSpace(cond.GetPhase()), "Stopped") {
 			continue
 		}
-		// A non-stopped extra repairs via checkpoint rather than silently
-		// ignoring a possible missed stop.
+		// A non-stopped extra repairs via checkpoint, never silent ignore.
 		return false
 	}
 	return true

@@ -17,24 +17,19 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
-// BuilderToolchainVersion identifies the platform builder toolchain that
-// produced a build artifact. It is part of the reuse key: bumping it when
-// the toolchain changes stops skip-rebuild lookups from matching images
-// built by older toolchains. Builder fleet skew stays with 7.3; this is a
-// platform property, not a per-builder report.
+// BuilderToolchainVersion is the platform toolchain in the reuse key: bumping it stops
+// skip-rebuild from matching older images. Not a per-builder report.
 const BuilderToolchainVersion = "v1"
 
-// Build artifact kinds. A build artifact records a successful platform
-// build; a direct-image artifact records a tag resolved to a digest at
-// deploy time. Both shapes pin runtime identity to a manifest digest.
+// Build artifact kinds. Build artifacts record successful platform builds; direct-image
+// artifacts record tags resolved at deploy time. Both pin runtime identity to a digest.
 const (
 	BuildArtifactBuild       = "build"
 	BuildArtifactDirectImage = "direct_image"
 )
 
-// BuildArtifactRecord is the immutable source of runtime identity. Rows
-// are insert-only: nothing updates an artifact, and retention deletes
-// only artifacts no deployment, rollout, or current pointer references.
+// BuildArtifactRecord is the immutable source of runtime identity. Rows are insert-only;
+// retention deletes only artifacts nothing references.
 type BuildArtifactRecord struct {
 	ID                   string
 	ServiceID            string
@@ -106,10 +101,8 @@ func scanBuildArtifactRow(scanner interface{ Scan(...any) error }) (BuildArtifac
 	return rec, nil
 }
 
-// artifactReuseKey identifies build content for skip-rebuild lookups:
-// the verified source snapshot, the canonical recipe, and the toolchain
-// version. Recipe defaults match equalDesiredSourceSpec so semantically
-// identical recipes converge on one key.
+// artifactReuseKey identifies build content for skip-rebuild: source snapshot, canonical
+// recipe, toolchain version. Recipe defaults match equalDesiredSourceSpec.
 func artifactReuseKey(snapshotDigest string, recipe *platformv1.BuildRecipe) string {
 	builder := recipe.GetBuilder().String()
 	dockerfile := recipe.GetDockerfilePath()
@@ -135,9 +128,8 @@ const buildArtifactInsertColumns = `id, service_id, build_id, kind, source_snaps
 	build_recipe_json, builder_version, image_repository, image_manifest_digest,
 	image_ref, source_image_ref, reuse_key, build_actor_kind, build_actor_id, created_at`
 
-// buildArtifactRecordFromParams validates artifact parameters and fills
-// the derived identity fields: the artifact id, the digest-pinned image
-// ref, and the build reuse key.
+// buildArtifactRecordFromParams validates artifact parameters and fills the derived
+// identity fields: artifact id, pinned image ref, and reuse key.
 func buildArtifactRecordFromParams(params insertArtifactParams) (BuildArtifactRecord, error) {
 	if strings.TrimSpace(params.ServiceID) == "" {
 		return BuildArtifactRecord{}, errors.New("artifact service is required")
@@ -187,12 +179,9 @@ func buildArtifactInsertArgs(rec BuildArtifactRecord) ([]any, error) {
 	}, nil
 }
 
-// insertBuildArtifactTx records the immutable artifact of one successful
-// build. Every successful build records its own artifact — provenance
-// (commit, actor, build time) belongs to the build that produced the
-// image — so two builds that report the same manifest digest keep
-// distinct rows. Callers must pass a digest-pinned image: user tags are
-// resolved before the product transaction and never reach this insert.
+// insertBuildArtifactTx records the immutable artifact of one successful build. Every build
+// records its own row — provenance belongs to the producing build — so equal digests keep
+// distinct rows. Callers pass digest-pinned images only.
 func (s *persistence) insertBuildArtifactTx(ctx context.Context, tx *sql.Tx, params insertArtifactParams) (BuildArtifactRecord, error) {
 	if params.Kind != BuildArtifactBuild {
 		return BuildArtifactRecord{}, fmt.Errorf("insertBuildArtifactTx requires kind %q, got %q", BuildArtifactBuild, params.Kind)
@@ -213,10 +202,8 @@ func (s *persistence) insertBuildArtifactTx(ctx context.Context, tx *sql.Tx, par
 	))
 }
 
-// insertDirectImageArtifactTx records a resolved direct image, converging
-// concurrent releases on one row per (service, image): re-resolving a tag
-// that still points at the same manifest digest records the same fact, so
-// earlier releases keep referencing one artifact.
+// insertDirectImageArtifactTx records a resolved direct image, converging concurrent
+// releases on one row per (service, image).
 func (s *persistence) insertDirectImageArtifactTx(ctx context.Context, tx *sql.Tx, params insertArtifactParams) (BuildArtifactRecord, error) {
 	if params.Kind != BuildArtifactDirectImage {
 		return BuildArtifactRecord{}, fmt.Errorf("insertDirectImageArtifactTx requires kind %q, got %q", BuildArtifactDirectImage, params.Kind)
@@ -254,12 +241,9 @@ func (s *persistence) buildArtifactByIDQuerier(ctx context.Context, q ServiceQue
 	))
 }
 
-// buildArtifactByReuseKeyTx finds the artifact an earlier build of the
-// same source already produced so the new build can be skipped. The
-// reuse key is an index, not a uniqueness constraint: a rebuild of one
-// source may legitimately report a different manifest digest (builds are
-// not bit-reproducible) and every successful build records its own
-// artifact. The newest recorded artifact wins the lookup.
+// buildArtifactByReuseKeyTx finds the artifact an earlier build of the same source already
+// produced. The reuse key is an index, not unique: rebuilds may report different digests,
+// and the newest artifact wins.
 func (s *persistence) buildArtifactByReuseKeyTx(ctx context.Context, tx *sql.Tx, serviceID, snapshotDigest string, recipe *platformv1.BuildRecipe) (BuildArtifactRecord, bool, error) {
 	if strings.TrimSpace(snapshotDigest) == "" {
 		return BuildArtifactRecord{}, false, nil
@@ -315,10 +299,8 @@ func (s *persistence) listBuildArtifacts(ctx context.Context, serviceID string, 
 	return out, rows.Err()
 }
 
-// pruneBuildArtifactsTx deletes unreferenced artifacts older than cutoff
-// beyond the newest keepRecent per service. Anything a deployment,
-// transition, rollout, or current pointer references is rollback material
-// and never pruned, no matter its age.
+// pruneBuildArtifactsTx deletes unreferenced artifacts older than cutoff beyond the newest
+// keepRecent per service. Referenced artifacts are rollback material and never pruned.
 func (s *persistence) pruneBuildArtifactsTx(ctx context.Context, tx *sql.Tx, cutoff time.Time, keepRecent int) (int64, error) {
 	if keepRecent < 0 {
 		keepRecent = 0
@@ -344,8 +326,7 @@ func (s *persistence) pruneBuildArtifactsTx(ctx context.Context, tx *sql.Tx, cut
 	return result.RowsAffected()
 }
 
-// PruneBuildArtifacts removes aged-out unreferenced artifacts across all
-// services. It reports how many rows were deleted.
+// PruneBuildArtifacts removes aged-out unreferenced artifacts, reporting the deleted count.
 func (d *Delivery) PruneBuildArtifacts(ctx context.Context, cutoff time.Time, keepRecent int) (int64, error) {
 	s := d.store
 	var deleted int64

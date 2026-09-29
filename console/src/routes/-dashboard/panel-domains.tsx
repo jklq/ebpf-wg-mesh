@@ -36,8 +36,7 @@ export function PanelDomains({
 		null,
 	);
 	const [generating, setGenerating] = useState(false);
-	// A domain that has been requested but is not confirmed live yet. It is shown
-	// in the list straight away with a spinner so the flow never blocks on a modal.
+	// A requested-but-unconfirmed domain shows straight away with a spinner; the flow never blocks on a modal.
 	const [pendingDomain, setPendingDomain] = useState<{
 		hostname?: string;
 	} | null>(null);

@@ -16,9 +16,7 @@ import { fetchServiceLogs } from "./server-fns";
 import { shortId } from "./service-utils";
 
 const CRASH_LOG_TAIL_LIMIT = 30;
-// Crash status reaches the dashboard before the agent's buffered runtime batch
-// reaches ClickHouse, so an empty tail is retried a few times before
-// concluding that no logs were retained.
+// Crash status arrives before the buffered runtime batch reaches ClickHouse, so an empty tail is retried before concluding no logs were retained.
 const CRASH_LOG_EMPTY_RETRIES = 4;
 const CRASH_LOG_EMPTY_RETRY_DELAY_MS = 1500;
 
@@ -100,9 +98,7 @@ function AllocationCrashCard({
 	);
 }
 
-// Revision of the crash evidence for one allocation. A second crash reuses
-// the same allocation ID, so the log tail keys off this revision to refetch
-// instead of showing the earlier crash tail.
+// Crash evidence revision per allocation. A second crash reuses the allocation ID, so the tail keys off this revision to refetch.
 function crashRevision(allocation: DashboardAllocationStatus): string {
 	const restart = allocation.restart;
 	if (!restart) return "no-restart";

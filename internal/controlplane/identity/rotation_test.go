@@ -17,9 +17,8 @@ import (
 )
 
 // TestTLSAuthorityRotationKeepsIssuanceAndVerification walks a CA rotation:
-// issuance signs with the active key, verification accepts both keys through
-// the overlap, and the retiring key stops verifying after finish while the
-// server leaf flips to the new CA without a restart.
+// active signs, both verify through overlap, retiring stops after finish, and
+// the leaf flips without a restart.
 func TestTLSAuthorityRotationKeepsIssuanceAndVerification(t *testing.T) {
 	t.Parallel()
 
@@ -76,8 +75,7 @@ func TestTLSAuthorityRotationKeepsIssuanceAndVerification(t *testing.T) {
 		t.Fatalf("VerifyClusterID(bogus) = %v, %v", ok, err)
 	}
 
-	// Both certificates verify against the overlap bundle, and a live TLS
-	// handshake accepts both.
+	// Both certificates verify against the overlap bundle, including live TLS.
 	bundle, err := authority.TrustBundle(ctx)
 	if err != nil {
 		t.Fatalf("TrustBundle: %v", err)
@@ -130,8 +128,7 @@ func TestTLSAuthorityRotationKeepsIssuanceAndVerification(t *testing.T) {
 	if got := countCertificates(t, finished); got != 1 {
 		t.Fatalf("finished bundle holds %d certificates, want 1", got)
 	}
-	// A replica that restarts (or ticks) after finish flips its leaf to the
-	// new CA on its own.
+	// A replica that restarts after finish flips its leaf to the new CA alone.
 	if err := authority.RefreshServerCertificate(ctx); err != nil {
 		t.Fatalf("RefreshServerCertificate: %v", err)
 	}
@@ -166,8 +163,7 @@ func TestTLSAuthorityHandshakeAcceptsBothGenerationsThroughOverlap(t *testing.T)
 		t.Fatalf("X509KeyPair: %v", err)
 	}
 	keys.Rotate(t, signkeys.ScopeInternalCA)
-	// The cached pre-rotation identity still verifies (both keys verify),
-	// so the cache is kept; mint the post-rotation identity fresh.
+	// The cached pre-rotation identity still verifies, so the cache is kept.
 	materialAfter, err := IssueClientCertificate(ctx, keys, CallerAgent, "node-1", 24*time.Hour)
 	if err != nil {
 		t.Fatalf("IssueClientCertificate: %v", err)
@@ -239,9 +235,8 @@ func TestTLSAuthorityHandshakeRejectsRetiredGenerationAfterFinish(t *testing.T) 
 		MinVersion:   tls.VersionTLS13,
 	})
 	serverErr, _ := runTLSHandshake(t, serverCredentials, client)
-	// The server rejects the retired client certificate. (In TLS 1.3 the
-	// client observes this as a failed connection, not a handshake error,
-	// so integration tests assert the dial fails.)
+	// The server rejects the retired certificate; in TLS 1.3 the client sees a
+	// failed connection, not a handshake error.
 	if serverErr == nil {
 		t.Fatal("post-finish handshake accepted the retired generation")
 	}

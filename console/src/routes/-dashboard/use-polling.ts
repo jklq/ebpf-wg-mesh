@@ -24,8 +24,7 @@ export function usePolling(
 			try {
 				await callbackRef.current();
 			} catch {
-				// The resource owns its visible error state. Polling must continue after
-				// a transient request failure and must not create an unhandled promise.
+				// The resource owns its error state. Polling continues after transient failures without unhandled promises.
 			} finally {
 				schedule();
 			}

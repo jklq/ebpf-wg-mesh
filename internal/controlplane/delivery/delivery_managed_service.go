@@ -16,12 +16,8 @@ import (
 )
 
 func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, trustedAgentID string) (ServiceRecord, []string, error) {
-	// Registry I/O happens outside the product transaction and outside
-	// the scheduler lock, and only when the spec's image input is about to
-	// deploy: an unchanged spec keeps its stored artifact and
-	// reconciliation never blocks on the registry or stalls other
-	// scheduler-serialized mutations. A spec racing the pre-read retries
-	// with a fresh resolution.
+	// Registry I/O runs outside the product transaction and scheduler lock, only when the
+	// spec's image is about to deploy; a racing spec retries with a fresh resolution.
 	var rec ServiceRecord
 	var affectedAgentIDs []string
 	var errEnsure error
@@ -49,9 +45,7 @@ func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name str
 }
 
 func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, trustedAgentID string, pre resolvedDirectImage) (ServiceRecord, []string, error) {
-	// The scheduler lock serializes the mutation phase only; the managed
-	// pre-read and registry resolution run outside it (see
-	// EnsureManagedService).
+	// The scheduler lock serializes the mutation phase only (see EnsureManagedService).
 	d.schedulerMu.Lock()
 	defer d.schedulerMu.Unlock()
 	s := d.store
@@ -121,9 +115,8 @@ func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name s
 		}
 		now := time.Now().UTC()
 		artifactID := current.ResolvedArtifactID
-		// A changed spec resolves the tag at deploy time. An unchanged spec
-		// — a placement-only migration — keeps the stored artifact so a moved
-		// tag can never swap the image under it.
+		// A changed spec resolves the tag at deploy time. An unchanged spec keeps its artifact
+		// so a moved tag can never swap the image under it.
 		if image := strings.TrimSpace(directImageRef(spec)); image != "" && (!sameServiceSpec(current.Spec, spec) || artifactID == "") {
 			artifact, err := d.directImageArtifactTx(ctx, tx, current.ID, image, pre, deploymentActor{Kind: DeploymentCauseSystem}, now)
 			if err != nil {
@@ -229,8 +222,7 @@ func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name s
 	return rec, affectedAgentIDs, err
 }
 
-// managedServiceByName pre-reads the managed service without locks so
-// registry I/O can be skipped when nothing deploys.
+// managedServiceByName pre-reads the service without locks to skip registry I/O when idle.
 func (s *persistence) managedServiceByName(ctx context.Context, projectID, name string) (ServiceRecord, bool, error) {
 	environment, err := scanEnvironmentRow(s.db.QueryRowContext(ctx, environmentSelect+` WHERE e.project_id = $1 AND e.is_production = TRUE`, projectID))
 	if errors.Is(err, sql.ErrNoRows) {

@@ -16,40 +16,32 @@ import (
 	"unicode/utf8"
 )
 
-// CACertValidity is the self-signed certificate lifetime for generated
-// internal CA and registry signer keys. The CA row rotates independently
-// of this lifetime; it only bounds a forgotten key.
+// CACertValidity is the self-signed certificate lifetime for generated CA and
+// registry signer keys. It only bounds a forgotten key; rotation is independent.
 const CACertValidity = 10 * 365 * 24 * time.Hour
 
-// HMACSecretSize is the random entropy behind a generated HMAC secret. The
-// stored form is the base64url encoding (43 characters), so the same bytes
-// travel safely through dashboard environment files on both sides.
+// HMACSecretSize is the random entropy behind a generated HMAC secret, stored
+// base64url-encoded so the bytes travel safely through environment files.
 const HMACSecretSize = 32
 
-// MinHMACSecretLength is the shortest operator-supplied HMAC secret, in
-// bytes. It matches the dashboard's 32-byte floor.
+// MinHMACSecretLength is the shortest operator-supplied HMAC secret in bytes.
 const MinHMACSecretLength = 32
 
-// MaxHMACSecretLength caps operator-supplied HMAC secrets.
 const MaxHMACSecretLength = 1024
 
-// ecdsaIdentity is one generated signing identity: the PKCS#8 private key
-// DER (wrapped into the row) and the self-signed certificate (public,
-// stored alongside the row).
+// ecdsaIdentity is one generated signing identity: wrapped PKCS#8 private key
+// plus the self-signed certificate stored alongside.
 type ecdsaIdentity struct {
 	keyDER  []byte
 	cert    *x509.Certificate
 	certPEM []byte
 }
 
-// generateCAIdentity mints a fresh self-signed internal CA.
 func generateCAIdentity() (*ecdsaIdentity, error) {
 	return generateSelfSignedIdentity("ebpf-wg-mesh internal ca", x509.KeyUsageCertSign|x509.KeyUsageCRLSign, true)
 }
 
 // generateRegistryIdentity mints a fresh self-signed registry token signer.
-// The registry verifies token signatures against this certificate's public
-// key from its rootcertbundle file.
 func generateRegistryIdentity(issuer string) (*ecdsaIdentity, error) {
 	if issuer == "" {
 		issuer = "ebpf-wg-mesh"
@@ -96,9 +88,7 @@ func generateSelfSignedIdentity(commonName string, usage x509.KeyUsage, isCA boo
 	}, nil
 }
 
-// generateHMACSecret returns fresh secret bytes as base64url-encoded UTF-8,
-// so the identical bytes verify on the control plane and travel through
-// dashboard secret files without encoding mismatch.
+// generateHMACSecret returns fresh secret bytes as base64url-encoded UTF-8.
 func generateHMACSecret() ([]byte, error) {
 	raw := make([]byte, HMACSecretSize)
 	if _, err := rand.Read(raw); err != nil {
@@ -107,9 +97,8 @@ func generateHMACSecret() ([]byte, error) {
 	return []byte(base64.RawURLEncoding.EncodeToString(raw)), nil
 }
 
-// validateHMACSecret rejects operator-supplied secrets that would not
-// survive dashboard transport (which trims surrounding whitespace) or that
-// are too short to sign with.
+// validateHMACSecret rejects secrets that would not survive dashboard transport
+// or are too short to sign with.
 func validateHMACSecret(secret []byte) error {
 	if len(secret) < MinHMACSecretLength || len(secret) > MaxHMACSecretLength {
 		return fmt.Errorf("%w: must be %d-%d bytes", ErrHMACSecretInvalid, MinHMACSecretLength, MaxHMACSecretLength)
@@ -140,7 +129,6 @@ func isHMACSpace(c byte) bool {
 	}
 }
 
-// parseECDSAPrivateKey decodes unwrapped PKCS#8 DER and requires P-256.
 func parseECDSAPrivateKey(der []byte) (*ecdsa.PrivateKey, error) {
 	parsed, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
@@ -153,7 +141,6 @@ func parseECDSAPrivateKey(der []byte) (*ecdsa.PrivateKey, error) {
 	return key, nil
 }
 
-// parseCertificatePEM decodes a single PEM certificate.
 func parseCertificatePEM(raw []byte) (*x509.Certificate, error) {
 	block, _ := pem.Decode(raw)
 	if block == nil {
@@ -179,7 +166,6 @@ func randomSerial() (*big.Int, error) {
 	}
 }
 
-// generateKeyID returns a random signing-key row identifier.
 func generateKeyID() (string, error) {
 	var raw [16]byte
 	if _, err := rand.Read(raw[:]); err != nil {
@@ -188,7 +174,6 @@ func generateKeyID() (string, error) {
 	return "sk-" + hex.EncodeToString(raw[:]), nil
 }
 
-// generateKID returns a random public key identifier for JWT kid headers.
 func generateKID() (string, error) {
 	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {

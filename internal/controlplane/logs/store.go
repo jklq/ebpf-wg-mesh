@@ -26,9 +26,8 @@ const (
 	maxLogGapResults     = 500
 	maxEntriesPerBatch   = 2000
 
-	// MinProjectRetentionDays and MaxProjectRetentionDays bound
-	// per-project log retention. Zero on a project means the platform
-	// default.
+	// MinProjectRetentionDays and MaxProjectRetentionDays bound per-project
+	// retention. Zero on a project means the platform default.
 	MinProjectRetentionDays = 1
 	MaxProjectRetentionDays = 90
 )
@@ -45,14 +44,12 @@ const (
 
 var ErrDisabled = errors.New("log storage is not configured")
 
-// ProjectRetention is the resolved tenant policy for one service.
 type ProjectRetention struct {
 	ProjectID     string
 	RetentionDays int
 }
 
-// ProjectResolver maps service IDs to their tenant retention policy.
-// The control plane injects a CockroachDB-backed implementation; a nil
+// ProjectResolver maps service IDs to their tenant retention policy. A nil
 // resolver keeps the platform default for every service.
 type ProjectResolver func(ctx context.Context, serviceIDs []string) (map[string]ProjectRetention, error)
 
@@ -93,9 +90,8 @@ type ServiceLogGap struct {
 	WindowEnd    time.Time
 }
 
-// ServiceLogPage is one authorized read: lines newest-first with an
-// older-page cursor, plus the explicit gaps overlapping the range. Gaps
-// paginate independently of lines.
+// ServiceLogPage is one authorized read: lines newest-first with an older-page
+// cursor, plus the overlapping gaps. Gaps paginate independently of lines.
 type ServiceLogPage struct {
 	Lines            []ServiceLog
 	Gaps             []ServiceLogGap
@@ -124,9 +120,8 @@ type LogLineInput struct {
 	Line              string
 }
 
-// GapInput is one persisted drop window. ProjectID and ExpiresAt are
-// normally resolved from the service's retention policy; callers
-// override them only when they already know the tenant.
+// GapInput is one persisted drop window. ProjectID and ExpiresAt resolve from the
+// service's retention policy unless the caller already knows the tenant.
 type GapInput struct {
 	ProjectID    string
 	ServiceID    string
@@ -139,9 +134,8 @@ type GapInput struct {
 	DroppedCount uint64
 	Reason       string
 	Reporter     string
-	// SummaryID is the producer's stable identity for a coalesced
-	// drop lineage. When set, it keys the gap row so retried reports
-	// replace their row even after their totals grew.
+	// SummaryID is the producer's stable identity for a coalesced drop lineage;
+	// retried reports replace their row even after totals grew.
 	SummaryID string
 	ExpiresAt time.Time
 }
@@ -218,9 +212,8 @@ func OpenLogStore(ctx context.Context, cfg config.LogCaptureConfig) (*LogStore, 
 	return store, nil
 }
 
-// SetProjectResolver injects tenant retention resolution. It must be
-// called before serving traffic; it is not safe for concurrent use
-// with writes.
+// SetProjectResolver injects tenant retention resolution. Call before serving
+// traffic; not safe for concurrent use with writes.
 func (s *LogStore) SetProjectResolver(resolve ProjectResolver) {
 	if s == nil {
 		return
@@ -273,11 +266,9 @@ func (s *LogStore) ensureSchema(ctx context.Context) error {
 		return fmt.Errorf("inspect log table engine: %w", err)
 	}
 	if engine != "" && !strings.Contains(engine, "ReplacingMergeTree") {
-		// Clean cutover from the pre-2.9 MergeTree schema, which has
-		// no line identity, no tenant attribution, and no per-row
-		// retention. Telemetry is not customer authority, so the old
-		// rows are dropped rather than carried forward with
-		// incompatible semantics.
+		// Clean cutover from the pre-2.9 MergeTree schema, which has no line identity,
+		// tenant attribution, or per-row retention. Telemetry is not customer authority,
+		// so the old rows drop.
 		slog.WarnContext(ctx, "dropping legacy log table for durable bounded logs cutover", "engine", engine)
 		if _, err := s.db.ExecContext(ctx, `DROP TABLE IF EXISTS service_logs`); err != nil {
 			return fmt.Errorf("drop legacy log table: %w", err)
@@ -291,28 +282,22 @@ func (s *LogStore) ensureSchema(ctx context.Context) error {
 	return nil
 }
 
-// WriteAgentBatch converts one agent batch already scoped onto its
-// allocation owners into durable line and gap inputs. Ownership
-// scoping stays with the caller; this method enforces size caps,
-// truncates defensively, resolves tenant retention, and persists
-// both lines and producer drop reports. Batches larger than
-// maxEntriesPerBatch are trimmed with the tail counted as ingest
-// gaps per affected service and allocation.
+// WriteAgentBatch converts one ownership-scoped agent batch into durable line and
+// gap inputs: size caps, defensive truncation, tenant retention, and producer drop
+// reports. Tails past maxEntriesPerBatch become ingest gaps per service/allocation.
 func (s *LogStore) WriteAgentBatch(ctx context.Context, agentID string, batch *agentv1.LogBatch) error {
 	if !s.Enabled() || batch == nil {
 		return nil
 	}
 	inputs, gaps := convertAgentBatch(agentID, batch)
-	// A producer total without a breakdown cannot be attributed to a
-	// service, so it only feeds the dropped counter, never a gap row.
+	// An unattributable producer total feeds only the dropped counter, never a gap row.
 	if err := s.WriteLogLines(ctx, inputs); err != nil {
 		return err
 	}
 	return s.WriteGaps(ctx, gaps)
 }
 
-// convertAgentBatch maps one scoped agent batch onto durable line
-// and gap inputs. Ownership scoping stays with the caller.
+// Ownership scoping stays with the caller.
 func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput, []GapInput) {
 	entries := batch.GetEntries()
 	var trimmed []*agentv1.LogEntry
@@ -351,9 +336,8 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 		})
 	}
 	gaps := dropSummariesToGaps(batch.GetDrops(), agentID)
-	// The trimmed tail keeps its own attribution: each affected
-	// service and allocation gets its own gap, never a single gap
-	// pinned to the first entry.
+	// The trimmed tail keeps its own attribution: each affected service and
+	// allocation gets its own gap.
 	now := time.Now().UTC()
 	type trimKey struct{ serviceID, allocationID, logType, stream string }
 	trimmedCounts := make(map[trimKey]uint64)
@@ -395,12 +379,9 @@ func convertAgentBatch(agentID string, batch *agentv1.LogBatch) ([]LogLineInput,
 	return inputs, gaps
 }
 
-// attribution resolves a row's tenant attribution and expiry. A row
-// that carries neither explicit attribution nor a resolver entry is
-// refused when the store resolves retention: it would land without a
-// project ID — invisible to the deletion purge — under the platform
-// default TTL instead of the project's own retention, outliving a
-// short project policy after its service or project was hard-deleted.
+// attribution resolves a row's tenant attribution and expiry. A row with neither
+// explicit attribution nor a resolver entry is refused: it would land ID-less —
+// invisible to the deletion purge — under the platform TTL instead of the project's.
 func (s *LogStore) attribution(projectID string, expiresAt time.Time, serviceID string, resolved map[string]ProjectRetention, now time.Time) (string, time.Time, bool) {
 	projectID = strings.TrimSpace(projectID)
 	if policy, ok := resolved[serviceID]; ok {
@@ -514,9 +495,8 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	return nil
 }
 
-// WriteGaps persists drop windows. Gap identity derives from the
-// window itself so retried reports collapse instead of double
-// counting.
+// WriteGaps persists drop windows. Gap identity derives from the window itself
+// so retried reports collapse instead of double-counting.
 func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 	if !s.Enabled() || len(gaps) == 0 {
 		return nil
@@ -650,12 +630,9 @@ func clampRetentionDays(projectDays, platformDefault int) int {
 	return platformDefault
 }
 
-// gapIdentity keys one gap row for ReplacingMergeTree dedup. Gaps
-// carrying a stable producer summary ID key on that ID plus the drop
-// identity: retries of the same coalesced lineage replace their row
-// even after the reported totals or window grew. Internally derived
-// gaps have no producer ID and are immutable per event, so they key
-// on their full content.
+// gapIdentity keys one gap row for ReplacingMergeTree dedup. Summary-carrying gaps
+// key on the producer ID plus drop identity so retries replace their row; internally
+// derived gaps are immutable per event and key on full content.
 func gapIdentity(serviceID, allocationID, buildID, logType, stream, reason, reporter, summaryID string, windowStart, windowEnd time.Time, count uint64) string {
 	payload := fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d\x00%d",
 		serviceID, allocationID, buildID, logType, stream,
@@ -670,10 +647,8 @@ func gapIdentity(serviceID, allocationID, buildID, logType, stream, reason, repo
 	return "gap:" + hex.EncodeToString(sum[:16])
 }
 
-// PurgeProjectLogs deletes every line and gap attributed to a
-// destroyed project. Mutations run synchronously so a returned nil
-// means the rows are gone; per-row TTL expiry remains the backstop
-// if a purge is lost.
+// PurgeProjectLogs deletes every line and gap of a destroyed project. Mutations run
+// synchronously; per-row TTL expiry is the backstop if a purge is lost.
 func (s *LogStore) PurgeProjectLogs(ctx context.Context, projectID string) error {
 	if !s.Enabled() {
 		return nil
@@ -690,9 +665,8 @@ func (s *LogStore) PurgeProjectLogs(ctx context.Context, projectID string) error
 	return nil
 }
 
-// ListServiceLogs returns one authorized page, newest first, with the
-// gaps overlapping the queried range. Callers must authorize the
-// service before calling.
+// ListServiceLogs returns one authorized page, newest first, with the overlapping
+// gaps. Callers must authorize the service before calling.
 func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServiceLogsRequest) (ServiceLogPage, error) {
 	var page ServiceLogPage
 	if !s.Enabled() {
@@ -800,9 +774,8 @@ SELECT observed_at, project_id, environment_id, service_id, allocation_id, agent
 	return page, nil
 }
 
-// listGaps returns up to maxLogGapResults gap rows newest-first with an
-// older-page cursor, so every gap stays reachable even when the range
-// holds more rows than one response may carry.
+// listGaps returns up to maxLogGapResults gap rows newest-first with an older-page
+// cursor, so every gap stays reachable.
 func (s *LogStore) listGaps(ctx context.Context, req *platformv1.ListServiceLogsRequest, cursorTime time.Time, cursorID string) ([]ServiceLogGap, string, error) {
 	filters := []string{"service_id = ?"}
 	args := []any{req.GetServiceId()}
@@ -897,8 +870,7 @@ func dropSummariesToGaps(drops []*platformv1.LogDropSummary, reporter string) []
 	return gaps
 }
 
-// DropSummariesToGaps converts producer drop reports into gap inputs
-// for non-agent producers such as builders.
+// DropSummariesToGaps converts drop reports into gap inputs for non-agent producers.
 func DropSummariesToGaps(drops []*platformv1.LogDropSummary, reporter string) []GapInput {
 	return dropSummariesToGaps(drops, reporter)
 }

@@ -10,11 +10,9 @@ import (
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 )
 
-// HeartbeatBuild extends the lease on a running build. It is a single
-// compare-and-swap on (builder_id, owner_epoch): a superseded owner gets
-// ErrBuildLeaseLost and must drop the work without completing it. A build
-// with cancellation requested gets ErrBuildCancelled so the builder stops
-// cooperatively; the late completion path then converges to cancelled.
+// HeartbeatBuild extends the lease on a running build via compare-and-swap on
+// (builder_id, owner_epoch). A superseded owner gets ErrBuildLeaseLost; a build with
+// cancellation requested gets ErrBuildCancelled so the builder stops cooperatively.
 func (d *Delivery) HeartbeatBuild(ctx context.Context, builderID, buildID string, epoch int64) error {
 	scheduler := d.BuildSchedulerConfig()
 	return d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {

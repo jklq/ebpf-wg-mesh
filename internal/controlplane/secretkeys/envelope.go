@@ -18,8 +18,7 @@ const NonceSize = 12
 // MaxSealedValueSize caps a single sealed secret value at 64 KiB.
 const MaxSealedValueSize = 64 * 1024
 
-// ErrSealedValueTooLarge is returned when a sealed value exceeds
-// MaxSealedValueSize. It carries the limit, never the value.
+// ErrSealedValueTooLarge carries the limit, never the value.
 var ErrSealedValueTooLarge = errors.New("sealed value exceeds size limit")
 
 // GenerateDEK returns fresh random data-encryption key material.
@@ -31,13 +30,11 @@ func GenerateDEK() ([DEKSize]byte, error) {
 	return dek, nil
 }
 
-// GenerateKeyID returns a random registry key identifier. Identifiers are
-// opaque and carry no key material.
+// GenerateKeyID returns a random opaque registry key identifier.
 func GenerateKeyID() (string, error) {
 	return generatePrefixedID("kek-")
 }
 
-// GenerateDEKID returns a random data-encryption key identifier.
 func GenerateDEKID() (string, error) {
 	return generatePrefixedID("dek-")
 }
@@ -50,10 +47,9 @@ func generatePrefixedID(prefix string) (string, error) {
 	return prefix + hex.EncodeToString(raw[:]), nil
 }
 
-// SealValue encrypts plaintext with dek under additional authenticated data.
-// The AAD binds the ciphertext to its location (service, name, version) so a
-// sealed row copied elsewhere does not decrypt. It returns the random nonce
-// alongside the ciphertext; callers persist both.
+// SealValue encrypts plaintext with dek under AAD binding the ciphertext to its
+// location (service, name, version), so a copied row does not decrypt. It returns
+// the random nonce alongside the ciphertext; callers persist both.
 func SealValue(dek [DEKSize]byte, aad, plaintext []byte) (nonce, ciphertext []byte, err error) {
 	if len(plaintext) > MaxSealedValueSize {
 		return nil, nil, fmt.Errorf("%w: values are capped at %d bytes", ErrSealedValueTooLarge, MaxSealedValueSize)
@@ -65,9 +61,8 @@ func SealValue(dek [DEKSize]byte, aad, plaintext []byte) (nonce, ciphertext []by
 	return sealed[:NonceSize], sealed[NonceSize:], nil
 }
 
-// OpenValue decrypts ciphertext sealed by SealValue. A tampered nonce,
-// ciphertext, or AAD reports an authentication failure without detail that
-// could aid forgery.
+// OpenValue decrypts ciphertext sealed by SealValue. Tampering reports an
+// authentication failure without detail that could aid forgery.
 func OpenValue(dek [DEKSize]byte, aad, nonce, ciphertext []byte) ([]byte, error) {
 	if len(nonce) != NonceSize {
 		return nil, errors.New("sealed value has invalid nonce")

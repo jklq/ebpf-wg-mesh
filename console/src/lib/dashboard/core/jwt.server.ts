@@ -16,10 +16,7 @@ const DashboardJWTAudience = "managed-dashboard";
 export interface DashboardJWTConfig {
 	/** Signs every new token and is tried first on verification. */
 	jwtSecret: string;
-	/**
-	 * Verifies tokens issued before a rotation until they expire. Never
-	 * signs.
-	 */
+	/** Verifies pre-rotation tokens until they expire. Never signs. */
 	jwtSecretPrevious?: string;
 }
 

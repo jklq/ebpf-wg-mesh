@@ -27,10 +27,9 @@ const defaultCPUCFSPeriod uint64 = 100_000
 type serviceEngine interface {
 	DiscoverServices(context.Context) ([]RuntimeResource, error)
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
-	// InspectService reports the current status of the allocation's container
-	// without creating one. It reports exists=false when no container matches
-	// the desired rollout generation and network identity, either because the
-	// container is missing or because it is stale.
+	// InspectService reports the container's current status without creating one.
+	// exists=false when no container matches the desired generation and network
+	// identity, missing or stale.
 	InspectService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
 	DrainService(context.Context, string, time.Time) (bool, bool, error)
 	RemoveService(context.Context, string) error
@@ -270,10 +269,8 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		cond.AllocationIpv4 = svc.GetPrivateIpv4()
 		cond.AllocationIpv6 = svc.GetPrivateIpv6()
 		cond.Healthy = false
-		// Preserve crash evidence across the drain: the control plane
-		// replaces the live observation with this condition, so a nil
-		// restart would drop the prior exit cause and count from the
-		// draining overlay.
+		// Preserve crash evidence across the drain: a nil restart would drop the
+		// prior exit cause and count from the draining overlay.
 		cond.Restart = r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
 		if drained {
 			cond.Phase = "Drained"
@@ -299,9 +296,8 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 	var status serviceStatus
 	var created bool
 	if shouldPreserveTerminalObservation(r.now(), svc.GetSpec().GetRuntime().GetRestart(), obs, svc.GetDesiredRolloutGeneration(), operatorNonce) {
-		// A terminal allocation must never execute: resolve its status without
-		// creating a container, so a missing container stays missing instead
-		// of being started and immediately removed on every safety resync.
+		// A terminal allocation must never execute: resolve status without creating
+		// a container, so a missing container stays missing on every resync.
 		preserved, err := r.inspectPreservedService(ctx, svc, obs)
 		if err != nil {
 			cond.Phase = "Error"
@@ -484,11 +480,9 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 	return reason, true
 }
 
-// inspectPreservedService resolves the status of an allocation whose saved
-// restart observation requires it to stay stopped, without starting a
-// container. A missing or stale container is cleaned up and reported as
-// stopped from the saved observation; a live container keeps its real status
-// so a running workload wins over stale history.
+// inspectPreservedService resolves the status of an allocation that must stay
+// stopped, without starting a container. Missing or stale containers report
+// stopped from the saved observation; a live container keeps its real status.
 func (r *ContainerdRuntime) inspectPreservedService(ctx context.Context, svc *agentv1.DesiredService, obs *platformv1.RestartObservation) (serviceStatus, error) {
 	status, exists, err := r.engine.InspectService(ctx, svc)
 	if err != nil {

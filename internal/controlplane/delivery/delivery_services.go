@@ -51,11 +51,8 @@ func (d *Delivery) CreateService(ctx context.Context, user authz.User, environme
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	// Registry resolution runs outside the scheduler lock, like every
-	// other pre-resolution: a slow or unreachable registry must not stall
-	// unrelated scheduler-serialized mutations (see ReleaseEnvironment).
-	// The resolution pins the caller's immutable spec input and needs no
-	// lock-held pre-read.
+	// Registry resolution runs outside the scheduler lock like every pre-resolution: a slow
+	// registry must not stall unrelated serialized mutations (see ReleaseEnvironment).
 	pre, err := d.preResolveDirectImage(ctx, spec)
 	if err != nil {
 		return ServiceRecord{}, err
@@ -205,8 +202,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if err != nil {
 		return ServiceRecord{}, false, false, err
 	}
-	// Lock and re-check: the optimistic revision guard below cannot see a
-	// concurrent tombstone, so deleted services must be fenced explicitly.
+	// Lock and re-check: the revision guard cannot see a concurrent tombstone.
 	deletion, err := s.lockServiceDeletionTx(ctx, tx, current.ID)
 	if err != nil {
 		return ServiceRecord{}, false, false, err
@@ -335,8 +331,7 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 	s := d.store
 	var hasBindings bool
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		// Lock first: the row lock serializes against concurrent deploys,
-		// which must observe the tombstone or win before it lands.
+		// Lock first: serialize against concurrent deploys.
 		deletion, err := s.lockServiceDeletionTx(ctx, tx, scope.ID())
 		if err != nil {
 			return err
@@ -344,8 +339,7 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		if deletion != nil && !deletion.Inherited {
 			return nil
 		}
-		// Capture before tombstoning: the live-binding check requires a
-		// live service row, so it must run before the tombstone lands.
+		// Capture before tombstoning: the live-binding check needs a live row.
 		bindings, err := s.hasLiveDomainBindingsQuerier(ctx, tx, scope.ID())
 		if err != nil {
 			return err
@@ -365,15 +359,12 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		if err := quiesceServiceTx(ctx, s, tx, scope.ID(), scope.UserID()); err != nil {
 			return err
 		}
-		// Record before dropping assignments: the recorder captures the live
-		// assignment keys and the commit resolves their absence as removals.
+		// Record before dropping assignments: the commit resolves their absence as removals.
 		if err := journal.RecordServiceRemoval(ctx, tx, scope.ID()); err != nil {
 			return err
 		}
-		// Assignments are placement records, not recoverable data: the
-		// deployment is Removed and the tombstoned service leaves desired
-		// state, so drop them here to keep durable rows consistent with
-		// the live view. Restore re-asserts the empty set.
+		// Assignments are placement records, not recoverable data: drop them so durable rows
+		// match the live view. Restore re-asserts the empty set.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
 			return err
 		}
@@ -397,10 +388,8 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 	return nil
 }
 
-// RestoreService clears a service's own tombstone within the grace period.
-// Restored services keep their deployment history; their assignments were
-// dropped at delete time, so a release resumes work. Restoring under a
-// tombstoned ancestor is refused: restore top-down.
+// RestoreService clears a service's own tombstone within the grace period. History survives;
+// a release resumes work since assignments dropped at delete. Restore top-down only.
 func (d *Delivery) RestoreService(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
@@ -442,8 +431,7 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 		if affected == 0 {
 			return ErrDeletionExpired
 		}
-		// Normally a no-op: delete dropped the assignments. Re-assert the
-		// empty set so a restore never resurrects stale placements.
+		// Re-assert the empty set so a restore never resurrects stale placements.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
 			return err
 		}

@@ -75,10 +75,8 @@ func (c *GitHubCoordinator) CompleteWorkItem(ctx context.Context, rec durablewor
 	return c.work.Complete(ctx, rec)
 }
 
-// FailWorkItem dispositions a claimed record after a failed attempt.
-// Retryable failures requeue with jittered backoff and dead-letter when the
-// attempt limit is reached; non-retryable failures (poison payloads,
-// unknown kinds) move the record to failed at once.
+// FailWorkItem dispositions a claimed record after a failed attempt. Retryable failures requeue
+// with jittered backoff and dead-letter at the attempt limit; poison records fail at once.
 func (c *GitHubCoordinator) FailWorkItem(ctx context.Context, rec durablework.Record, processErr error, retryable bool) error {
 	return c.work.Fail(ctx, rec, processErr, durablework.FailOptions{Retryable: retryable})
 }
@@ -246,10 +244,8 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if binding.AccessState != SourceAccessStateAvailable {
 		return nil
 	}
-	// The fetch below proves currency only over the head observed before it
-	// began (see BuildTransition): a push that lands while the fetch is in
-	// flight makes this observation stale, and a delayed sync must never
-	// move the proven head backward.
+	// The fetch proves currency only over the head observed before it began: a push landing
+	// mid-fetch makes this observation stale.
 	fetchedFrom, err := c.store.SourceBindingHeadCommit(ctx, binding.ID)
 	if err != nil {
 		return err
@@ -262,11 +258,8 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	if err != nil {
 		return err
 	}
-	// Unanchored syncs carry no spec revision: they are automatic refreshes
-	// triggered by push or provider events, not explicit spec writes or
-	// releases, so they honor the environment auto-deploy switch. The
-	// commit is the freshly fetched tracked head, so the request is
-	// authoritative regardless of observed order.
+	// Unanchored syncs are automatic refreshes, not explicit writes or releases, so they
+	// honor the auto-deploy switch. Their commit is the freshly fetched head.
 	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0, BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom})
 }
 
@@ -283,13 +276,9 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 		transition := BuildTransition{PreviousCommit: payload.PreviousCommitSHA}
 		stalePush := false
 		if NoPushPredecessor(payload.PreviousCommitSHA) {
-			// A created or recreated ref: the payload's all-zero "before"
-			// names a predecessor that can never be observed — the
-			// binding's stored tip predates the deletion — so chaining to
-			// it would pend this push as an early successor forever. Prove
-			// currency the way syncs do instead: fetch the tracked head.
-			// The pushed commit must still be it; anything newer made this
-			// delivery stale.
+			// A created or recreated ref: the all-zero "before" names a predecessor that can never
+			// be observed, so prove currency by fetching the tracked head like syncs do. The pushed
+			// commit must still be it; anything newer made this delivery stale.
 			fetchedFrom, err := c.store.SourceBindingHeadCommit(ctx, binding.ID)
 			if err != nil {
 				return err
@@ -305,10 +294,8 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 			if head == payload.CommitSHA {
 				transition = BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom}
 			} else {
-				// The ref moved past this delivery before it was applied:
-				// record it as history only — never as a head, even when the
-				// binding has none yet — and let the push that moved the head
-				// carry the work.
+				// The ref moved past this delivery before it applied: record history only — never
+				// the head — and let the newer push carry the work.
 				slog.InfoContext(ctx, "github recreated-ref push superseded by newer tracked head; recording only", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA, "tracked_head", head)
 				stalePush = true
 				transition = BuildTransition{History: true}
@@ -344,10 +331,8 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 	return nil
 }
 
-// observeBoundRevision records the observed commit for the bound service and
-// queues a build for it. Automatic observations (pushes and refresh syncs)
-// honor the environment auto-deploy switch: when it is off the revision is
-// recorded and held for a manual release instead of building.
+// observeBoundRevision records the observed commit and queues a build. Automatic observations
+// honor the auto-deploy switch: when off, the revision is held for a manual release.
 func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool, transition BuildTransition) error {
 	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor, transition)
 	if err != nil {
@@ -418,13 +403,9 @@ func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding
 	}
 	if queued.Superseded {
 		if queued.ChainUnproven {
-			// A push whose predecessor chains to neither the proven head
-			// nor a fetched one: an unobserved predecessor whose webhook
-			// may never arrive, or one recorded as history by an earlier
-			// recreated-ref push that never held the head. Only a fetch
-			// decides whether the pushed commit is still current, so
-			// reconcile the tracked head now instead of leaving the
-			// service on an older image until the binding expires.
+			// A push chaining to neither the proven nor a fetched head: only a fetch decides whether
+			// the commit is still current, so reconcile the tracked head now instead of leaving the
+			// service on an older image.
 			if _, err := c.work.Enqueue(ctx, SourceSpecChangedParams(binding.ServiceID, 0, true)); err != nil {
 				return err
 			}

@@ -347,8 +347,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 		if err != nil {
 			return err
 		}
-		// A tracked-head fixture fetches over the binding's current
-		// proven head, so successive seeds advance the head like syncs.
+		// A tracked-head fixture fetches over the binding's current proven head, so successive seeds advance the head like syncs.
 		head, err := store.source.SourceBindingHeadCommitTx(ctx, tx, binding.ID)
 		if err != nil {
 			return err
@@ -478,8 +477,7 @@ func openAgentSync(t *testing.T, server *Server, cert tls.Certificate, hello *ag
 	if err := server.store.db.QueryRowContext(ctx, `SELECT session_incarnation + 1 FROM agent_registrations WHERE id = $1`, hello.GetAgentId()).Scan(&hello.SessionIncarnation); err != nil {
 		t.Fatal(err)
 	}
-	// An explicit hello cluster id is preserved so rotation tests can
-	// speak as a pre-renewal agent; otherwise the current identity is used.
+	// An explicit hello cluster id is preserved so rotation tests can speak as a pre-renewal agent; otherwise the current identity is used.
 	if strings.TrimSpace(hello.GetClusterId()) == "" {
 		clusterID, err := server.authority.ClusterIdentity(context.Background())
 		if err != nil {

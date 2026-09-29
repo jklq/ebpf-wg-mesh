@@ -202,8 +202,7 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 				return err
 			}
 		}
-		// Staged candidates have no acceptance decision; a crash must never
-		// promote them.
+		// Staged candidates have no acceptance decision; a crash must never promote them.
 		for _, key := range [][]byte{stagedDesiredStateKey, stagedDiffKey, stagedNodeConfigKey} {
 			if err := tx.Bucket(localDesiredBucket).Delete(key); err != nil {
 				return err
@@ -215,9 +214,9 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 		}
 		switch version := readUint64(rawVersion); version {
 		case 0, localStateFormatVersion:
-			// Fresh or current store.
+
 		case 2:
-			// Flat migration of the previous release's format.
+
 			if err := migrateLocalStateV2ToV3(tx); err != nil {
 				return err
 			}
@@ -249,10 +248,9 @@ func (s *localStateStore) initialize(agentID string, existed, corrupt bool) erro
 	})
 }
 
-// migrateLocalStateV2ToV3 rewrites a previous-release store to the current
-// format in place: flat, one direction, no compatibility mode. It stamps the
-// content hash of the accepted node configuration and leaves the other
-// channel versions absent, which forces one full update on the next batch.
+// migrateLocalStateV2ToV3 rewrites a previous-release store in place: flat, one
+// direction, no compatibility mode. Absent channel versions force one full
+// update on the next batch.
 func migrateLocalStateV2ToV3(tx *bbolt.Tx) error {
 	desired := tx.Bucket(localDesiredBucket)
 	raw := desired.Get(desiredStateKey)
@@ -308,8 +306,7 @@ func (s *localStateStore) validateRecords() error {
 		} else if readUint64(meta.Get(authorityEpochKey)) != 0 || readInt64(meta.Get(cursorKey)) != 0 {
 			return errors.New("local reconciliation position exists without desired state")
 		}
-		// Credentials are independently versioned and may arrive before their
-		// checkpoint.
+		// Credentials are independently versioned and may arrive before their checkpoint.
 		if err := tx.Bucket(localCredentialsBucket).ForEach(func(key, value []byte) error {
 			if err := validateRuntimeID("allocation ID", string(key)); err != nil {
 				return err
@@ -676,8 +673,8 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 			if !desiredConfigurationEqual(&previousState, clean) {
 				return fmt.Errorf("desired state changed without advancing reconciliation cursor %d", acceptedCursor)
 			}
-			// A same-cursor repair checkpoint may carry new node config or
-			// observation overlay; both are versioned outside the cursor.
+			// A repair checkpoint may carry node config or overlay; both are versioned
+			// outside the cursor.
 			changed = previousState.GetNodeConfigVersion() != clean.GetNodeConfigVersion() ||
 				reconciliation.HashObservationOverlay(previousState.GetServices()) != reconciliation.HashObservationOverlay(clean.GetServices())
 		} else {
@@ -692,7 +689,7 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 		if err := putInt64(meta, cursorKey, incoming.GetReconciliationCursor()); err != nil {
 			return err
 		}
-		// Checkpoints carry node config but never credentials.
+
 		if err := meta.Put(nodeConfigVersionKey, []byte(incoming.GetNodeConfigVersion())); err != nil {
 			return err
 		}
@@ -802,7 +799,7 @@ func (s *localStateStore) acceptStagedDiff(clusterID, sessionID string, staged [
 		}
 		if diff.GetTargetRevision() <= acceptedCursor {
 			if diff.GetTargetRevision() == acceptedCursor {
-				// Duplicate of already-applied diff; idempotent, no re-apply.
+
 				if err := tx.Bucket(localDesiredBucket).Delete(stagedDiffKey); err != nil {
 					return err
 				}
@@ -870,9 +867,8 @@ func (s *localStateStore) acceptStagedDiff(clusterID, sessionID string, staged [
 	return changed && err == nil, err
 }
 
-// applyDiffToState merges starts/updates/stops into previous: upserts and
-// idempotent deletes. Node config and versions are preserved; only the
-// allocation cursor/epoch advance.
+// applyDiffToState merges starts/updates/stops into previous. Node config and
+// versions are preserved; only the allocation cursor/epoch advance.
 func applyDiffToState(previous *agentv1.DesiredNodeState, diff *agentv1.AllocationDiff) (*agentv1.DesiredNodeState, error) {
 	if previous == nil {
 		return nil, errors.New("previous desired state is nil")
@@ -1465,9 +1461,8 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 	return result, err
 }
 
-// canonicalizeDesiredState orders services and volumes by their stable IDs:
-// desired configuration is a set, and every stored and compared form must be
-// canonical so equality is order-independent.
+// canonicalizeDesiredState orders services and volumes by stable ID so equality
+// is order-independent.
 func canonicalizeDesiredState(state *agentv1.DesiredNodeState) {
 	sort.Slice(state.GetServices(), func(i, j int) bool {
 		return state.GetServices()[i].GetAllocationId() < state.GetServices()[j].GetAllocationId()
@@ -1495,12 +1490,10 @@ func desiredConfigurationEqual(a, b *agentv1.DesiredNodeState) bool {
 	left.GeneratedAt, right.GeneratedAt = nil, nil
 	left.SessionId, right.SessionId = "", ""
 	left.AuthorityNotAfter, right.AuthorityNotAfter = nil, nil
-	// Node config is an independently versioned stream that may change at
-	// the same cursor; its integrity is bound by its content-hash version.
+	// Node config is independently versioned and may change at the same cursor.
 	left.NodeConfig, right.NodeConfig = nil, nil
 	left.NodeConfigVersion, right.NodeConfigVersion = "", ""
-	// The observation overlay derives from live observations and may also
-	// change at the same cursor; drift is repaired with a checkpoint.
+	// The observation overlay may also change at the same cursor.
 	for _, svc := range left.GetServices() {
 		svc.InternalHosts, svc.RestartObservation = nil, nil
 	}
@@ -1788,8 +1781,7 @@ func (s *localStateStore) requireClusterIdentity(clusterID string) error {
 	return errors.Join(err, recoveryErr)
 }
 
-// clusterIdentity returns the pinned cluster identity adopted at
-// enrollment, or empty before the first enrollment.
+// clusterIdentity returns the pinned identity, or empty before enrollment.
 func (s *localStateStore) clusterIdentity() string {
 	var id string
 	_ = s.db.View(func(tx *bbolt.Tx) error {
@@ -1799,10 +1791,9 @@ func (s *localStateStore) clusterIdentity() string {
 	return id
 }
 
-// adoptClusterIdentity replaces the pinned cluster identity with the one a
-// certificate renewal observed. Renewal runs over a channel authenticated
-// by the pinned roots, so the new identity is trust-continuous; it still
-// refuses while the store needs identity recovery.
+// adoptClusterIdentity replaces the pinned identity with the one a renewal
+// observed. Renewal is trust-continuous over pinned roots; it still refuses
+// while the store needs identity recovery.
 func (s *localStateStore) adoptClusterIdentity(clusterID string) error {
 	if strings.TrimSpace(clusterID) == "" {
 		return errors.New("adopted cluster identity is empty")

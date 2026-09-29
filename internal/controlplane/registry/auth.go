@@ -58,10 +58,8 @@ func (c registryTokenClaims) GetAudience() (jwt.ClaimStrings, error) {
 	return jwt.ClaimStrings{c.Audience}, nil
 }
 
-// Auth mints registry capabilities and exchanges them for short-lived
-// registry tokens. The signing key is shared signing-key state: every
-// replica signs with the active key and verifies capabilities against the
-// active plus retiring keys, so rotation never breaks pulls or pushes.
+// Auth mints registry capabilities and exchanges them for short-lived tokens. Every
+// replica signs with the active key and verifies active plus retiring, so rotation is safe.
 type Auth struct {
 	issuer        string
 	service       string
@@ -94,11 +92,9 @@ func NewAuth(ctx context.Context, cfg config.RegistryConfig, keys signkeys.Provi
 	}, nil
 }
 
-// writeTrustBundle publishes the registry trust bundle (active plus
-// retiring certificates) for the registry's rootcertbundle mount. The
-// bundle is public material; the state directory no longer holds the
-// signing key. Rotation refreshes it via `signing-keys export`; see the
-// runbook in docs/signing-keys.md.
+// writeTrustBundle publishes the registry trust bundle (active plus retiring certs) for
+// the registry's rootcertbundle mount. Rotation refreshes it via `signing-keys export`;
+// see the runbook in docs/signing-keys.md.
 func writeTrustBundle(ctx context.Context, keys signkeys.Provider, bundlePath string) error {
 	bundle, err := keys.PublicBundle(ctx, signkeys.ScopeRegistry)
 	if err != nil {
@@ -108,8 +104,7 @@ func writeTrustBundle(ctx context.Context, keys signkeys.Provider, bundlePath st
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create registry auth directory: %w", err)
 	}
-	// Pre-2.3b file-based signer. The key is shared state now; a stale
-	// file must never be mistaken for authority.
+	// Pre-2.3b file-based signer; a stale file must never be mistaken for authority.
 	for _, stale := range []string{"signing-key.pem", "signing-cert.pem"} {
 		_ = os.Remove(filepath.Join(dir, stale))
 	}
@@ -127,8 +122,7 @@ func (a *Auth) RefreshTrustBundle(ctx context.Context) error {
 	return writeTrustBundle(ctx, a.keys, a.bundlePath)
 }
 
-// BundlePath is the registry trust bundle file: the rootcertbundle the
-// registry daemon verifies token signatures against.
+// BundlePath is the registry trust bundle file the daemon verifies token signatures against.
 func (a *Auth) BundlePath() string {
 	if a == nil {
 		return ""
@@ -248,8 +242,7 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseCapability verifies a capability against the active key first, then
-// the retiring key while a rotation overlaps.
+// parseCapability verifies a capability against the active key first, then the retiring key.
 func (a *Auth) parseCapability(ctx context.Context, username, raw string) (*registryCapabilityClaims, error) {
 	mats, err := a.keys.Verifying(ctx, signkeys.ScopeRegistry)
 	if err != nil {

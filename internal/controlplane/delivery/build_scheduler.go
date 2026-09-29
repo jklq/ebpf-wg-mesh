@@ -22,7 +22,6 @@ type BuildSchedulerConfig struct {
 	MaxQueueAge time.Duration
 }
 
-// DefaultBuildSchedulerConfig returns the default limits.
 func DefaultBuildSchedulerConfig() BuildSchedulerConfig {
 	defaults := config.DefaultControlPlaneBuilderConfig()
 	return BuildSchedulerConfig{
@@ -35,7 +34,6 @@ func DefaultBuildSchedulerConfig() BuildSchedulerConfig {
 	}
 }
 
-// WithDefaults fills zero fields from DefaultBuildSchedulerConfig.
 func (c BuildSchedulerConfig) WithDefaults() BuildSchedulerConfig {
 	def := DefaultBuildSchedulerConfig()
 	if c.LeaseTTL <= 0 {
