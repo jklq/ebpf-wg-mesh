@@ -110,7 +110,17 @@ export function applyServicesSnapshot(
 	const order: Array<string> = [];
 	for (const service of merged) {
 		if (!byId[service.id]) order.push(service.id);
-		byId[service.id] = service;
+		const current = state.servicesById[service.id];
+		byId[service.id] =
+			!force &&
+			current &&
+			(serviceVersionOrder(service, current) < 0 ||
+				compareIntegers(
+					snapshot.revision,
+					state.statusRevisionByServiceId[service.id] ?? "0",
+				) < 0)
+				? current
+				: service;
 	}
 	const selectedKept =
 		state.selectedServiceId && byId[state.selectedServiceId]
@@ -137,6 +147,8 @@ export function applyLoaderState(
 	if (loader.environment?.id !== state.base.environment?.id) {
 		const reset: NormalizedDashboardState = {
 			...next,
+			allocationsByServiceId: {},
+			statusRevisionByServiceId: {},
 			selectedServiceId: loader.environment
 				? loader.selectedServiceId
 				: state.selectedServiceId,
@@ -204,8 +216,13 @@ export function applyServiceStatusSnapshot(
 	) {
 		return state;
 	}
+	const current = state.servicesById[serviceId];
+	const record =
+		current && serviceVersionOrder(service, current) < 0
+			? current
+			: withCanvasMetadata(service, current);
 	return {
-		...upsertServiceRecord(state, service),
+		...upsertServiceRecord(state, record),
 		allocationsByServiceId: {
 			...state.allocationsByServiceId,
 			[serviceId]: {
@@ -226,7 +243,13 @@ export function applyMutationRecord(
 	service: DashboardServiceRecord,
 	basisRevision: string,
 ): NormalizedDashboardState {
-	if (compareIntegers(basisRevision, state.servicesRevision) < 0) return state;
+	const current = state.servicesById[service.id];
+	const order = current ? serviceVersionOrder(service, current) : 0;
+	if (
+		order < 0 ||
+		(order === 0 && compareIntegers(basisRevision, state.servicesRevision) < 0)
+	)
+		return state;
 	return upsertServiceRecord(state, service);
 }
 
@@ -235,22 +258,64 @@ export function applyMutationStatus(
 	status: DashboardServiceStatus,
 	basisRevision: string,
 ): NormalizedDashboardState {
-	if (compareIntegers(basisRevision, state.servicesRevision) < 0) return state;
 	const service = status.service;
 	if (!service) throw new Error("Service status is missing its service");
+	const next = applyMutationRecord(
+		state,
+		withCanvasMetadata(service, state.servicesById[service.id]),
+		basisRevision,
+	);
+	if (next === state) return state;
+	const statusRevision = state.statusRevisionByServiceId[service.id] ?? "0";
+	const responseRevision =
+		compareIntegers(status.index, statusRevision) > 0
+			? status.index
+			: statusRevision;
 	return {
-		...upsertServiceRecord(state, service),
+		...next,
 		allocationsByServiceId: {
 			...state.allocationsByServiceId,
 			[service.id]: {
 				allocation: status.allocation,
 				allocations: status.allocations,
-				revision:
-					state.statusRevisionByServiceId[service.id] !== undefined
-						? state.statusRevisionByServiceId[service.id]
-						: "0",
+				revision: responseRevision,
 			},
 		},
+		statusRevisionByServiceId: {
+			...state.statusRevisionByServiceId,
+			[service.id]: responseRevision,
+		},
+	};
+}
+
+// Event indices belong to the whole environment. A reply can still advance one
+// service after another service has advanced that index.
+function serviceVersionOrder(
+	incoming: DashboardServiceRecord,
+	current: DashboardServiceRecord,
+): number {
+	const spec = compareIntegers(incoming.specRevision, current.specRevision);
+	const rollout = compareIntegers(
+		incoming.rolloutGeneration,
+		current.rolloutGeneration,
+	);
+	if (spec < 0 || rollout < 0) return -1;
+	if (spec > 0 || rollout > 0) return 1;
+	const updated =
+		Date.parse(incoming.updatedAt ?? "") - Date.parse(current.updatedAt ?? "");
+	return Number.isFinite(updated) ? Math.sign(updated) : 0;
+}
+
+function withCanvasMetadata(
+	service: DashboardServiceRecord,
+	current?: DashboardServiceRecord,
+): DashboardServiceRecord {
+	return {
+		...service,
+		...(current?.projectId ? { projectId: current.projectId } : {}),
+		...(current?.layoutPosition
+			? { layoutPosition: current.layoutPosition }
+			: {}),
 	};
 }
 

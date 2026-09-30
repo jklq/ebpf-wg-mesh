@@ -11,6 +11,8 @@ import type { useEnvironmentRelease } from "./use-environment-release";
 
 type ReleasePromptModel = Pick<
 	ReturnType<typeof useEnvironmentRelease>,
+	| "discardingChangeCount"
+	| "pendingCreationCount"
 	| "changeSignature"
 	| "deployError"
 	| "applyingChangeCount"
@@ -51,6 +53,8 @@ export function WorkspaceReleasePrompt({
 				<div {...stylex.props(styles.promptCopy)}>
 					<span {...stylex.props(styles.promptTitle)}>
 						{dirtyPromptTitle({
+							discarding: release.discardingChangeCount,
+							creating: release.pendingCreationCount,
 							applying: release.applyingChangeCount,
 							deployError: release.deployError,
 							deploying: release.deployingChanges,
@@ -58,6 +62,8 @@ export function WorkspaceReleasePrompt({
 					</span>
 					<span {...stylex.props(styles.promptDetail)}>
 						{dirtyPromptDetail({
+							discarding: release.discardingChangeCount,
+							creating: release.pendingCreationCount,
 							applying: release.applyingChangeCount,
 							deployable: release.deployableUnappliedChanges,
 							saving: release.hasPendingSpecWrites,
@@ -74,6 +80,7 @@ export function WorkspaceReleasePrompt({
 					type="button"
 					variant="secondary"
 					onClick={() => release.setShowChangeDetails(true)}
+					disabled={release.totalUnappliedChanges === 0}
 				>
 					Details
 				</Button>
@@ -82,6 +89,8 @@ export function WorkspaceReleasePrompt({
 					variant="primary"
 					onClick={release.handleDeployChanges}
 					disabled={
+						release.discardingChangeCount > 0 ||
+						release.pendingCreationCount > 0 ||
 						release.deployingChanges ||
 						(!release.hasPendingSpecWrites &&
 							release.deployableUnappliedChanges === 0)

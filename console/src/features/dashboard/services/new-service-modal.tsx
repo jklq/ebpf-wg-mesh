@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { Dialog, dialogStyles } from "#/components/ui/dialog";
 import { RepositoryPicker } from "#/features/dashboard/services/repository-picker";
 import type {
@@ -42,6 +43,7 @@ export function NewServiceModal({
 	const [highlightedIndex, setHighlightedIndex] = useState(0);
 	const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 	const repoListRef = useRef<HTMLDivElement>(null);
+	const submittingRef = useRef(false);
 	const filteredRepositories = state.repositories.filter((repo) =>
 		repo.fullName.toLowerCase().includes(repoSearch.toLowerCase()),
 	);
@@ -79,23 +81,30 @@ export function NewServiceModal({
 	};
 
 	const handleConfirm = async (selectorOverride?: string) => {
-		if (loading) return;
+		if (submittingRef.current) return;
 		const selector = (selectorOverride ?? repoSelector).trim();
 		if (!selector) return;
-		setError(undefined);
-		onCreating?.(selector);
-		setLoading(true);
+		submittingRef.current = true;
+		// Commit the picker close and pending node before starting server work.
+		flushSync(() => {
+			setError(undefined);
+			setLoading(true);
+			onCreating?.(selector);
+		});
+		let result: CreateServiceFastResult;
 		try {
-			const result = await confirmRepository({
+			result = await confirmRepository({
 				data: { repositorySelector: selector },
 			});
-			onCreated(result);
 		} catch (e) {
 			const message = formatError(e);
 			setError(message);
 			setLoading(false);
+			submittingRef.current = false;
 			onCreateFailed?.(selector, message);
+			return;
 		}
+		onCreated(result);
 	};
 
 	const activatePickerSelection = (index: number) => {
