@@ -1,47 +1,4 @@
-import { type Timestamp, timestampDate } from "@bufbuild/protobuf/wkt";
-
 export const NOT_DEPLOYED_LABEL = "Not deployed";
-
-// google.protobuf.Timestamp range: 0001-01-01T00:00:00Z to 9999-12-31T23:59:59.999999999Z.
-// Go's zero time serializes to the range minimum, so it stays absent.
-const MIN_TIMESTAMP_SECONDS = -62135596800n;
-const MAX_TIMESTAMP_SECONDS = 253402300799n;
-const MAX_NANOS = 999_999_999;
-
-export function protoTimestampToDate(
-	value: Timestamp | undefined | null,
-): Date | undefined {
-	if (!value) {
-		return undefined;
-	}
-	try {
-		const seconds =
-			typeof value.seconds === "bigint"
-				? value.seconds
-				: BigInt(value.seconds ?? 0);
-		const nanos = value.nanos ?? 0;
-		if (seconds === 0n && nanos === 0) {
-			return undefined;
-		}
-		if (seconds === MIN_TIMESTAMP_SECONDS && nanos === 0) {
-			return undefined;
-		}
-		if (seconds < MIN_TIMESTAMP_SECONDS || seconds > MAX_TIMESTAMP_SECONDS) {
-			return undefined;
-		}
-		if (!Number.isInteger(nanos) || nanos < 0 || nanos > MAX_NANOS) {
-			return undefined;
-		}
-		const date = timestampDate(value);
-		const ms = date.getTime();
-		if (!Number.isFinite(ms) || ms === 0) {
-			return undefined;
-		}
-		return date;
-	} catch {
-		return undefined;
-	}
-}
 
 export function cleanDate(value: unknown): Date | undefined {
 	if (!value) {
@@ -49,12 +6,17 @@ export function cleanDate(value: unknown): Date | undefined {
 	}
 	if (value instanceof Date) {
 		const ms = value.getTime();
-		if (!Number.isFinite(ms) || ms === 0) {
+		if (!Number.isFinite(ms) || ms === 0 || ms === -62135596800000) {
 			return undefined;
 		}
 		return value;
 	}
 	if (typeof value === "string" || typeof value === "number") {
+		if (
+			typeof value === "string" &&
+			/^0001-01-01T00:00:00(?:\.0+)?Z$/.test(value)
+		)
+			return undefined;
 		const date = new Date(value);
 		const ms = date.getTime();
 		if (!Number.isFinite(ms) || ms === 0) {
@@ -66,14 +28,15 @@ export function cleanDate(value: unknown): Date | undefined {
 }
 
 export function formatRelativeTime(
-	value: Date | undefined | null,
+	value: Date | string | undefined | null,
 	nowMs: number = Date.now(),
 	absentLabel: string = NOT_DEPLOYED_LABEL,
 ): string {
-	if (!value || !Number.isFinite(value.getTime()) || value.getTime() === 0) {
+	const date = cleanDate(value);
+	if (!date) {
 		return absentLabel;
 	}
-	const diffMs = value.getTime() - nowMs;
+	const diffMs = date.getTime() - nowMs;
 	if (diffMs > 0) {
 		return "just now";
 	}
@@ -101,7 +64,9 @@ export function formatDuration(ms: number): string {
 	return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-export function formatLogTime(date: Date): string {
+export function formatLogTime(value: Date | string): string {
+	const date = cleanDate(value);
+	if (!date) return "—";
 	return new Intl.DateTimeFormat(undefined, {
 		hour: "2-digit",
 		minute: "2-digit",
@@ -112,10 +77,11 @@ export function formatLogTime(date: Date): string {
 
 /** "in 6 days" style distance to a future moment; "any moment now" once due. */
 export function formatTimeUntil(
-	value: Date,
+	value: Date | string,
 	nowMs: number = Date.now(),
 ): string {
-	const diffMs = value.getTime() - nowMs;
+	const date = cleanDate(value);
+	const diffMs = date ? date.getTime() - nowMs : 0;
 	if (!Number.isFinite(diffMs) || diffMs <= 60_000) {
 		return "any moment now";
 	}
@@ -131,7 +97,9 @@ export function formatTimeUntil(
 	return rtf.format(Math.round(hours / 24), "day");
 }
 
-export function formatDateTime(date: Date): string {
+export function formatDateTime(value: Date | string): string {
+	const date = cleanDate(value);
+	if (!date) return "—";
 	return new Intl.DateTimeFormat("en", {
 		timeZone: "UTC",
 		timeZoneName: "short",
@@ -142,4 +110,8 @@ export function formatDateTime(date: Date): string {
 		minute: "2-digit",
 		hour12: false,
 	}).format(date);
+}
+
+export function dateMillis(value: Date | string | undefined | null): number {
+	return cleanDate(value)?.getTime() ?? 0;
 }

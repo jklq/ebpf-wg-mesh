@@ -1,14 +1,9 @@
-import {
-	ConnectError,
-	createClient,
-	type Transport,
-} from "@connectrpc/connect";
+import { ConnectError, type Transport } from "@connectrpc/connect";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
 import type { DashboardUser } from "#/lib/dashboard/core/types.server";
 import { PlatformGatewayError } from "#/lib/dashboard/core/types-errors.server";
 import { formatError } from "#/lib/dashboard/core/utils.server";
-import { OpsService, PlatformService } from "#/lib/platform-gen/platform_pb";
 import { createPlatformUserAssertion } from "#/lib/platform-grpc/user-assertion.server";
 
 export interface PlatformRuntimeConfig {
@@ -20,29 +15,9 @@ export interface PlatformRuntimeConfig {
 	userAssertionSecret: string;
 }
 
-export type PlatformClient = ReturnType<
-	typeof createClient<typeof PlatformService>
->;
-
-export type OpsClient = ReturnType<typeof createClient<typeof OpsService>>;
-
 let transportInstance: Transport | undefined;
-let clientInstance: PlatformClient | undefined;
-let opsClientInstance: OpsClient | undefined;
 
-export function getPlatformClient(
-	runtime: PlatformRuntimeConfig,
-): PlatformClient {
-	clientInstance ??= createClient(PlatformService, getTransport(runtime));
-	return clientInstance;
-}
-
-export function getOpsClient(runtime: PlatformRuntimeConfig): OpsClient {
-	opsClientInstance ??= createClient(OpsService, getTransport(runtime));
-	return opsClientInstance;
-}
-
-function getTransport(runtime: PlatformRuntimeConfig): Transport {
+export function getTransport(runtime: PlatformRuntimeConfig): Transport {
 	transportInstance ??= createConnectTransport({
 		baseUrl: `https://${runtime.controlPlaneAddress}`,
 		httpVersion: "2",
@@ -58,7 +33,7 @@ function getTransport(runtime: PlatformRuntimeConfig): Transport {
 }
 
 export function userAssertionMetadata(
-	runtime: PlatformRuntimeConfig,
+	runtime: Pick<PlatformRuntimeConfig, "userAssertionSecret">,
 	user: DashboardUser | undefined,
 ): Record<string, string> {
 	if (!user) {

@@ -13,7 +13,7 @@ export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
 	if (deployment) {
 		if (
 			deployment.state === "DEPLOYMENT_STATE_STAGED" &&
-			deployment.rolloutGeneration === 0
+			deployment.rolloutGeneration === "0"
 		) {
 			return "offline";
 		}
@@ -52,7 +52,7 @@ export function serviceStatusLabel(service: DashboardServiceRecord): string {
 	const deployment = service.latestDeployment;
 	if (
 		deployment?.state === "DEPLOYMENT_STATE_STAGED" &&
-		deployment.rolloutGeneration === 0
+		deployment.rolloutGeneration === "0"
 	) {
 		return NOT_DEPLOYED_LABEL;
 	}

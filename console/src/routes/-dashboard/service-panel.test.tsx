@@ -1,3 +1,14 @@
+import {
+	jsonFixture,
+	serviceFixture,
+	statusFixture,
+} from "#/lib/dashboard/testkit/protocol";
+import {
+	BuildStatusSchema,
+	DeploymentStatusSchema,
+	EnvironmentSchema,
+	ProjectSchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -44,11 +55,11 @@ describe("ServicePanel rename", () => {
 			<ServicePanel
 				service={service()}
 				status={null}
-				project={{
+				project={jsonFixture(ProjectSchema, {
 					id: "project-1",
 					name: "test-project",
 					kind: "PROJECT_KIND_USER",
-				}}
+				})}
 				state={state()}
 				activeTab="deployments"
 				onTabChange={() => {}}
@@ -76,17 +87,17 @@ describe("ServicePanel deployment badge", () => {
 	it("shows progress ticks for a partial building snapshot", () => {
 		const current = {
 			...service(),
-			latestDeployment: {
+			latestDeployment: jsonFixture(DeploymentStatusSchema, {
 				deploymentId: "deployment-1",
 				state: "DEPLOYMENT_STATE_BUILDING" as const,
 				causeKind: "DEPLOYMENT_CAUSE_KIND_BUILDER" as const,
 				causeId: "builder-1",
 				reasonCode: "BUILD_STARTED",
 				detail: "Building image",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "",
-				rolloutGeneration: 1,
-			},
+				rolloutGeneration: "1",
+			}),
 		};
 		render(
 			<ServicePanel
@@ -112,17 +123,17 @@ describe("ServicePanel deployment badge", () => {
 	it("starts the first progress tick while a build is queued", () => {
 		const current = {
 			...service(),
-			latestDeployment: {
+			latestDeployment: jsonFixture(DeploymentStatusSchema, {
 				deploymentId: "deployment-1",
 				state: "DEPLOYMENT_STATE_QUEUED_BUILD" as const,
 				causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK" as const,
 				causeId: "github",
 				reasonCode: "BUILD_QUEUED",
 				detail: "Build queued from webhook",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "",
-				rolloutGeneration: 1,
-			},
+				rolloutGeneration: "1",
+			}),
 		};
 		render(
 			<ServicePanel
@@ -147,20 +158,20 @@ describe("ServicePanel deployment badge", () => {
 	it("shows Not deployed for a newly staged service", () => {
 		const current = {
 			...service(),
-			rolloutGeneration: 0,
+			rolloutGeneration: "0",
 			latestBuild: undefined,
-			latestDeployment: {
+			latestDeployment: jsonFixture(DeploymentStatusSchema, {
 				deploymentId: "deployment-1",
 				state: "DEPLOYMENT_STATE_STAGED" as const,
 				causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
 				causeId: "user-1",
 				reasonCode: "SERVICE_STAGED",
 				detail: "Configuration staged",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "",
-				rolloutGeneration: 0,
+				rolloutGeneration: "0",
 				transitionedAt: undefined,
-			},
+			}),
 		};
 		render(
 			<ServicePanel
@@ -186,7 +197,7 @@ describe("ServicePanel deployment badge", () => {
 	it("does not retain deployment ticks while offline", () => {
 		const current = {
 			...service(),
-			latestBuild: {
+			latestBuild: jsonFixture(BuildStatusSchema, {
 				buildId: "build-1",
 				state: "BUILD_STATE_SUCCEEDED" as const,
 				commitSha: "abc1234",
@@ -200,18 +211,18 @@ describe("ServicePanel deployment badge", () => {
 						state: "DEPLOYMENT_STAGE_STATE_SUCCEEDED" as const,
 					},
 				],
-			},
-			latestDeployment: {
+			}),
+			latestDeployment: jsonFixture(DeploymentStatusSchema, {
 				deploymentId: "deployment-1",
 				state: "DEPLOYMENT_STATE_REMOVED" as const,
 				causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
 				causeId: "user-1",
 				reasonCode: "SERVICE_REMOVED",
 				detail: "Service removed",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "",
-				rolloutGeneration: 1,
-			},
+				rolloutGeneration: "1",
+			}),
 		};
 		render(
 			<ServicePanel
@@ -237,23 +248,23 @@ describe("ServicePanel deployment badge", () => {
 	it("does not pulse Building while the service has undeployed changes", () => {
 		render(
 			<ServicePanel
-				service={{
+				service={serviceFixture({
 					...service(),
-					specRevision: 2,
+					specRevision: "2",
 					pendingChanges: true,
 					unappliedChangeCount: 1,
-					latestBuild: {
+					latestBuild: jsonFixture(BuildStatusSchema, {
 						buildId: "build-1",
 						state: "BUILD_STATE_RUNNING",
 						commitSha: "",
 						imageDigest: "",
 						failureReason: "",
-					},
-				}}
-				status={{
+					}),
+				})}
+				status={statusFixture({
 					service: {
 						...service(),
-						specRevision: 1,
+						specRevision: "1",
 						latestBuild: {
 							buildId: "build-1",
 							state: "BUILD_STATE_RUNNING",
@@ -263,12 +274,12 @@ describe("ServicePanel deployment badge", () => {
 						},
 					},
 					allocations: [],
-				}}
-				project={{
+				})}
+				project={jsonFixture(ProjectSchema, {
 					id: "project-1",
 					name: "test-project",
 					kind: "PROJECT_KIND_USER",
-				}}
+				})}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -287,13 +298,17 @@ describe("ServicePanel replica scaling", () => {
 	it("keeps replica controls off the header", () => {
 		render(
 			<ServicePanel
-				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
+				service={serviceFixture({
+					...service(),
+					desiredReplicaCount: 1,
+					readyReplicaCount: 1,
+				})}
 				status={null}
-				project={{
+				project={jsonFixture(ProjectSchema, {
 					id: "project-1",
 					name: "test-project",
 					kind: "PROJECT_KIND_USER",
-				}}
+				})}
 				state={state()}
 				activeTab="deployments"
 				onTabChange={() => {}}
@@ -309,23 +324,29 @@ describe("ServicePanel replica scaling", () => {
 	});
 
 	it("queues a replica count without applying it live", async () => {
-		doScaleServiceMock.mockResolvedValue({
-			service: {
-				...service(),
-				desiredReplicaCount: 1,
-				spec: { ...service().spec, desiredReplicaCount: 2 },
-			},
-		});
+		doScaleServiceMock.mockResolvedValue(
+			statusFixture({
+				service: {
+					...service(),
+					desiredReplicaCount: 1,
+					spec: { ...service().spec, desiredReplicaCount: 2 },
+				},
+			}),
+		);
 		const onServiceUpdated = vi.fn();
 		render(
 			<ServicePanel
-				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
+				service={serviceFixture({
+					...service(),
+					desiredReplicaCount: 1,
+					readyReplicaCount: 1,
+				})}
 				status={null}
-				project={{
+				project={jsonFixture(ProjectSchema, {
 					id: "project-1",
 					name: "test-project",
 					kind: "PROJECT_KIND_USER",
-				}}
+				})}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -362,7 +383,7 @@ describe("ServicePanel replica scaling", () => {
 		}
 		render(
 			<ServicePanel
-				service={{
+				service={serviceFixture({
 					...current,
 					desiredReplicaCount: 1,
 					readyReplicaCount: 1,
@@ -373,13 +394,13 @@ describe("ServicePanel replica scaling", () => {
 							volumeName: "data",
 						},
 					},
-				}}
+				})}
 				status={null}
-				project={{
+				project={jsonFixture(ProjectSchema, {
 					id: "project-1",
 					name: "test-project",
 					kind: "PROJECT_KIND_USER",
-				}}
+				})}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -399,13 +420,17 @@ describe("ServicePanel replica scaling", () => {
 		doUpdateServiceMock.mockResolvedValue(service());
 		render(
 			<ServicePanel
-				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
+				service={serviceFixture({
+					...service(),
+					desiredReplicaCount: 1,
+					readyReplicaCount: 1,
+				})}
 				status={null}
-				project={{
+				project={jsonFixture(ProjectSchema, {
 					id: "project-1",
 					name: "test-project",
 					kind: "PROJECT_KIND_USER",
-				}}
+				})}
 				state={state()}
 				activeTab="settings"
 				onTabChange={() => {}}
@@ -446,38 +471,40 @@ describe("ServicePanelFallback", () => {
 });
 
 function service(): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "hello",
 		spec: {
 			source: {
-				provider: "github",
-				repositorySelector: "octocat/hello",
-				trackedRef: "main",
+				sourceSpec: {
+					provider: "github",
+					repositorySelector: "octocat/hello",
+					trackedRef: "main",
+				},
 			},
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
-	};
+	});
 }
 
 function state(): DashboardHomeState {
-	const environment = {
+	const environment = jsonFixture(EnvironmentSchema, {
 		id: "environment-1",
 		projectId: "project-1",
 		name: "production",
-		kind: "persistent" as const,
+		kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 		isProduction: true,
 		autoDeploy: false,
-	};
+	});
 	return {
 		user: { id: "user-1", email: "user@example.com" },
-		project: {
+		project: jsonFixture(ProjectSchema, {
 			id: "project-1",
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
-		},
+		}),
 		projects: [],
 
 		environments: [environment],
@@ -495,7 +522,7 @@ function state(): DashboardHomeState {
 		},
 		repositories: [],
 		services: [service()],
-		servicesRevision: 0,
+		servicesRevision: "0",
 		selectedServiceId: null,
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",

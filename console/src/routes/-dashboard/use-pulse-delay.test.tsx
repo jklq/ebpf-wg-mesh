@@ -1,3 +1,4 @@
+import { serviceFixture } from "#/lib/dashboard/testkit/protocol";
 // @vitest-environment jsdom
 
 import { cleanup, render, waitFor } from "@testing-library/react";
@@ -14,18 +15,20 @@ import { usePulseDelay } from "./use-pulse-delay";
 afterEach(cleanup);
 
 function buildingService(): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "hello",
 		spec: {
 			source: {
-				provider: "github",
-				repositorySelector: "octocat/hello",
-				trackedRef: "main",
+				sourceSpec: {
+					provider: "github",
+					repositorySelector: "octocat/hello",
+					trackedRef: "main",
+				},
 			},
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
 		latestBuild: {
 			buildId: "build-1",
@@ -42,7 +45,7 @@ function buildingService(): DashboardServiceRecord {
 				},
 			],
 		},
-	};
+	});
 }
 
 function PulseProbe({ active }: { active: boolean }) {

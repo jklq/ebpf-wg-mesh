@@ -4,6 +4,8 @@ import type {
 	DashboardAllocationStatus,
 	DashboardServiceLogLine,
 } from "#/lib/dashboard/core/types.server";
+import { compareIntegers } from "#/lib/platform-json";
+import { dateMillis } from "#/lib/time";
 import { errorMsg } from "#/lib/ui-classes";
 import {
 	crashCauseForAllocation,
@@ -11,7 +13,7 @@ import {
 	formatCrashSummary,
 	hasCrashEvidence,
 } from "./crash-evidence";
-import { hydrateServiceLogLine } from "./panel-deployments-helpers";
+
 import { fetchServiceLogs } from "./server-fns";
 import { shortId } from "./service-utils";
 
@@ -104,7 +106,7 @@ function crashRevision(allocation: DashboardAllocationStatus): string {
 	if (!restart) return "no-restart";
 	return [
 		restart.restartCount,
-		restart.lastRestartAt?.getTime() ?? 0,
+		dateMillis(restart.lastRestartAt) ?? 0,
 		restart.lastCause,
 		restart.lastExitCode,
 		restart.lastSignal,
@@ -165,10 +167,13 @@ function CrashLogTail({
 				},
 			});
 			setLines(
-				next.lines.map(hydrateServiceLogLine).sort((left, right) => {
-					const leftTime = left.observedAt?.getTime() ?? 0;
-					const rightTime = right.observedAt?.getTime() ?? 0;
-					return leftTime - rightTime || left.sequence - right.sequence;
+				next.lines.sort((left, right) => {
+					const leftTime = dateMillis(left.observedAt) ?? 0;
+					const rightTime = dateMillis(right.observedAt) ?? 0;
+					return (
+						leftTime - rightTime ||
+						compareIntegers(left.sequence, right.sequence)
+					);
 				}),
 			);
 		} catch (cause) {
@@ -243,7 +248,7 @@ function CrashLogTail({
 						>
 							{lines.map((line) => (
 								<div
-									key={`${line.observedAt?.toISOString() ?? "t"}-${line.sequence}-${line.line}`}
+									key={`${line.observedAt ?? "t"}-${line.sequence}-${line.line}`}
 									className="px-2 py-[2px] whitespace-pre-wrap text-dim [overflow-wrap:anywhere]"
 								>
 									{line.line}

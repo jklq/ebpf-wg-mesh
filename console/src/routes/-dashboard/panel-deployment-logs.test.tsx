@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import { ProjectSchema } from "#/lib/platform-gen/platform_pb";
 
 const fetch = vi.hoisted(() => vi.fn());
 vi.mock("./server-fns", () => ({ fetchServiceLogs: fetch }));
@@ -15,11 +17,11 @@ it("renders dropped windows, truncation, and expandable platform attributes acro
 				{
 					lineId: "1",
 					line: "output",
-					sequence: 1,
+					sequence: "1",
 					allocationId: "",
 					agentId: "",
 					stream: "stdout",
-					rolloutGeneration: 0,
+					rolloutGeneration: "0",
 					truncated: true,
 				},
 				{
@@ -27,11 +29,11 @@ it("renders dropped windows, truncation, and expandable platform attributes acro
 					line: "Starting",
 					event: "deploy.started",
 					attributes: { phase: "start" },
-					sequence: 2,
+					sequence: "2",
 					allocationId: "",
 					agentId: "",
 					stream: "stdout",
-					rolloutGeneration: 0,
+					rolloutGeneration: "0",
 				},
 			],
 			gaps: [],
@@ -44,15 +46,19 @@ it("renders dropped windows, truncation, and expandable platform attributes acro
 					allocationId: "",
 					buildId: "",
 					stream: "stdout",
-					droppedCount: 42,
+					droppedCount: "42",
 					reason: "buffer full",
 				},
 			],
 		});
 	render(
 		<DeploymentLogsView
-			service={{ id: "s", environmentId: "e", name: "web" }}
-			project={{ id: "p", name: "demo", kind: "PROJECT_KIND_USER" }}
+			service={serviceFixture({ id: "s", environmentId: "e", name: "web" })}
+			project={jsonFixture(ProjectSchema, {
+				id: "p",
+				name: "demo",
+				kind: "PROJECT_KIND_USER",
+			})}
 			build={undefined}
 			allocation={undefined}
 			active={false}

@@ -553,7 +553,7 @@ export function recommendedTargetPort(
 	service: DashboardServiceRecord,
 	status: DashboardServiceStatus | null,
 ): number {
-	const primary = service.spec?.runtime.ports.find((port) => port.primary);
+	const primary = service.spec?.runtime?.ports.find((port) => port.primary);
 	if (primary?.port) {
 		return primary.port;
 	}

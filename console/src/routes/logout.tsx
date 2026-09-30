@@ -20,8 +20,13 @@ export const Route = createFileRoute("/logout")({
 	server: {
 		handlers: {
 			GET: async () => {
-				const service = await import("#/lib/dashboard/server");
-				return logoutRouteResponse(service);
+				const auth = await import("#/lib/dashboard/core/auth.server");
+				const runtime = (
+					await import("#/lib/dashboard/server")
+				).getDashboardRuntime();
+				return logoutRouteResponse({
+					clearSession: () => auth.clearSession(runtime),
+				});
 			},
 		},
 	},

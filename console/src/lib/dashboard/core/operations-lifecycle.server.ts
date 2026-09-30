@@ -1,8 +1,5 @@
 import { requireSession } from "#/lib/dashboard/core/auth.server";
-import {
-	type DashboardRuntime,
-	platformCall,
-} from "#/lib/dashboard/core/runtime.server";
+import type { DashboardRuntime } from "#/lib/dashboard/core/runtime.server";
 import {
 	type DashboardDeletableKind,
 	type DashboardDeletedResource,
@@ -14,6 +11,8 @@ import {
 	type DashboardUser,
 	DashboardValidationError,
 } from "#/lib/dashboard/core/types.server";
+import { PlatformService } from "#/lib/platform-gen/platform_pb";
+import { dateMillis } from "#/lib/time";
 
 export async function loadProjectSettingsFromSession(
 	runtime: DashboardRuntime,
@@ -21,21 +20,25 @@ export async function loadProjectSettingsFromSession(
 ): Promise<DashboardProjectSettings> {
 	const session = await requireSession(runtime);
 	const [project, environments] = await Promise.all([
-		platformCall(runtime, "getProject", (platform) =>
-			platform.getProject(session.user, projectId),
-		),
-		platformCall(runtime, "listEnvironments", (platform) =>
-			platform.listEnvironments(session.user, projectId),
-		),
+		runtime.platform.call(PlatformService.method.getProject, session.user, {
+			projectId: projectId,
+		}),
+		runtime.platform
+			.call(PlatformService.method.listEnvironments, session.user, {
+				projectId: projectId,
+			})
+			.then((response) => response.environments ?? []),
 	]);
 	return {
 		project,
 		environments: await Promise.all(
 			sortEnvironments(environments).map(async (environment) => ({
 				environment,
-				volumes: await platformCall(runtime, "listVolumes", (platform) =>
-					platform.listVolumes(session.user, environment.id),
-				),
+				volumes: await runtime.platform
+					.call(PlatformService.method.listVolumes, session.user, {
+						environmentId: environment.id,
+					})
+					.then((response) => response.volumes ?? []),
 			})),
 		),
 	};
@@ -47,11 +50,11 @@ export async function projectLandingEnvironmentFromSession(
 	projectId: string,
 ): Promise<string | null> {
 	const session = await requireSession(runtime);
-	const environments = await platformCall(
-		runtime,
-		"listEnvironments",
-		(platform) => platform.listEnvironments(session.user, projectId),
-	);
+	const environments = await runtime.platform
+		.call(PlatformService.method.listEnvironments, session.user, {
+			projectId: projectId,
+		})
+		.then((response) => response.environments ?? []);
 	return sortEnvironments(environments)[0]?.id ?? null;
 }
 
@@ -66,11 +69,13 @@ export async function updateProjectLogRetentionFromSession(
 			message: "Log retention must be 1–90 days, or the platform default.",
 		});
 	}
-	return platformCall(runtime, "updateProjectLogRetention", (platform) =>
-		platform.updateProjectLogRetention(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.updateProjectLogRetention,
+		session.user,
+		{
 			projectId: input.projectId,
 			logRetentionDays: days,
-		}),
+		},
 	);
 }
 
@@ -81,16 +86,22 @@ export async function previewDeletionFromSession(
 	const session = await requireSession(runtime);
 	switch (input.kind) {
 		case "project":
-			return platformCall(runtime, "previewProjectDeletion", (platform) =>
-				platform.previewProjectDeletion(session.user, input.id),
+			return runtime.platform.call(
+				PlatformService.method.previewProjectDeletion,
+				session.user,
+				{ projectId: input.id },
 			);
 		case "environment":
-			return platformCall(runtime, "previewEnvironmentDeletion", (platform) =>
-				platform.previewEnvironmentDeletion(session.user, input.id),
+			return runtime.platform.call(
+				PlatformService.method.previewEnvironmentDeletion,
+				session.user,
+				{ environmentId: input.id },
 			);
 		case "volume":
-			return platformCall(runtime, "previewVolumeDeletion", (platform) =>
-				platform.previewVolumeDeletion(session.user, input.id),
+			return runtime.platform.call(
+				PlatformService.method.previewVolumeDeletion,
+				session.user,
+				{ volumeId: input.id },
 			);
 	}
 }
@@ -107,25 +118,33 @@ export async function deleteResourceFromSession(
 	const confirmationName = input.confirmationName ?? "";
 	switch (input.kind) {
 		case "project":
-			return platformCall(runtime, "deleteProject", (platform) =>
-				platform.deleteProject(session.user, {
+			await runtime.platform.call(
+				PlatformService.method.deleteProject,
+				session.user,
+				{
 					projectId: input.id,
 					confirmationName,
-				}),
+				},
 			);
+			return;
 		case "environment":
-			return platformCall(runtime, "deleteEnvironment", (platform) =>
-				platform.deleteEnvironment(session.user, {
+			await runtime.platform.call(
+				PlatformService.method.deleteEnvironment,
+				session.user,
+				{
 					environmentId: input.id,
 					confirmationName,
-				}),
+				},
 			);
+			return;
 		case "volume":
-			return platformCall(runtime, "deleteVolume", (platform) =>
-				platform.deleteVolume(session.user, {
+			await runtime.platform.call(
+				PlatformService.method.deleteVolume,
+				session.user,
+				{
 					volumeId: input.id,
 					confirmationName,
-				}),
+				},
 			);
 	}
 }
@@ -137,23 +156,31 @@ export async function restoreResourceFromSession(
 	const session = await requireSession(runtime);
 	switch (input.kind) {
 		case "project":
-			await platformCall(runtime, "restoreProject", (platform) =>
-				platform.restoreProject(session.user, input.id),
+			await runtime.platform.call(
+				PlatformService.method.restoreProject,
+				session.user,
+				{ projectId: input.id },
 			);
 			return;
 		case "environment":
-			await platformCall(runtime, "restoreEnvironment", (platform) =>
-				platform.restoreEnvironment(session.user, input.id),
+			await runtime.platform.call(
+				PlatformService.method.restoreEnvironment,
+				session.user,
+				{ environmentId: input.id },
 			);
 			return;
 		case "service":
-			await platformCall(runtime, "restoreService", (platform) =>
-				platform.restoreService(session.user, input.id),
+			await runtime.platform.call(
+				PlatformService.method.restoreService,
+				session.user,
+				{ serviceId: input.id },
 			);
 			return;
 		case "domain":
-			await platformCall(runtime, "restoreDomainBinding", (platform) =>
-				platform.restoreDomainBinding(session.user, input.id),
+			await runtime.platform.call(
+				PlatformService.method.restoreDomainBinding,
+				session.user,
+				{ hostname: input.id },
 			);
 			return;
 	}
@@ -164,9 +191,11 @@ export async function loadRecentlyDeletedFromSession(
 	runtime: DashboardRuntime,
 ): Promise<Array<DashboardDeletedResource>> {
 	const session = await requireSession(runtime);
-	const projects = await platformCall(runtime, "listProjects", (platform) =>
-		platform.listProjects(session.user, { includeDeleted: true }),
-	);
+	const projects = await runtime.platform
+		.call(PlatformService.method.listProjects, session.user, {
+			includeDeleted: true,
+		})
+		.then((response) => response.projects ?? []);
 	const groups = await Promise.all(
 		projects.map((project) =>
 			project.deletion
@@ -187,8 +216,8 @@ export async function loadRecentlyDeletedFromSession(
 		.flat()
 		.sort(
 			(left, right) =>
-				(right.deletion.deletedAt?.getTime() ?? 0) -
-				(left.deletion.deletedAt?.getTime() ?? 0),
+				(dateMillis(right.deletion.deletedAt) ?? 0) -
+				(dateMillis(left.deletion.deletedAt) ?? 0),
 		);
 }
 
@@ -197,12 +226,12 @@ async function deletedInProject(
 	user: DashboardUser,
 	project: DashboardProject,
 ): Promise<Array<DashboardDeletedResource>> {
-	const environments = await platformCall(
-		runtime,
-		"listEnvironments",
-		(platform) =>
-			platform.listEnvironments(user, project.id, { includeDeleted: true }),
-	);
+	const environments = await runtime.platform
+		.call(PlatformService.method.listEnvironments, user, {
+			projectId: project.id,
+			...{ includeDeleted: true },
+		})
+		.then((response) => response.environments ?? []);
 	const base = { projectId: project.id, projectName: project.name };
 	const perEnvironment = await Promise.all(
 		environments.map(async (environment) => {
@@ -225,14 +254,18 @@ async function deletedInProject(
 				});
 			}
 			const [services, volumes] = await Promise.all([
-				platformCall(runtime, "listServices", (platform) =>
-					platform.listServices(user, environment.id, {
+				runtime.platform.call(PlatformService.method.listServices, user, {
+					environmentId: environment.id,
+					...{
 						includeDeleted: true,
-					}),
-				),
-				platformCall(runtime, "listVolumes", (platform) =>
-					platform.listVolumes(user, environment.id, { includeDeleted: true }),
-				),
+					},
+				}),
+				runtime.platform
+					.call(PlatformService.method.listVolumes, user, {
+						environmentId: environment.id,
+						...{ includeDeleted: true },
+					})
+					.then((response) => response.volumes ?? []),
 			]);
 			for (const volume of volumes) {
 				if (!volume.deletion) continue;
@@ -263,15 +296,12 @@ async function deletedInProject(
 							deletedWith: environmentTombstone,
 						});
 					}
-					const domains = await platformCall(
-						runtime,
-						"listDomainBindings",
-						(platform) =>
-							platform.listDomainBindings(user, {
-								serviceId: service.id,
-								includeDeleted: true,
-							}),
-					);
+					const domains = await runtime.platform
+						.call(PlatformService.method.listDomainBindings, user, {
+							serviceId: service.id,
+							includeDeleted: true,
+						})
+						.then((response) => response.bindings ?? []);
 					for (const domain of domains) {
 						if (!domain.deletion) continue;
 						entries.push({

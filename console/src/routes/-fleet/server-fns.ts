@@ -22,19 +22,33 @@ const agentLifecycleState = z.enum([
 ]);
 
 export const loadFleet = createServerFn({ method: "GET" }).handler(async () =>
-	(await import("#/lib/dashboard/server")).loadFleetFromSession(),
+	(
+		await import("#/lib/dashboard/core/operations-fleet.server")
+	).loadFleetFromSession(
+		(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+	),
 );
 
 export const doCreateFleetAgent = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => fleetAgentInput.parse(input))
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).createFleetAgentFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-fleet.server")
+		).createFleetAgentFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doUpdateFleetAgent = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => fleetAgentInput.parse(input))
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).updateFleetAgentFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-fleet.server")
+		).updateFleetAgentFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doSetFleetAgentLifecycle = createServerFn({ method: "POST" })
@@ -44,7 +58,10 @@ export const doSetFleetAgentLifecycle = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).setFleetAgentLifecycleFromSession(
+		(
+			await import("#/lib/dashboard/core/operations-fleet.server")
+		).setFleetAgentLifecycleFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 			data,
 		),
 	);

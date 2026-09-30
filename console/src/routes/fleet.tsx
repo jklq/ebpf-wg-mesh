@@ -7,7 +7,6 @@ import {
 	Server,
 } from "lucide-react";
 import { useState } from "react";
-
 import { cn } from "#/lib/cn";
 import type {
 	DashboardAgentEnrollment,
@@ -16,6 +15,7 @@ import type {
 	DashboardFleetAgent,
 	FleetAgentInput,
 } from "#/lib/dashboard/core/types.server";
+import { safeInteger } from "#/lib/platform-json";
 import { formatRelativeTime } from "#/lib/time";
 import {
 	btnDangerOutline,
@@ -128,17 +128,17 @@ function FleetRoute() {
 				<div className="mt-[26px] mb-[18px] grid grid-cols-3 gap-3 max-[800px]:grid-cols-1">
 					<CapacityCard
 						label="Schedulable nodes"
-						value={`${fleet.capacity.schedulableNodeCount} / ${fleet.capacity.nodeCount}`}
+						value={`${fleet.capacity?.schedulableNodeCount ?? 0} / ${fleet.capacity?.nodeCount ?? 0}`}
 					/>
 					<CapacityCard
 						label="CPU headroom"
-						value={formatCPU(fleet.capacity.headroomCpuMillis)}
-						detail={`${formatCPU(fleet.capacity.allocatedCpuMillis)} allocated`}
+						value={formatCPU(fleet.capacity?.headroomCpuMillis ?? "0")}
+						detail={`${formatCPU(fleet.capacity?.allocatedCpuMillis ?? "0")} allocated`}
 					/>
 					<CapacityCard
 						label="Memory headroom"
-						value={formatMemory(fleet.capacity.headroomMemoryMebibytes)}
-						detail={`${formatMemory(fleet.capacity.allocatedMemoryMebibytes)} allocated`}
+						value={formatMemory(fleet.capacity?.headroomMemoryMebibytes ?? "0")}
+						detail={`${formatMemory(fleet.capacity?.allocatedMemoryMebibytes ?? "0")} allocated`}
 					/>
 				</div>
 
@@ -371,8 +371,8 @@ function FleetAgentDialog({
 		region: agent?.region ?? "",
 		zone: agent?.zone ?? "",
 		failureDomain: agent?.failureDomain ?? "",
-		reservedCpuMillis: agent?.reservedCpuMillis ?? 0,
-		reservedMemoryMebibytes: agent?.reservedMemoryMebibytes ?? 0,
+		reservedCpuMillis: safeInteger(agent?.reservedCpuMillis ?? "0"),
+		reservedMemoryMebibytes: safeInteger(agent?.reservedMemoryMebibytes ?? "0"),
 	});
 	const [saving, setSaving] = useState(false);
 	const [error, setError] = useState<string>();
@@ -569,12 +569,14 @@ function fleetStateLabel(state: DashboardAgentLifecycleState): string {
 	return state.replace("AGENT_LIFECYCLE_STATE_", "").toLowerCase();
 }
 
-function formatCPU(millis: number): string {
+function formatCPU(raw: string): string {
+	const millis = safeInteger(raw);
 	return millis >= 1000
 		? `${(millis / 1000).toFixed(1)} cores`
 		: `${millis} mCPU`;
 }
-function formatMemory(mebibytes: number): string {
+function formatMemory(raw: string): string {
+	const mebibytes = safeInteger(raw);
 	return mebibytes >= 1024
 		? `${(mebibytes / 1024).toFixed(1)} GiB`
 		: `${mebibytes} MiB`;

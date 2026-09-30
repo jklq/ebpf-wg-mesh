@@ -1,3 +1,9 @@
+import type { DashboardEnvironment } from "#/lib/dashboard/core/types.server";
+import { jsonFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	EnvironmentSchema,
+	ProjectSchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -237,15 +243,19 @@ describe("DashboardPage canvas", () => {
 	it("keeps the panel open for a new service while the server state catches up", async () => {
 		const created = serviceRecord();
 		doCreateServiceFastMock.mockResolvedValue({
-			project: { id: "project-1", name: "test-project", kind: "user" },
-			environment: {
+			project: jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "test-project",
+				kind: "PROJECT_KIND_USER",
+			}),
+			environment: jsonFixture(EnvironmentSchema, {
 				id: "environment-1",
 				projectId: "project-1",
 				name: "Production",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: true,
 				autoDeploy: false,
-			},
+			}),
 			service: created,
 			serviceStatus: null,
 			onboarding: emptyState().onboarding,
@@ -284,16 +294,20 @@ describe("DashboardPage canvas", () => {
 
 	it("keeps the panel open after remounting when the first service creates an environment", async () => {
 		const created = serviceRecord();
-		const environment = {
+		const environment = jsonFixture(EnvironmentSchema, {
 			id: "environment-1",
 			projectId: "project-1",
 			name: "Production",
-			kind: "persistent" as const,
+			kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 			isProduction: true,
 			autoDeploy: false,
-		};
+		});
 		doCreateServiceFastMock.mockResolvedValue({
-			project: { id: "project-1", name: "test-project", kind: "user" },
+			project: jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "test-project",
+				kind: "PROJECT_KIND_USER",
+			}),
 			environment,
 			service: created,
 			serviceStatus: null,
@@ -352,14 +366,7 @@ describe("DashboardPage canvas", () => {
 	it("renders a selectable loading service on the canvas immediately", async () => {
 		const creation = deferred<{
 			project: { id: string; name: string; kind: string };
-			environment: {
-				id: string;
-				projectId: string;
-				name: string;
-				kind: "persistent";
-				isProduction: boolean;
-				autoDeploy: boolean;
-			};
+			environment: DashboardEnvironment;
 			service: ReturnType<typeof serviceRecord>;
 			serviceStatus: null;
 			onboarding: ReturnType<typeof emptyState>["onboarding"];
@@ -400,15 +407,19 @@ describe("DashboardPage canvas", () => {
 
 		const created = serviceRecord();
 		creation.resolve({
-			project: { id: "project-1", name: "test-project", kind: "user" },
-			environment: {
+			project: jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "test-project",
+				kind: "PROJECT_KIND_USER",
+			}),
+			environment: jsonFixture(EnvironmentSchema, {
 				id: "environment-1",
 				projectId: "project-1",
 				name: "Production",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: true,
 				autoDeploy: false,
-			},
+			}),
 			service: created,
 			serviceStatus: null,
 			onboarding: emptyState().onboarding,
@@ -447,16 +458,20 @@ describe("DashboardPage canvas", () => {
 
 	it("keeps the panel open after a live snapshot and remount for the first service", async () => {
 		const created = serviceRecord();
-		const environment = {
+		const environment = jsonFixture(EnvironmentSchema, {
 			id: "environment-1",
 			projectId: "project-1",
 			name: "Production",
-			kind: "persistent" as const,
+			kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 			isProduction: true,
 			autoDeploy: false,
-		};
+		});
 		doCreateServiceFastMock.mockResolvedValue({
-			project: { id: "project-1", name: "test-project", kind: "user" },
+			project: jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "test-project",
+				kind: "PROJECT_KIND_USER",
+			}),
 			environment,
 			service: created,
 			serviceStatus: null,
@@ -490,7 +505,7 @@ describe("DashboardPage canvas", () => {
 		});
 		environmentSource.emit("services", {
 			services: [created],
-			revision: 2,
+			revision: "2",
 		});
 
 		expect(

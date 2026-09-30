@@ -1,3 +1,19 @@
+import {
+	jsonFixture,
+	serviceFixture,
+	statusFixture,
+} from "#/lib/dashboard/testkit/protocol";
+import type * as P from "#/lib/platform-gen/platform_pb";
+import {
+	AllocationStatusSchema,
+	BuildStatusSchema,
+	DeploymentRecordSchema,
+	DeploymentStatusSchema,
+	DomainBindingSchema,
+	ListServiceLogsResponseSchema,
+	ProjectSchema,
+	ServiceSourceSummarySchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -41,62 +57,66 @@ describe("deployments panel inline failure", () => {
 		serverFns.fetchServiceDeployments
 			.mockReset()
 			.mockResolvedValue([failedDeployment()]);
-		serverFns.fetchServiceLogs.mockReset().mockResolvedValue({
-			lines: [
-				{
-					observedAt: new Date("2026-08-13T10:00:00Z"),
-					allocationId: "",
-					agentId: "builder-1",
-					stream: "stdout",
-					rolloutGeneration: 1,
-					sequence: 1,
-					line: "#6 [builder 5/7] RUN go build -o /out/worker ./cmd/worker",
-					logType: "build",
-					buildId: "build-1",
-					stage: "build",
-				},
-				{
-					observedAt: new Date("2026-08-13T10:00:01Z"),
-					allocationId: "",
-					agentId: "builder-1",
-					stream: "stdout",
-					rolloutGeneration: 1,
-					sequence: 2,
-					line: "#6 0.412 config: reading environment",
-					logType: "build",
-					buildId: "build-1",
-					stage: "build",
-				},
-				{
-					observedAt: new Date("2026-08-13T10:00:02Z"),
-					allocationId: "",
-					agentId: "builder-1",
-					stream: "stderr",
-					rolloutGeneration: 1,
-					sequence: 3,
-					line: "#6 0.418 fatal: STRIPE_KEY is required at build time",
-					logType: "build",
-					buildId: "build-1",
-					stage: "build",
-				},
-				{
-					observedAt: new Date("2026-08-13T10:00:03Z"),
-					allocationId: "",
-					agentId: "builder-1",
-					stream: "stderr",
-					rolloutGeneration: 1,
-					sequence: 4,
-					line: "#6 ERROR: process did not complete successfully: exit code 1",
-					logType: "build",
-					buildId: "build-1",
-					stage: "build",
-				},
-			],
-			gaps: [],
-		});
-		serverFns.doApplyDeploymentAction.mockReset().mockResolvedValue({
-			service: failedService(),
-		});
+		serverFns.fetchServiceLogs.mockReset().mockResolvedValue(
+			jsonFixture(ListServiceLogsResponseSchema, {
+				lines: [
+					{
+						observedAt: new Date("2026-08-13T10:00:00Z").toISOString(),
+						allocationId: "",
+						agentId: "builder-1",
+						stream: "stdout",
+						rolloutGeneration: "1",
+						sequence: "1",
+						line: "#6 [builder 5/7] RUN go build -o /out/worker ./cmd/worker",
+						logType: "SERVICE_LOG_TYPE_BUILD",
+						buildId: "build-1",
+						stage: "build",
+					},
+					{
+						observedAt: new Date("2026-08-13T10:00:01Z").toISOString(),
+						allocationId: "",
+						agentId: "builder-1",
+						stream: "stdout",
+						rolloutGeneration: "1",
+						sequence: "2",
+						line: "#6 0.412 config: reading environment",
+						logType: "SERVICE_LOG_TYPE_BUILD",
+						buildId: "build-1",
+						stage: "build",
+					},
+					{
+						observedAt: new Date("2026-08-13T10:00:02Z").toISOString(),
+						allocationId: "",
+						agentId: "builder-1",
+						stream: "stderr",
+						rolloutGeneration: "1",
+						sequence: "3",
+						line: "#6 0.418 fatal: STRIPE_KEY is required at build time",
+						logType: "SERVICE_LOG_TYPE_BUILD",
+						buildId: "build-1",
+						stage: "build",
+					},
+					{
+						observedAt: new Date("2026-08-13T10:00:03Z").toISOString(),
+						allocationId: "",
+						agentId: "builder-1",
+						stream: "stderr",
+						rolloutGeneration: "1",
+						sequence: "4",
+						line: "#6 ERROR: process did not complete successfully: exit code 1",
+						logType: "SERVICE_LOG_TYPE_BUILD",
+						buildId: "build-1",
+						stage: "build",
+					},
+				],
+				gaps: [],
+			}),
+		);
+		serverFns.doApplyDeploymentAction.mockReset().mockResolvedValue(
+			statusFixture({
+				service: failedService(),
+			}),
+		);
 	});
 
 	it("keeps the failing build lines on the stage instead of a drawer", async () => {
@@ -273,9 +293,9 @@ describe("deployments panel live rollouts", () => {
 
 	it("labels history entries without times instead of measuring from 1970", async () => {
 		serverFns.fetchServiceDeployments.mockResolvedValue([
-			{
+			jsonFixture(DeploymentRecordSchema, {
 				id: "deploy-0",
-				rolloutGeneration: 1,
+				rolloutGeneration: "1",
 				isCurrent: false,
 				build: {
 					buildId: "build-0",
@@ -292,11 +312,11 @@ describe("deployments panel live rollouts", () => {
 					causeId: "github",
 					reasonCode: "DEPLOYMENT_COMPLETED",
 					detail: "Replaced",
-					specRevision: 1,
+					specRevision: "1",
 					imageDigest: "sha256:older",
-					rolloutGeneration: 1,
+					rolloutGeneration: "1",
 				},
-			},
+			}),
 		]);
 		const service = rollingService({
 			latestBuild: undefined,
@@ -314,27 +334,27 @@ describe("deployments panel live rollouts", () => {
 	});
 
 	it("keeps generation-zero staged configuration out of deployment history", async () => {
-		const stagedStatus = {
+		const stagedStatus = jsonFixture(DeploymentStatusSchema, {
 			deploymentId: "deploy-staged",
 			state: "DEPLOYMENT_STATE_STAGED" as const,
 			causeKind: "DEPLOYMENT_CAUSE_KIND_USER" as const,
 			causeId: "user-1",
 			reasonCode: "SERVICE_STAGED",
 			detail: "Configuration staged",
-			specRevision: 1,
+			specRevision: "1",
 			imageDigest: "",
-			rolloutGeneration: 0,
-		};
+			rolloutGeneration: "0",
+		});
 		serverFns.fetchServiceDeployments.mockResolvedValue([
-			{
+			jsonFixture(DeploymentRecordSchema, {
 				id: stagedStatus.deploymentId,
-				rolloutGeneration: 0,
+				rolloutGeneration: "0",
 				isCurrent: true,
 				status: stagedStatus,
-			},
+			}),
 		]);
 		const service = rollingService({
-			rolloutGeneration: 0,
+			rolloutGeneration: "0",
 			latestBuild: undefined,
 			latestDeployment: stagedStatus,
 			pendingChanges: true,
@@ -394,25 +414,25 @@ describe("deployments panel live rollouts", () => {
 
 	it("puts active deployment actions in a menu with remove last", async () => {
 		const currentDeployment = { ...activeDeployment(), isCurrent: true };
-		const service: DashboardServiceRecord = {
+		const service: DashboardServiceRecord = serviceFixture({
 			...rollingService({
 				rolloutGeneration: currentDeployment.rolloutGeneration,
 				latestBuild: currentDeployment.build,
 				latestDeployment: currentDeployment.status,
 			}),
-		};
+		});
 		serverFns.fetchServiceDeployments.mockResolvedValue([currentDeployment]);
 
 		render(
 			<PanelDeployments
 				service={service}
-				status={{
+				status={statusFixture({
 					service,
 					allocations: [
 						allocation({ allocationId: "alloc-1" }),
 						allocation({ allocationId: "alloc-2" }),
 					],
-				}}
+				})}
 				project={project()}
 			/>,
 		);
@@ -434,22 +454,22 @@ describe("deployments panel live rollouts", () => {
 		const failed = {
 			...failedDeployment(),
 			id: "deploy-3",
-			rolloutGeneration: 3,
+			rolloutGeneration: "3",
 		};
 		serverFns.fetchServiceDeployments.mockResolvedValue([failed]);
 		const service = failedService();
 		render(
 			<PanelDeployments
 				service={service}
-				status={{
+				status={statusFixture({
 					service,
 					allocations: [
 						allocation({
 							allocationId: "alloc-gen-2",
 							phase: "CrashLoop",
 							healthy: false,
-							desiredRolloutGeneration: 2,
-							appliedRolloutGeneration: 2,
+							desiredRolloutGeneration: "2",
+							appliedRolloutGeneration: "2",
 							restart: {
 								restartCount: 5,
 								crashLoop: true,
@@ -461,7 +481,7 @@ describe("deployments panel live rollouts", () => {
 							},
 						}),
 					],
-				}}
+				})}
 				project={project()}
 			/>,
 		);
@@ -476,15 +496,15 @@ describe("deployments panel live rollouts", () => {
 		render(
 			<PanelDeployments
 				service={service}
-				status={{
+				status={statusFixture({
 					service,
 					allocations: [
 						allocation({
 							allocationId: "alloc-gen-1",
 							phase: "CrashLoop",
 							healthy: false,
-							desiredRolloutGeneration: 1,
-							appliedRolloutGeneration: 1,
+							desiredRolloutGeneration: "1",
+							appliedRolloutGeneration: "1",
 							restart: {
 								restartCount: 5,
 								crashLoop: true,
@@ -496,7 +516,7 @@ describe("deployments panel live rollouts", () => {
 							},
 						}),
 					],
-				}}
+				})}
 				project={project()}
 			/>,
 		);
@@ -512,13 +532,13 @@ describe("deployments panel live rollouts", () => {
 				status={rollingStatus()}
 				project={project()}
 				domains={[
-					{
+					jsonFixture(DomainBindingSchema, {
 						hostname: "worker.example.com",
 						serviceId: "service-1",
 						targetPort: 8080,
 						platformGenerated: false,
 						ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
-					},
+					}),
 				]}
 			/>,
 		);
@@ -530,16 +550,19 @@ describe("deployments panel live rollouts", () => {
 	it("shows a removed current deployment in history with an offline status", async () => {
 		const active = activeDeployment();
 		if (!active.status) throw new Error("active deployment status is required");
-		const removed: DashboardDeploymentRecord = {
-			...active,
-			isCurrent: true,
-			status: {
-				...active.status,
-				state: "DEPLOYMENT_STATE_REMOVED" as const,
-				reasonCode: "DEPLOYMENT_REMOVED",
-				detail: "Service removed",
+		const removed: DashboardDeploymentRecord = jsonFixture(
+			DeploymentRecordSchema,
+			{
+				...active,
+				isCurrent: true,
+				status: {
+					...active.status,
+					state: "DEPLOYMENT_STATE_REMOVED" as const,
+					reasonCode: "DEPLOYMENT_REMOVED",
+					detail: "Service removed",
+				},
 			},
-		};
+		);
 		const service = rollingService({
 			rolloutGeneration: removed.rolloutGeneration,
 			latestBuild: removed.build,
@@ -576,18 +599,20 @@ describe("deployments panel source revision banner", () => {
 	it("offers a manual deploy when auto-deploy is off", async () => {
 		const service = failedService({
 			lastSuccessfulCommitSha: "aaa111aaa111",
-			sourceSummary: { latestRevision: { commitSha: "bbb222bbb222" } },
-			latestBuild: {
+			sourceSummary: jsonFixture(ServiceSourceSummarySchema, {
+				sourceState: { latestRevision: { commitSha: "bbb222bbb222" } },
+			}),
+			latestBuild: jsonFixture(BuildStatusSchema, {
 				buildId: "build-0",
 				state: "BUILD_STATE_SUCCEEDED",
 				commitSha: "aaa111aaa111",
 				imageDigest: "",
 				failureReason: "",
-			},
+			}),
 			latestDeployment: undefined,
 		});
 		serverFns.doReleaseEnvironment.mockResolvedValue([
-			{ service, allocations: [] },
+			statusFixture({ service, allocations: [] }),
 		]);
 		const onRedeployed = vi.fn();
 		render(
@@ -617,14 +642,16 @@ describe("deployments panel source revision banner", () => {
 	it("shows no banner when the deployment card already tells the story", async () => {
 		const deployed = failedService({
 			lastSuccessfulCommitSha: "aaa111aaa111",
-			sourceSummary: { latestRevision: { commitSha: "aaa111aaa111" } },
-			latestBuild: {
+			sourceSummary: jsonFixture(ServiceSourceSummarySchema, {
+				sourceState: { latestRevision: { commitSha: "aaa111aaa111" } },
+			}),
+			latestBuild: jsonFixture(BuildStatusSchema, {
 				buildId: "build-0",
 				state: "BUILD_STATE_SUCCEEDED",
 				commitSha: "aaa111aaa111",
 				imageDigest: "",
 				failureReason: "",
-			},
+			}),
 			latestDeployment: undefined,
 		});
 		const { unmount } = render(
@@ -641,14 +668,16 @@ describe("deployments panel source revision banner", () => {
 
 		const waiting = failedService({
 			lastSuccessfulCommitSha: "aaa111aaa111",
-			sourceSummary: { latestRevision: { commitSha: "bbb222bbb222" } },
-			latestBuild: {
+			sourceSummary: jsonFixture(ServiceSourceSummarySchema, {
+				sourceState: { latestRevision: { commitSha: "bbb222bbb222" } },
+			}),
+			latestBuild: jsonFixture(BuildStatusSchema, {
 				buildId: "build-1",
 				state: "BUILD_STATE_RUNNING",
 				commitSha: "bbb222bbb222",
 				imageDigest: "",
 				failureReason: "",
-			},
+			}),
 			latestDeployment: undefined,
 		});
 		render(
@@ -665,13 +694,17 @@ describe("deployments panel source revision banner", () => {
 });
 
 function project(): DashboardProject {
-	return { id: "project-1", name: "test-project", kind: "PROJECT_KIND_USER" };
+	return jsonFixture(ProjectSchema, {
+		id: "project-1",
+		name: "test-project",
+		kind: "PROJECT_KIND_USER",
+	});
 }
 
 function failedDeployment(): DashboardDeploymentRecord {
-	const startedAt = new Date("2026-08-13T10:00:00Z");
-	const finishedAt = new Date("2026-08-13T10:00:22Z");
-	const build: DashboardBuildStatus = {
+	const startedAt = new Date("2026-08-13T10:00:00Z").toISOString();
+	const finishedAt = new Date("2026-08-13T10:00:22Z").toISOString();
+	const build: DashboardBuildStatus = jsonFixture(BuildStatusSchema, {
 		buildId: "build-1",
 		state: "BUILD_STATE_FAILED",
 		commitSha: "0c19aa4deadbeef",
@@ -703,10 +736,10 @@ function failedDeployment(): DashboardDeploymentRecord {
 				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 			},
 		],
-	};
-	return {
+	});
+	return jsonFixture(DeploymentRecordSchema, {
 		id: "deploy-1",
-		rolloutGeneration: 1,
+		rolloutGeneration: "1",
 		createdAt: startedAt,
 		build,
 		isCurrent: true,
@@ -717,41 +750,43 @@ function failedDeployment(): DashboardDeploymentRecord {
 			causeId: "user-1",
 			reasonCode: "build_failed",
 			detail: "Build failed",
-			specRevision: 1,
+			specRevision: "1",
 			imageDigest: "",
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 		},
-	};
+	});
 }
 
 function failedService(
-	overrides: Partial<DashboardServiceRecord> = {},
+	overrides: Parameters<typeof serviceFixture>[0] = {},
 ): DashboardServiceRecord {
 	const deployment = failedDeployment();
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "billing-worker",
 		spec: {
 			source: {
-				provider: "github",
-				repositorySelector: "relay5/billing-worker",
-				trackedRef: "main",
+				sourceSpec: {
+					provider: "github",
+					repositorySelector: "relay5/billing-worker",
+					trackedRef: "main",
+				},
 			},
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
 		latestBuild: deployment.build,
 		latestDeployment: deployment.status,
 		...overrides,
-	};
+	});
 }
 
 function rollingService(
-	overrides: Partial<DashboardServiceRecord> = {},
+	overrides: Parameters<typeof serviceFixture>[0] = {},
 ): DashboardServiceRecord {
 	const incoming = buildingDeployment();
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
@@ -760,48 +795,50 @@ function rollingService(
 		readyReplicaCount: 1,
 		spec: {
 			source: {
-				provider: "github",
-				repositorySelector: "relay5/billing-worker",
-				trackedRef: "main",
+				sourceSpec: {
+					provider: "github",
+					repositorySelector: "relay5/billing-worker",
+					trackedRef: "main",
+				},
 			},
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
 		latestBuild: incoming.build,
 		latestDeployment: incoming.status,
 		...overrides,
-	};
+	});
 }
 
 function rollingStatus(): DashboardServiceStatus {
-	return {
+	return statusFixture({
 		service: rollingService(),
 		allocations: [
 			allocation({
 				allocationId: "alloc-old-1",
 				healthy: true,
-				appliedRolloutGeneration: 1,
-				desiredRolloutGeneration: 1,
+				appliedRolloutGeneration: "1",
+				desiredRolloutGeneration: "1",
 			}),
 			allocation({
 				allocationId: "alloc-new-1",
 				healthy: true,
-				appliedRolloutGeneration: 2,
-				desiredRolloutGeneration: 2,
+				appliedRolloutGeneration: "2",
+				desiredRolloutGeneration: "2",
 			}),
 			allocation({
 				allocationId: "alloc-new-2",
 				healthy: false,
 				phase: "Starting",
-				appliedRolloutGeneration: 1,
-				desiredRolloutGeneration: 2,
+				appliedRolloutGeneration: "1",
+				desiredRolloutGeneration: "2",
 			}),
 		],
-	};
+	});
 }
 
 function buildingDeployment(): DashboardDeploymentRecord {
-	const startedAt = new Date("2026-08-13T10:05:00Z");
-	const build: DashboardBuildStatus = {
+	const startedAt = new Date("2026-08-13T10:05:00Z").toISOString();
+	const build: DashboardBuildStatus = jsonFixture(BuildStatusSchema, {
 		buildId: "build-2",
 		state: "BUILD_STATE_RUNNING",
 		commitSha: "aa11bb22cc",
@@ -839,10 +876,10 @@ function buildingDeployment(): DashboardDeploymentRecord {
 				state: "DEPLOYMENT_STAGE_STATE_PENDING",
 			},
 		],
-	};
-	return {
+	});
+	return jsonFixture(DeploymentRecordSchema, {
 		id: "deploy-2",
-		rolloutGeneration: 2,
+		rolloutGeneration: "2",
 		createdAt: startedAt,
 		build,
 		isCurrent: true,
@@ -853,12 +890,12 @@ function buildingDeployment(): DashboardDeploymentRecord {
 			causeId: "github",
 			reasonCode: "BUILD_STARTED",
 			detail: "Publishing image",
-			specRevision: 2,
+			specRevision: "2",
 			imageDigest: "",
-			rolloutGeneration: 2,
+			rolloutGeneration: "2",
 			transitionedAt: startedAt,
 		},
-	};
+	});
 }
 
 function pinnedDigest(nibble: string): string {
@@ -866,11 +903,11 @@ function pinnedDigest(nibble: string): string {
 }
 
 function activeDeployment(): DashboardDeploymentRecord {
-	const startedAt = new Date("2026-08-13T10:02:00Z");
+	const startedAt = new Date("2026-08-13T10:02:00Z").toISOString();
 	const imageDigest = pinnedDigest("a");
-	return {
+	return jsonFixture(DeploymentRecordSchema, {
 		id: "deploy-1",
-		rolloutGeneration: 1,
+		rolloutGeneration: "1",
 		createdAt: startedAt,
 		build: {
 			buildId: "build-1",
@@ -901,19 +938,19 @@ function activeDeployment(): DashboardDeploymentRecord {
 			causeId: "github",
 			reasonCode: "DEPLOYMENT_ACTIVE",
 			detail: "Serving traffic",
-			specRevision: 1,
+			specRevision: "1",
 			imageDigest,
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 			transitionedAt: startedAt,
 		},
-	};
+	});
 }
 
 function completedDeployment(): DashboardDeploymentRecord {
-	const startedAt = new Date("2026-08-13T09:00:00Z");
-	return {
+	const startedAt = new Date("2026-08-13T09:00:00Z").toISOString();
+	return jsonFixture(DeploymentRecordSchema, {
 		id: "deploy-0",
-		rolloutGeneration: 0,
+		rolloutGeneration: "0",
 		createdAt: startedAt,
 		build: {
 			buildId: "build-0",
@@ -934,32 +971,32 @@ function completedDeployment(): DashboardDeploymentRecord {
 			causeId: "github",
 			reasonCode: "DEPLOYMENT_COMPLETED",
 			detail: "Replaced",
-			specRevision: 1,
+			specRevision: "1",
 			imageDigest: "sha256:older",
-			rolloutGeneration: 0,
+			rolloutGeneration: "0",
 			transitionedAt: startedAt,
 		},
-	};
+	});
 }
 
 function allocation(
-	overrides: Partial<DashboardAllocationStatus>,
+	overrides: P.AllocationStatusJson,
 ): DashboardAllocationStatus {
-	return {
+	return jsonFixture(AllocationStatusSchema, {
 		allocationId: "alloc",
 		serviceId: "service-1",
 		agentId: "agent-1",
-		desiredSpecRevision: 2,
-		appliedSpecRevision: 2,
+		desiredSpecRevision: "2",
+		appliedSpecRevision: "2",
 		phase: "Running",
 		message: "",
 		allocationIpv4: "10.200.0.2",
 		allocationIpv6: "fd00:200::2",
 		healthy: true,
-		desiredRolloutGeneration: 2,
-		appliedRolloutGeneration: 2,
+		desiredRolloutGeneration: "2",
+		appliedRolloutGeneration: "2",
 		healthyIpv4Ports: [8080],
 		healthyIpv6Ports: [8080],
 		...overrides,
-	};
+	});
 }

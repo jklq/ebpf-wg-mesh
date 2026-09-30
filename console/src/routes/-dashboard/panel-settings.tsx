@@ -572,7 +572,7 @@ function settingsChangedFields(
 function settingsDraftFromService(
 	service: DashboardServiceRecord,
 ): SettingsDraft {
-	const source = service.spec?.source;
+	const source = service.spec?.source?.sourceSpec;
 	return {
 		repoSelector: source?.repositorySelector ?? "",
 		trackedRef: source?.trackedRef ?? "",
@@ -582,9 +582,9 @@ function settingsDraftFromService(
 				: "railpack",
 		dockerfilePath: source?.buildRecipe?.dockerfilePath ?? "",
 		contextDir: source?.buildRecipe?.contextDir ?? ".",
-		restartPolicy: restartPolicyToDraft(service.spec?.runtime.restart?.policy),
-		maxRestarts: String(service.spec?.runtime.restart?.maxRestarts ?? 5),
-		windowSeconds: String(service.spec?.runtime.restart?.windowSeconds ?? 300),
+		restartPolicy: restartPolicyToDraft(service.spec?.runtime?.restart?.policy),
+		maxRestarts: String(service.spec?.runtime?.restart?.maxRestarts ?? 5),
+		windowSeconds: String(service.spec?.runtime?.restart?.windowSeconds ?? 300),
 		placementRegion: service.spec?.placementRegion ?? "",
 		healthcheckTimeoutSeconds: String(
 			service.spec?.rollingStrategy?.healthcheckTimeoutSeconds ?? 300,

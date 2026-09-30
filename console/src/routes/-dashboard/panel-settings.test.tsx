@@ -1,3 +1,15 @@
+import {
+	jsonFixture,
+	serviceFixture,
+	statusFixture,
+} from "#/lib/dashboard/testkit/protocol";
+import {
+	EnvironmentSchema,
+	ProjectSchema,
+	ServiceRestartSchema,
+	ServiceRuntimeSchema,
+	ServiceSpecSchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -114,7 +126,7 @@ describe("PanelSettings", () => {
 
 	it("switches the builder and persists the choice", async () => {
 		const dockerfile = service();
-		const source = dockerfile.spec?.source;
+		const source = dockerfile.spec?.source?.sourceSpec;
 		if (!source) {
 			throw new Error("expected service source");
 		}
@@ -233,13 +245,13 @@ describe("PanelSettings", () => {
 		await waitFor(() => expect(doUpdateServiceMock).toHaveBeenCalledTimes(1));
 
 		const updated = service();
-		updated.specRevision = 2;
-		if (!updated.spec) throw new Error("expected service spec");
-		updated.spec.runtime.restart = {
+		updated.specRevision = "2";
+		if (!updated.spec?.runtime) throw new Error("expected service runtime");
+		updated.spec.runtime.restart = jsonFixture(ServiceRestartSchema, {
 			policy: "RESTART_POLICY_NEVER",
 			maxRestarts: 5,
 			windowSeconds: 300,
-		};
+		});
 		updated.pendingChanges = true;
 		updated.unappliedChangeCount = 1;
 		updated.unappliedChanges = [
@@ -331,16 +343,18 @@ describe("PanelSettings replica scaling", () => {
 		const queued = {
 			...service(),
 			desiredReplicaCount: 1,
-			spec: {
+			spec: jsonFixture(ServiceSpecSchema, {
 				...service().spec,
 				desiredReplicaCount: 2,
-				runtime: service().spec?.runtime ?? {
-					env: {},
-					cpuMillis: 250,
-					memoryMebibytes: 256,
-					ports: [],
-				},
-			},
+				runtime:
+					service().spec?.runtime ??
+					jsonFixture(ServiceRuntimeSchema, {
+						env: {},
+						cpuMillis: "250",
+						memoryMebibytes: "256",
+						ports: [],
+					}),
+			}),
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
@@ -349,17 +363,21 @@ describe("PanelSettings replica scaling", () => {
 					section: "Replicas",
 					field: "Current count",
 					path: "desiredReplicaCount",
-					action: "update" as const,
+					action: "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE" as const,
 					currentValue: "1",
 					newValue: "2",
 				},
 			],
 		};
-		doScaleServiceMock.mockResolvedValue({ service: queued });
+		doScaleServiceMock.mockResolvedValue(statusFixture({ service: queued }));
 		const onSaved = vi.fn();
 		render(
 			<PanelSettings
-				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
+				service={serviceFixture({
+					...service(),
+					desiredReplicaCount: 1,
+					readyReplicaCount: 1,
+				})}
 				state={state()}
 				onSaved={onSaved}
 				onDeleted={() => {}}
@@ -398,7 +416,7 @@ describe("PanelSettings replica scaling", () => {
 		const onSaved = vi.fn();
 		render(
 			<PanelSettings
-				service={{
+				service={serviceFixture({
 					...current,
 					desiredReplicaCount: 1,
 					readyReplicaCount: 1,
@@ -409,7 +427,7 @@ describe("PanelSettings replica scaling", () => {
 							volumeName: "data",
 						},
 					},
-				}}
+				})}
 				state={state()}
 				onSaved={onSaved}
 				onDeleted={() => {}}
@@ -513,7 +531,11 @@ describe("PanelSettings replica scaling", () => {
 		doUpdateServiceMock.mockResolvedValue(service());
 		render(
 			<PanelSettings
-				service={{ ...service(), desiredReplicaCount: 1, readyReplicaCount: 1 }}
+				service={serviceFixture({
+					...service(),
+					desiredReplicaCount: 1,
+					readyReplicaCount: 1,
+				})}
 				state={state()}
 				onSaved={() => {}}
 				onDeleted={() => {}}
@@ -532,38 +554,40 @@ describe("PanelSettings replica scaling", () => {
 });
 
 function service(): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "hello",
 		spec: {
 			source: {
-				provider: "github",
-				repositorySelector: "octocat/hello",
-				trackedRef: "main",
+				sourceSpec: {
+					provider: "github",
+					repositorySelector: "octocat/hello",
+					trackedRef: "main",
+				},
 			},
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
-	};
+	});
 }
 
 function state(): DashboardHomeState {
-	const environment = {
+	const environment = jsonFixture(EnvironmentSchema, {
 		id: "environment-1",
 		projectId: "project-1",
 		name: "production",
-		kind: "persistent" as const,
+		kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 		isProduction: true,
 		autoDeploy: false,
-	};
+	});
 	return {
 		user: { id: "user-1", email: "user@example.com" },
-		project: {
+		project: jsonFixture(ProjectSchema, {
 			id: "project-1",
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
-		},
+		}),
 		projects: [],
 
 		environments: [environment],
@@ -581,7 +605,7 @@ function state(): DashboardHomeState {
 		},
 		repositories: [],
 		services: [service()],
-		servicesRevision: 0,
+		servicesRevision: "0",
 		selectedServiceId: null,
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",

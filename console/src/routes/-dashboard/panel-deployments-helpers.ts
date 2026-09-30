@@ -8,8 +8,10 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { DeploymentRecordSchema } from "#/lib/platform-gen/platform_pb";
+import { fromPlatformJson, toPlatformJson } from "#/lib/platform-json";
 import {
-	cleanDate,
+	dateMillis,
 	formatDuration,
 	formatRelativeTime,
 	NOT_DEPLOYED_LABEL,
@@ -44,7 +46,7 @@ export function withSourceStage(
 	) {
 		return stages;
 	}
-	const source = service.spec?.source;
+	const source = service.spec?.source?.sourceSpec;
 	if (!source?.repositorySelector) {
 		return stages;
 	}
@@ -136,7 +138,7 @@ export function stageStatusText(
 ): string {
 	if (stage.startedAt && stage.finishedAt) {
 		return formatDuration(
-			stage.finishedAt.getTime() - stage.startedAt.getTime(),
+			dateMillis(stage.finishedAt) - dateMillis(stage.startedAt),
 		);
 	}
 	if (
@@ -144,7 +146,7 @@ export function stageStatusText(
 		stage.startedAt &&
 		nowMs
 	) {
-		return formatDuration(nowMs - stage.startedAt.getTime());
+		return formatDuration(nowMs - dateMillis(stage.startedAt));
 	}
 	switch (stage.state) {
 		case "DEPLOYMENT_STAGE_STATE_RUNNING":
@@ -244,6 +246,7 @@ export function actionLabel(action: DashboardDeploymentAction): string {
 		case "DEPLOYMENT_ACTION_RETRY":
 			return "Retry";
 	}
+	return "Unknown action";
 }
 
 export function newIdempotencyKey(): string {
@@ -269,8 +272,11 @@ export function reconcileCurrentDeployment(
 	if (!status && !build) return records;
 
 	const rolloutGeneration =
-		status?.rolloutGeneration ?? service.rolloutGeneration ?? 0;
-	if (rolloutGeneration === 0 && status?.state === "DEPLOYMENT_STATE_STAGED") {
+		status?.rolloutGeneration ?? service.rolloutGeneration ?? "0";
+	if (
+		rolloutGeneration === "0" &&
+		status?.state === "DEPLOYMENT_STATE_STAGED"
+	) {
 		return records;
 	}
 	const deploymentId = status?.deploymentId;
@@ -278,7 +284,8 @@ export function reconcileCurrentDeployment(
 		(record) =>
 			(Boolean(deploymentId) && record.id === deploymentId) ||
 			(Boolean(build?.buildId) && record.build?.buildId === build?.buildId) ||
-			(record.rolloutGeneration === rolloutGeneration && rolloutGeneration > 0),
+			(record.rolloutGeneration === rolloutGeneration &&
+				rolloutGeneration !== "0"),
 	);
 	const current = matchIndex >= 0 ? records[matchIndex] : undefined;
 	const mergedBuild = build
@@ -288,33 +295,37 @@ export function reconcileCurrentDeployment(
 				stages:
 					(build.stages?.length ?? 0) > 0
 						? build.stages
-						: current?.build?.stages,
+						: (current?.build?.stages ?? []),
 			}
 		: current?.build;
-	const next: DashboardDeploymentRecord = {
-		...current,
-		id:
-			deploymentId ||
-			current?.id ||
-			build?.buildId ||
-			`${service.id}:${rolloutGeneration}`,
-		rolloutGeneration,
-		specRevision: status?.specRevision ?? service.specRevision,
-		createdAt:
-			current?.createdAt ??
-			status?.transitionedAt ??
-			build?.queuedAt ??
-			build?.startedAt ??
-			service.updatedAt,
-		repositorySelector: service.spec?.source?.repositorySelector,
-		trackedRef: service.spec?.source?.trackedRef,
-		build: mergedBuild,
-		isCurrent: true,
-		status: status ?? current?.status,
-		stages: (build?.stages?.length ?? 0) > 0 ? build?.stages : current?.stages,
-		imageDigest:
-			build?.imageDigest || status?.imageDigest || current?.imageDigest,
-	};
+	const next = toPlatformJson(
+		DeploymentRecordSchema,
+		fromPlatformJson(DeploymentRecordSchema, {
+			...current,
+			id:
+				deploymentId ||
+				current?.id ||
+				build?.buildId ||
+				`${service.id}:${rolloutGeneration}`,
+			rolloutGeneration,
+			specRevision: status?.specRevision ?? service.specRevision,
+			createdAt:
+				current?.createdAt ??
+				status?.transitionedAt ??
+				build?.queuedAt ??
+				build?.startedAt ??
+				service.updatedAt,
+			build: mergedBuild,
+			isCurrent: true,
+			status: status ?? current?.status,
+			stages:
+				build && build.stages.length > 0
+					? build.stages
+					: (current?.stages ?? []),
+			imageDigest:
+				build?.imageDigest || status?.imageDigest || current?.imageDigest || "",
+		}),
+	);
 
 	if (matchIndex < 0) return [next, ...records];
 	return records.map((record, index) => (index === matchIndex ? next : record));
@@ -322,11 +333,10 @@ export function reconcileCurrentDeployment(
 
 export function deploymentTime(entry: DashboardDeploymentRecord): number {
 	return (
-		entry.createdAt?.getTime() ??
-		entry.build?.startedAt?.getTime() ??
-		entry.build?.queuedAt?.getTime() ??
-		entry.build?.finishedAt?.getTime() ??
-		entry.allocation?.updatedAt?.getTime() ??
+		dateMillis(entry.createdAt) ||
+		dateMillis(entry.build?.startedAt) ||
+		dateMillis(entry.build?.queuedAt) ||
+		dateMillis(entry.build?.finishedAt) ||
 		0
 	);
 }
@@ -336,7 +346,7 @@ export function shouldRenderDeploymentHistoryEntry(
 	service: DashboardServiceRecord,
 ): boolean {
 	if (
-		entry.rolloutGeneration === 0 &&
+		entry.rolloutGeneration === "0" &&
 		entry.status?.state === "DEPLOYMENT_STATE_STAGED"
 	) {
 		return false;
@@ -354,7 +364,7 @@ export function pendingManualDeployRevision(
 	service: DashboardServiceRecord,
 	autoDeploy: boolean,
 ): { commitSha: string } | undefined {
-	const latest = service.sourceSummary?.latestRevision?.commitSha;
+	const latest = service.sourceSummary?.sourceState?.latestRevision?.commitSha;
 	if (!latest) {
 		return undefined;
 	}
@@ -381,7 +391,8 @@ export function pendingManualDeployRevision(
 
 export function usesRepositorySource(service: DashboardServiceRecord): boolean {
 	return Boolean(
-		service.spec?.source?.provider || service.sourceSummary?.desiredSpec,
+		service.spec?.source?.sourceSpec?.provider ||
+			service.sourceSummary?.sourceState?.desiredSpec,
 	);
 }
 
@@ -406,13 +417,13 @@ export function deploymentCardHeadline(
 
 export function deploymentSubtitle(
 	build: DashboardBuildStatus | undefined,
-	rolloutGeneration: number | undefined,
+	rolloutGeneration: string | undefined,
 	nowMs: number,
 ): string {
 	const timestamp =
 		build?.startedAt ?? build?.queuedAt ?? build?.finishedAt ?? undefined;
 	if (timestamp) return formatRelativeTime(timestamp, nowMs);
-	if (rolloutGeneration !== undefined && rolloutGeneration > 0)
+	if (rolloutGeneration !== undefined && rolloutGeneration !== "0")
 		return `Rollout ${rolloutGeneration}`;
 	return NOT_DEPLOYED_LABEL;
 }
@@ -422,7 +433,7 @@ export function matchesDeploymentLog(
 	scope: {
 		buildId?: string;
 		allocationId?: string;
-		rolloutGeneration?: number;
+		rolloutGeneration?: string;
 	},
 ): boolean {
 	if (!scope.buildId && !scope.allocationId && !scope.rolloutGeneration) {
@@ -443,7 +454,7 @@ export function matchesDeploymentLog(
 
 export function deploymentMeta(
 	build: DashboardBuildStatus | undefined,
-	timestamp: Date | undefined,
+	timestamp: string | undefined,
 	nowMs: number,
 ): string[] {
 	const parts: string[] = [];
@@ -475,80 +486,4 @@ export function formatError(error: unknown, fallback: string): string {
 		return String((error as { message: unknown }).message);
 	}
 	return fallback;
-}
-
-export function hydrateDeploymentRecord(
-	record: DashboardDeploymentRecord,
-): DashboardDeploymentRecord {
-	return {
-		...record,
-		createdAt: cleanDate(record.createdAt),
-		build: hydrateBuildStatus(record.build),
-		allocation: hydrateAllocationStatus(record.allocation),
-		status: record.status
-			? {
-					...record.status,
-					transitionedAt: cleanDate(record.status.transitionedAt),
-				}
-			: undefined,
-		stages:
-			record.stages?.map((stage) => ({
-				...stage,
-				startedAt: cleanDate(stage.startedAt),
-				finishedAt: cleanDate(stage.finishedAt),
-			})) ?? record.stages,
-		actions:
-			record.actions?.map((action) => ({
-				...action,
-				createdAt: cleanDate(action.createdAt),
-			})) ?? record.actions,
-	};
-}
-
-export function hydrateBuildStatus(
-	build: DashboardBuildStatus | undefined,
-): DashboardBuildStatus | undefined {
-	if (!build) return undefined;
-	return {
-		...build,
-		queuedAt: cleanDate(build.queuedAt),
-		startedAt: cleanDate(build.startedAt),
-		finishedAt: cleanDate(build.finishedAt),
-		stages:
-			build.stages?.map((stage) => ({
-				...stage,
-				startedAt: cleanDate(stage.startedAt),
-				finishedAt: cleanDate(stage.finishedAt),
-			})) ?? [],
-	};
-}
-
-export function hydrateAllocationStatus(
-	allocation: DashboardAllocationStatus | undefined,
-): DashboardAllocationStatus | undefined {
-	if (!allocation) return undefined;
-	return {
-		...allocation,
-		updatedAt: cleanDate(allocation.updatedAt),
-		drainStartedAt: cleanDate(allocation.drainStartedAt),
-		drainDeadline: cleanDate(allocation.drainDeadline),
-		restart: allocation.restart
-			? {
-					...allocation.restart,
-					windowStartedAt: cleanDate(allocation.restart.windowStartedAt),
-					lastRestartAt: cleanDate(allocation.restart.lastRestartAt),
-					nextRestartAt: cleanDate(allocation.restart.nextRestartAt),
-					startedAt: cleanDate(allocation.restart.startedAt),
-				}
-			: undefined,
-	};
-}
-
-export function hydrateServiceLogLine(
-	line: DashboardServiceLogLine,
-): DashboardServiceLogLine {
-	return {
-		...line,
-		observedAt: cleanDate(line.observedAt),
-	};
 }

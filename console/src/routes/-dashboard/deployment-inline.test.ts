@@ -1,4 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { jsonFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	DeploymentRecordSchema,
+	DeploymentStatusSchema,
+} from "#/lib/platform-gen/platform_pb";
 
 import {
 	buildStepHint,
@@ -77,9 +82,9 @@ describe("trafficRetentionCopy", () => {
 
 describe("partitionDeployments", () => {
 	it("moves the current deployment to history once it is removed", () => {
-		const removed = {
+		const removed = jsonFixture(DeploymentRecordSchema, {
 			id: "deploy-1",
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 			isCurrent: true,
 			status: {
 				deploymentId: "deploy-1",
@@ -88,11 +93,11 @@ describe("partitionDeployments", () => {
 				causeId: "user-1",
 				reasonCode: "DEPLOYMENT_REMOVED",
 				detail: "Service removed",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "sha256:removed",
-				rolloutGeneration: 1,
+				rolloutGeneration: "1",
 			},
-		};
+		});
 
 		expect(isPinnedDeployment(removed)).toBe(false);
 		expect(partitionDeployments([removed])).toEqual({
@@ -102,9 +107,9 @@ describe("partitionDeployments", () => {
 	});
 
 	it("keeps a draining predecessor live until it is actually stopped", () => {
-		const incoming = {
+		const incoming = jsonFixture(DeploymentRecordSchema, {
 			id: "deploy-2",
-			rolloutGeneration: 2,
+			rolloutGeneration: "2",
 			isCurrent: true,
 			status: {
 				deploymentId: "deploy-2",
@@ -113,14 +118,14 @@ describe("partitionDeployments", () => {
 				causeId: "hook",
 				reasonCode: "BUILD_STARTED",
 				detail: "Building image",
-				specRevision: 2,
+				specRevision: "2",
 				imageDigest: "",
-				rolloutGeneration: 2,
+				rolloutGeneration: "2",
 			},
-		};
-		const stillServing = {
+		});
+		const stillServing = jsonFixture(DeploymentRecordSchema, {
 			id: "deploy-1",
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 			isCurrent: false,
 			status: {
 				deploymentId: "deploy-1",
@@ -129,14 +134,14 @@ describe("partitionDeployments", () => {
 				causeId: "hook",
 				reasonCode: "DEPLOYMENT_ACTIVE",
 				detail: "Serving traffic",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "sha256:old",
-				rolloutGeneration: 1,
+				rolloutGeneration: "1",
 			},
-		};
-		const stopped = {
+		});
+		const stopped = jsonFixture(DeploymentRecordSchema, {
 			id: "deploy-0",
-			rolloutGeneration: 0,
+			rolloutGeneration: "0",
 			isCurrent: false,
 			status: {
 				deploymentId: "deploy-0",
@@ -145,11 +150,11 @@ describe("partitionDeployments", () => {
 				causeId: "hook",
 				reasonCode: "DEPLOYMENT_COMPLETED",
 				detail: "Replaced",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "sha256:older",
-				rolloutGeneration: 0,
+				rolloutGeneration: "0",
 			},
-		};
+		});
 
 		expect(isPinnedDeployment(stillServing)).toBe(true);
 		const { live, history } = partitionDeployments([
@@ -180,17 +185,17 @@ describe("deploymentProgressCopy", () => {
 	it("names the live step instead of listing the pipeline", () => {
 		expect(
 			deploymentProgressCopy({
-				status: {
+				status: jsonFixture(DeploymentStatusSchema, {
 					deploymentId: "deploy-2",
 					state: "DEPLOYMENT_STATE_BUILDING",
 					causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 					causeId: "hook",
 					reasonCode: "BUILD_STARTED",
 					detail: "Publishing image",
-					specRevision: 2,
+					specRevision: "2",
 					imageDigest: "",
-					rolloutGeneration: 2,
-				},
+					rolloutGeneration: "2",
+				}),
 				stages: [
 					{
 						key: "source",
@@ -219,17 +224,17 @@ describe("deploymentProgressCopy", () => {
 	it("treats an active rollout as successful", () => {
 		expect(
 			deploymentProgressCopy({
-				status: {
+				status: jsonFixture(DeploymentStatusSchema, {
 					deploymentId: "deploy-1",
 					state: "DEPLOYMENT_STATE_ACTIVE",
 					causeKind: "DEPLOYMENT_CAUSE_KIND_WEBHOOK",
 					causeId: "hook",
 					reasonCode: "DEPLOYMENT_ACTIVE",
 					detail: "Serving traffic",
-					specRevision: 1,
+					specRevision: "1",
 					imageDigest: "sha256:ok",
-					rolloutGeneration: 1,
-				},
+					rolloutGeneration: "1",
+				}),
 				stages: [],
 			}),
 		).toBe("Deployment successful");

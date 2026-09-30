@@ -1,3 +1,5 @@
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import { DomainBindingSchema } from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -41,14 +43,16 @@ describe("domains panel", () => {
 	});
 
 	it("closes the generate dialog immediately and shows the domain as pending", async () => {
-		const platformBinding: DashboardDomainBinding = {
-			hostname: "violet-7k3.platform.example",
-			projectId: "project-1",
-			serviceId: "service-1",
-			targetPort: 8080,
-			platformGenerated: true,
-			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
-		};
+		const platformBinding: DashboardDomainBinding = jsonFixture(
+			DomainBindingSchema,
+			{
+				hostname: "violet-7k3.platform.example",
+				serviceId: "service-1",
+				targetPort: 8080,
+				platformGenerated: true,
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+			},
+		);
 		let resolveGenerate: (binding: DashboardDomainBinding) => void = () => {};
 		serverFns.generate.mockReturnValue(
 			new Promise<DashboardDomainBinding>((resolve) => {
@@ -100,46 +104,48 @@ describe("domains panel", () => {
 	});
 
 	it("adds a custom domain without blocking on CNAME and shows ownership status", async () => {
-		const platformBinding: DashboardDomainBinding = {
-			hostname: "violet-7k3.platform.example",
-			projectId: "project-1",
-			serviceId: "service-1",
-			targetPort: 8080,
-			platformGenerated: true,
-			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
-		};
-		const customBinding: DashboardDomainBinding = {
-			hostname: "app.customer.com",
-			projectId: "project-1",
-			serviceId: "service-1",
-			targetPort: 8080,
-			platformGenerated: false,
-			ownershipState: "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
-			ownershipMessage:
-				"domain CNAME does not point to the service platform hostname: lookup app.customer.com: no such host",
-		};
+		const platformBinding: DashboardDomainBinding = jsonFixture(
+			DomainBindingSchema,
+			{
+				hostname: "violet-7k3.platform.example",
+				serviceId: "service-1",
+				targetPort: 8080,
+				platformGenerated: true,
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+			},
+		);
+		const customBinding: DashboardDomainBinding = jsonFixture(
+			DomainBindingSchema,
+			{
+				hostname: "app.customer.com",
+				serviceId: "service-1",
+				targetPort: 8080,
+				platformGenerated: false,
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
+				ownershipMessage:
+					"domain CNAME does not point to the service platform hostname: lookup app.customer.com: no such host",
+			},
+		);
 		serverFns.generate.mockResolvedValue(platformBinding);
 		serverFns.create.mockResolvedValue(customBinding);
 
 		render(
 			<PanelDomains
-				service={
-					{
-						id: "service-1",
-						environmentId: "environment-1",
-						projectId: "project-1",
-						name: "web",
-						internalHostname: "accurate-reflection.mesh.internal",
-						spec: {
-							runtime: {
-								env: {},
-								cpuMillis: 250,
-								memoryMebibytes: 256,
-								ports: [],
-							},
+				service={serviceFixture({
+					id: "service-1",
+					environmentId: "environment-1",
+					projectId: "project-1",
+					name: "web",
+					internalHostname: "accurate-reflection.mesh.internal",
+					spec: {
+						runtime: {
+							env: {},
+							cpuMillis: "250",
+							memoryMebibytes: "256",
+							ports: [],
 						},
-					} as DashboardServiceRecord
-				}
+					},
+				})}
 				state={{ domainBindings: [] } as unknown as DashboardHomeState}
 			/>,
 		);
@@ -197,22 +203,26 @@ describe("domains panel", () => {
 	});
 
 	it("hides the generated domain once a custom domain exists", async () => {
-		const platformBinding: DashboardDomainBinding = {
-			hostname: "violet-7k3.platform.example",
-			projectId: "project-1",
-			serviceId: "service-1",
-			targetPort: 8080,
-			platformGenerated: true,
-			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
-		};
-		const customBinding: DashboardDomainBinding = {
-			hostname: "app.customer.com",
-			projectId: "project-1",
-			serviceId: "service-1",
-			targetPort: 8080,
-			platformGenerated: false,
-			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
-		};
+		const platformBinding: DashboardDomainBinding = jsonFixture(
+			DomainBindingSchema,
+			{
+				hostname: "violet-7k3.platform.example",
+				serviceId: "service-1",
+				targetPort: 8080,
+				platformGenerated: true,
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+			},
+		);
+		const customBinding: DashboardDomainBinding = jsonFixture(
+			DomainBindingSchema,
+			{
+				hostname: "app.customer.com",
+				serviceId: "service-1",
+				targetPort: 8080,
+				platformGenerated: false,
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+			},
+		);
 		serverFns.list.mockResolvedValue([platformBinding, customBinding]);
 
 		render(<PanelDomains service={domainService()} state={domainState()} />);
@@ -224,16 +234,16 @@ describe("domains panel", () => {
 });
 
 function domainService(): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "web",
 		internalHostname: "accurate-reflection.mesh.internal",
 		spec: {
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
-	} as DashboardServiceRecord;
+	});
 }
 
 function domainState(): DashboardHomeState {

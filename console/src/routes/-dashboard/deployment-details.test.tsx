@@ -2,6 +2,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import type { DashboardDeploymentRecord } from "#/lib/dashboard/core/types.server";
+import { jsonFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	DeploymentRecordSchema,
+	DeploymentStatusSchema,
+} from "#/lib/platform-gen/platform_pb";
 
 const fetch = vi.hoisted(() => vi.fn());
 vi.mock("./server-fns", () => ({ fetchBuildAttempts: fetch }));
@@ -10,20 +15,20 @@ import { DeploymentDetails } from "./deployment-details";
 import { deploymentBadgeLabel } from "./deployment-inline";
 
 afterEach(cleanup);
-const record: DashboardDeploymentRecord = {
+const record: DashboardDeploymentRecord = jsonFixture(DeploymentRecordSchema, {
 	id: "d",
 	isCurrent: true,
-	rolloutGeneration: 1,
-	sealedVersions: { TOKEN: 3 },
+	rolloutGeneration: "1",
+	sealedVersions: { TOKEN: "3" },
 	build: {
 		buildId: "b",
 		state: "BUILD_STATE_RUNNING",
 		commitSha: "abc123",
 		imageDigest: "",
 		failureReason: "",
-		attemptCount: 2,
-		attemptLimit: 3,
-		cancelRequestedAt: new Date(),
+		attemptCount: "2",
+		attemptLimit: "3",
+		cancelRequestedAt: new Date().toISOString(),
 	},
 	artifact: {
 		id: "a",
@@ -31,11 +36,11 @@ const record: DashboardDeploymentRecord = {
 		imageRef: "image@sha256:abc",
 		commitSha: "abc123",
 	},
-};
+});
 it("shows cancellation, retry history, and pinned versions without secret values", async () => {
 	fetch.mockResolvedValue([
 		{
-			attemptNumber: 1,
+			attemptNumber: "1",
 			builderId: "worker",
 			outcome: "worker_lost",
 			detail: "Worker lease expired",
@@ -58,18 +63,18 @@ it("keeps reuse visible after the rollout's reason changes", () => {
 			serviceId="s"
 			record={{
 				...record,
-				status: {
+				status: jsonFixture(DeploymentStatusSchema, {
 					deploymentId: "d",
 					causeKind: "DEPLOYMENT_CAUSE_KIND_UNSPECIFIED",
 					causeId: "",
 					detail: "",
-					specRevision: 1,
+					specRevision: "1",
 					imageDigest: "",
-					rolloutGeneration: 1,
+					rolloutGeneration: "1",
 					state: "DEPLOYMENT_STATE_ACTIVE",
 					reasonCode: "HEALTHY",
 					buildReused: true,
-				},
+				}),
 			}}
 		/>,
 	);

@@ -9,7 +9,6 @@ import {
 	type DashboardGitHubAccount,
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
-	type DashboardServiceSpec,
 	type DashboardSourceSpec,
 	DashboardValidationError,
 	DEFAULT_SERVICE_CPU_MILLIS,
@@ -19,6 +18,8 @@ import {
 	type GitHubUserRepository,
 	type StoredDashboardGitHubAccount,
 } from "#/lib/dashboard/core/types.server";
+import type * as Protocol from "#/lib/platform-gen/platform_pb";
+import { integerString, safeInteger } from "#/lib/platform-json";
 
 export function normalizeFleetAgentInput(
 	input: FleetAgentInput,
@@ -126,7 +127,7 @@ export function buildServiceSpec(
 	recommendedPorts: number[],
 	cpuMillis?: number,
 	memoryMebibytes?: number,
-): DashboardServiceSpec {
+): Protocol.ServiceSpecJson {
 	const seen = new Set<number>();
 	const ports = recommendedPorts
 		.filter((port) => Number.isInteger(port) && port >= 1 && port <= 65535)
@@ -142,19 +143,19 @@ export function buildServiceSpec(
 			primary: index === 0,
 		}));
 	return {
-		source,
+		source: { sourceSpec: source },
 		desiredReplicaCount: 1,
 		runtime: {
 			env: {},
-			cpuMillis: normalizeResource(
-				cpuMillis,
-				DEFAULT_SERVICE_CPU_MILLIS,
-				"CPU request",
+			cpuMillis: integerString(
+				normalizeResource(cpuMillis, DEFAULT_SERVICE_CPU_MILLIS, "CPU request"),
 			),
-			memoryMebibytes: normalizeResource(
-				memoryMebibytes,
-				DEFAULT_SERVICE_MEMORY_MEBIBYTES,
-				"memory request",
+			memoryMebibytes: integerString(
+				normalizeResource(
+					memoryMebibytes,
+					DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+					"memory request",
+				),
 			),
 			ports,
 		},
@@ -162,11 +163,12 @@ export function buildServiceSpec(
 }
 
 export function normalizeResource(
-	value: number | undefined,
+	value: string | number | undefined,
 	fallback: number,
 	label: string,
 ): number {
-	const normalized = value ?? fallback;
+	const normalized =
+		typeof value === "string" ? safeInteger(value) : (value ?? fallback);
 	if (!Number.isSafeInteger(normalized) || normalized < fallback) {
 		throw new DashboardValidationError({
 			message: `${label} must be at least ${fallback}`,

@@ -19,8 +19,8 @@ import { PanelSecrets } from "./panel-secrets";
 
 afterEach(cleanup);
 it("updates write-only values and keeps backend conflicts actionable", async () => {
-	rpc.fetchServiceSecrets.mockResolvedValue([{ name: "TOKEN", version: 2 }]);
-	rpc.doSealServiceSecret.mockResolvedValue({ name: "TOKEN", version: 3 });
+	rpc.fetchServiceSecrets.mockResolvedValue([{ name: "TOKEN", version: "2" }]);
+	rpc.doSealServiceSecret.mockResolvedValue({ name: "TOKEN", version: "3" });
 	render(<PanelSecrets serviceId="service" />);
 	await screen.findByText("TOKEN");
 	fireEvent.click(screen.getByRole("button", { name: "Update" }));

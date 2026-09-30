@@ -1,7 +1,6 @@
 import { requireSession } from "#/lib/dashboard/core/auth.server";
 import {
 	type DashboardRuntime,
-	platformCall,
 	storeCall,
 } from "#/lib/dashboard/core/runtime.server";
 import {
@@ -22,6 +21,8 @@ import {
 } from "#/lib/dashboard/core/types.server";
 import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
 import { sealedSecretName } from "#/lib/dashboard/sealed-secrets";
+import { PlatformService } from "#/lib/platform-gen/platform_pb";
+import { integerString } from "#/lib/platform-json";
 import {
 	applyServicePositions,
 	normalizeResource,
@@ -34,14 +35,18 @@ export async function waitForServiceStatusFromSession(
 	runtime: DashboardRuntime,
 	input: {
 		serviceId: string;
-		waitIndex: number;
+		waitIndex: string;
 		waitTimeoutSeconds: number;
 	},
 ) {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "waitForServiceStatus", (platform) =>
-		platform.waitForServiceStatus(session.user, input),
-	);
+	return runtime.platform
+		.call(PlatformService.method.getServiceStatus, session.user, input)
+		.then((status) => ({
+			index: status.index,
+			notModified: status.notModified,
+			status: status.notModified ? undefined : status,
+		}));
 }
 
 export async function listEnvironmentServicesFromSession(
@@ -50,9 +55,9 @@ export async function listEnvironmentServicesFromSession(
 ) {
 	const session = await requireSession(runtime);
 	const [snapshot, positions] = await Promise.all([
-		platformCall(runtime, "listServices", (platform) =>
-			platform.listServices(session.user, input.environmentId),
-		),
+		runtime.platform.call(PlatformService.method.listServices, session.user, {
+			environmentId: input.environmentId,
+		}),
 		storeCall(runtime, "listServicePositions", (store) =>
 			store.listServicePositions(session.user.id, input.environmentId),
 		),
@@ -69,13 +74,15 @@ export async function waitForEnvironmentServicesFromSession(
 	runtime: DashboardRuntime,
 	input: {
 		environmentId: string;
-		waitIndex: number;
+		waitIndex: string;
 		waitTimeoutSeconds: number;
 	},
 ) {
 	const session = await requireSession(runtime);
-	const result = await platformCall(runtime, "waitForServices", (platform) =>
-		platform.waitForServices(session.user, input),
+	const result = await runtime.platform.call(
+		PlatformService.method.listServices,
+		session.user,
+		input,
 	);
 	if (result.notModified || !result.services) {
 		return result;
@@ -105,8 +112,14 @@ export async function listServiceLogsFromSession(
 	},
 ): Promise<DashboardServiceLogPage> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "listServiceLogs", (platform) =>
-		platform.listServiceLogs(session.user, input),
+	return runtime.platform.call(
+		PlatformService.method.listServiceLogs,
+		session.user,
+		{
+			...input,
+			startTime: input.startTime?.toISOString(),
+			endTime: input.endTime?.toISOString(),
+		},
 	);
 }
 
@@ -115,12 +128,12 @@ export async function listServiceDeploymentsFromSession(
 	input: { serviceId: string; limit?: number },
 ): Promise<Array<DashboardDeploymentRecord>> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "listServiceDeployments", (platform) =>
-		platform.listServiceDeployments(session.user, {
+	return runtime.platform
+		.call(PlatformService.method.listServiceDeployments, session.user, {
 			serviceId: input.serviceId,
 			limit: input.limit,
-		}),
-	);
+		})
+		.then((response) => response.deployments ?? []);
 }
 
 export async function listBuildAttemptsFromSession(
@@ -128,9 +141,9 @@ export async function listBuildAttemptsFromSession(
 	input: { serviceId: string; buildId: string },
 ): Promise<Array<DashboardBuildAttempt>> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "listBuildAttempts", (platform) =>
-		platform.listBuildAttempts(session.user, input),
-	);
+	return runtime.platform
+		.call(PlatformService.method.listBuildAttempts, session.user, input)
+		.then((response) => response.attempts ?? []);
 }
 
 export async function listServiceSecretsFromSession(
@@ -138,9 +151,11 @@ export async function listServiceSecretsFromSession(
 	input: { serviceId: string },
 ): Promise<Array<DashboardServiceSecret>> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "listServiceSecrets", (platform) =>
-		platform.listServiceSecrets(session.user, input.serviceId),
-	);
+	return runtime.platform
+		.call(PlatformService.method.listServiceSecrets, session.user, {
+			serviceId: input.serviceId,
+		})
+		.then((response) => response.secrets ?? []);
 }
 
 /** Seals a write-only value. The value goes to the RPC and nowhere else. */
@@ -155,12 +170,14 @@ export async function sealServiceSecretFromSession(
 			message: name.error.issues[0]?.message ?? "Invalid secret name.",
 		});
 	}
-	return platformCall(runtime, "sealServiceSecret", (platform) =>
-		platform.sealServiceSecret(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.sealServiceSecret,
+		session.user,
+		{
 			serviceId: input.serviceId,
 			name: name.data,
 			value: input.value,
-		}),
+		},
 	);
 }
 
@@ -169,8 +186,10 @@ export async function deleteServiceSecretFromSession(
 	input: { serviceId: string; name: string },
 ): Promise<void> {
 	const session = await requireSession(runtime);
-	await platformCall(runtime, "deleteServiceSecret", (platform) =>
-		platform.deleteServiceSecret(session.user, input),
+	await runtime.platform.call(
+		PlatformService.method.deleteServiceSecret,
+		session.user,
+		input,
 	);
 }
 
@@ -179,12 +198,14 @@ export async function updateServiceFromSession(
 	input: UpdateServiceInput,
 ): Promise<DashboardServiceRecord> {
 	const session = await requireSession(runtime);
-	const current = await platformCall(runtime, "getService", (platform) =>
-		platform.getService(session.user, {
+	const current = await runtime.platform.call(
+		PlatformService.method.getService,
+		session.user,
+		{
 			serviceId: input.serviceId,
-		}),
+		},
 	);
-	const currentSource = current.spec?.source;
+	const currentSource = current.spec?.source?.sourceSpec;
 	const repositorySelector =
 		input.repositorySelector ?? currentSource?.repositorySelector ?? "";
 	const trackedRef = input.trackedRef ?? currentSource?.trackedRef ?? "";
@@ -224,67 +245,87 @@ export async function updateServiceFromSession(
 		});
 	}
 	if (repositoryChanged) {
-		const environment = await platformCall(
-			runtime,
-			"getEnvironment",
-			(platform) =>
-				platform.getEnvironment(session.user, current.environmentId),
+		const environment = await runtime.platform.call(
+			PlatformService.method.getEnvironment,
+			session.user,
+			{ environmentId: current.environmentId },
 		);
 		const githubUserAccessToken = await requireGitHubRepositoryAccess(
 			runtime,
 			session.user.id,
 			desiredSource.repositorySelector,
 		);
-		await platformCall(runtime, "linkGitHubRepository", (platform) =>
-			platform.linkGitHubRepository(session.user, {
+		await runtime.platform.call(
+			PlatformService.method.linkGitHubRepository,
+			session.user,
+			{
 				projectId: environment.projectId,
 				repositorySelector: desiredSource.repositorySelector,
 				githubUserAccessToken,
-			}),
+			},
 		);
 	}
-	return platformCall(runtime, "updateService", (platform) =>
-		platform.updateService(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.updateService,
+		session.user,
+		{
 			serviceId: input.serviceId,
-			...(input.serviceName?.trim() ? { name: input.serviceName.trim() } : {}),
-			spec: {
-				...(desiredSource ? { source: desiredSource } : {}),
-				desiredReplicaCount:
-					input.desiredReplicaCount ?? current.spec?.desiredReplicaCount,
-				placementRegion:
-					input.placementRegion?.trim().toLowerCase() ??
-					current.spec?.placementRegion,
-				rollingStrategy: input.rollingStrategy ?? current.spec?.rollingStrategy,
-				runtime: {
-					env: normalizeRuntimeEnv(
-						input.runtimeEnv ?? current.spec?.runtime.env,
-					),
-					cpuMillis: normalizeResource(
-						input.cpuMillis ?? current.spec?.runtime.cpuMillis,
-						DEFAULT_SERVICE_CPU_MILLIS,
-						"CPU request",
-					),
-					memoryMebibytes: normalizeResource(
-						input.memoryMebibytes ?? current.spec?.runtime.memoryMebibytes,
-						DEFAULT_SERVICE_MEMORY_MEBIBYTES,
-						"memory request",
-					),
-					ports: current.spec?.runtime.ports ?? [],
-					...(current.spec?.runtime.healthCheck
-						? { healthCheck: current.spec.runtime.healthCheck }
-						: {}),
-					...(current.spec?.runtime.livenessCheck
-						? { livenessCheck: current.spec.runtime.livenessCheck }
-						: {}),
-					...((input.restart ?? current.spec?.runtime.restart)
-						? { restart: input.restart ?? current.spec?.runtime.restart }
-						: {}),
-					...(current.spec?.runtime.volumeName
-						? { volumeName: current.spec.runtime.volumeName }
-						: {}),
+			service: {
+				...(input.serviceName?.trim()
+					? { name: input.serviceName.trim() }
+					: {}),
+				spec: {
+					...current.spec,
+					source: desiredSource
+						? { sourceSpec: desiredSource }
+						: current.spec?.source,
+					desiredReplicaCount:
+						input.desiredReplicaCount ?? current.spec?.desiredReplicaCount,
+					placementRegion:
+						input.placementRegion?.trim().toLowerCase() ??
+						current.spec?.placementRegion,
+					rollingStrategy:
+						input.rollingStrategy ?? current.spec?.rollingStrategy,
+					runtime: {
+						...current.spec?.runtime,
+						env:
+							input.runtimeEnv === undefined
+								? (current.spec?.runtime?.env ?? {})
+								: normalizeRuntimeEnv(input.runtimeEnv),
+						cpuMillis:
+							input.cpuMillis === undefined
+								? (current.spec?.runtime?.cpuMillis ??
+									integerString(DEFAULT_SERVICE_CPU_MILLIS))
+								: integerString(
+										normalizeResource(
+											input.cpuMillis,
+											DEFAULT_SERVICE_CPU_MILLIS,
+											"CPU request",
+										),
+									),
+						memoryMebibytes:
+							input.memoryMebibytes === undefined
+								? (current.spec?.runtime?.memoryMebibytes ??
+									integerString(DEFAULT_SERVICE_MEMORY_MEBIBYTES))
+								: integerString(
+										normalizeResource(
+											input.memoryMebibytes,
+											DEFAULT_SERVICE_MEMORY_MEBIBYTES,
+											"memory request",
+										),
+									),
+						...(input.restart
+							? {
+									restart: {
+										...current.spec?.runtime?.restart,
+										...input.restart,
+									},
+								}
+							: {}),
+					},
 				},
 			},
-		}),
+		},
 	);
 }
 
@@ -299,8 +340,10 @@ export async function applyDeploymentActionFromSession(
 	},
 ): Promise<DashboardServiceStatus> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "applyDeploymentAction", (platform) =>
-		platform.applyDeploymentAction(session.user, input),
+	return runtime.platform.call(
+		PlatformService.method.applyDeploymentAction,
+		session.user,
+		input,
 	);
 }
 
@@ -312,11 +355,13 @@ export async function scaleServiceFromSession(
 	},
 ): Promise<DashboardServiceStatus> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "scaleService", (platform) =>
-		platform.scaleService(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.scaleService,
+		session.user,
+		{
 			serviceId: input.serviceId,
 			desiredReplicaCount: input.desiredReplicaCount,
-		}),
+		},
 	);
 }
 
@@ -329,12 +374,14 @@ export async function discardServiceChangesFromSession(
 	},
 ): Promise<DashboardServiceRecord> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "discardServiceChanges", (platform) =>
-		platform.discardServiceChanges(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.discardServiceChanges,
+		session.user,
+		{
 			serviceId: input.serviceId,
 			changeIds: input.changeIds,
 			discardAll: input.discardAll,
-		}),
+		},
 	);
 }
 
@@ -343,8 +390,10 @@ export async function deleteServiceFromSession(
 	input: { serviceId: string },
 ): Promise<void> {
 	const session = await requireSession(runtime);
-	await platformCall(runtime, "deleteService", (platform) =>
-		platform.deleteService(session.user, { serviceId: input.serviceId }),
+	await runtime.platform.call(
+		PlatformService.method.deleteService,
+		session.user,
+		{ serviceId: input.serviceId },
 	);
 }
 

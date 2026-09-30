@@ -109,8 +109,12 @@ export const loadHome = createServerFn({ method: "GET" })
 		z.object({ environmentId: optionalIdentifier }).optional().parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		const state = await svc.loadDashboardHome(data?.environmentId);
+		const state = await (
+			await import("#/lib/dashboard/core/operations-home.server")
+		).loadDashboardHome(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data?.environmentId,
+		);
 		if (!state) {
 			throw redirect({
 				to: "/login",
@@ -125,7 +129,12 @@ export const doCreateEnvironment = createServerFn({ method: "POST" })
 		z.object({ projectId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).createEnvironmentFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).createEnvironmentFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doDuplicateEnvironment = createServerFn({ method: "POST" })
@@ -139,7 +148,10 @@ export const doDuplicateEnvironment = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).duplicateEnvironmentFromSession(
+		(
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).duplicateEnvironmentFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 			data,
 		),
 	);
@@ -149,7 +161,12 @@ export const doRenameEnvironment = createServerFn({ method: "POST" })
 		z.object({ environmentId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).renameEnvironmentFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).renameEnvironmentFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doUpdateEnvironmentAutoDeploy = createServerFn({ method: "POST" })
@@ -160,8 +177,11 @@ export const doUpdateEnvironmentAutoDeploy = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data }) =>
 		(
-			await import("#/lib/dashboard/server")
-		).updateEnvironmentAutoDeployFromSession(data),
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).updateEnvironmentAutoDeployFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const fetchDeletionPreview = createServerFn({ method: "POST" })
@@ -169,7 +189,12 @@ export const fetchDeletionPreview = createServerFn({ method: "POST" })
 		z.object({ kind: deletableKind, id: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).previewDeletionFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-lifecycle.server")
+		).previewDeletionFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doDeleteResource = createServerFn({ method: "POST" })
@@ -183,7 +208,12 @@ export const doDeleteResource = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).deleteResourceFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-lifecycle.server")
+		).deleteResourceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doRestoreResource = createServerFn({ method: "POST" })
@@ -191,13 +221,22 @@ export const doRestoreResource = createServerFn({ method: "POST" })
 		z.object({ kind: restorableKind, id: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).restoreResourceFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-lifecycle.server")
+		).restoreResourceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const loadRecentlyDeleted = createServerFn({ method: "GET" }).handler(
 	async () =>
 		signedIn("/deleted", async () =>
-			(await import("#/lib/dashboard/server")).loadRecentlyDeletedFromSession(),
+			(
+				await import("#/lib/dashboard/core/operations-lifecycle.server")
+			).loadRecentlyDeletedFromSession(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			),
 		),
 );
 
@@ -207,7 +246,10 @@ export const loadProjectSettings = createServerFn({ method: "GET" })
 	)
 	.handler(async ({ data }) =>
 		signedIn(`/projects/${data.projectId}/settings`, async () =>
-			(await import("#/lib/dashboard/server")).loadProjectSettingsFromSession(
+			(
+				await import("#/lib/dashboard/core/operations-lifecycle.server")
+			).loadProjectSettingsFromSession(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 				data.projectId,
 			),
 		),
@@ -220,8 +262,11 @@ export const resolveProjectLanding = createServerFn({ method: "GET" })
 	.handler(async ({ data }) =>
 		signedIn(`/projects/${data.projectId}`, async () =>
 			(
-				await import("#/lib/dashboard/server")
-			).projectLandingEnvironmentFromSession(data.projectId),
+				await import("#/lib/dashboard/core/operations-lifecycle.server")
+			).projectLandingEnvironmentFromSession(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data.projectId,
+			),
 		),
 	);
 
@@ -236,14 +281,20 @@ export const doUpdateProjectLogRetention = createServerFn({ method: "POST" })
 	)
 	.handler(async ({ data }) =>
 		(
-			await import("#/lib/dashboard/server")
-		).updateProjectLogRetentionFromSession(data),
+			await import("#/lib/dashboard/core/operations-lifecycle.server")
+		).updateProjectLogRetentionFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doReleaseEnvironment = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => environmentIdInput.parse(input))
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).releaseEnvironmentFromSession(
+		(
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).releaseEnvironmentFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 			data.environmentId,
 		),
 	);
@@ -253,8 +304,11 @@ export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
 		githubAccount?: DashboardGitHubAccount;
 		repositories: Array<GitHubUserRepository>;
 	}> => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.loadGitHubCatalogFromSession();
+		return (
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).loadGitHubCatalogFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+		);
 	},
 );
 
@@ -276,8 +330,12 @@ export const fetchServiceLogs = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.listServiceLogsFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).listServiceLogsFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const fetchBuildAttempts = createServerFn({ method: "POST" })
@@ -285,13 +343,21 @@ export const fetchBuildAttempts = createServerFn({ method: "POST" })
 		z.object({ serviceId: identifier, buildId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).listBuildAttemptsFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-services.server")
+		).listBuildAttemptsFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const fetchServiceSecrets = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).listServiceSecretsFromSession(
+		(
+			await import("#/lib/dashboard/core/operations-services.server")
+		).listServiceSecretsFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 			data,
 		),
 	);
@@ -308,7 +374,12 @@ export const doSealServiceSecret = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).sealServiceSecretFromSession(data),
+		(
+			await import("#/lib/dashboard/core/operations-services.server")
+		).sealServiceSecretFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
 	);
 
 export const doDeleteServiceSecret = createServerFn({ method: "POST" })
@@ -316,7 +387,10 @@ export const doDeleteServiceSecret = createServerFn({ method: "POST" })
 		z.object({ serviceId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
-		(await import("#/lib/dashboard/server")).deleteServiceSecretFromSession(
+		(
+			await import("#/lib/dashboard/core/operations-services.server")
+		).deleteServiceSecretFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 			data,
 		),
 	);
@@ -328,22 +402,34 @@ export const fetchServiceDeployments = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }): Promise<Array<DashboardDeploymentRecord>> => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.listServiceDeploymentsFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).listServiceDeploymentsFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const fetchDomainBindings = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.listDomainBindingsFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-domains.server")
+		).listDomainBindingsFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doUpdateService = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => updateServiceInput.parse(input))
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.updateServiceFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).updateServiceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doApplyDeploymentAction = createServerFn({ method: "POST" })
@@ -359,8 +445,12 @@ export const doApplyDeploymentAction = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.applyDeploymentActionFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).applyDeploymentActionFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doScaleService = createServerFn({ method: "POST" })
@@ -370,8 +460,12 @@ export const doScaleService = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.scaleServiceFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).scaleServiceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doDiscardServiceChanges = createServerFn({ method: "POST" })
@@ -385,15 +479,23 @@ export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.discardServiceChangesFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).discardServiceChangesFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doDeleteService = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		await svc.deleteServiceFromSession(data);
+		await (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).deleteServiceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doSaveServicePosition = createServerFn({ method: "POST" })
@@ -407,8 +509,12 @@ export const doSaveServicePosition = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.saveServicePositionFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).saveServicePositionFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doCreateDomainBinding = createServerFn({ method: "POST" })
@@ -419,8 +525,12 @@ export const doCreateDomainBinding = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.createDomainBindingFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-domains.server")
+		).createDomainBindingFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doGenerateDomainBinding = createServerFn({ method: "POST" })
@@ -431,8 +541,12 @@ export const doGenerateDomainBinding = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.generateDomainBindingFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-domains.server")
+		).generateDomainBindingFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doUpdateDomainBinding = createServerFn({ method: "POST" })
@@ -443,20 +557,32 @@ export const doUpdateDomainBinding = createServerFn({ method: "POST" })
 			.parse(input),
 	)
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.updateDomainBindingFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-domains.server")
+		).updateDomainBindingFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doDeleteDomainBinding = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => hostnameInput.parse(input))
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.deleteDomainBindingFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-domains.server")
+		).deleteDomainBindingFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});
 
 export const doCreateServiceFast = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) => confirmRepositoryInput.parse(input))
 	.handler(async ({ data }) => {
-		const svc = await import("#/lib/dashboard/server");
-		return svc.createServiceFastFromSession(data);
+		return (
+			await import("#/lib/dashboard/core/operations-onboarding.server")
+		).createServiceFastFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
 	});

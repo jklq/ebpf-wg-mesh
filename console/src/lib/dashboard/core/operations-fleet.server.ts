@@ -1,8 +1,5 @@
 import { requireSession } from "#/lib/dashboard/core/auth.server";
-import {
-	type DashboardRuntime,
-	platformCall,
-} from "#/lib/dashboard/core/runtime.server";
+import type { DashboardRuntime } from "#/lib/dashboard/core/runtime.server";
 import type {
 	DashboardAgentEnrollment,
 	DashboardAgentLifecycleState,
@@ -10,15 +7,14 @@ import type {
 	DashboardFleetAgent,
 	FleetAgentInput,
 } from "#/lib/dashboard/core/types.server";
+import { OpsService } from "#/lib/platform-gen/platform_pb";
 import { normalizeFleetAgentInput } from "./operations-helpers.server";
 
 export async function loadFleetFromSession(
 	runtime: DashboardRuntime,
 ): Promise<DashboardFleet> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "listFleet", (platform) =>
-		platform.listFleet(session.user),
-	);
+	return runtime.platform.call(OpsService.method.listFleet, session.user, {});
 }
 
 export async function createFleetAgentFromSession(
@@ -26,9 +22,11 @@ export async function createFleetAgentFromSession(
 	input: FleetAgentInput,
 ): Promise<DashboardAgentEnrollment> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "createFleetAgent", (platform) =>
-		platform.createFleetAgent(session.user, normalizeFleetAgentInput(input)),
-	);
+	return runtime.platform.call(OpsService.method.createAgent, session.user, {
+		...normalizeFleetAgentInput(input),
+		reservedCpuMillis: String(input.reservedCpuMillis),
+		reservedMemoryMebibytes: String(input.reservedMemoryMebibytes),
+	});
 }
 
 export async function updateFleetAgentFromSession(
@@ -36,9 +34,11 @@ export async function updateFleetAgentFromSession(
 	input: FleetAgentInput,
 ): Promise<DashboardFleetAgent> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "updateFleetAgent", (platform) =>
-		platform.updateFleetAgent(session.user, normalizeFleetAgentInput(input)),
-	);
+	return runtime.platform.call(OpsService.method.updateAgent, session.user, {
+		...normalizeFleetAgentInput(input),
+		reservedCpuMillis: String(input.reservedCpuMillis),
+		reservedMemoryMebibytes: String(input.reservedMemoryMebibytes),
+	});
 }
 
 export async function setFleetAgentLifecycleFromSession(
@@ -46,10 +46,12 @@ export async function setFleetAgentLifecycleFromSession(
 	input: { agentId: string; lifecycleState: DashboardAgentLifecycleState },
 ): Promise<DashboardFleetAgent> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "setFleetAgentLifecycle", (platform) =>
-		platform.setFleetAgentLifecycle(session.user, {
+	return runtime.platform.call(
+		OpsService.method.setAgentLifecycle,
+		session.user,
+		{
 			agentId: input.agentId.trim(),
 			lifecycleState: input.lifecycleState,
-		}),
+		},
 	);
 }

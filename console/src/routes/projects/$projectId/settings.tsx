@@ -9,12 +9,12 @@ import {
 	Trash2,
 } from "lucide-react";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
-
 import { cn } from "#/lib/cn";
 import type {
 	DashboardProject,
 	DashboardVolume,
 } from "#/lib/dashboard/core/types.server";
+import { safeInteger } from "#/lib/platform-json";
 import { cleanDate, formatRelativeTime } from "#/lib/time";
 import {
 	btnDangerOutline,
@@ -473,7 +473,8 @@ function RetentionOption({
 	);
 }
 
-function formatBytes(bytes: number): string {
+function formatBytes(raw: string): string {
+	const bytes = safeInteger(raw);
 	const units = ["B", "KiB", "MiB", "GiB", "TiB"];
 	let value = bytes;
 	let unit = 0;

@@ -1,17 +1,17 @@
 import { describe, expect, it } from "vitest";
-
 import type {
 	DashboardDeploymentState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { serviceFixture } from "#/lib/dashboard/testkit/protocol";
 
 import { serviceHealth, serviceStatusLabel } from "./service-utils";
 
 function serviceWith(
 	state: DashboardDeploymentState,
-	rolloutGeneration = 3,
+	rolloutGeneration = "3",
 ): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		name: "hello",
@@ -23,24 +23,26 @@ function serviceWith(
 			causeId: "user-1",
 			reasonCode: "TEST",
 			detail: "",
-			specRevision: 1,
+			specRevision: "1",
 			imageDigest: "",
 			rolloutGeneration,
 		},
-	};
+	});
 }
 
 describe("serviceStatusLabel", () => {
 	it("labels a newly staged service as not deployed", () => {
-		expect(serviceStatusLabel(serviceWith("DEPLOYMENT_STATE_STAGED", 0))).toBe(
-			"Not deployed",
-		);
 		expect(
-			serviceStatusLabel({
-				id: "service-1",
-				environmentId: "environment-1",
-				name: "hello",
-			}),
+			serviceStatusLabel(serviceWith("DEPLOYMENT_STATE_STAGED", "0")),
+		).toBe("Not deployed");
+		expect(
+			serviceStatusLabel(
+				serviceFixture({
+					id: "service-1",
+					environmentId: "environment-1",
+					name: "hello",
+				}),
+			),
 		).toBe("Not deployed");
 	});
 
@@ -83,7 +85,7 @@ describe("serviceHealth", () => {
 		expect(serviceHealth(serviceWith("DEPLOYMENT_STATE_CRASHED"))).toBe(
 			"failed",
 		);
-		expect(serviceHealth(serviceWith("DEPLOYMENT_STATE_STAGED", 0))).toBe(
+		expect(serviceHealth(serviceWith("DEPLOYMENT_STATE_STAGED", "0"))).toBe(
 			"offline",
 		);
 		expect(serviceHealth(serviceWith("DEPLOYMENT_STATE_REMOVED"))).toBe(

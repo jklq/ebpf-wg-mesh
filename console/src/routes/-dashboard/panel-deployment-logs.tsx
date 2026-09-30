@@ -1,6 +1,5 @@
 import { RefreshCw, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
 import { cn } from "#/lib/cn";
 import type {
 	DashboardAllocationStatus,
@@ -10,12 +9,12 @@ import type {
 	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
-import { formatLogTime } from "#/lib/time";
+import { compareIntegers } from "#/lib/platform-json";
+import { dateMillis, formatLogTime } from "#/lib/time";
 import { errorMsg } from "#/lib/ui-classes";
 import { fetchLogPage, type LogCursors } from "./log-pages";
 import {
 	formatError,
-	hydrateServiceLogLine,
 	type LogTypeFilter,
 	matchesDeploymentLog,
 } from "./panel-deployments-helpers";
@@ -46,10 +45,13 @@ export function useInlineDeploymentLogs({
 				buildId,
 			});
 			setLines(
-				nextLines.lines.map(hydrateServiceLogLine).sort((left, right) => {
-					const leftTime = left.observedAt?.getTime() ?? 0;
-					const rightTime = right.observedAt?.getTime() ?? 0;
-					return leftTime - rightTime || left.sequence - right.sequence;
+				nextLines.lines.sort((left, right) => {
+					const leftTime = dateMillis(left.observedAt) ?? 0;
+					const rightTime = dateMillis(right.observedAt) ?? 0;
+					return (
+						leftTime - rightTime ||
+						compareIntegers(left.sequence, right.sequence)
+					);
 				}),
 			);
 		} catch {
@@ -78,7 +80,7 @@ export function DeploymentLogsView({
 	project: DashboardProject | undefined;
 	build: DashboardBuildStatus | undefined;
 	allocation: DashboardAllocationStatus | undefined;
-	rolloutGeneration?: number;
+	rolloutGeneration?: string;
 	active: boolean;
 }) {
 	const [search, setSearch] = useState("");
@@ -132,9 +134,7 @@ export function DeploymentLogsView({
 					append ? [...current, ...nextLines.gaps] : nextLines.gaps,
 				);
 				setLines((current) =>
-					append
-						? [...current, ...nextLines.lines.map(hydrateServiceLogLine)]
-						: nextLines.lines.map(hydrateServiceLogLine),
+					append ? [...current, ...nextLines.lines] : nextLines.lines,
 				);
 			} catch (cause) {
 				if (generation === requestGeneration.current)
@@ -185,9 +185,9 @@ export function DeploymentLogsView({
 	const sortedLines = useMemo(
 		() =>
 			[...filteredLines].sort((a, b) => {
-				const aTime = a.observedAt?.getTime() ?? 0;
-				const bTime = b.observedAt?.getTime() ?? 0;
-				return aTime - bTime || a.sequence - b.sequence;
+				const aTime = dateMillis(a.observedAt) ?? 0;
+				const bTime = dateMillis(b.observedAt) ?? 0;
+				return aTime - bTime || compareIntegers(a.sequence, b.sequence);
 			}),
 		[filteredLines],
 	);
@@ -253,7 +253,7 @@ export function DeploymentLogsView({
 				)}
 				{[
 					...sortedLines.map((line) => ({
-						time: line.observedAt?.getTime() ?? 0,
+						time: dateMillis(line.observedAt) ?? 0,
 						line,
 						gap: undefined as DashboardServiceLogGap | undefined,
 					})),
