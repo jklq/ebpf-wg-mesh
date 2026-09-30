@@ -99,7 +99,7 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		journal.RecordAssignment(ctx, allocation.ID)
+		journal.AssignmentRow(allocation.ID).Capture(ctx)
 		return nil
 	}
 	if err := store.withProductTx(commandCtx, func(ctx context.Context, tx *sql.Tx) error {
@@ -410,8 +410,8 @@ func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, 1, '{}', $2)`, id, now); err != nil {
 				return err
 			}
-			journal.RecordService(ctx, id)
-			journal.RecordRevision(ctx, id, 1)
+			journal.ServiceRow(id).Capture(ctx)
+			journal.RevisionRow(id, 1).Capture(ctx)
 		}
 		return nil
 	}); err != nil {
@@ -466,7 +466,7 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, 'user', NULL, statement_timestamp())`, id, prefix, prefix+"-"+id); err != nil {
 					return err
 				}
-				journal.RecordProject(ctx, id)
+				journal.ProjectRow(id).Capture(ctx)
 				return nil
 			}); err != nil {
 				errs <- err
@@ -579,7 +579,7 @@ func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, 'owner', 'retained', 'user', NULL, statement_timestamp())`, projectID); err != nil {
 			return err
 		}
-		journal.RecordProject(ctx, projectID)
+		journal.ProjectRow(projectID).Capture(ctx)
 		return nil
 	})
 	if err != nil {
@@ -783,7 +783,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET detail = 'staged for test' WHERE id = $1`, deploymentID); err != nil {
 			return err
 		}
-		journal.RecordDeployment(ctx, deploymentID)
+		journal.DeploymentRow(deploymentID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -798,7 +798,7 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET operator_restart_nonce = operator_restart_nonce + 1 WHERE id = $1`, allocs[0].ID); err != nil {
 			return err
 		}
-		journal.RecordAssignment(ctx, allocs[0].ID)
+		journal.AssignmentRow(allocs[0].ID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

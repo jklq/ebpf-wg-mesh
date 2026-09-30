@@ -187,7 +187,7 @@ func (s *database) withProductTx(ctx context.Context, fn func(context.Context, *
 			return err
 		}
 		return nil
-	}, func(ctx context.Context, tx *sql.Tx, base journal.DurableState, batch journal.Batch) error {
+	}, func(ctx context.Context, tx *sql.Tx, base *journal.Projection, batch journal.Batch) error {
 		if batch.Empty() {
 			return nil
 		}
@@ -225,10 +225,10 @@ func (s *database) withObservationTx(ctx context.Context, fn func(context.Contex
 
 func (s *database) withCommittedState(ctx context.Context, fn func(*sql.Tx) error) error {
 	s.initJournal()
-	return s.journal.Read(ctx, func(tx *sql.Tx, _ journal.DurableState) error { return fn(tx) })
+	return s.journal.Read(ctx, func(tx *sql.Tx, _ *journal.Projection) error { return fn(tx) })
 }
 
-func (s *database) readLiveState(ctx context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
+func (s *database) readLiveState(ctx context.Context, fn func(*sql.Tx, *journal.Projection) error) error {
 	s.initJournal()
 	return s.journal.Read(ctx, fn)
 }
@@ -321,7 +321,7 @@ func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error
 func newPersistence(db *database) *persistence {
 	live := deliverycore.NewLive()
 	db.initJournal()
-	db.journal.SetOnApplied(live.ApplyDurable)
+	db.journal.SetOnApplied(live.ApplyProduct)
 	p := &persistence{database: db, liveImplementation: live, notifications: live, publication: live}
 	authorizer := authz.NewAuthorizer(db.db)
 	p.catalog = &catalogPersistence{database: db, authz: authorizer}

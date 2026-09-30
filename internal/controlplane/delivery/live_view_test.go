@@ -10,7 +10,7 @@ import (
 )
 
 func TestSharedEnvironmentMembership(t *testing.T) {
-	live := &Live{durable: journal.DurableState{
+	state := journal.DurableState{
 		Agents:         make(map[string]journal.AgentRegistration),
 		Administration: make(map[string]journal.AgentAdministration),
 		Environments: map[string]journal.Environment{
@@ -28,17 +28,27 @@ func TestSharedEnvironmentMembership(t *testing.T) {
 			"2b":       {ID: "2b", AgentID: "2", ServiceID: "b"},
 			"3b":       {ID: "3b", AgentID: "3", ServiceID: "b"},
 		},
-	}}
+	}
 	for _, id := range []string{"1", "2", "3"} {
-		live.durable.Agents[id] = journal.AgentRegistration{
+		state.Agents[id] = journal.AgentRegistration{
 			ID: id, WireguardPublicKey: "key-" + id, WireguardEndpoint: "192.0.2.1:51820",
 			WorkloadIPv4Subnet: "10.200.0.0/24", WorkloadIPv6Subnet: "fd00:200::/64",
 		}
 	}
+	state.Deployments = map[string]journal.Deployment{"dep": {ID: "dep"}}
+	for id, a := range state.Assignments {
+		a.DeploymentID = "dep"
+		state.Assignments[id] = a
+	}
+	product := journal.NewProjection(state)
 	check := func(wantPeers []string, wantIdentities int) {
 		t.Helper()
-		live.rebuildIndexesLocked()
-		cfg, err := assignedNodeConfigForAgent(live.durable, cloneLiveIndexes(live.indexes), config.ControlPlaneMeshConfig{}, "1")
+		var err error
+		product, err = product.Preview(journal.Diff(product.DurableState, state))
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg, err := assignedNodeConfigForAgent(product, config.ControlPlaneMeshConfig{}, "1")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -56,8 +66,8 @@ func TestSharedEnvironmentMembership(t *testing.T) {
 		}
 	}
 	check([]string{"2"}, 3)
-	if !slices.Equal(live.indexes.environmentsByAgent["2"], []string{"a", "b"}) ||
-		!slices.Equal(live.indexes.agentsByEnvironment["a"], []string{"1", "2"}) {
+	if !slices.Equal(product.EnvironmentIDsForAgent("2"), []string{"a", "b"}) ||
+		!slices.Equal(product.AgentIDsForEnvironment("a"), []string{"1", "2"}) {
 		t.Fatal("membership indexes contain duplicates")
 	}
 	now := time.Now()
@@ -65,16 +75,16 @@ func TestSharedEnvironmentMembership(t *testing.T) {
 		{LifecycleState: "retired"},
 		{CredentialRevokedAt: &now},
 	} {
-		live.durable.Administration["2"] = admin
+		state.Administration["2"] = admin
 		check(nil, 3)
 	}
-	delete(live.durable.Administration, "2")
-	delete(live.durable.Assignments, "2a-extra")
+	delete(state.Administration, "2")
+	delete(state.Assignments, "2a-extra")
 	check([]string{"2"}, 2)
-	assignment := live.durable.Assignments["2a"]
+	assignment := state.Assignments["2a"]
 	assignment.RolloutState = AllocationRolloutLost
-	live.durable.Assignments["2a"] = assignment
+	state.Assignments["2a"] = assignment
 	check(nil, 1)
-	delete(live.durable.Assignments, "1a")
+	delete(state.Assignments, "1a")
 	check(nil, 0)
 }

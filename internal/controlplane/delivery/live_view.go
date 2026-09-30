@@ -15,82 +15,58 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-func newLiveIndexes() liveIndexes {
-	return liveIndexes{
-		environmentsByAgent:   make(map[string][]string),
-		agentsByEnvironment:   make(map[string][]string),
-		assignmentsByAgent:    make(map[string][]string),
-		assignmentsByService:  make(map[string][]string),
-		domainsByService:      make(map[string][]string),
-		servicesByEnvironment: make(map[string][]string),
-	}
-}
-
-func (l *Live) ApplyDurable(state journal.DurableState) {
-	if l == nil {
+func (l *Live) ApplyProduct(update journal.Applied) {
+	if l == nil || update.Projection == nil {
 		return
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.applyDurableLocked(state)
+	l.applyProductLocked(update)
 }
 
-func (l *Live) applyDurableLocked(state journal.DurableState) {
+func (l *Live) applyProductLocked(update journal.Applied) {
+	state := update.Projection
 	if state.ClusterID != "" && l.durableIndexes[state.ClusterID] >= state.LogIndex && l.durableIndexes[state.ClusterID] != 0 {
 		return
 	}
-	previous := l.durable
-	l.durable = state.Clone()
+	previous := l.product
+	// Hooks run after Store unlocks. A later callback may arrive first; its
+	// projection is complete but its suffix cannot cover the skipped prefix.
+	// Treat that gap as a reset so every changed agent is woken and diff baselines
+	// fall back to a checkpoint instead of losing an earlier command's effects.
+	if !update.Reset && (previous.ClusterID != state.ClusterID || len(update.Batches) == 0 || update.Batches[0].BaseIndex != previous.LogIndex) {
+		update.Reset = true
+	}
+	l.product = state
+	l.allocSync.applied(previous, update)
 	if state.ClusterID != "" && state.LogIndex > l.durableIndexes[state.ClusterID] {
 		l.durableIndexes[state.ClusterID] = state.LogIndex
 	}
-	l.rebuildIndexesLocked()
 	l.liveIndex++
-	for id, agent := range l.durable.Agents {
-		if before, ok := previous.Agents[id]; ok && before.DesiredRevision == agent.DesiredRevision {
-			continue
+	if update.Reset {
+		for id, agent := range state.Agents {
+			if before, ok := previous.Agents[id]; !ok || before.DesiredRevision != agent.DesiredRevision {
+				l.notifyLocked(id)
+			}
 		}
-		l.notifyLocked(id)
+		for id := range previous.Agents {
+			if _, exists := state.Agents[id]; !exists {
+				l.notifyLocked(id)
+			}
+		}
+		return
 	}
-}
-
-func (l *Live) rebuildIndexesLocked() {
-	idx := newLiveIndexes()
-	for id, assignment := range l.durable.Assignments {
-		idx.assignmentsByAgent[assignment.AgentID] = append(idx.assignmentsByAgent[assignment.AgentID], id)
-		idx.assignmentsByService[assignment.ServiceID] = append(idx.assignmentsByService[assignment.ServiceID], id)
-		if service, ok := l.durable.Services[assignment.ServiceID]; ok && assignment.RolloutState != AllocationRolloutLost {
-			idx.environmentsByAgent[assignment.AgentID] = append(idx.environmentsByAgent[assignment.AgentID], service.EnvironmentID)
-			idx.agentsByEnvironment[service.EnvironmentID] = append(idx.agentsByEnvironment[service.EnvironmentID], assignment.AgentID)
+	for _, batch := range update.Batches {
+		for _, change := range batch.Agents {
+			if change.Value == nil {
+				l.notifyLocked(change.Key)
+				continue
+			}
+			if before, ok := previous.Agents[change.Key]; !ok || before.DesiredRevision != change.Value.DesiredRevision {
+				l.notifyLocked(change.Key)
+			}
 		}
 	}
-	for hostname, domain := range l.durable.Domains {
-		idx.domainsByService[domain.ServiceID] = append(idx.domainsByService[domain.ServiceID], hostname)
-	}
-	for id, service := range l.durable.Services {
-		idx.servicesByEnvironment[service.EnvironmentID] = append(idx.servicesByEnvironment[service.EnvironmentID], id)
-	}
-	for agentID := range idx.assignmentsByAgent {
-		slices.Sort(idx.assignmentsByAgent[agentID])
-	}
-	for serviceID := range idx.assignmentsByService {
-		slices.Sort(idx.assignmentsByService[serviceID])
-	}
-	for serviceID := range idx.domainsByService {
-		slices.Sort(idx.domainsByService[serviceID])
-	}
-	for environmentID := range idx.servicesByEnvironment {
-		slices.Sort(idx.servicesByEnvironment[environmentID])
-	}
-	for agentID, ids := range idx.environmentsByAgent {
-		slices.Sort(ids)
-		idx.environmentsByAgent[agentID] = slices.Compact(ids)
-	}
-	for environmentID, ids := range idx.agentsByEnvironment {
-		slices.Sort(ids)
-		idx.agentsByEnvironment[environmentID] = slices.Compact(ids)
-	}
-	l.indexes = idx
 }
 
 func (l *Live) touchLiveLocked() {
@@ -109,7 +85,7 @@ func (l *Live) Position() LivePosition {
 
 func (l *Live) positionLocked() LivePosition {
 	pos := LivePosition{
-		AcceptedDurable: l.durable.LogIndex,
+		AcceptedDurable: l.product.LogIndex,
 		AppliedLive:     l.liveIndex,
 		Ready:           l.serving && l.accepting,
 	}
@@ -147,7 +123,7 @@ func (l *Live) DesiredRevision(agentID string) (int64, bool) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	agent, ok := l.durable.Agents[agentID]
+	agent, ok := l.product.Agents[agentID]
 	if !ok {
 		return 0, false
 	}
@@ -205,13 +181,15 @@ func (l *Live) notifyLocked(agentID string) {
 	}
 }
 
-func (l *Live) Durable() journal.DurableState {
+// Product borrows the immutable committed projection. Callers must not mutate
+// its rows; subsequent journal application cannot change this captured prefix.
+func (l *Live) Product() *journal.Projection {
 	if l == nil {
-		return journal.DurableState{}
+		return nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.durable.Clone()
+	return l.product
 }
 
 func (l *Live) AgentIDs() []string {
@@ -238,12 +216,12 @@ func (l *Live) AgentIDsIfServing() ([]string, error) {
 }
 
 func (l *Live) agentIDsLocked() []string {
-	ids := make([]string, 0, len(l.durable.Agents))
-	for id := range l.durable.Agents {
+	ids := make([]string, 0, len(l.product.Agents))
+	for id := range l.product.Agents {
 		ids = append(ids, id)
 	}
 	slices.SortFunc(ids, func(a, b string) int {
-		if n := l.durable.Agents[a].CreatedAt.Compare(l.durable.Agents[b].CreatedAt); n != 0 {
+		if n := l.product.Agents[a].CreatedAt.Compare(l.product.Agents[b].CreatedAt); n != 0 {
 			return n
 		}
 		return strings.Compare(a, b)
@@ -275,10 +253,10 @@ func (l *Live) AgentsIfServing() ([]AgentRecord, error) {
 }
 
 func (l *Live) agentsLocked() []AgentRecord {
-	out := make([]AgentRecord, 0, len(l.durable.Agents))
+	out := make([]AgentRecord, 0, len(l.product.Agents))
 	ids := l.agentIDsLocked()
 	for _, id := range ids {
-		out = append(out, l.overlayAgentLocked(agentRecordFromDurable(l.durable.Agents[id], l.durable.Administration[id])))
+		out = append(out, l.overlayAgentLocked(agentRecordFromDurable(l.product.Agents[id], l.product.Administration[id])))
 	}
 	return out
 }
@@ -311,11 +289,11 @@ func (l *Live) AgentIfServing(agentID string) (AgentRecord, error) {
 }
 
 func (l *Live) agentLocked(agentID string) (AgentRecord, bool) {
-	reg, ok := l.durable.Agents[agentID]
+	reg, ok := l.product.Agents[agentID]
 	if !ok {
 		return AgentRecord{}, false
 	}
-	return l.overlayAgentLocked(agentRecordFromDurable(reg, l.durable.Administration[agentID])), true
+	return l.overlayAgentLocked(agentRecordFromDurable(reg, l.product.Administration[agentID])), true
 }
 
 func (l *Live) overlayAgentLocked(rec AgentRecord) AgentRecord {
@@ -369,7 +347,7 @@ func (l *Live) AllocationsByEnvironmentIfServing(environmentID string) (map[stri
 	if !l.serving {
 		return nil, ErrNotLiveOwner
 	}
-	serviceIDs := l.indexes.servicesByEnvironment[environmentID]
+	serviceIDs := l.product.ServiceIDsForEnvironment(environmentID)
 	out := make(map[string][]AllocationRecord, len(serviceIDs))
 	for _, serviceID := range serviceIDs {
 		out[serviceID] = l.allocationsByServiceLocked(serviceID)
@@ -378,14 +356,14 @@ func (l *Live) AllocationsByEnvironmentIfServing(environmentID string) (map[stri
 }
 
 func (l *Live) allocationsByServiceLocked(serviceID string) []AllocationRecord {
-	ids := l.indexes.assignmentsByService[serviceID]
+	ids := l.product.AssignmentIDsForService(serviceID)
 	out := make([]AllocationRecord, 0, len(ids))
 	for _, id := range ids {
-		assignment, ok := l.durable.Assignments[id]
+		assignment, ok := l.product.Assignments[id]
 		if !ok {
 			continue
 		}
-		out = append(out, l.overlayAllocationLocked(allocationRecordFromAssignment(l.durable, assignment)))
+		out = append(out, l.overlayAllocationLocked(allocationRecordFromAssignment(l.product.DurableState, assignment)))
 	}
 	return out
 }
@@ -396,14 +374,14 @@ func (l *Live) AllocationsByAgent(agentID string) []AllocationRecord {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	ids := l.indexes.assignmentsByAgent[agentID]
+	ids := l.product.AssignmentIDsForAgent(agentID)
 	out := make([]AllocationRecord, 0, len(ids))
 	for _, id := range ids {
-		assignment, ok := l.durable.Assignments[id]
+		assignment, ok := l.product.Assignments[id]
 		if !ok {
 			continue
 		}
-		out = append(out, l.overlayAllocationLocked(allocationRecordFromAssignment(l.durable, assignment)))
+		out = append(out, l.overlayAllocationLocked(allocationRecordFromAssignment(l.product.DurableState, assignment)))
 	}
 	return out
 }
@@ -429,8 +407,8 @@ func (l *Live) AssignedIDs(agentID string) []string {
 
 func (l *Live) assignedIDsLocked(agentID string) []string {
 	var ids []string
-	for _, id := range l.indexes.assignmentsByAgent[agentID] {
-		assignment := l.durable.Assignments[id]
+	for _, id := range l.product.AssignmentIDsForAgent(agentID) {
+		assignment := l.product.Assignments[id]
 		if assignment.RolloutState != AllocationRolloutLost {
 			ids = append(ids, id)
 		}
@@ -445,8 +423,8 @@ func (l *Live) InProgressRolloutServiceIDs() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	seen := make(map[string]struct{})
-	for _, rollout := range l.durable.Rollouts {
-		service, ok := l.durable.Services[rollout.ServiceID]
+	for _, rollout := range l.product.Rollouts {
+		service, ok := l.product.Services[rollout.ServiceID]
 		if !ok || service.CurrentRolloutGeneration != rollout.RolloutGeneration {
 			continue
 		}
@@ -454,7 +432,7 @@ func (l *Live) InProgressRolloutServiceIDs() []string {
 			seen[rollout.ServiceID] = struct{}{}
 		}
 	}
-	for _, assignment := range l.durable.Assignments {
+	for _, assignment := range l.product.Assignments {
 		if assignment.RolloutState == AllocationRolloutDraining || assignment.RolloutState == AllocationRolloutWithdrawing {
 			seen[assignment.ServiceID] = struct{}{}
 		}
@@ -473,13 +451,13 @@ func (l *Live) AgentUsage() map[string]AgentUsage {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	out := make(map[string]AgentUsage, len(l.durable.Agents))
-	for _, assignment := range l.durable.Assignments {
+	out := make(map[string]AgentUsage, len(l.product.Agents))
+	for _, assignment := range l.product.Assignments {
 		if assignment.RolloutState == AllocationRolloutLost {
 			continue
 		}
-		service := l.durable.Services[assignment.ServiceID]
-		revision := l.durable.Revisions[fmt.Sprintf("%s/%d", assignment.ServiceID, service.CurrentSpecRevision)]
+		service := l.product.Services[assignment.ServiceID]
+		revision := l.product.Revisions[fmt.Sprintf("%s/%d", assignment.ServiceID, service.CurrentSpecRevision)]
 		spec, err := LoadServiceSpec(revision.SpecJSON)
 		if err != nil {
 			continue
@@ -590,12 +568,12 @@ func (l *Live) rolloutSnapshot(serviceID string) (rolloutSnapshot, string, bool)
 	if !l.serving {
 		return rolloutSnapshot{}, "", false
 	}
-	service, ok := l.durable.Services[serviceID]
+	service, ok := l.product.Services[serviceID]
 	if !ok {
 		return rolloutSnapshot{}, "", false
 	}
 	var rec rolloutRecord
-	if rollout, ok := l.durable.Rollouts[fmt.Sprintf("%s/%d", serviceID, service.CurrentRolloutGeneration)]; ok {
+	if rollout, ok := l.product.Rollouts[fmt.Sprintf("%s/%d", serviceID, service.CurrentRolloutGeneration)]; ok {
 		rec = rolloutRecord{
 			ServiceID:           rollout.ServiceID,
 			Generation:          rollout.RolloutGeneration,
@@ -619,7 +597,7 @@ func (l *Live) rolloutSnapshot(serviceID string) (rolloutSnapshot, string, bool)
 		rec.Strategy = canonicalRollingStrategy(rec.Strategy)
 	}
 	removing := false
-	for _, dep := range l.durable.Deployments {
+	for _, dep := range l.product.Deployments {
 		if dep.ServiceID == serviceID && dep.IsCurrent && dep.State == DeploymentStateDraining && dep.ReasonCode == reasonUserRemove {
 			removing = true
 			break

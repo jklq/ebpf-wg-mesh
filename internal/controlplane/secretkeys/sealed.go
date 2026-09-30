@@ -198,44 +198,47 @@ func (s *SealedStore) OpenCurrent(ctx context.Context, q Querier, serviceID, nam
 	return plaintext, version.Int64, nil
 }
 
-// ResolveMany decrypts the live secrets for each service, honoring pinned versions
-// where provided. pins maps service ID to a deployment-captured name-to-version map;
-// unpinned names resolve to current. Values are runtime plaintext for assigned
-// allocations only; callers must not log or persist them.
-func (s *SealedStore) ResolveMany(ctx context.Context, q Querier, serviceIDs []string, pins map[string]map[string]int64) (map[string]map[string]string, error) {
-	out := make(map[string]map[string]string, len(serviceIDs))
-	for _, serviceID := range serviceIDs {
-		if _, ok := out[serviceID]; ok {
+type DeploymentSecrets struct {
+	DeploymentID string
+	ServiceID    string
+	Versions     map[string]int64
+}
+
+// ResolveDeployments decrypts each deployment's captured versions independently.
+// Old and new allocations of one service may coexist during a rollout. Only
+// captured names are delivered; draft values and new names require a release.
+// Pinned versions survive deletion and re-sealing.
+// Values are runtime plaintext only; callers must not log or persist them.
+func (s *SealedStore) ResolveDeployments(ctx context.Context, q Querier, deployments []DeploymentSecrets) (map[string]map[string]string, error) {
+	out := make(map[string]map[string]string, len(deployments))
+	type versionKey struct {
+		service, name string
+		version       int64
+	}
+	decrypted := make(map[versionKey]string)
+	for _, deployment := range deployments {
+		if _, ok := out[deployment.DeploymentID]; ok {
 			continue
 		}
-		live, err := s.CurrentVersions(ctx, q, serviceID)
-		if err != nil {
-			return nil, err
-		}
-		wanted := make(map[string]int64, len(live))
-		for name, version := range live {
-			wanted[name] = version
-		}
-		// Pinned names resolve to their captured version even when later deleted or
-		// re-sealed; that is what makes rollback restore captured values.
-		for name, version := range pins[serviceID] {
-			if version > 0 {
-				wanted[name] = version
+		resolved := make(map[string]string, len(deployment.Versions))
+		for name, version := range deployment.Versions {
+			if version <= 0 {
+				return nil, fmt.Errorf("deployment %s pins an invalid sealed version for %q", deployment.DeploymentID, name)
 			}
-		}
-		if len(wanted) == 0 {
-			continue
-		}
-		resolved := make(map[string]string, len(wanted))
-		for name, version := range wanted {
-			plaintext, err := s.OpenVersion(ctx, q, serviceID, name, version)
-			if err != nil {
-				return nil, err
+			key := versionKey{deployment.ServiceID, name, version}
+			value, known := decrypted[key]
+			if !known {
+				plaintext, err := s.OpenVersion(ctx, q, deployment.ServiceID, name, version)
+				if err != nil {
+					return nil, err
+				}
+				value = string(plaintext)
+				clear(plaintext)
+				decrypted[key] = value
 			}
-			resolved[name] = string(plaintext)
-			clear(plaintext)
+			resolved[name] = value
 		}
-		out[serviceID] = resolved
+		out[deployment.DeploymentID] = resolved
 	}
 	return out, nil
 }

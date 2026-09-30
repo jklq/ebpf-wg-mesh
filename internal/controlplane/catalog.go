@@ -143,8 +143,7 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	if _, err := q.ExecContext(
-		ctx,
+	if _, err := journal.ProjectRow(id).Exec(ctx, q,
 		`INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		id,
 		userID,
@@ -155,7 +154,6 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 	); err != nil {
 		return "", fmt.Errorf("insert project: %w", err)
 	}
-	journal.RecordProject(ctx, id)
 	if _, err := s.createEnvironmentQuerier(ctx, q, id, "Production", true, ""); err != nil {
 		return "", fmt.Errorf("create production environment: %w", err)
 	}
@@ -190,8 +188,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 				SystemKey: systemKey,
 				CreatedAt: now,
 			}
-			_, err = tx.ExecContext(
-				ctx,
+			_, err = journal.ProjectRow(project.ID).Exec(ctx, tx,
 				`INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 				project.ID,
 				"",
@@ -203,13 +200,12 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 			if err != nil {
 				return err
 			}
-			journal.RecordProject(ctx, project.ID)
+
 			_, err = s.createEnvironmentQuerier(ctx, tx, project.ID, "Production", true, "")
 			return err
 		}
 		if current.Name != name || current.Kind != deliverycore.ProjectKindManaged {
-			if _, err := tx.ExecContext(
-				ctx,
+			if _, err := journal.ProjectRow(current.ID).Exec(ctx, tx,
 				`UPDATE projects SET name = $1, kind = $2 WHERE id = $3`,
 				name,
 				string(deliverycore.ProjectKindManaged),
@@ -217,7 +213,6 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 			); err != nil {
 				return err
 			}
-			journal.RecordProject(ctx, current.ID)
 			current.Name = name
 			current.Kind = deliverycore.ProjectKindManaged
 		}
@@ -368,10 +363,9 @@ func (s *catalogPersistence) updateProjectLogRetention(ctx context.Context, user
 		if current.Deletion != nil {
 			return deliverycore.ErrProjectDeleted
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE projects SET log_retention_days = $1 WHERE id = $2`, retentionDays, current.ID); err != nil {
+		if _, err := journal.ProjectRow(current.ID).Exec(ctx, tx, `UPDATE projects SET log_retention_days = $1 WHERE id = $2`, retentionDays, current.ID); err != nil {
 			return err
 		}
-		journal.RecordProject(ctx, current.ID)
 		current.LogRetentionDays = retentionDays
 		rec = current
 		return nil

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -93,150 +94,76 @@ func TestPlatformEventsTimeoutReturnsNotModified(t *testing.T) {
 	}
 }
 
-func TestPeerChangedAgentIDs(t *testing.T) {
-	base := journal.DurableState{
-		Agents: map[string]journal.AgentRegistration{
-			"node-1": peerAgent("node-1"),
-		},
-		Administration: map[string]journal.AgentAdministration{
-			"node-1": {AgentID: "node-1", LifecycleState: "active"},
-		},
+func TestAffectedAgentsUseBothIndexedPrefixes(t *testing.T) {
+	state := journal.DurableState{
+		Projects:       map[string]journal.Project{"p": {ID: "p"}, "q": {ID: "q"}},
+		Environments:   map[string]journal.Environment{"e": {ID: "e", ProjectID: "p"}, "f": {ID: "f", ProjectID: "q"}},
+		Services:       map[string]journal.ServiceIntent{"s": {ID: "s", EnvironmentID: "e"}, "sibling": {ID: "sibling", EnvironmentID: "e"}, "foreign": {ID: "foreign", EnvironmentID: "f"}},
+		Agents:         map[string]journal.AgentRegistration{"one": peerAgent("one"), "two": peerAgent("two"), "three": peerAgent("three")},
+		Administration: map[string]journal.AgentAdministration{"one": {AgentID: "one", LifecycleState: "active"}},
+		Deployments:    map[string]journal.Deployment{"d": {ID: "d"}},
+		Assignments:    map[string]journal.Assignment{"a": {ID: "a", AgentID: "one", ServiceID: "s", DeploymentID: "d"}, "b": {ID: "b", AgentID: "two", ServiceID: "sibling", DeploymentID: "d"}, "c": {ID: "c", AgentID: "three", ServiceID: "foreign", DeploymentID: "d"}},
+		Domains:        map[string]journal.Domain{"example.test": {Hostname: "example.test", ServiceID: "s"}},
+		Volumes:        map[string]journal.Volume{"v": {ID: "v", EnvironmentID: "e"}},
 	}
-
-	t.Run("session and timestamp do not fan out", func(t *testing.T) {
-		after := peerAgent("node-1")
-		after.SessionIncarnation = 2
-		after.UpdatedAt = time.Now().UTC()
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(base, batch)) > 0 {
-			t.Fatal("reconnect hello fanned out")
-		}
-		if ids := selfAgentIDs(base, batch); len(ids) != 0 {
-			t.Fatalf("self bump %v", ids)
-		}
-	})
-
-	t.Run("legacy advertise address does not fan out", func(t *testing.T) {
-		after := peerAgent("node-1")
-		after.AdvertiseAddr = "fd00:30::99"
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(base, batch)) > 0 {
-			t.Fatal("unused advertise_addr change fanned out")
-		}
-	})
-
-	t.Run("retire fans out", func(t *testing.T) {
-		admin := journal.AgentAdministration{AgentID: "node-1", LifecycleState: "retired"}
-		batch := journal.Batch{Administration: []journal.Change[journal.AgentAdministration]{{Key: "node-1", Value: &admin}}}
-		if len(peerChangedAgentIDs(base, batch)) == 0 {
-			t.Fatal("retire did not fan out")
-		}
-	})
-
-	t.Run("empty enroll does not fan out", func(t *testing.T) {
-		empty := journal.AgentRegistration{ID: "node-2", Name: "node-2"}
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-2", Value: &empty}}}
-		if len(peerChangedAgentIDs(base, batch)) > 0 {
-			t.Fatal("empty enroll fanned out")
-		}
-	})
-
-	t.Run("first hello with keys fans out", func(t *testing.T) {
-		emptyBase := journal.DurableState{
-			Agents: map[string]journal.AgentRegistration{
-				"node-2": {ID: "node-2", Name: "node-2"},
-			},
-			Administration: map[string]journal.AgentAdministration{
-				"node-2": {AgentID: "node-2", LifecycleState: "enrolling"},
-			},
-		}
-		after := peerAgent("node-2")
-		active := journal.AgentAdministration{AgentID: "node-2", LifecycleState: "active"}
-		batch := journal.Batch{
-			Agents:         []journal.Change[journal.AgentRegistration]{{Key: "node-2", Value: &after}},
-			Administration: []journal.Change[journal.AgentAdministration]{{Key: "node-2", Value: &active}},
-		}
-		if len(peerChangedAgentIDs(emptyBase, batch)) == 0 {
-			t.Fatal("first hello did not fan out")
-		}
-	})
-
-	t.Run("wireguard ipv6 only bumps self", func(t *testing.T) {
-		after := peerAgent("node-1")
-		after.WireguardIPv6 = "fd00:44::ff"
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(base, batch)) > 0 {
-			t.Fatal("own wireguard address fanned out")
-		}
-		if ids := selfAgentIDs(base, batch); len(ids) != 1 || ids[0] != "node-1" {
-			t.Fatalf("self bump %v", ids)
-		}
-	})
-
-	t.Run("wireguard listen port only bumps self", func(t *testing.T) {
-		after := peerAgent("node-1")
-		after.WireguardListenPort = 51821
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(base, batch)) > 0 {
-			t.Fatal("local WireGuard listen port fanned out")
-		}
-		if ids := selfAgentIDs(base, batch); len(ids) != 1 || ids[0] != "node-1" {
-			t.Fatalf("self bump %v", ids)
-		}
-	})
-
-	t.Run("wireguard endpoint fans out", func(t *testing.T) {
-		after := peerAgent("node-1")
-		after.WireguardEndpoint = "192.0.2.10:51820"
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(base, batch)) == 0 {
-			t.Fatal("WireGuard endpoint change did not fan out")
-		}
-	})
-
-	t.Run("wireguard endpoint cleared fans out", func(t *testing.T) {
-		after := peerAgent("node-1")
-		after.WireguardEndpoint = ""
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(base, batch)) == 0 {
-			t.Fatal("WireGuard endpoint removal did not fan out")
-		}
-	})
-
-	t.Run("wireguard endpoint set from empty fans out", func(t *testing.T) {
-		emptyEndpoint := peerAgent("node-1")
-		emptyEndpoint.WireguardEndpoint = ""
-		emptyBase := journal.DurableState{
-			Agents:         map[string]journal.AgentRegistration{"node-1": emptyEndpoint},
-			Administration: map[string]journal.AgentAdministration{"node-1": {AgentID: "node-1", LifecycleState: "active"}},
-		}
-		after := peerAgent("node-1")
-		batch := journal.Batch{Agents: []journal.Change[journal.AgentRegistration]{{Key: "node-1", Value: &after}}}
-		if len(peerChangedAgentIDs(emptyBase, batch)) == 0 {
-			t.Fatal("WireGuard endpoint set from empty did not fan out")
-		}
-	})
-}
-
-func TestServiceAndVolumeEnvironmentIDs(t *testing.T) {
-	base := journal.DurableState{
-		Services: map[string]journal.ServiceIntent{
-			"svc-a": {ID: "svc-a", EnvironmentID: "env-1"},
-		},
-		Volumes: map[string]journal.Volume{
-			"vol-a": {ID: "vol-a", EnvironmentID: "env-1"},
-		},
+	before := journal.NewProjection(state)
+	tests := []struct {
+		name   string
+		change func(*journal.DurableState)
+		want   []string
+	}{
+		{"reconnect", func(s *journal.DurableState) {
+			a := s.Agents["one"]
+			a.SessionIncarnation++
+			a.UpdatedAt = time.Now()
+			s.Agents["one"] = a
+		}, nil},
+		{"own listen port", func(s *journal.DurableState) { a := s.Agents["one"]; a.WireguardListenPort++; s.Agents["one"] = a }, []string{"one"}},
+		{"peer endpoint", func(s *journal.DurableState) {
+			a := s.Agents["one"]
+			a.WireguardEndpoint = "192.0.2.1:51820"
+			s.Agents["one"] = a
+		}, []string{"one", "two"}},
+		{"retire peer", func(s *journal.DurableState) {
+			a := s.Administration["one"]
+			a.LifecycleState = "retired"
+			s.Administration["one"] = a
+		}, []string{"one", "two"}},
+		{"revoke peer", func(s *journal.DurableState) {
+			a := s.Administration["one"]
+			now := time.Now()
+			a.CredentialRevokedAt = &now
+			s.Administration["one"] = a
+		}, []string{"one", "two"}},
+		{"volume removal", func(s *journal.DurableState) { delete(s.Volumes, "v") }, []string{"one", "two"}},
+		{"service move", func(s *journal.DurableState) { a := s.Services["s"]; a.EnvironmentID = "f"; s.Services["s"] = a }, []string{"one", "three", "two"}},
+		{"domain move", func(s *journal.DurableState) {
+			a := s.Domains["example.test"]
+			a.ServiceID = "foreign"
+			s.Domains["example.test"] = a
+		}, []string{"one", "three"}},
+		{"project visibility removal", func(s *journal.DurableState) {
+			delete(s.Projects, "p")
+			delete(s.Environments, "e")
+			delete(s.Services, "s")
+			delete(s.Services, "sibling")
+			delete(s.Assignments, "a")
+			delete(s.Assignments, "b")
+		}, []string{"one", "two"}},
 	}
-	renamed := journal.ServiceIntent{ID: "svc-a", EnvironmentID: "env-1", Name: "renamed"}
-	batch := journal.Batch{
-		Services: []journal.Change[journal.ServiceIntent]{{Key: "svc-a", Value: &renamed}},
-		Volumes:  []journal.Change[journal.Volume]{{Key: "vol-a"}},
-	}
-	if got := uniqueStrings(serviceEnvironmentIDs(base, batch, []string{"svc-a"})); len(got) != 1 || got[0] != "env-1" {
-		t.Fatalf("service envs %v", got)
-	}
-	if got := uniqueStrings(volumeEnvironmentIDs(base, batch)); len(got) != 1 || got[0] != "env-1" {
-		t.Fatalf("volume envs %v", got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			next := state.Clone()
+			test.change(&next)
+			batch := journal.Diff(state, next)
+			after, err := before.Preview(batch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := affectedAgentIDs(before, after, batch); !slices.Equal(got, test.want) {
+				t.Fatalf("affected=%v want=%v", got, test.want)
+			}
+		})
 	}
 }
 

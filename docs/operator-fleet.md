@@ -55,6 +55,15 @@ Retirement consumes remaining bootstrap tokens, sets `credential_revoked_at`, ap
 
 The live owner truncates `cluster_journal` in batches while retaining at least the latest 1024 commands. Restarts rebuild from the authoritative normalized product tables in one consistent database transaction; there is no whole-state JSON checkpoint. Retried commands are looked up in `cluster_journal_receipts` after their log row is gone. Internally generated receipts expire after one hour, while caller-provided idempotency receipts expire after seven days.
 
+Persistence operations couple SQL to typed product effects through
+`journal.Mutation`. The command resolves only affected row keys, derives agent
+revision bumps from indexed before/after projections, and appends their exact
+changes in the same transaction. Tombstone, restore and parent deletion capture
+the affected subtree before the SQL changes visibility. The journal and live
+owner borrow one immutable indexed projection; unchanged reads publish nothing.
+Compaction recovery imports a fresh normalized projection and resets incremental
+agent sync baselines.
+
 ## Local stack
 
 `make dev-ephemeral` enrolls `localteststack-agent` in region `local` / failure domain `localteststack` and marks the dev user as a platform operator so the Fleet page is usable.

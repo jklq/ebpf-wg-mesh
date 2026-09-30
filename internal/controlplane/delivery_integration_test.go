@@ -46,7 +46,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volume.ID); err != nil {
 			return err
 		}
-		journal.RecordVolume(ctx, volume.ID)
+		journal.VolumeRow(volume.ID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

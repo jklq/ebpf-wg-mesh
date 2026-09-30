@@ -1,6 +1,10 @@
 package delivery
 
 import (
+	"crypto/sha256"
+	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/reconciliation"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -35,29 +39,46 @@ type storedDiff struct {
 	SizeBytes    int
 }
 
-type agentSyncHistory struct {
-	lastRevision int64
-	lastSnapshot *agentv1.DesiredNodeState // stripped allocations+volumes only
-	diffs        []storedDiff
-	historyBytes int
-	// compactedBefore is the lowest retained base; cursors below need a checkpoint.
-	compactedBefore int64
-	initialized     bool
-	used            uint64 // LRU order for MaxTrackedAgents eviction
+// Only per-allocation fingerprints and bounded wire patches are retained. The
+// shared product projection owns the rows; a journal batch invalidates exactly
+// the assignments whose rendered desired state can change.
+type allocationFingerprint struct {
+	Content  [32]byte
+	VolumeID string
+	Overlay  string
 }
 
-// allocSync resets on live resign/become so a new owner falls back to checkpoints.
+type agentSyncHistory struct {
+	revision     int64
+	target       int64
+	services     map[string]allocationFingerprint
+	volumes      map[string][32]byte
+	dirty        map[string]bool
+	serial       uint64
+	diffs        []storedDiff
+	historyBytes int
+	initialized  bool
+	used         uint64
+}
+
+type syncBaseline struct {
+	history  *agentSyncHistory
+	revision int64
+	services map[string]allocationFingerprint
+	volumes  map[string][32]byte // immutable fingerprint maps
+	dirty    []string
+	serial   uint64
+	usable   bool
+}
+
 type allocSync struct {
 	mu      sync.Mutex
 	history map[string]*agentSyncHistory
 	use     uint64
 }
 
-func newAllocSync() *allocSync {
-	return &allocSync{history: make(map[string]*agentSyncHistory)}
-}
+func newAllocSync() *allocSync { return &allocSync{history: make(map[string]*agentSyncHistory)} }
 
-// historyFor creates agentID's history with LRU eviction. Callers hold s.mu.
 func (s *allocSync) historyFor(agentID string) *agentSyncHistory {
 	h := s.history[agentID]
 	if h == nil && len(s.history) >= MaxTrackedAgents {
@@ -71,11 +92,11 @@ func (s *allocSync) historyFor(agentID string) *agentSyncHistory {
 		delete(s.history, oldestKey)
 	}
 	if h == nil {
-		h = &agentSyncHistory{}
+		h = &agentSyncHistory{dirty: make(map[string]bool)}
+		s.history[agentID] = h
 	}
 	s.use++
 	h.used = s.use
-	s.history[agentID] = h
 	return h
 }
 
@@ -88,111 +109,208 @@ func (s *allocSync) reset() {
 	s.history = make(map[string]*agentSyncHistory)
 }
 
-// recordAndDiff records current and returns diffs from base to it. ok=false
-// when a checkpoint is required (uninitialized base, compacted history, gap).
-func (s *allocSync) recordAndDiff(agentID string, current *agentv1.DesiredNodeState, base int64) (diffs []storedDiff, ok bool) {
-	if s == nil || current == nil {
-		return nil, false
+func (s *allocSync) applied(before *journal.Projection, update journal.Applied) {
+	if s == nil {
+		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	h := s.historyFor(agentID)
-	stripped := stripForDiff(current)
-	target := current.GetReconciliationCursor()
-	if !h.initialized {
-		h.lastRevision = target
-		h.lastSnapshot = stripped
-		h.compactedBefore = target
-		h.initialized = true
-		if base == target {
-			return nil, true
+	after := update.Projection
+	if update.Reset {
+		for id, h := range s.history {
+			h.initialized = false
+			h.services = nil
+			h.volumes = nil
+			h.diffs = nil
+			h.historyBytes = 0
+			h.dirty = make(map[string]bool)
+			h.target = after.Agents[id].DesiredRevision
+			h.serial++
 		}
-		return nil, false
-	}
-	if target < h.lastRevision {
-		// Durable revision regressed; rebase and require a checkpoint.
-		h.lastRevision = target
-		h.lastSnapshot = stripped
-		h.diffs = nil
-		h.historyBytes = 0
-		h.compactedBefore = target
-		return nil, false
-	}
-	if target > h.lastRevision {
-		diff := diffSnapshots(h.lastSnapshot, stripped, h.lastRevision, target)
-		h.diffs = append(h.diffs, diff)
-		h.historyBytes += diff.SizeBytes
-		h.lastRevision = target
-		h.lastSnapshot = stripped
-		for len(h.diffs) > 0 && (len(h.diffs) > MaxDiffEntriesPerAgent || h.historyBytes > MaxDiffHistoryBytesPerAgent) {
-			h.historyBytes -= h.diffs[0].SizeBytes
-			h.diffs = h.diffs[1:]
-		}
-		if len(h.diffs) > 0 {
-			h.compactedBefore = h.diffs[0].Base
-		} else {
-			h.compactedBefore = h.lastRevision
-		}
-	}
-	return h.diffsFromBase(base)
-}
-
-// diffsFromBase collects the contiguous retained chain from base to latest
-// within the per-payload caps. ok=false when a checkpoint is required.
-func (h *agentSyncHistory) diffsFromBase(base int64) (diffs []storedDiff, ok bool) {
-	if base == h.lastRevision {
-		return nil, true
-	}
-	if base < h.compactedBefore || base > h.lastRevision {
-		return nil, false
-	}
-	var out []storedDiff
-	cursor := base
-	for _, d := range h.diffs {
-		if d.Target <= cursor {
-			continue
-		}
-		if d.Base != cursor {
-			return nil, false
-		}
-		out = append(out, d)
-		cursor = d.Target
-		if cursor == h.lastRevision {
-			break
-		}
-	}
-	if cursor != h.lastRevision {
-		return nil, false
-	}
-	for _, d := range out {
-		if d.SizeBytes > MaxDiffPayloadBytes || len(d.Starts)+len(d.Updates)+len(d.Stops) > MaxDiffAllocationsPerMessage {
-			return nil, false
-		}
-	}
-	return out, true
-}
-
-// recordCurrent tracks durable revisions even with no agent connected.
-func (s *allocSync) recordCurrent(agentID string, current *agentv1.DesiredNodeState) {
-	if s == nil || current == nil {
 		return
 	}
-	_, _ = s.recordAndDiff(agentID, current, current.GetReconciliationCursor())
+	// Group effects by their old/new host once. Unrelated commits do not touch a
+	// history or invalidate a sync plan currently being rendered for another node.
+	byAgent := make(map[string]map[string]bool)
+	for id := range changedAssignmentIDs(before, after, update.Batches) {
+		for _, agentID := range []string{before.Assignments[id].AgentID, after.Assignments[id].AgentID} {
+			if agentID == "" {
+				continue
+			}
+			if byAgent[agentID] == nil {
+				byAgent[agentID] = make(map[string]bool)
+			}
+			byAgent[agentID][id] = true
+		}
+	}
+	for _, batch := range update.Batches {
+		for _, c := range batch.Agents {
+			if before.Agents[c.Key].DesiredRevision != after.Agents[c.Key].DesiredRevision && byAgent[c.Key] == nil {
+				byAgent[c.Key] = make(map[string]bool)
+			}
+		}
+	}
+	for agentID, ids := range byAgent {
+		h := s.history[agentID]
+		if h == nil {
+			continue
+		}
+		target := after.Agents[agentID].DesiredRevision
+		if h.target == target && len(ids) == 0 {
+			continue
+		}
+		h.target = target
+		h.serial++
+		if !h.initialized {
+			continue
+		}
+		for id := range ids {
+			h.dirty[id] = true
+		}
+		// Disconnected agents can accumulate arbitrarily many removed identities.
+		// Beyond a useful patch size, drop the optimization and require a checkpoint.
+		if len(h.dirty) > MaxDiffAllocationsPerMessage {
+			h.initialized = false
+			h.services = nil
+			h.volumes = nil
+			h.diffs = nil
+			h.historyBytes = 0
+			h.dirty = make(map[string]bool)
+		}
+	}
 }
 
-// rebase moves the diff baseline to current after a checkpoint, which travels
-// outside the retained chain. Without this the next diff would silently skip
-// fields the checkpoint changed.
+func changedAssignmentIDs(before, after *journal.Projection, batches []journal.Batch) map[string]bool {
+	ids, services, environments := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	for _, batch := range batches {
+		for _, c := range batch.Assignments {
+			ids[c.Key] = true
+		}
+		for _, c := range batch.Services {
+			services[c.Key] = true
+		}
+		for _, c := range batch.Revisions {
+			id, _, _ := strings.Cut(c.Key, "/")
+			services[id] = true
+		}
+		for _, c := range batch.Rollouts {
+			id, _, _ := strings.Cut(c.Key, "/")
+			services[id] = true
+		}
+		for _, c := range batch.Domains {
+			services[before.Domains[c.Key].ServiceID] = true
+			services[after.Domains[c.Key].ServiceID] = true
+		}
+		for _, c := range batch.Environments {
+			environments[c.Key] = true
+		}
+		for _, c := range batch.Volumes {
+			environments[before.Volumes[c.Key].EnvironmentID] = true
+			environments[after.Volumes[c.Key].EnvironmentID] = true
+		}
+		for _, c := range batch.Projects {
+			for _, env := range before.EnvironmentIDsForProject(c.Key) {
+				environments[env] = true
+			}
+			for _, env := range after.EnvironmentIDsForProject(c.Key) {
+				environments[env] = true
+			}
+		}
+	}
+	for env := range environments {
+		for _, id := range before.ServiceIDsForEnvironment(env) {
+			services[id] = true
+		}
+		for _, id := range after.ServiceIDsForEnvironment(env) {
+			services[id] = true
+		}
+	}
+	for service := range services {
+		for _, id := range before.AssignmentIDsForService(service) {
+			ids[id] = true
+		}
+		for _, id := range after.AssignmentIDsForService(service) {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
+func (s *allocSync) baseline(agentID string, cursor int64) syncBaseline {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.historyFor(agentID)
+	ids := slices.Collect(maps.Keys(h.dirty))
+	slices.Sort(ids)
+	return syncBaseline{h, h.revision, h.services, h.volumes, ids, h.serial, h.initialized && h.target <= cursor && h.revision <= cursor}
+}
+
+// acceptDiff publishes rendered patches only if their captured invalidation
+// prefix still matches. A concurrent command makes the caller send its captured
+// checkpoint instead; the pending newer effects remain for the next sync.
+func (s *allocSync) acceptDiff(agentID string, baseline syncBaseline, cursor int64, services map[string]allocationFingerprint, volumes map[string][32]byte, diff storedDiff) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	h := s.history[agentID]
+	if h == nil || h != baseline.history || h.serial != baseline.serial || !h.initialized || h.revision != baseline.revision {
+		return false
+	}
+	h.revision, h.services, h.volumes = cursor, services, volumes
+	h.dirty = make(map[string]bool)
+	h.diffs = append(h.diffs, diff)
+	h.historyBytes += diff.SizeBytes
+	for len(h.diffs) > 0 && (len(h.diffs) > MaxDiffEntriesPerAgent || h.historyBytes > MaxDiffHistoryBytesPerAgent) {
+		h.historyBytes -= h.diffs[0].SizeBytes
+		h.diffs = h.diffs[1:]
+	}
+	return true
+}
+
 func (s *allocSync) rebase(agentID string, current *agentv1.DesiredNodeState) {
 	if s == nil || current == nil {
 		return
 	}
+	services, volumes := fingerprintState(current)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	h := s.historyFor(agentID)
-	h.lastRevision = current.GetReconciliationCursor()
-	h.lastSnapshot = stripForDiff(current)
+	cursor := current.GetReconciliationCursor()
+	// A delayed checkpoint callback must not rewind a newer established baseline.
+	if h.initialized && cursor < h.revision {
+		return
+	}
+	h.revision, h.services, h.volumes = cursor, services, volumes
+	if h.target < cursor {
+		h.target = cursor
+	}
 	h.initialized = true
+	h.diffs = nil
+	h.historyBytes = 0
+	if h.target <= cursor {
+		h.dirty = make(map[string]bool)
+	}
+	h.serial++
+}
+
+func fingerprintState(state *agentv1.DesiredNodeState) (map[string]allocationFingerprint, map[string][32]byte) {
+	services, volumes := map[string]allocationFingerprint{}, map[string][32]byte{}
+	for _, svc := range state.GetServices() {
+		services[svc.GetAllocationId()] = serviceFingerprint(svc)
+	}
+	for _, v := range state.GetVolumes() {
+		volumes[v.GetVolumeId()] = fingerprint(v)
+	}
+	return services, volumes
+}
+
+func serviceFingerprint(svc *agentv1.DesiredService) allocationFingerprint {
+	return allocationFingerprint{Content: fingerprint(svc), VolumeID: svc.GetVolumeId(),
+		Overlay: reconciliation.HashObservationOverlay([]*agentv1.DesiredService{svc})}
+}
+
+func fingerprint(message proto.Message) [32]byte {
+	raw, _ := proto.MarshalOptions{Deterministic: true}.Marshal(message)
+	return sha256.Sum256(raw)
 }
 
 func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, target int64, ok bool) {
@@ -201,120 +319,39 @@ func (s *allocSync) diffsFrom(agentID string, base int64) (diffs []storedDiff, t
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	h, exists := s.history[agentID]
-	if !exists || !h.initialized {
+	h := s.history[agentID]
+	if h == nil || !h.initialized {
 		return nil, 0, false
 	}
 	s.use++
 	h.used = s.use
-	out, ok := h.diffsFromBase(base)
-	return out, h.lastRevision, ok
+	diffs, ok = h.diffsFromBase(base)
+	return diffs, h.revision, ok
 }
 
-// stripForDiff keeps allocations+volumes only for diff comparison.
-func stripForDiff(state *agentv1.DesiredNodeState) *agentv1.DesiredNodeState {
-	if state == nil {
-		return &agentv1.DesiredNodeState{}
+func (h *agentSyncHistory) diffsFromBase(base int64) ([]storedDiff, bool) {
+	if base == h.revision {
+		return nil, true
 	}
-	out := &agentv1.DesiredNodeState{
-		AgentId:              state.GetAgentId(),
-		ReconciliationCursor: state.GetReconciliationCursor(),
+	if base > h.revision {
+		return nil, false
 	}
-	for _, v := range state.GetVolumes() {
-		out.Volumes = append(out.Volumes, proto.Clone(v).(*agentv1.DesiredVolume))
-	}
-	for _, svc := range state.GetServices() {
-		clean := proto.Clone(svc).(*agentv1.DesiredService)
-		clean.RegistryUsername = ""
-		clean.RegistryPassword = ""
-		out.Services = append(out.Services, clean)
-	}
-	sortDesiredForDiff(out)
-	return out
-}
-
-func sortDesiredForDiff(state *agentv1.DesiredNodeState) {
-	slices.SortFunc(state.Volumes, func(a, b *agentv1.DesiredVolume) int {
-		return strings.Compare(a.GetVolumeId(), b.GetVolumeId())
-	})
-	slices.SortFunc(state.Services, func(a, b *agentv1.DesiredService) int {
-		return strings.Compare(a.GetAllocationId(), b.GetAllocationId())
-	})
-}
-
-func diffSnapshots(old, new *agentv1.DesiredNodeState, base, target int64) storedDiff {
-	if old == nil {
-		old = &agentv1.DesiredNodeState{}
-	}
-	if new == nil {
-		new = &agentv1.DesiredNodeState{}
-	}
-	oldServices := make(map[string]*agentv1.DesiredService, len(old.GetServices()))
-	for _, svc := range old.GetServices() {
-		oldServices[svc.GetAllocationId()] = svc
-	}
-	newServices := make(map[string]*agentv1.DesiredService, len(new.GetServices()))
-	for _, svc := range new.GetServices() {
-		newServices[svc.GetAllocationId()] = svc
-	}
-	var starts, updates []*agentv1.DesiredService
-	var stops []string
-	for id, svc := range newServices {
-		prev, exists := oldServices[id]
-		if !exists {
-			starts = append(starts, proto.Clone(svc).(*agentv1.DesiredService))
+	var out []storedDiff
+	cursor := base
+	for _, d := range h.diffs {
+		if d.Target <= cursor {
 			continue
 		}
-		if !proto.Equal(prev, svc) {
-			updates = append(updates, proto.Clone(svc).(*agentv1.DesiredService))
+		if d.Base != cursor || d.SizeBytes > MaxDiffPayloadBytes || len(d.Starts)+len(d.Updates)+len(d.Stops) > MaxDiffAllocationsPerMessage {
+			return nil, false
+		}
+		out = append(out, d)
+		cursor = d.Target
+		if cursor == h.revision {
+			return out, true
 		}
 	}
-	for id := range oldServices {
-		if _, exists := newServices[id]; !exists {
-			stops = append(stops, id)
-		}
-	}
-	slices.SortFunc(starts, func(a, b *agentv1.DesiredService) int {
-		return strings.Compare(a.GetAllocationId(), b.GetAllocationId())
-	})
-	slices.SortFunc(updates, func(a, b *agentv1.DesiredService) int {
-		return strings.Compare(a.GetAllocationId(), b.GetAllocationId())
-	})
-	slices.Sort(stops)
-
-	oldVolumes := make(map[string]*agentv1.DesiredVolume, len(old.GetVolumes()))
-	for _, v := range old.GetVolumes() {
-		oldVolumes[v.GetVolumeId()] = v
-	}
-	newVolumes := make(map[string]*agentv1.DesiredVolume, len(new.GetVolumes()))
-	for _, v := range new.GetVolumes() {
-		newVolumes[v.GetVolumeId()] = v
-	}
-	var volumeStarts []*agentv1.DesiredVolume
-	var volumeStops []string
-	for id, v := range newVolumes {
-		prev, exists := oldVolumes[id]
-		if !exists || !proto.Equal(prev, v) {
-			volumeStarts = append(volumeStarts, proto.Clone(v).(*agentv1.DesiredVolume))
-		}
-	}
-	for id := range oldVolumes {
-		if _, exists := newVolumes[id]; !exists {
-			volumeStops = append(volumeStops, id)
-		}
-	}
-	slices.SortFunc(volumeStarts, func(a, b *agentv1.DesiredVolume) int {
-		return strings.Compare(a.GetVolumeId(), b.GetVolumeId())
-	})
-	slices.Sort(volumeStops)
-
-	diff := storedDiff{
-		Base: base, Target: target,
-		Starts: starts, Updates: updates, Stops: stops,
-		VolumeStarts: volumeStarts, VolumeStops: volumeStops,
-	}
-	diff.SizeBytes = diffPayloadSize(&diff)
-	return diff
+	return nil, false
 }
 
 func diffPayloadSize(d *storedDiff) int {
@@ -395,4 +432,12 @@ func (d storedDiff) ToProto(agentID string) *agentv1.AllocationDiff {
 		out.VolumeStarts = append(out.VolumeStarts, proto.Clone(v).(*agentv1.DesiredVolume))
 	}
 	return out
+}
+
+func (s *allocSync) discardThrough(agentID string, cursor int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if h := s.history[agentID]; h != nil && h.revision <= cursor {
+		delete(s.history, agentID)
+	}
 }

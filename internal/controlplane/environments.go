@@ -128,10 +128,9 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.U
 			return deliverycore.ErrEnvironmentDeleted
 		}
 		now := time.Now().UTC()
-		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
+		if _, err := journal.EnvironmentRow(current.ID).Exec(ctx, tx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
 			return err
 		}
-		journal.RecordEnvironment(ctx, current.ID)
 		current.Name = name
 		current.UpdatedAt = now
 		rec = current
@@ -155,10 +154,9 @@ func (s *catalogPersistence) updateEnvironmentAutoDeploy(ctx context.Context, us
 			return deliverycore.ErrEnvironmentDeleted
 		}
 		now := time.Now().UTC()
-		if _, err := tx.ExecContext(ctx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
+		if _, err := journal.EnvironmentRow(current.ID).Exec(ctx, tx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
 			return err
 		}
-		journal.RecordEnvironment(ctx, current.ID)
 		current.AutoDeploy = autoDeploy
 		current.UpdatedAt = now
 		rec = current
@@ -205,9 +203,6 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.U
 		if err := s.quiesceEnvironmentServicesTx(ctx, tx, rec.ID, user.ID()); err != nil {
 			return err
 		}
-		if err := journal.RecordEnvironmentRemoval(ctx, tx, rec.ID); err != nil {
-			return err
-		}
 		agentIDs, err = s.environmentAgentIDsQuerier(ctx, tx, rec.ID)
 		if err != nil {
 			return err
@@ -250,9 +245,6 @@ func (s *catalogPersistence) restoreEnvironment(ctx context.Context, user authz.
 		if err := dropEnvironmentAssignmentsTx(ctx, tx, current.ID); err != nil {
 			return err
 		}
-		if err := journal.RecordEnvironmentRemoval(ctx, tx, current.ID); err != nil {
-			return err
-		}
 		rec, err = s.environmentByScopeQuerier(ctx, tx, scope)
 		return err
 	})
@@ -281,7 +273,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
-	_, err = q.ExecContext(ctx, `
+	_, err = journal.EnvironmentRow(rec.ID).Exec(ctx, q, `
 		INSERT INTO environments(
 			id, project_id, name, kind, is_production, auto_deploy, network_identity,
 			copied_from_environment_id, created_at, updated_at
@@ -292,7 +284,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 	if err != nil {
 		return deliverycore.EnvironmentRecord{}, err
 	}
-	journal.RecordEnvironment(ctx, rec.ID)
+
 	return rec, nil
 }
 
@@ -449,7 +441,6 @@ func (s *catalogPersistence) deleteVolume(ctx context.Context, user authz.User, 
 		if !tombstoned {
 			return nil
 		}
-		journal.RecordVolume(ctx, rec.ID)
 		return nil
 	})
 }
@@ -545,7 +536,7 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, pro
 		SizeBytes:     sizeBytes,
 		CreatedAt:     time.Now().UTC(),
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.VolumeRow(rec.ID).Exec(ctx, tx,
 		`INSERT INTO volumes(id, environment_id, name, size_bytes, created_at) VALUES ($1, $2, $3, $4, $5)`,
 		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
 	); err != nil {
@@ -555,6 +546,5 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, pro
 		}
 		return deliverycore.VolumeRecord{}, err
 	}
-	journal.RecordVolume(ctx, rec.ID)
 	return rec, nil
 }

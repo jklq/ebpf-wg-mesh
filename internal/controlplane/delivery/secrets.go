@@ -62,9 +62,7 @@ func (d *Delivery) SealServiceSecret(ctx context.Context, user authz.User, servi
 		if err != nil {
 			return err
 		}
-		// Sealed rows are not journaled, but agents must still re-pull desired
-		// state to pick up the new value.
-		journal.RecordService(ctx, scope.ID())
+		// Draft secret versions reach allocations when a deployment pins them.
 		return nil
 	})
 	if err != nil {
@@ -91,7 +89,6 @@ func (d *Delivery) DeleteServiceSecret(ctx context.Context, user authz.User, ser
 		if err := secrets.Sealed().Delete(ctx, tx, scope.ID(), name); err != nil {
 			return err
 		}
-		journal.RecordService(ctx, scope.ID())
 		return nil
 	})
 }
@@ -139,8 +136,9 @@ func (d *Delivery) rejectSealedNameConflicts(ctx context.Context, tx *sql.Tx, se
 
 // resolveSealedEnv merges decrypted sealed values into an agent's desired
 // state. It is the only control-plane path that decrypts, and only for services
-// assigned to this agent. Deployments pin versions; unpinned names use current.
-func (d *Delivery) resolveSealedEnv(ctx context.Context, state *agentv1.DesiredNodeState) error {
+// assigned to this agent. Each allocation uses only the sealed names and versions
+// its deployment captured in the same immutable product prefix as its spec.
+func (d *Delivery) resolveSealedEnv(ctx context.Context, product *journal.Projection, state *agentv1.DesiredNodeState) error {
 	secrets := d.store.secrets
 	if secrets == nil || state == nil {
 		return nil
@@ -149,30 +147,30 @@ func (d *Delivery) resolveSealedEnv(ctx context.Context, state *agentv1.DesiredN
 	if len(services) == 0 {
 		return nil
 	}
-	serviceIDs := make([]string, 0, len(services))
-	deploymentIDs := make([]string, 0, len(services))
-	seenServices := map[string]bool{}
+	deployments := make([]secretkeys.DeploymentSecrets, 0, len(services))
 	seenDeployments := map[string]bool{}
 	for _, svc := range services {
-		if svc.GetServiceId() != "" && !seenServices[svc.GetServiceId()] {
-			seenServices[svc.GetServiceId()] = true
-			serviceIDs = append(serviceIDs, svc.GetServiceId())
+		id := svc.GetDeploymentId()
+		if seenDeployments[id] {
+			continue
 		}
-		if svc.GetDeploymentId() != "" && !seenDeployments[svc.GetDeploymentId()] {
-			seenDeployments[svc.GetDeploymentId()] = true
-			deploymentIDs = append(deploymentIDs, svc.GetDeploymentId())
+		deployment, exists := product.Deployments[id]
+		if !exists || deployment.ServiceID != svc.GetServiceId() {
+			return fmt.Errorf("allocation %s has no matching deployment %s in the captured product prefix", svc.GetAllocationId(), id)
 		}
+		var versions map[string]int64
+		if err := json.Unmarshal(deployment.SealedVersionsJSON, &versions); err != nil {
+			return fmt.Errorf("decode deployment %s sealed versions: %w", id, err)
+		}
+		seenDeployments[id] = true
+		deployments = append(deployments, secretkeys.DeploymentSecrets{DeploymentID: id, ServiceID: deployment.ServiceID, Versions: versions})
 	}
-	pins, err := d.deploymentSealedPins(ctx, deploymentIDs)
-	if err != nil {
-		return err
-	}
-	resolved, err := secrets.Sealed().ResolveMany(ctx, d.store.db, serviceIDs, pins)
+	resolved, err := secrets.Sealed().ResolveDeployments(ctx, d.store.db, deployments)
 	if err != nil {
 		return err
 	}
 	for _, svc := range services {
-		values := resolved[svc.GetServiceId()]
+		values := resolved[svc.GetDeploymentId()]
 		if len(values) == 0 {
 			continue
 		}
@@ -189,44 +187,4 @@ func (d *Delivery) resolveSealedEnv(ctx context.Context, state *agentv1.DesiredN
 		}
 	}
 	return nil
-}
-
-// deploymentSealedPins loads sealed_versions_json per service. The column carries
-// sealed names only, so public/sealed moves cannot collide. Names a deployment
-// predates resolve to current.
-func (d *Delivery) deploymentSealedPins(ctx context.Context, deploymentIDs []string) (map[string]map[string]int64, error) {
-	out := map[string]map[string]int64{}
-	if len(deploymentIDs) == 0 {
-		return out, nil
-	}
-	rows, err := d.store.db.QueryContext(ctx,
-		`SELECT service_id, sealed_versions_json FROM deployments WHERE id = ANY($1)`, deploymentIDs)
-	if err != nil {
-		return nil, fmt.Errorf("load deployment sealed versions: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var serviceID string
-		var raw []byte
-		if err := rows.Scan(&serviceID, &raw); err != nil {
-			return nil, fmt.Errorf("scan deployment sealed versions: %w", err)
-		}
-		var versions map[string]int64
-		if err := json.Unmarshal(raw, &versions); err != nil {
-			return nil, fmt.Errorf("decode deployment sealed versions: %w", err)
-		}
-		for name, version := range versions {
-			if version <= 0 {
-				continue
-			}
-			if out[serviceID] == nil {
-				out[serviceID] = map[string]int64{}
-			}
-			out[serviceID][name] = version
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("load deployment sealed versions: %w", err)
-	}
-	return out, nil
 }

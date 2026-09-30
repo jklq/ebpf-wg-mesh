@@ -56,15 +56,6 @@ type liveWatcher struct {
 	ch      chan struct{}
 }
 
-type liveIndexes struct {
-	environmentsByAgent   map[string][]string
-	agentsByEnvironment   map[string][]string
-	assignmentsByAgent    map[string][]string
-	assignmentsByService  map[string][]string
-	domainsByService      map[string][]string
-	servicesByEnvironment map[string][]string
-}
-
 const (
 	liveEvalExpiry   = "expiry"
 	liveEvalDeadline = "deadline"
@@ -87,12 +78,12 @@ type Live struct {
 	timers       map[string]*time.Timer
 	deadlines    map[string]time.Time
 
-	durable        journal.DurableState
+	product        *journal.Projection
 	durableIndexes map[string]int64
 	liveIndex      uint64
 	authorityEpoch uint64
-	indexes        liveIndexes
 	watchers       []*liveWatcher
+	allocSync      *allocSync
 
 	evals chan liveEval
 }
@@ -107,7 +98,8 @@ func NewLive() *Live {
 		timers:         make(map[string]*time.Timer),
 		deadlines:      make(map[string]time.Time),
 		durableIndexes: make(map[string]int64),
-		indexes:        newLiveIndexes(),
+		product:        journal.NewProjection(journal.DurableState{}),
+		allocSync:      newAllocSync(),
 		evals:          make(chan liveEval, 128),
 	}
 }
@@ -161,18 +153,12 @@ func (d *Delivery) BecomeLive(ctx context.Context) error {
 	if d == nil || d.live == nil {
 		return nil
 	}
-	if d.allocSync != nil {
-		d.allocSync.reset()
-	}
 	return d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch)
 }
 
 func (d *Delivery) ResignLive() {
 	if d != nil && d.live != nil {
 		d.live.resign()
-	}
-	if d != nil && d.allocSync != nil {
-		d.allocSync.reset()
 	}
 }
 
@@ -187,9 +173,6 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	}
 	owned := false
 	if !d.live.Serving() {
-		if d.allocSync != nil {
-			d.allocSync.reset()
-		}
 		if err := d.live.become(ctx, d.store.readState, d.store.readAuthorityEpoch); err != nil {
 			return err
 		}
@@ -198,9 +181,6 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	if owned {
 		defer func() {
 			d.live.resign()
-			if d.allocSync != nil {
-				d.allocSync.reset()
-			}
 		}()
 	}
 
@@ -218,16 +198,16 @@ func (d *Delivery) ServeLive(ctx context.Context) error {
 	}
 }
 
-func (l *Live) become(ctx context.Context, readState func(context.Context, func(*sql.Tx, journal.DurableState) error) error, readEpoch func(context.Context) (uint64, error)) error {
+func (l *Live) become(ctx context.Context, readState func(context.Context, func(*sql.Tx, *journal.Projection) error) error, readEpoch func(context.Context) (uint64, error)) error {
 	l.mu.Lock()
 	l.resetLocked()
 	l.publishing = false
 	l.accepting = false
 	l.mu.Unlock()
 
-	var durable journal.DurableState
-	if err := readState(ctx, func(_ *sql.Tx, state journal.DurableState) error {
-		durable = state
+	var product *journal.Projection
+	if err := readState(ctx, func(_ *sql.Tx, state *journal.Projection) error {
+		product = state
 		return nil
 	}); err != nil {
 		l.mu.Lock()
@@ -249,8 +229,8 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.applyDurableLocked(durable)
-	durable = l.durable.Clone()
+	l.applyProductLocked(journal.Applied{Projection: product, Reset: true})
+	durable := l.product.DurableState
 	l.serving = true
 	l.authorityEpoch = epoch
 	for id, assignment := range durable.Assignments {
@@ -270,6 +250,7 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 }
 
 func (l *Live) resetLocked() {
+	l.allocSync.reset()
 	for _, timer := range l.timers {
 		timer.Stop()
 	}
@@ -282,9 +263,8 @@ func (l *Live) resetLocked() {
 	l.timers = make(map[string]*time.Timer)
 	l.deadlines = make(map[string]time.Time)
 	l.authorityEpoch = 0
-	l.durable = journal.DurableState{}
+	l.product = journal.NewProjection(journal.DurableState{})
 	l.durableIndexes = make(map[string]int64)
-	l.indexes = newLiveIndexes()
 	for {
 		select {
 		case <-l.evals:

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -101,181 +100,99 @@ func platformWaitDuration(seconds int32) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func (s *database) bumpAffectedAgents(ctx context.Context, tx *sql.Tx, base journal.DurableState, batch journal.Batch) error {
-	recorder := journal.RecorderFromContext(ctx)
-	var domainServices map[string][]string
-	if recorder != nil {
-		domainServices = recorder.DomainServices()
-	}
-	agentIDs, err := affectedAgentIDs(ctx, tx, base, batch, domainServices)
+func (s *database) bumpAffectedAgents(ctx context.Context, tx *sql.Tx, base *journal.Projection, batch journal.Batch) error {
+	after, err := base.Preview(batch)
 	if err != nil {
 		return err
 	}
-	if len(agentIDs) == 0 {
-		return nil
-	}
-	return dbtx.BumpDesiredRevisions(ctx, tx, agentIDs)
+	return dbtx.BumpDesiredRevisions(ctx, tx, affectedAgentIDs(base, after, batch))
 }
 
-func affectedAgentIDs(ctx context.Context, tx *sql.Tx, base journal.DurableState, batch journal.Batch, domainServices map[string][]string) ([]string, error) {
-	environments := make([]string, 0, len(batch.Environments)+len(batch.Volumes)+len(batch.Services))
-	for _, change := range batch.Environments {
-		environments = append(environments, change.Key)
-	}
-	environments = append(environments, volumeEnvironmentIDs(base, batch)...)
-	environments = append(environments, serviceEnvironmentIDs(base, batch, serviceIDsFromEnvScoped(batch))...)
-	changedPeers := peerChangedAgentIDs(base, batch)
-	assignmentServices := make([]string, 0, len(batch.Assignments)*2)
-	var assignmentAgents []string
-	for _, change := range batch.Assignments {
-		if before, ok := base.Assignments[change.Key]; ok {
-			assignmentServices = append(assignmentServices, before.ServiceID)
-			assignmentAgents = append(assignmentAgents, before.AgentID)
-		}
-		if change.Value != nil {
-			assignmentServices = append(assignmentServices, change.Value.ServiceID)
-			assignmentAgents = append(assignmentAgents, change.Value.AgentID)
+func affectedAgentIDs(before, after *journal.Projection, batch journal.Batch) []string {
+	environments, services, agents := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
+	add := func(set map[string]struct{}, id string) {
+		if id != "" {
+			set[id] = struct{}{}
 		}
 	}
-	if len(changedPeers) > 0 {
-		peerSet := make(map[string]bool, len(changedPeers))
-		for _, id := range changedPeers {
-			peerSet[id] = true
-		}
-		for _, assignment := range base.Assignments {
-			if peerSet[assignment.AgentID] && assignment.RolloutState != "lost" {
-				assignmentServices = append(assignmentServices, assignment.ServiceID)
-			}
-		}
-		predicate, args := stringIn("a.agent_id", changedPeers)
-		found, err := queryStrings(ctx, tx, `SELECT DISTINCT s.environment_id FROM allocation_assignments a JOIN services s ON s.id = a.service_id WHERE a.rollout_state <> 'lost' AND `+predicate, args...)
-		if err != nil {
-			return nil, err
-		}
-		environments = append(environments, found...)
+	serviceEnvironment := func(id string) {
+		add(environments, before.Services[id].EnvironmentID)
+		add(environments, after.Services[id].EnvironmentID)
 	}
-	environments = uniqueStrings(append(environments, serviceEnvironmentIDs(base, batch, assignmentServices)...))
-
-	serviceScoped := map[string]struct{}{}
-	for _, change := range batch.Rollouts {
-		if serviceID, _, ok := strings.Cut(change.Key, "/"); ok {
-			serviceScoped[serviceID] = struct{}{}
-		}
+	for _, c := range batch.Environments {
+		add(environments, c.Key)
 	}
-	for _, services := range domainServices {
-		for _, serviceID := range services {
-			serviceScoped[serviceID] = struct{}{}
-		}
+	for _, c := range batch.Volumes {
+		add(environments, before.Volumes[c.Key].EnvironmentID)
+		add(environments, after.Volumes[c.Key].EnvironmentID)
 	}
-	unresolvedDomains := changedDomainsWithoutServiceHint(batch, domainServices)
-	if len(unresolvedDomains) > 0 {
-		resolved, err := servicesForDomainHostnames(ctx, tx, unresolvedDomains)
-		if err != nil {
-			return nil, err
+	for _, c := range batch.Services {
+		serviceEnvironment(c.Key)
+	}
+	for _, c := range batch.Revisions {
+		id, _, _ := strings.Cut(c.Key, "/")
+		serviceEnvironment(id)
+	}
+	for _, c := range batch.Assignments {
+		old, next := before.Assignments[c.Key], after.Assignments[c.Key]
+		add(agents, old.AgentID)
+		add(agents, next.AgentID)
+		serviceEnvironment(old.ServiceID)
+		serviceEnvironment(next.ServiceID)
+	}
+	for _, id := range peerChangedAgentIDs(before, after, batch) {
+		for _, env := range before.EnvironmentIDsForAgent(id) {
+			add(environments, env)
 		}
-		for _, serviceID := range resolved {
-			serviceScoped[serviceID] = struct{}{}
+		for _, env := range after.EnvironmentIDsForAgent(id) {
+			add(environments, env)
 		}
 	}
-
-	projects := make([]string, 0, len(batch.Projects))
-	for _, change := range batch.Projects {
-		projects = append(projects, change.Key)
+	for _, id := range selfAgentIDs(before, after, batch) {
+		add(agents, id)
 	}
-
-	var out []string
-	out = append(out, selfAgentIDs(base, batch)...)
-	out = append(out, assignmentAgents...)
-	// The SQL view is already updated; retain former members for removals.
-	environmentSet := make(map[string]bool, len(environments))
-	for _, id := range environments {
-		environmentSet[id] = true
+	for _, c := range batch.Rollouts {
+		id, _, _ := strings.Cut(c.Key, "/")
+		add(services, id)
 	}
-	if len(environmentSet) > 0 {
-		for _, assignment := range base.Assignments {
-			if environmentSet[base.Services[assignment.ServiceID].EnvironmentID] && assignment.RolloutState != "lost" {
-				out = append(out, assignment.AgentID)
-			}
+	for _, c := range batch.Domains {
+		add(services, before.Domains[c.Key].ServiceID)
+		add(services, after.Domains[c.Key].ServiceID)
+	}
+	for _, c := range batch.Projects {
+		for _, env := range before.EnvironmentIDsForProject(c.Key) {
+			add(environments, env)
+		}
+		for _, env := range after.EnvironmentIDsForProject(c.Key) {
+			add(environments, env)
 		}
 	}
-	if ids := uniqueStrings(environments); len(ids) > 0 {
-		found, err := agentIDsForEnvironments(ctx, tx, ids)
-		if err != nil {
-			return nil, err
+	for env := range environments {
+		for _, id := range before.AgentIDsForEnvironment(env) {
+			add(agents, id)
 		}
-		out = append(out, found...)
-	}
-	if ids := keysOf(serviceScoped); len(ids) > 0 {
-		found, err := agentIDsForServices(ctx, tx, ids)
-		if err != nil {
-			return nil, err
+		for _, id := range after.AgentIDsForEnvironment(env) {
+			add(agents, id)
 		}
-		out = append(out, found...)
 	}
-	if len(projects) > 0 {
-		found, err := agentIDsForProjects(ctx, tx, projects)
-		if err != nil {
-			return nil, err
+	for service := range services {
+		for _, id := range before.AssignmentIDsForService(service) {
+			add(agents, before.Assignments[id].AgentID)
 		}
-		out = append(out, found...)
+		for _, id := range after.AssignmentIDsForService(service) {
+			add(agents, after.Assignments[id].AgentID)
+		}
 	}
-	sort.Strings(out)
-	return dedupe(out), nil
+	return keysOf(agents)
 }
 
-func serviceIDsFromEnvScoped(batch journal.Batch) []string {
-	ids := map[string]struct{}{}
-	for _, change := range batch.Services {
-		ids[change.Key] = struct{}{}
-	}
-	for _, change := range batch.Revisions {
-		if serviceID, _, ok := strings.Cut(change.Key, "/"); ok {
-			ids[serviceID] = struct{}{}
-		}
-	}
-	return keysOf(ids)
-}
-
-func volumeEnvironmentIDs(base journal.DurableState, batch journal.Batch) []string {
-	var out []string
-	for _, change := range batch.Volumes {
-		if change.Value != nil {
-			out = append(out, change.Value.EnvironmentID)
-			continue
-		}
-		if volume, ok := base.Volumes[change.Key]; ok {
-			out = append(out, volume.EnvironmentID)
-		}
-	}
-	return out
-}
-
-func serviceEnvironmentIDs(base journal.DurableState, batch journal.Batch, serviceIDs []string) []string {
-	fromBatch := map[string]string{}
-	for _, change := range batch.Services {
-		if change.Value != nil {
-			fromBatch[change.Key] = change.Value.EnvironmentID
-		}
-	}
-	var out []string
-	for _, id := range serviceIDs {
-		if envID, ok := fromBatch[id]; ok {
-			out = append(out, envID)
-		}
-		if service, ok := base.Services[id]; ok {
-			out = append(out, service.EnvironmentID)
-		}
-	}
-	return out
-}
-
-func peerChangedAgentIDs(base journal.DurableState, batch journal.Batch) []string {
+func peerChangedAgentIDs(base, after *journal.Projection, batch journal.Batch) []string {
 	var out []string
 	for _, id := range changedAgentIDs(batch) {
 		beforeAgent, hasBeforeAgent := base.Agents[id]
 		beforeAdmin, hasBeforeAdmin := base.Administration[id]
-		afterAgent, hasAfterAgent := agentAfter(base, batch, id)
-		afterAdmin, hasAfterAdmin := adminAfter(base, batch, id)
+		afterAgent, hasAfterAgent := after.Agents[id]
+		afterAdmin, hasAfterAdmin := after.Administration[id]
 		beforePeer := hasBeforeAgent && peerVisible(beforeAgent, beforeAdmin, hasBeforeAdmin)
 		afterPeer := hasAfterAgent && peerVisible(afterAgent, afterAdmin, hasAfterAdmin)
 		if beforePeer != afterPeer || afterPeer && hasBeforeAgent && peerFieldsChanged(beforeAgent, afterAgent) {
@@ -285,10 +202,10 @@ func peerChangedAgentIDs(base journal.DurableState, batch journal.Batch) []strin
 	return out
 }
 
-func selfAgentIDs(base journal.DurableState, batch journal.Batch) []string {
+func selfAgentIDs(base, after *journal.Projection, batch journal.Batch) []string {
 	var out []string
 	for _, id := range changedAgentIDs(batch) {
-		afterAgent, hasAfter := agentAfter(base, batch, id)
+		afterAgent, hasAfter := after.Agents[id]
 		if !hasAfter {
 			continue
 		}
@@ -309,34 +226,6 @@ func changedAgentIDs(batch journal.Batch) []string {
 		ids[change.Key] = struct{}{}
 	}
 	return keysOf(ids)
-}
-
-func agentAfter(base journal.DurableState, batch journal.Batch, id string) (journal.AgentRegistration, bool) {
-	for _, change := range batch.Agents {
-		if change.Key != id {
-			continue
-		}
-		if change.Value == nil {
-			return journal.AgentRegistration{}, false
-		}
-		return *change.Value, true
-	}
-	agent, ok := base.Agents[id]
-	return agent, ok
-}
-
-func adminAfter(base journal.DurableState, batch journal.Batch, id string) (journal.AgentAdministration, bool) {
-	for _, change := range batch.Administration {
-		if change.Key != id {
-			continue
-		}
-		if change.Value == nil {
-			return journal.AgentAdministration{}, false
-		}
-		return *change.Value, true
-	}
-	admin, ok := base.Administration[id]
-	return admin, ok
 }
 
 func peerVisible(agent journal.AgentRegistration, admin journal.AgentAdministration, hasAdmin bool) bool {
@@ -361,104 +250,11 @@ func selfNodeConfigChanged(before journal.AgentRegistration, hasBefore bool, aft
 	return before.WireguardIPv6 != after.WireguardIPv6 || before.WireguardListenPort != after.WireguardListenPort
 }
 
-func changedDomainsWithoutServiceHint(batch journal.Batch, domainServices map[string][]string) []string {
-	var out []string
-	for _, change := range batch.Domains {
-		if len(domainServices[change.Key]) == 0 {
-			out = append(out, change.Key)
-		}
-	}
-	return out
-}
-
-func agentIDsForServices(ctx context.Context, tx *sql.Tx, serviceIDs []string) ([]string, error) {
-	predicate, args := stringIn("service_id", serviceIDs)
-	return queryStrings(ctx, tx, `SELECT DISTINCT agent_id FROM allocation_assignments WHERE `+predicate, args...)
-}
-
-func agentIDsForEnvironments(ctx context.Context, tx *sql.Tx, environmentIDs []string) ([]string, error) {
-	predicate, args := stringIn("s.environment_id", environmentIDs)
-	return queryStrings(ctx, tx, `
-		SELECT DISTINCT a.agent_id
-		  FROM allocation_assignments a
-		  JOIN services s ON s.id = a.service_id
-		 WHERE a.rollout_state <> 'lost' AND `+predicate, args...)
-}
-
-func agentIDsForProjects(ctx context.Context, tx *sql.Tx, projectIDs []string) ([]string, error) {
-	predicate, args := stringIn("e.project_id", projectIDs)
-	return queryStrings(ctx, tx, `
-		SELECT DISTINCT a.agent_id
-		  FROM allocation_assignments a
-		  JOIN services s ON s.id = a.service_id
-		  JOIN environments e ON e.id = s.environment_id
-		 WHERE `+predicate, args...)
-}
-
-func servicesForDomainHostnames(ctx context.Context, tx *sql.Tx, hostnames []string) ([]string, error) {
-	predicate, args := stringIn("hostname", hostnames)
-	return queryStrings(ctx, tx, `SELECT DISTINCT service_id FROM domain_bindings WHERE `+predicate, args...)
-}
-
-func queryStrings(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var out []string
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			return nil, err
-		}
-		out = append(out, value)
-	}
-	return out, rows.Err()
-}
-
-func stringIn(column string, values []string) (string, []any) {
-	placeholders := make([]string, len(values))
-	args := make([]any, len(values))
-	for i, value := range values {
-		placeholders[i] = "$" + strconv.Itoa(i+1)
-		args[i] = value
-	}
-	return column + " IN (" + strings.Join(placeholders, ", ") + ")", args
-}
-
 func keysOf(set map[string]struct{}) []string {
 	out := make([]string, 0, len(set))
 	for key := range set {
 		out = append(out, key)
 	}
 	sort.Strings(out)
-	return out
-}
-
-func uniqueStrings(values []string) []string {
-	if len(values) == 0 {
-		return nil
-	}
-	seen := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		seen[value] = struct{}{}
-	}
-	return keysOf(seen)
-}
-
-func dedupe(sorted []string) []string {
-	if len(sorted) == 0 {
-		return nil
-	}
-	out := sorted[:1]
-	for _, value := range sorted[1:] {
-		if value != out[len(out)-1] {
-			out = append(out, value)
-		}
-	}
 	return out
 }

@@ -433,7 +433,7 @@ func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, alloca
 		); err != nil {
 			return err
 		}
-		journal.RecordAssignment(ctx, allocationID)
+		journal.AssignmentRow(allocationID).Capture(ctx)
 		return nil
 	}); err != nil {
 		return err
@@ -531,7 +531,7 @@ func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) e
 		if err := rows.Scan(&id); err != nil {
 			return err
 		}
-		journal.RecordDeployment(ctx, id)
+		journal.DeploymentRow(id).Capture(ctx)
 	}
 	return rows.Err()
 }
@@ -547,7 +547,7 @@ func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, service
 			rows.Close()
 			return err
 		}
-		journal.RecordAssignment(ctx, id)
+		journal.AssignmentRow(id).Capture(ctx)
 	}
 	if err := rows.Close(); err != nil {
 		return err
@@ -556,7 +556,7 @@ func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, service
 	if err := tx.QueryRowContext(ctx, `SELECT current_rollout_generation FROM service_delivery_status WHERE service_id = $1`, serviceID).Scan(&generation); err != nil {
 		return err
 	}
-	journal.RecordRollout(ctx, serviceID, generation)
+	journal.RolloutRow(serviceID, generation).Capture(ctx)
 	return nil
 }
 

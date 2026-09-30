@@ -1,147 +1,388 @@
 package delivery
 
 import (
-	"fmt"
-	"strings"
-	"testing"
-
+	"context"
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
+	"fmt"
+	"maps"
+	"testing"
+	"time"
 )
 
 func testService(id string, revision, generation int64) *agentv1.DesiredService {
-	return &agentv1.DesiredService{
-		AllocationId: id, ServiceId: "svc-" + id, EnvironmentId: "env-1",
-		DesiredSpecRevision: revision, DesiredRolloutGeneration: generation,
-		Intent: agentv1.AllocationIntent_ALLOCATION_INTENT_RUN,
-		Spec:   &platformv1.ResolvedServiceSpec{Image: "example.test/img@sha256:abc"},
+	return &agentv1.DesiredService{AllocationId: id, ServiceId: "svc-" + id, EnvironmentId: "env-1", DesiredSpecRevision: revision, DesiredRolloutGeneration: generation}
+}
+
+func syncFixture(t *testing.T) (*Delivery, *journal.DurableState, *AgentSyncPlan) {
+	t.Helper()
+	live := startLive(t)
+	state := &journal.DurableState{ClusterID: "test", LogIndex: 1,
+		Projects:     map[string]journal.Project{"p": {ID: "p", Name: "project"}},
+		Environments: map[string]journal.Environment{"e": {ID: "e", ProjectID: "p", Name: "environment", NetworkIdentity: 1}},
+		Services:     map[string]journal.ServiceIntent{"s": {ID: "s", Name: "service", EnvironmentID: "e", CurrentSpecRevision: 1}},
+		Revisions:    map[string]journal.ServiceRevision{"s/1": {ServiceID: "s", SpecRevision: 1, SpecJSON: []byte(`{"runtime":{"env":{"VALUE":"first"}}}`)}},
+		Agents:       map[string]journal.AgentRegistration{"agent": {ID: "agent", DesiredRevision: 1}},
+		Deployments:  map[string]journal.Deployment{"d": {ID: "d", ServiceID: "s"}},
+		Rollouts:     map[string]journal.Rollout{"s/1": {ServiceID: "s", RolloutGeneration: 1, ImageDigest: "example.test/image@sha256:abc"}},
+		Assignments:  map[string]journal.Assignment{},
+	}
+	for _, id := range []string{"keep", "update", "remove"} {
+		state.Assignments[id] = journal.Assignment{ID: id, ServiceID: "s", AgentID: "agent", DeploymentID: "d", DesiredSpecRevision: 1, DesiredRolloutGeneration: 1}
+	}
+	live.applyTestState(*state)
+	d := New(Dependencies{Live: live})
+	plan, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", RequireCheckpoint: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.AgentCheckpointSent(plan.Checkpoint)
+	return d, state, plan
+}
+
+func applySyncFixture(t *testing.T, d *Delivery, state *journal.DurableState) {
+	t.Helper()
+	before := d.live.product
+	state.LogIndex++
+	agent := state.Agents["agent"]
+	agent.DesiredRevision++
+	state.Agents["agent"] = agent
+	batch := journal.Diff(before.DurableState, *state)
+	d.live.ApplyProduct(journal.Applied{Projection: journal.NewProjection(*state), Batches: []journal.Batch{batch}})
+}
+
+func nextSync(t *testing.T, d *Delivery, previous *AgentSyncPlan) *AgentSyncPlan {
+	t.Helper()
+	plan, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", BaseRevision: previous.Cursor, OverlayVersion: previous.OverlayVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestAgentSyncPlanStartsUpdatesStopsAndNoOpCursor(t *testing.T) {
+	d, state, first := syncFixture(t)
+	updated := state.Assignments["update"]
+	updated.OperatorRestartNonce = 1
+	state.Assignments["update"] = updated
+	delete(state.Assignments, "remove")
+	added := state.Assignments["keep"]
+	added.ID = "add"
+	state.Assignments["add"] = added
+	applySyncFixture(t, d, state)
+	plan := nextSync(t, d, first)
+	if plan.Checkpoint != nil || len(plan.Diffs) != 1 {
+		t.Fatalf("expected one diff: %+v", plan)
+	}
+	diff := plan.Diffs[0]
+	if len(diff.Starts) != 1 || diff.Starts[0].GetAllocationId() != "add" || len(diff.Updates) != 1 || diff.Updates[0].GetAllocationId() != "update" || len(diff.Stops) != 1 || diff.Stops[0] != "remove" {
+		t.Fatalf("unexpected changes: %+v", diff)
+	}
+	if value := diff.Updates[0].GetSpec().GetRuntime().GetEnv()["VALUE"]; value != "first" {
+		t.Fatalf("resolved spec missing from update: %q", value)
+	}
+	if len(plan.Images) != 3 {
+		t.Fatalf("pull image set lost unchanged assignments: %+v", plan.Images)
+	}
+	// A node-only revision still advances the allocation cursor with an empty patch.
+	agent := state.Agents["agent"]
+	agent.WireguardListenPort = 51821
+	state.Agents["agent"] = agent
+	applySyncFixture(t, d, state)
+	next := nextSync(t, d, plan)
+	if next.Checkpoint != nil || len(next.Diffs) != 1 || len(next.Diffs[0].Starts)+len(next.Diffs[0].Updates)+len(next.Diffs[0].Stops) != 0 {
+		t.Fatalf("node-only revision must produce no-op allocation diff: %+v", next)
+	}
+	if next.NodeConfigVersion == plan.NodeConfigVersion {
+		t.Fatal("node config did not change independently")
 	}
 }
 
-func testCheckpoint(revision int64, services ...*agentv1.DesiredService) *agentv1.DesiredNodeState {
-	return &agentv1.DesiredNodeState{
-		AgentId: "agent-1", ReconciliationCursor: revision,
-		Services: services,
-		Volumes:  []*agentv1.DesiredVolume{{VolumeId: "vol-1", EnvironmentId: "env-1", Name: "data", SizeBytes: 1}},
-		NodeConfig: &agentv1.AssignedNodeConfig{
-			WorkloadIpv4Subnet: "10.0.0.0/24", WorkloadIpv6Subnet: "fd00::/64",
-		},
+func TestAgentSyncPlanRepairsSameCursorOverlayAndUsesRepairedBaseline(t *testing.T) {
+	d, state, first := syncFixture(t)
+	if err := d.live.BeginSession("agent", "session", nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.live.RecordObservation(AllocationObservation{AgentID: "agent", SessionID: "session", AllocationID: "keep", RolloutGeneration: 1, AppliedGeneration: 1, AppliedSpecRevision: 1, Restart: &platformv1.RestartObservation{RestartCount: 2}, ObservedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	repaired := nextSync(t, d, first)
+	if repaired.Checkpoint == nil || repaired.Cursor != first.Cursor || repaired.OverlayVersion == first.OverlayVersion {
+		t.Fatalf("same-cursor overlay drift needs checkpoint: %+v", repaired)
+	}
+	d.AgentCheckpointSent(repaired.Checkpoint)
+	// A durable nonce update must retain the repaired observation fields.
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce = 2
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	plan := nextSync(t, d, repaired)
+	if plan.Checkpoint != nil || len(plan.Diffs) != 1 || len(plan.Diffs[0].Updates) != 1 || plan.Diffs[0].Updates[0].GetRestartObservation().GetRestartCount() != 2 {
+		t.Fatalf("diff lost repaired overlay: %+v", plan)
 	}
 }
 
-func TestDiffSnapshotsStartUpdateStop(t *testing.T) {
-	t.Parallel()
-	old := testCheckpoint(5, testService("keep", 1, 1), testService("update", 1, 1), testService("remove", 1, 1))
-	updated := testService("update", 2, 2)
-	new := testCheckpoint(6, testService("keep", 1, 1), updated, testService("add", 1, 1))
-	diff := diffSnapshots(stripForDiff(old), stripForDiff(new), 5, 6)
-	if diff.Base != 5 || diff.Target != 6 {
-		t.Fatalf("revisions = %d->%d", diff.Base, diff.Target)
+func TestAgentSyncBehindCursorStillRepairsInvalidInventory(t *testing.T) {
+	d, state, first := syncFixture(t)
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	var matching []*agentv1.ServiceCondition
+	for _, svc := range first.Checkpoint.GetServices() {
+		matching = append(matching, &agentv1.ServiceCondition{AllocationId: svc.GetAllocationId(),
+			DesiredSpecRevision: svc.GetDesiredSpecRevision(), DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(), Phase: "Running"})
 	}
-	if len(diff.Starts) != 1 || diff.Starts[0].GetAllocationId() != "add" {
-		t.Fatalf("starts = %+v", diff.Starts)
-	}
-	if len(diff.Updates) != 1 || diff.Updates[0].GetAllocationId() != "update" || diff.Updates[0].GetDesiredSpecRevision() != 2 {
-		t.Fatalf("updates = %+v", diff.Updates)
-	}
-	if len(diff.Stops) != 1 || diff.Stops[0] != "remove" {
-		t.Fatalf("stops = %+v", diff.Stops)
-	}
-	if len(diff.VolumeStarts) != 0 || len(diff.VolumeStops) != 0 {
-		t.Fatalf("volumes changed without cause: %+v %+v", diff.VolumeStarts, diff.VolumeStops)
-	}
-}
-
-func TestDiffStripsCredentials(t *testing.T) {
-	t.Parallel()
-	a := testService("a", 1, 1)
-	a.RegistryUsername = "user"
-	a.RegistryPassword = "secret"
-	b := testService("a", 1, 1)
-	diff := diffSnapshots(stripForDiff(testCheckpoint(1, a)), stripForDiff(testCheckpoint(2, b)), 1, 2)
-	if len(diff.Starts)+len(diff.Updates)+len(diff.Stops) != 0 {
-		t.Fatalf("credential-only change produced allocation diff: %+v", diff)
-	}
-}
-
-func TestRecordAndDiffOrderedAndBounded(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	first := testCheckpoint(1, testService("a", 1, 1))
-	if _, ok := sync.recordAndDiff("agent-1", first, 0); ok {
-		t.Fatal("uninitialized base should require checkpoint")
-	}
-	if diffs, ok := sync.recordAndDiff("agent-1", first, 1); !ok || len(diffs) != 0 {
-		t.Fatalf("same revision should send nothing: %+v %v", diffs, ok)
-	}
-	second := testCheckpoint(2, testService("a", 1, 1), testService("b", 1, 1))
-	diffs, ok := sync.recordAndDiff("agent-1", second, 1)
-	if !ok || len(diffs) != 1 || diffs[0].Base != 1 || diffs[0].Target != 2 || len(diffs[0].Starts) != 1 {
-		t.Fatalf("incremental diff missing: %+v %v", diffs, ok)
-	}
-	if diffs, ok := sync.recordAndDiff("agent-1", second, 2); !ok || len(diffs) != 0 {
-		t.Fatalf("unchanged reconnect should send nothing: %+v %v", diffs, ok)
+	for _, test := range []struct {
+		name       string
+		inventory  []*agentv1.ServiceCondition
+		checkpoint bool
+	}{
+		{"matching", matching, false},
+		{"missing accepted allocation", matching[1:], true},
+		{"unowned running allocation", append(append([]*agentv1.ServiceCondition(nil), matching...), &agentv1.ServiceCondition{AllocationId: "unowned", Phase: "Running"}), true},
+		{"stopped extra", append(append([]*agentv1.ServiceCondition(nil), matching...), &agentv1.ServiceCondition{AllocationId: "unowned", Phase: "Stopped"}), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			plan, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", BaseRevision: first.Cursor,
+				OverlayVersion: first.OverlayVersion, CheckInventory: true, Inventory: test.inventory})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Cursor <= first.Cursor || plan.OverlayVersion != first.OverlayVersion {
+				t.Fatal("fixture must exercise a behind cursor with an unchanged observation overlay")
+			}
+			if (plan.Checkpoint != nil) != test.checkpoint {
+				t.Fatalf("inventory checkpoint=%v want=%v", plan.Checkpoint != nil, test.checkpoint)
+			}
+		})
 	}
 }
 
-func TestCompactedHistoryRequiresCheckpoint(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	base := testCheckpoint(0)
-	if _, ok := sync.recordAndDiff("agent-1", base, 0); !ok {
-		t.Fatal("init should succeed")
-	}
-	for i := int64(1); i <= MaxDiffEntriesPerAgent+5; i++ {
-		cur := testCheckpoint(i, testService("a", 1, i))
-		if _, ok := sync.recordAndDiff("agent-1", cur, i-1); !ok {
-			t.Fatalf("revision %d should diff", i)
+func TestAgentSyncPlanBoundsHistoryAndFallsBackAfterReset(t *testing.T) {
+	d, state, first := syncFixture(t)
+	previous := first
+	for i := 0; i < MaxDiffEntriesPerAgent+5; i++ {
+		a := state.Assignments["keep"]
+		a.OperatorRestartNonce++
+		state.Assignments["keep"] = a
+		applySyncFixture(t, d, state)
+		previous = nextSync(t, d, previous)
+		if previous.Checkpoint != nil {
+			t.Fatalf("recent cursor unexpectedly required checkpoint at %d", i)
 		}
 	}
-	if _, ok := sync.recordAndDiff("agent-1", testCheckpoint(MaxDiffEntriesPerAgent+5, testService("a", 1, MaxDiffEntriesPerAgent+5)), 1); ok {
+	old := nextSync(t, d, first)
+	if old.Checkpoint == nil {
 		t.Fatal("compacted cursor should require checkpoint")
 	}
-	latest := int64(MaxDiffEntriesPerAgent + 5)
-	if diffs, ok := sync.recordAndDiff("agent-1", testCheckpoint(latest, testService("a", 1, latest)), latest-1); !ok || len(diffs) == 0 {
-		t.Fatal("recent cursor should still diff")
+	d.live.ApplyProduct(journal.Applied{Projection: journal.NewProjection(*state), Reset: true}) // duplicate prefix must be ignored
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	state.LogIndex++
+	agent := state.Agents["agent"]
+	agent.DesiredRevision++
+	state.Agents["agent"] = agent
+	d.live.ApplyProduct(journal.Applied{Projection: journal.NewProjection(*state), Reset: true})
+	if plan := nextSync(t, d, previous); plan.Checkpoint == nil {
+		t.Fatal("recovery reset must discard diff baseline")
 	}
 }
 
-func TestFailoverLosesHistoryAndFallsBackToCheckpoint(t *testing.T) {
-	t.Parallel()
-	old := newAllocSync()
-	if _, ok := old.recordAndDiff("agent-1", testCheckpoint(1, testService("a", 1, 1)), 1); !ok {
-		t.Fatal("init")
-	}
-	if _, ok := old.recordAndDiff("agent-1", testCheckpoint(2, testService("a", 1, 1), testService("b", 1, 1)), 1); !ok {
-		t.Fatal("diff")
-	}
-	fresh := newAllocSync()
-	fresh.reset()
-	cur := testCheckpoint(2, testService("a", 1, 1), testService("b", 1, 1))
-	if _, ok := fresh.recordAndDiff("agent-1", cur, 1); ok {
-		t.Fatal("failover with lost history should require checkpoint")
-	}
-	if _, ok := fresh.recordAndDiff("agent-1", cur, 2); !ok {
-		t.Fatal("established cursor should send nothing")
-	}
-}
-
-func TestOversizedDiffFallsBackToCheckpoint(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	if _, ok := sync.recordAndDiff("agent-1", testCheckpoint(0), 0); !ok {
-		t.Fatal("init")
-	}
-	var services []*agentv1.DesiredService
+func TestAgentSyncPlanOversizedPatchRequiresCheckpoint(t *testing.T) {
+	d, state, first := syncFixture(t)
 	for i := 0; i < MaxDiffAllocationsPerMessage+10; i++ {
-		id := "alloc-" + strings.Repeat("x", 2) + string(rune('a'+i/26)) + string(rune('A'+i%26)) + strings.Repeat("y", 2)
-		svc := testService(id, 1, 1)
-		services = append(services, svc)
+		a := state.Assignments["keep"]
+		a.ID = fmt.Sprintf("added-%03d", i)
+		state.Assignments[a.ID] = a
 	}
-	cur := testCheckpoint(1, services...)
-	if _, ok := sync.recordAndDiff("agent-1", cur, 0); ok {
-		t.Fatal("oversized diff should require checkpoint")
+	applySyncFixture(t, d, state)
+	if plan := nextSync(t, d, first); plan.Checkpoint == nil {
+		t.Fatal("oversized patch must fall back to checkpoint")
+	}
+}
+
+func TestAgentSyncCheckpointAndDiffAgreeOnMountedVolumes(t *testing.T) {
+	for _, reason := range []string{"lost assignment", "unresolved image"} {
+		t.Run(reason, func(t *testing.T) {
+			d, state, _ := syncFixture(t)
+			delete(state.Assignments, "remove")
+			delete(state.Assignments, "update")
+			revision := state.Revisions["s/1"]
+			revision.SpecJSON = []byte(`{"runtime":{"volumeName":"data"}}`)
+			state.Revisions["s/1"] = revision
+			state.Volumes = map[string]journal.Volume{"v": {ID: "v", EnvironmentID: "e", Name: "data", SizeBytes: 64 << 20}}
+			applySyncFixture(t, d, state)
+			baseline, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", RequireCheckpoint: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(baseline.Checkpoint.GetServices()) != 1 || baseline.Checkpoint.GetServices()[0].GetVolumeId() != "v" || len(baseline.Checkpoint.GetVolumes()) != 1 {
+				t.Fatalf("mounted baseline is incomplete: %+v", baseline.Checkpoint)
+			}
+			d.AgentCheckpointSent(baseline.Checkpoint)
+			if reason == "lost assignment" {
+				a := state.Assignments["keep"]
+				a.RolloutState = AllocationRolloutLost
+				state.Assignments["keep"] = a
+			} else {
+				rollout := state.Rollouts["s/1"]
+				rollout.ImageDigest = ""
+				state.Rollouts["s/1"] = rollout
+			}
+			applySyncFixture(t, d, state)
+			incremental := nextSync(t, d, baseline)
+			if incremental.Checkpoint != nil || len(incremental.Diffs) != 1 {
+				t.Fatalf("expected a retained diff: %+v", incremental)
+			}
+			diff := incremental.Diffs[0]
+			if len(diff.GetStops()) != 1 || diff.GetStops()[0] != "keep" || len(diff.GetVolumeStops()) != 1 || diff.GetVolumeStops()[0] != "v" ||
+				len(diff.GetStarts())+len(diff.GetUpdates())+len(diff.GetVolumeStarts()) != 0 {
+				t.Fatalf("diff must remove exactly the unrendered workload and its mount: %+v", diff)
+			}
+			checkpoint, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", BaseRevision: incremental.Cursor, RequireCheckpoint: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(checkpoint.Checkpoint.GetServices()) != 0 || len(checkpoint.Checkpoint.GetVolumes()) != 0 {
+				t.Fatalf("checkpoint retains resources removed by the equivalent diff: %+v", checkpoint.Checkpoint)
+			}
+		})
+	}
+}
+
+func TestAgentSyncSkippedCallbackResetsHistoryAndWakesChangedAgents(t *testing.T) {
+	d, state, first := syncFixture(t)
+	watch, cancel := d.live.Watch("agent")
+	defer cancel()
+	before := d.live.product
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	agent := state.Agents["agent"]
+	agent.DesiredRevision++
+	state.Agents["agent"] = agent
+	state.LogIndex++
+	second := journal.NewProjection(*state)
+	secondBatch := journal.Diff(before.DurableState, second.DurableState)
+	project := state.Projects["p"]
+	project.Name = "later unrelated command"
+	state.Projects["p"] = project
+	state.LogIndex++
+	third := journal.NewProjection(*state)
+	thirdBatch := journal.Diff(second.DurableState, third.DurableState)
+	// The N+1 callback contains the complete prefix but only its own suffix.
+	d.live.ApplyProduct(journal.Applied{Projection: third, Batches: []journal.Batch{thirdBatch}})
+	select {
+	case <-watch:
+	default:
+		t.Fatal("skipped command's changed agent was not woken")
+	}
+	if plan := nextSync(t, d, first); plan.Checkpoint == nil || plan.Checkpoint.Services[0].GetAllocationId() != "keep" || plan.Checkpoint.Services[0].GetOperatorRestartNonce() != 1 {
+		t.Fatalf("skipped invalidations must repair from the complete latest prefix: %+v", plan)
+	}
+	d.live.ApplyProduct(journal.Applied{Projection: second, Batches: []journal.Batch{secondBatch}})
+	if d.live.product != third {
+		t.Fatal("delayed N callback replaced the N+1 projection")
+	}
+	select {
+	case <-watch:
+		t.Fatal("delayed older callback published an invalidation")
+	default:
+	}
+}
+
+func TestAgentSyncUnrelatedCommitDoesNotInvalidateCapturedPlan(t *testing.T) {
+	d, state, first := syncFixture(t)
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	cursor := state.Agents["agent"].DesiredRevision
+	baseline := d.live.allocSync.baseline("agent", cursor)
+	before := d.live.product
+	state.Projects["foreign"] = journal.Project{ID: "foreign", Name: "unhosted project"}
+	state.LogIndex++
+	d.live.ApplyProduct(journal.Applied{Projection: journal.NewProjection(*state), Batches: []journal.Batch{journal.Diff(before.DurableState, *state)}})
+	services := maps.Clone(baseline.services)
+	if !d.live.allocSync.acceptDiff("agent", baseline, cursor, services, baseline.volumes,
+		storedDiff{Base: first.Cursor, Target: cursor}) {
+		t.Fatal("unrelated commit invalidated a plan for an unchanged agent scope")
+	}
+	if history, target, ok := d.live.allocSync.diffsFrom("agent", first.Cursor); !ok || target != cursor || len(history) != 1 {
+		t.Fatalf("captured plan lost retained history: target=%d ok=%v history=%v", target, ok, history)
+	}
+}
+
+func TestAgentSyncCommittedChangeRejectsCapturedDiff(t *testing.T) {
+	d, state, first := syncFixture(t)
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	cursor := state.Agents["agent"].DesiredRevision
+	baseline := d.live.allocSync.baseline("agent", cursor)
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	if d.live.allocSync.acceptDiff("agent", baseline, cursor, baseline.services, baseline.volumes,
+		storedDiff{Base: first.Cursor, Target: cursor}) {
+		t.Fatal("concurrent committed invalidations accepted a stale rendered patch")
+	}
+	plan := nextSync(t, d, first)
+	if plan.Checkpoint != nil || len(plan.Diffs) != 1 || plan.Diffs[0].GetUpdates()[0].GetOperatorRestartNonce() != 2 {
+		t.Fatalf("rejected plan consumed pending invalidations: %+v", plan)
+	}
+}
+
+func TestAgentCheckpointDelayedCallbackPreservesNewerBaseline(t *testing.T) {
+	d, state, first := syncFixture(t)
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	second := nextSync(t, d, first)
+	// Sending a newer prefix can finish before an earlier checkpoint callback.
+	d.AgentCheckpointSent(first.Checkpoint)
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	third := nextSync(t, d, second)
+	if third.Checkpoint != nil || len(third.Diffs) != 1 {
+		t.Fatalf("delayed checkpoint discarded a newer diff baseline: %+v", third)
+	}
+}
+
+func TestAgentCheckpointCommittedWhileSendingRequiresFreshBaseline(t *testing.T) {
+	d, state, first := syncFixture(t)
+	d.live.allocSync.reset()
+	a := state.Assignments["keep"]
+	a.OperatorRestartNonce++
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	d.AgentCheckpointSent(first.Checkpoint)
+	if plan := nextSync(t, d, first); plan.Checkpoint == nil {
+		t.Fatal("checkpoint callback established an older prefix after a concurrent commit")
+	}
+}
+
+func TestTrackedAgentHistoriesEvictLeastRecentlyUsed(t *testing.T) {
+	sync := newAllocSync()
+	for i := 0; i <= MaxTrackedAgents; i++ {
+		sync.rebase(fmt.Sprintf("agent-%04d", i), &agentv1.DesiredNodeState{ReconciliationCursor: 1})
+	}
+	if _, _, ok := sync.diffsFrom("agent-0000", 1); ok {
+		t.Fatal("oldest history retained after bound")
+	}
+	if _, _, ok := sync.diffsFrom("agent-0001", 1); !ok {
+		t.Fatal("recent history missing")
+	}
+	sync.rebase("new-agent", &agentv1.DesiredNodeState{ReconciliationCursor: 1})
+	if _, _, ok := sync.diffsFrom("agent-0002", 1); ok {
+		t.Fatal("touch did not update eviction order")
 	}
 }
 
@@ -184,92 +425,5 @@ func TestIndependentVersionsChangeSeparately(t *testing.T) {
 	}
 	if reconciliation.HashReplicas([]string{"a:1"}) == reconciliation.HashReplicas([]string{"a:1", "b:1"}) {
 		t.Fatal("replica change should change version")
-	}
-}
-
-func TestZeroContentRevisionBumpReturnsNoOpCursorDiff(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A peer-only bump is an empty no-op diff; the accepted cursor still advances in lockstep.
-	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
-	diffs, target, ok := sync.diffsFrom("agent-1", 1)
-	if !ok || target != 2 || len(diffs) != 1 {
-		t.Fatalf("zero-content bump must return a covering no-op diff: %+v target=%d ok=%v", diffs, target, ok)
-	}
-	d := diffs[0]
-	if d.Base != 1 || d.Target != 2 {
-		t.Fatalf("no-op diff revisions = %d->%d, want 1->2", d.Base, d.Target)
-	}
-	if len(d.Starts)+len(d.Updates)+len(d.Stops)+len(d.VolumeStarts)+len(d.VolumeStops) != 0 {
-		t.Fatalf("no-op diff changed allocations: %+v", d)
-	}
-}
-
-func TestRebaseAfterCheckpointDiffsCarryRestoredOverlay(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A same-cursor repair checkpoint changes the baseline; without rebasing,
-	// the next diff would compare against the pre-repair snapshot.
-	repaired := testService("a", 1, 1)
-	repaired.InternalHosts = []*agentv1.InternalHost{{Hostname: "a.mesh.internal", Ipv4: "10.0.0.1"}}
-	sync.rebase("agent-1", testCheckpoint(1, repaired))
-	// The covering diff must carry the reverted overlay instead of skipping it.
-	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
-	diffs, target, ok := sync.diffsFrom("agent-1", 1)
-	if !ok || target != 2 || len(diffs) != 1 {
-		t.Fatalf("restored overlay must be covered by the diff chain: %+v target=%d ok=%v", diffs, target, ok)
-	}
-	d := diffs[0]
-	if len(d.Updates) != 1 || d.Updates[0].GetAllocationId() != "a" {
-		t.Fatalf("restored overlay must surface as an allocation update: %+v", d)
-	}
-	if hosts := d.Updates[0].GetInternalHosts(); len(hosts) != 0 {
-		t.Fatalf("update must carry the restored overlay: %+v", hosts)
-	}
-}
-
-func TestRebaseKeepsNoOpCursorDiffForPeerOnlyBump(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	sync.recordCurrent("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	sync.rebase("agent-1", testCheckpoint(1, testService("a", 1, 1)))
-	// A peer-only bump after a rebased baseline is still an empty no-op diff.
-	sync.recordCurrent("agent-1", testCheckpoint(2, testService("a", 1, 1)))
-	diffs, target, ok := sync.diffsFrom("agent-1", 1)
-	if !ok || target != 2 || len(diffs) != 1 {
-		t.Fatalf("zero-content bump must return a covering no-op diff: %+v target=%d ok=%v", diffs, target, ok)
-	}
-	if d := diffs[0]; len(d.Starts)+len(d.Updates)+len(d.Stops)+len(d.VolumeStarts)+len(d.VolumeStops) != 0 {
-		t.Fatalf("no-op diff changed allocations: %+v", d)
-	}
-}
-
-func TestTrackedAgentHistoriesAreBoundedAndEvictLeastRecentlyUsed(t *testing.T) {
-	t.Parallel()
-	sync := newAllocSync()
-	total := MaxTrackedAgents + 1
-	for i := 0; i < total; i++ {
-		agent := fmt.Sprintf("agent-%04d", i)
-		sync.recordCurrent(agent, testCheckpoint(1, testService("a", 1, 1)))
-	}
-	if len(sync.history) != MaxTrackedAgents {
-		t.Fatalf("tracked agents = %d, want bound %d", len(sync.history), MaxTrackedAgents)
-	}
-	// The least-recently used entry is evicted and falls back to checkpoints.
-	if _, _, ok := sync.diffsFrom("agent-0000", 1); ok {
-		t.Fatal("evicted agent must fall back to checkpoint delivery")
-	}
-	// A touch refreshes an entry's eviction order.
-	sync.recordCurrent("agent-0001", testCheckpoint(1, testService("a", 1, 1)))
-	sync.recordCurrent("agent-new", testCheckpoint(1, testService("a", 1, 1)))
-	if _, _, ok := sync.diffsFrom("agent-0002", 1); ok {
-		t.Fatal("next-oldest agent must be evicted after the refresh")
-	}
-	sync.recordCurrent("agent-0001", testCheckpoint(2, testService("a", 1, 1)))
-	diffs, target, ok := sync.diffsFrom("agent-0001", 1)
-	if !ok || target != 2 || len(diffs) != 1 {
-		t.Fatalf("refreshed agent must keep its history: %+v target=%d ok=%v", diffs, target, ok)
 	}
 }

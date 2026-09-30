@@ -36,10 +36,12 @@ type Store struct {
 	mu          sync.Mutex
 	db          *sql.DB
 	clusterID   string
-	state       DurableState
+	state       *Projection
 	initialized bool
 	fence       Fence
-	onApplied   func(DurableState)
+	onApplied   func(Applied)
+	published   *Projection
+	pending     Applied
 	verify      bool
 }
 
@@ -50,12 +52,19 @@ func (s *Store) SetVerifyRecordings(enabled bool) {
 }
 
 func New(db *sql.DB, clusterID string, fence Fence) *Store {
-	return &Store{db: db, clusterID: clusterID, state: DurableState{ClusterID: clusterID}, fence: fence}
+	return &Store{db: db, clusterID: clusterID, state: newProjection(DurableState{ClusterID: clusterID}), fence: fence}
 }
 
 // SetOnApplied registers a listener invoked after the in-memory prefix advances.
-// The callback must not re-enter the journal; it receives an owned snapshot.
-func (s *Store) SetOnApplied(fn func(DurableState)) {
+// The callback receives the shared immutable projection and exact committed
+// changes. Unchanged reads do not publish. It must not re-enter the journal.
+type Applied struct {
+	Projection *Projection
+	Batches    []Batch
+	Reset      bool
+}
+
+func (s *Store) SetOnApplied(fn func(Applied)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onApplied = fn
@@ -73,12 +82,12 @@ func (s *Store) Execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 
 // ExecuteWithMutation runs one journal command, then lets afterChanges react to
 // the exact rows changed. afterChanges runs in the same transaction before
-// serialization; rows it changes through the Recorder join the command payload.
+// serialization; rows it changes through Mutation join the command payload.
 //
-// fn must contain only transactional work and record every durable row it
+// fn must contain only transactional work and capture every durable row it
 // changes. Planning happens outside the heads lock; the command retries on
 // serialization conflicts and publishes no attempted state.
-func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
+func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
 	return s.execute(ctx, fn, afterChanges)
 }
 
@@ -99,7 +108,7 @@ func (s *Store) authorizeScheduling(ctx context.Context, tx *sql.Tx, batch Batch
 	return &epoch, nil
 }
 
-func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, DurableState, Batch) error) (Entry, error) {
+func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
 	s.mu.Lock()
 	held := true
 	defer func() {
@@ -142,7 +151,7 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		base, err := s.stateAtHead(ctx, tx, head)
+		base, _, err := s.stateAtHead(ctx, tx, head)
 		if err != nil {
 			return err
 		}
@@ -151,7 +160,7 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		if err := fn(commandCtx, tx); err != nil {
 			return err
 		}
-		batch, err := resolveRecorded(ctx, tx, base, recorder.keys)
+		batch, err := resolveRecorded(ctx, tx, base.DurableState, recorder.keys)
 		if err != nil {
 			return err
 		}
@@ -159,13 +168,13 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 			if err := afterChanges(commandCtx, tx, base, batch); err != nil {
 				return err
 			}
-			batch, err = resolveRecorded(ctx, tx, base, recorder.keys)
+			batch, err = resolveRecorded(ctx, tx, base.DurableState, recorder.keys)
 			if err != nil {
 				return err
 			}
 		}
 		if s.verify {
-			if err := verifyRecordings(ctx, tx, base, batch); err != nil {
+			if err := verifyRecordings(ctx, tx, base.DurableState, batch); err != nil {
 				return err
 			}
 		}
@@ -204,7 +213,7 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		if lockedHead != head {
 			return headMovedError{}
 		}
-		if _, err := base.Apply(receipt); err != nil {
+		if _, _, err := base.advance(receipt); err != nil {
 			return err
 		}
 		if err := tx.QueryRowContext(ctx, `INSERT INTO cluster_journal
@@ -267,7 +276,7 @@ func (s *Store) Snapshot(ctx context.Context) (DurableState, error) {
 		s.mu.Unlock()
 		return DurableState{}, err
 	}
-	copy := s.state.Clone()
+	copy := s.state.DurableState.Clone()
 	hook, snap := s.appliedLocked(true)
 	s.mu.Unlock()
 	if hook != nil {
@@ -282,7 +291,7 @@ func (s *Store) catchUp(ctx context.Context) error {
 
 // Read builds an external snapshot from the same database snapshot as the
 // applied prefix. The result must not be published inside fn.
-func (s *Store) Read(ctx context.Context, fn func(*sql.Tx, DurableState) error) error {
+func (s *Store) Read(ctx context.Context, fn func(*sql.Tx, *Projection) error) error {
 	s.mu.Lock()
 	err := s.read(ctx, fn)
 	hook, snap := s.appliedLocked(err == nil)
@@ -293,22 +302,29 @@ func (s *Store) Read(ctx context.Context, fn func(*sql.Tx, DurableState) error) 
 	return err
 }
 
-func (s *Store) appliedLocked(ok bool) (func(DurableState), DurableState) {
-	if !ok || s.onApplied == nil {
-		return nil, DurableState{}
+func (s *Store) appliedLocked(ok bool) (func(Applied), Applied) {
+	if !ok || s.onApplied == nil || s.published == s.state {
+		return nil, Applied{}
 	}
-	return s.onApplied, s.state.Clone()
+	update := s.pending
+	update.Projection = s.state
+	if s.published == nil {
+		update.Reset = true
+	}
+	s.published = s.state
+	return s.onApplied, update
 }
 
-func (s *Store) read(ctx context.Context, fn func(*sql.Tx, DurableState) error) error {
-	var next DurableState
+func (s *Store) read(ctx context.Context, fn func(*sql.Tx, *Projection) error) error {
+	var next *Projection
+	var batches []Batch
 	err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		var head int64
 		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&head); err != nil {
 			return err
 		}
 		var err error
-		next, err = s.stateAtHead(ctx, tx, head)
+		next, batches, err = s.stateAtHead(ctx, tx, head)
 		if err != nil {
 			return err
 		}
@@ -318,25 +334,26 @@ func (s *Store) read(ctx context.Context, fn func(*sql.Tx, DurableState) error) 
 		return nil
 	})
 	if err == nil {
+		s.pending = Applied{Projection: next, Batches: batches, Reset: next != s.state && len(batches) == 0}
 		s.state = next
 		s.initialized = true
 	}
 	return err
 }
 
-func (s *Store) stateAtHead(ctx context.Context, tx *sql.Tx, head int64) (DurableState, error) {
+func (s *Store) stateAtHead(ctx context.Context, tx *sql.Tx, head int64) (*Projection, []Batch, error) {
 	var compacted int64
 	if err := tx.QueryRowContext(ctx, `SELECT compacted_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&compacted); err != nil {
-		return DurableState{}, err
+		return nil, nil, err
 	}
 	if !s.initialized || s.state.LogIndex < compacted {
 		state, err := readProductState(ctx, tx)
 		if err != nil {
-			return DurableState{}, err
+			return nil, nil, err
 		}
 		state.ClusterID = s.clusterID
 		state.LogIndex = head
-		return state, nil
+		return newProjection(state), nil, nil
 	}
 	return replay(ctx, tx, s.state, head)
 }
@@ -378,30 +395,36 @@ func verifyRecordings(ctx context.Context, tx *sql.Tx, base DurableState, record
 	return nil
 }
 
-func replay(ctx context.Context, tx *sql.Tx, state DurableState, head int64) (DurableState, error) {
+func replay(ctx context.Context, tx *sql.Tx, state *Projection, head int64) (*Projection, []Batch, error) {
+	var batches []Batch
+	if head == state.LogIndex {
+		return state, nil, nil
+	}
 	if head < state.LogIndex {
-		return state, errors.New("journal head moved backwards")
+		return state, nil, errors.New("journal head moved backwards")
 	}
 	rows, err := tx.QueryContext(ctx, `SELECT `+entryColumns+` FROM cluster_journal WHERE cluster_id = $1 AND log_index > $2 AND log_index <= $3 ORDER BY log_index`, state.ClusterID, state.LogIndex, head)
 	if err != nil {
-		return state, err
+		return state, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		entry, err := scanEntry(rows)
 		if err != nil {
-			return state, err
+			return state, nil, err
 		}
-		state, err = state.Apply(entry)
+		var batch Batch
+		state, batch, err = state.advance(entry)
 		if err != nil {
-			return state, err
+			return state, nil, err
 		}
+		batches = append(batches, batch)
 	}
 	if err := rows.Err(); err != nil {
-		return state, err
+		return state, nil, err
 	}
 	if state.LogIndex != head {
-		return state, fmt.Errorf("journal gap: applied %d, head %d", state.LogIndex, head)
+		return state, nil, fmt.Errorf("journal gap: applied %d, head %d", state.LogIndex, head)
 	}
-	return state, nil
+	return state, batches, nil
 }

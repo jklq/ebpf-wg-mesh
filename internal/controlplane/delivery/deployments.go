@@ -583,7 +583,7 @@ func (s *persistence) insertDeploymentTx(
 	if err != nil {
 		return DeploymentRecord{}, err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.DeploymentRow(rec.ID).Exec(ctx, tx,
 		`INSERT INTO deployments(
 			id, service_id, spec_revision, rollout_generation, build_id, artifact_id,
 			state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
@@ -595,7 +595,6 @@ func (s *persistence) insertDeploymentTx(
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
-	journal.RecordDeployment(ctx, rec.ID)
 	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, "", rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ArtifactID, rec.RolloutGeneration, now); err != nil {
 		return DeploymentRecord{}, err
 	}
@@ -616,17 +615,15 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 		return err
 	}
 	if deploymentStateTerminal(current.State) {
-		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+		if _, err := journal.DeploymentRow(current.ID).Exec(ctx, tx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 			return err
 		}
-		journal.RecordDeployment(ctx, current.ID)
 		return nil
 	}
 	if current.State == DeploymentStateActive {
-		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+		if _, err := journal.DeploymentRow(current.ID).Exec(ctx, tx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 			return err
 		}
-		journal.RecordDeployment(ctx, current.ID)
 		return nil
 	}
 	nextState := DeploymentStateSuperseded
@@ -646,10 +643,9 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+	if _, err := journal.DeploymentRow(current.ID).Exec(ctx, tx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 		return err
 	}
-	journal.RecordDeployment(ctx, current.ID)
 	return nil
 }
 
@@ -665,7 +661,7 @@ func (s *persistence) applyDeploymentTransitionTx(ctx context.Context, tx *sql.T
 		return rec, err
 	}
 
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.DeploymentRow(rec.ID).Exec(ctx, tx,
 		`UPDATE deployments
 		    SET spec_revision = $1,
 		        rollout_generation = $2,
@@ -683,7 +679,6 @@ func (s *persistence) applyDeploymentTransitionTx(ctx context.Context, tx *sql.T
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
-	journal.RecordDeployment(ctx, rec.ID)
 	if err := s.insertDeploymentTransitionTx(ctx, tx, rec.ID, fromState, rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.SpecRevision, rec.ArtifactID, rec.RolloutGeneration, now); err != nil {
 		return DeploymentRecord{}, err
 	}

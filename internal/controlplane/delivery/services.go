@@ -138,11 +138,10 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 		rec.ResolvedImage = artifact.ImageRef
 	}
 	rec.RolloutGeneration = 1
-	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
+	if _, err := journal.ServiceRow(rec.ID).Exec(ctx, tx, `UPDATE service_delivery_status
 		SET current_rollout_generation = 1, current_artifact_id = NULLIF($1, '') WHERE service_id = $2`, rec.ResolvedArtifactID, rec.ID); err != nil {
 		return ServiceRecord{}, err
 	}
-	journal.RecordService(ctx, rec.ID)
 	if err := s.insertServiceRolloutTx(ctx, tx, rec.ID, 1, 1, "create", "", "", now); err != nil {
 		return ServiceRecord{}, err
 	}
@@ -247,7 +246,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 			return current, false, false, nil
 		}
 		now := time.Now().UTC()
-		result, err := tx.ExecContext(ctx,
+		result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
 			`UPDATE services
 			    SET name = $1,
 			        updated_at = $2
@@ -266,7 +265,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 		if affected == 0 {
 			return ServiceRecord{}, false, false, ErrConcurrentUpdate
 		}
-		journal.RecordService(ctx, current.ID)
+
 		current.Name = nextName
 		current.UpdatedAt = now
 		return current, false, false, nil
@@ -279,7 +278,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if err != nil {
 		return ServiceRecord{}, false, false, err
 	}
-	result, err := tx.ExecContext(ctx,
+	result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
 		`UPDATE services
 		    SET name = $1,
 		        current_spec_revision = $2,
@@ -299,14 +298,13 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if affected == 0 {
 		return ServiceRecord{}, false, false, ErrConcurrentUpdate
 	}
-	journal.RecordService(ctx, current.ID)
-	if _, err := tx.ExecContext(ctx,
+
+	if _, err := journal.RevisionRow(current.ID, nextSpecRevision).Exec(ctx, tx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 		current.ID, nextSpecRevision, specJSON, now,
 	); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
-	journal.RecordRevision(ctx, current.ID, nextSpecRevision)
 	nextRecord := current
 	nextRecord.Name = nextName
 	nextRecord.Spec = spec
@@ -361,10 +359,6 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		if err := quiesceServiceTx(ctx, s, tx, scope.ID(), scope.UserID()); err != nil {
 			return err
 		}
-		// Record before dropping assignments: the commit resolves their absence as removals.
-		if err := journal.RecordServiceRemoval(ctx, tx, scope.ID()); err != nil {
-			return err
-		}
 		// Assignments are placement records, not recoverable data: drop them so durable rows
 		// match the live view. Restore re-asserts the empty set.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
@@ -415,7 +409,7 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 		if deletion.Inherited {
 			return ErrAncestorDeleted
 		}
-		result, err := tx.ExecContext(ctx,
+		result, err := journal.ServiceTree(scope.ID()).Exec(ctx, tx,
 			`UPDATE services
 			    SET deleted_at = NULL,
 			        deleted_by_user_id = '',
@@ -435,9 +429,6 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 		}
 		// Re-assert the empty set so a restore never resurrects stale placements.
 		if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE service_id = $1`, scope.ID()); err != nil {
-			return err
-		}
-		if err := journal.RecordServiceRemoval(ctx, tx, scope.ID()); err != nil {
 			return err
 		}
 		rec, err = s.serviceByIDQuerier(ctx, tx, scope)
@@ -513,7 +504,7 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 		if err != nil {
 			return err
 		}
-		result, err := tx.ExecContext(ctx,
+		result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
 			`UPDATE services
 			    SET current_spec_revision = $1,
 			        updated_at = $2
@@ -532,14 +523,13 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 		if affected == 0 {
 			return ErrConcurrentUpdate
 		}
-		journal.RecordService(ctx, current.ID)
-		if _, err := tx.ExecContext(ctx,
+
+		if _, err := journal.RevisionRow(current.ID, nextRevision).Exec(ctx, tx,
 			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 			current.ID, nextRevision, specJSON, now,
 		); err != nil {
 			return err
 		}
-		journal.RecordRevision(ctx, current.ID, nextRevision)
 		rec = current
 		rec.Spec = nextSpec
 		rec.SpecRevision = nextRevision
@@ -697,7 +687,7 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	if err != nil {
 		return ServiceRecord{}, err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.ServiceRow(rec.ID).Exec(ctx, tx,
 		`INSERT INTO services(
 			id, environment_id, name, current_spec_revision,
 			desired_replica_count, created_at, updated_at
@@ -710,14 +700,12 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		}
 		return ServiceRecord{}, err
 	}
-	journal.RecordService(ctx, rec.ID)
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.RevisionRow(rec.ID, rec.SpecRevision).Exec(ctx, tx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 		rec.ID, rec.SpecRevision, specJSON, now,
 	); err != nil {
 		return ServiceRecord{}, err
 	}
-	journal.RecordRevision(ctx, rec.ID, rec.SpecRevision)
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO service_delivery_status(service_id, updated_at) VALUES ($1, $2)`,
 		rec.ID, now,
@@ -849,7 +837,7 @@ func requireLiveService(deletion *DeletionInfo) error {
 // tombstoneServiceTx marks the service deleted, reporting whether the row transitioned. An
 // already-tombstoned row is a no-op success so deletes stay idempotent.
 func (s *persistence) tombstoneServiceTx(ctx context.Context, tx *sql.Tx, serviceID, userID string, now time.Time) (bool, error) {
-	result, err := tx.ExecContext(ctx,
+	result, err := journal.ServiceTree(serviceID).Exec(ctx, tx,
 		`UPDATE services
 		    SET deleted_at = $1,
 		        deleted_by_user_id = $2,

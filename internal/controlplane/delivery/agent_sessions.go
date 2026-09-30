@@ -120,15 +120,13 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if hello.GetSessionIncarnation() <= previousIncarnation || hello.GetSessionIncarnation() > math.MaxInt64 {
 			return ErrStaleAgentSession
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET session_incarnation = $2 WHERE id = $1`, hello.GetAgentId(), int64(hello.GetSessionIncarnation())); err != nil {
+		if _, err := journal.AgentRow(hello.GetAgentId()).Exec(ctx, tx, `UPDATE agent_registrations SET session_incarnation = $2 WHERE id = $1`, hello.GetAgentId(), int64(hello.GetSessionIncarnation())); err != nil {
 			return err
 		}
-		journal.RecordAgent(ctx, hello.GetAgentId())
 		if storeID == "" {
-			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET local_store_id = $2 WHERE id = $1`, hello.GetAgentId(), hello.GetLocalStoreId()); err != nil {
+			if _, err := journal.AgentRow(hello.GetAgentId()).Exec(ctx, tx, `UPDATE agent_registrations SET local_store_id = $2 WHERE id = $1`, hello.GetAgentId(), hello.GetLocalStoreId()); err != nil {
 				return err
 			}
-			journal.RecordAgent(ctx, hello.GetAgentId())
 		}
 		workloadIPv4Subnet := existing.WorkloadIPv4Subnet
 		if workloadIPv4Subnet == "" {
@@ -175,7 +173,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx,
+		_, err = journal.AgentRow(hello.GetAgentId()).Exec(ctx, tx,
 			`UPDATE agent_registrations SET
 				advertise_addr = $1, workload_ipv4_subnet = $2, workload_ipv6_subnet = $3, wireguard_public_key = $4,
 				wireguard_listen_port = $5, wireguard_endpoint = $6, wireguard_ipv6 = $7, cpu_millis_capacity = $8,
@@ -198,8 +196,8 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if err != nil {
 			return err
 		}
-		journal.RecordAgent(ctx, hello.GetAgentId())
-		administration, err := tx.ExecContext(ctx, `UPDATE agent_administration
+
+		administration, err := journal.AdministrationRow(hello.GetAgentId()).Exec(ctx, tx, `UPDATE agent_administration
 			SET lifecycle_state = CASE WHEN lifecycle_state = 'enrolling' THEN 'active' ELSE lifecycle_state END,
 			    updated_at = CASE WHEN lifecycle_state = 'enrolling' THEN $2 ELSE updated_at END
 			WHERE agent_id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, hello.GetAgentId(), now)
@@ -213,7 +211,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if rows != 1 {
 			return ErrAgentCredentialRevoked
 		}
-		journal.RecordAdministration(ctx, hello.GetAgentId())
+
 		return nil
 	})
 	if err != nil {
@@ -277,7 +275,8 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		inventory = append(inventory, cond.GetAllocationId())
 	}
 
-	durable := d.live.Durable()
+	product := d.live.Product()
+	durable := product.DurableState
 	if err := validateStatusInventory(durable, authenticatedAgentID, report); err != nil {
 		return false, nil, err
 	}
@@ -326,7 +325,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 		} else {
 			deploymentAllocationIDs[cond.GetAllocationId()] = struct{}{}
 		}
-		if _, hasDomain := domainForService(durable, assignment.ServiceID); hasDomain {
+		if len(product.DomainHostnamesForService(assignment.ServiceID)) > 0 {
 			ingressChanged = true
 		}
 	}
@@ -400,15 +399,6 @@ func validateStatusInventory(durable journal.DurableState, authenticatedAgentID 
 		}
 	}
 	return nil
-}
-
-func domainForService(durable journal.DurableState, serviceID string) (journal.Domain, bool) {
-	for _, domain := range durable.Domains {
-		if domain.ServiceID == serviceID {
-			return domain, true
-		}
-	}
-	return journal.Domain{}, false
 }
 
 // evaluateObservedDeployment folds a live observation into the deployment record and reports

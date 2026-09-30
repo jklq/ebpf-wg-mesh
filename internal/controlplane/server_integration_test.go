@@ -46,6 +46,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 		StateDir: t.TempDir(),
 		Ingress: config.IngressConfig{
 			PublicAddr: "platform.local",
+			XDSListen:  "127.0.0.1:0",
 		},
 		Dashboard: config.ManagedDashboardConfig{
 			ServiceCallerID: "dashboard-test",
