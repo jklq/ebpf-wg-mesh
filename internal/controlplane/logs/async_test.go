@@ -121,6 +121,7 @@ func newTestIngester(t *testing.T, store flushStore, cfg AsyncIngesterConfig) *A
 	if err != nil {
 		t.Fatalf("NewAsyncIngester: %v", err)
 	}
+	t.Cleanup(func() { _ = ingester.Close() })
 	return ingester
 }
 
@@ -134,7 +135,7 @@ func TestAsyncIngesterFlushesQueuedBatches(t *testing.T) {
 
 	ingester.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 5))
 	stats := waitForIngest(t, ingester, 5)
-	if stats.ShedLines != 0 || stats.OwedGaps != 0 {
+	if stats.ShedLines != 0 {
 		t.Fatalf("clean ingest shed lines: %+v", stats)
 	}
 	store.mu.Lock()
@@ -168,7 +169,7 @@ func TestAsyncIngesterRateLimitsAbusiveAllocations(t *testing.T) {
 	}
 }
 
-func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
+func TestAsyncIngesterDurablyShedsWhenJournalFull(t *testing.T) {
 	t.Parallel()
 
 	// No Run loop: the journal fills and stays full.
@@ -195,10 +196,10 @@ func TestAsyncIngesterShedsWithOwedGapsWhenJournalFull(t *testing.T) {
 		gapLines += gap.DroppedCount
 	}
 	if gapLines != stats.ShedLines {
-		t.Fatalf("owed gap not flushed: %+v", store.gaps)
+		t.Fatalf("durable gap not flushed: %+v", store.gaps)
 	}
 	if store.gaps[0].Reason != logpipeline.ReasonIngestOverflow {
-		t.Fatalf("owed gap reason wrong: %+v", store.gaps)
+		t.Fatalf("durable gap reason wrong: %+v", store.gaps)
 	}
 }
 
@@ -283,59 +284,7 @@ func TestAsyncIngesterRunBlocksUntilContextEndsWhenDisabled(t *testing.T) {
 
 // Past the detailed key cap, shed windows fold into service-level aggregates
 // so every shed line still surfaces in reads.
-func TestAsyncIngesterFoldsOwedGapsPastKeyCap(t *testing.T) {
-	t.Parallel()
 
-	store := &fakeFlushStore{enabled: true}
-	ingester := newTestIngester(t, store, AsyncIngesterConfig{QueueBytes: 512})
-
-	services := []string{"svc-a", "svc-b", "svc-c"}
-	totalKeys := 2 * maxIngestOwedGaps
-	for i := 0; i < totalKeys; i++ {
-		service := services[i%len(services)]
-		ingester.EnqueueAgentBatch("agent-1", testAgentBatch(service, fmt.Sprintf("alloc-%05d", i), 2))
-	}
-
-	stats := ingester.Stats()
-	if stats.ShedLines == 0 {
-		t.Fatalf("tiny journal must shed: %+v", stats)
-	}
-	if stats.OwedGaps > maxIngestOwedGaps+3 {
-		t.Fatalf("owed %d gaps, want at most %d detailed + 3 folded", stats.OwedGaps, maxIngestOwedGaps)
-	}
-
-	stop := runIngester(t, ingester)
-	defer stop()
-	deadline := time.Now().Add(15 * time.Second)
-	for {
-		store.mu.Lock()
-		flushed := len(store.gaps) > 0
-		store.mu.Unlock()
-		if flushed {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("owed gaps never flushed")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	var total uint64
-	for _, gap := range store.gaps {
-		total += gap.DroppedCount
-	}
-	// Every fed line is accounted exactly once: stored, shed into gap rows,
-	// or counted lost (rejected batches are retried by their producer).
-	if stats.AcceptedLines+total+stats.GapsLost != uint64(2*totalKeys) {
-		t.Fatalf("%d accepted + %d gap lines + %d lost != %d fed: every count must be accounted",
-			stats.AcceptedLines, total, stats.GapsLost, 2*totalKeys)
-	}
-}
-
-// Shutdown must not discard accepted batches: Run drains the backlog and owed
-// gaps under the grace deadline even when its context is already canceled.
 func TestAsyncIngesterDrainsAcceptedBacklogOnShutdown(t *testing.T) {
 	t.Parallel()
 
@@ -504,7 +453,10 @@ func TestAsyncIngesterJournalSurvivesRestart(t *testing.T) {
 	for i := 0; i < 6; i++ {
 		ingester.EnqueueLines([]LogLineInput{{ID: fmt.Sprintf("sy:%d", i), Line: "kept"}})
 	}
-	// No flusher ran: the process "crashes" here, but accepted lines must survive.
+	// Release process resources without flushing the durable acceptance.
+	if err := ingester.Close(); err != nil {
+		t.Fatal(err)
+	}
 	reopened := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
 	for i := 0; i < 6; i++ {
 		reopened.EnqueueLines([]LogLineInput{{ID: fmt.Sprintf("sy:late-%d", i), Line: "kept"}})
@@ -557,72 +509,31 @@ func TestAsyncIngesterKeepsAbandonedBacklogForNextBoot(t *testing.T) {
 	store.mu.Lock()
 	store.failLines = nil
 	store.mu.Unlock()
+	if err := ingester.Close(); err != nil {
+		t.Fatal(err)
+	}
 	reopened := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
 	stop := runIngester(t, reopened)
 	defer stop()
 	waitForIngest(t, reopened, 7500)
 }
 
-func TestAsyncIngesterKeepsCorruptGapUntilStoreAcceptsIt(t *testing.T) {
+func TestAsyncIngesterRefusesDamagedJournal(t *testing.T) {
 	dir := t.TempDir()
-	store := &fakeFlushStore{enabled: true, failGaps: errors.New("clickhouse is down")}
+	store := &fakeFlushStore{enabled: true}
 	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
-	if first.EnqueueLines([]LogLineInput{{ID: "line-1", ServiceID: "svc-1", Line: "lost"}}) != AdmitAccepted {
+	if first.EnqueueLines([]LogLineInput{{ID: "line-1", ServiceID: "svc-1", Line: "durable"}}) != AdmitAccepted {
 		t.Fatal("journal did not accept line")
 	}
 	if err := first.backlog.Close(); err != nil {
-		t.Fatalf("close journal: %v", err)
+		t.Fatal(err)
 	}
-	segments, err := filepath.Glob(filepath.Join(dir, "seg-*.log"))
-	if err != nil || len(segments) != 1 {
-		t.Fatalf("journal segments: %v %v", segments, err)
+	if err := os.WriteFile(filepath.Join(dir, logpipeline.SpoolFile), make([]byte, 8192), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(segments[0])
-	if err != nil || len(raw) == 0 {
-		t.Fatalf("read journal segment: %v", err)
-	}
-	raw[len(raw)-1] ^= 0xff
-	if err := os.WriteFile(segments[0], raw, 0o600); err != nil {
-		t.Fatalf("corrupt journal segment: %v", err)
-	}
-
-	failed := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir, ShutdownGrace: 100 * time.Millisecond})
-	pending := failed.backlog.PendingCorruptDrops()
-	if pending["ingest|svc-1:1"].Count != 1 || pending["ingest|svc-1:1"].ID == "" {
-		t.Fatalf("corrupt loss not recorded durably: %+v", pending)
-	}
-	failed.drainShutdown(context.Background())
-	if got := failed.backlog.PendingCorruptDrops()["ingest|svc-1:1"]; got != pending["ingest|svc-1:1"] {
-		t.Fatalf("failed gap write cleared loss: %+v", got)
-	}
-	if err := failed.backlog.Close(); err != nil {
-		t.Fatalf("close failed drain: %v", err)
-	}
-	store.mu.Lock()
-	store.failGaps = nil
-	store.mu.Unlock()
-	reopened := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: dir})
-	stop := runIngester(t, reopened)
-	defer stop()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		store.mu.Lock()
-		var gap GapInput
-		if len(store.gaps) > 0 {
-			gap = store.gaps[0]
-		}
-		store.mu.Unlock()
-		if gap.DroppedCount == 1 && gap.ServiceID == "svc-1" &&
-			len(reopened.backlog.PendingCorruptDrops()) == 0 {
-			if gap.SummaryID != pending["ingest|svc-1:1"].ID+":svc-1" {
-				t.Fatalf("corrupt gap identity changed across restart: %+v", gap)
-			}
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("corrupt gap did not flush after restart: %+v", gap)
-		}
-		time.Sleep(10 * time.Millisecond)
+	if reopened, err := NewAsyncIngester(store, AsyncIngesterConfig{SpoolDir: dir}); err == nil {
+		_ = reopened.backlog.Close()
+		t.Fatal("damaged journal was silently reset")
 	}
 }
 
@@ -905,9 +816,9 @@ func TestAsyncIngesterReplayedProducerGapsDoNotInflate(t *testing.T) {
 	stop := runIngester(t, ingester)
 	defer stop()
 	deadline := time.Now().Add(10 * time.Second)
-	for ingester.Stats().FlushedLines < 0 || ingester.Stats().OwedGaps > 0 {
+	for ingester.Stats().QueuedFlushes > 0 {
 		if time.Now().After(deadline) {
-			t.Fatalf("owed gap never flushed: %+v", ingester.Stats())
+			t.Fatalf("journal gap never flushed: %+v", ingester.Stats())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -1030,7 +941,10 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 		t.Fatalf("expected the oversized batch to shed: %+v", first.Stats())
 	}
 
-	// Crash before any flush: the restart must surface shed lines as gap rows.
+	// Restart before any flush: accepted losses must surface as gap rows.
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
 	second := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir, QueueBytes: 4096})
 	stop := runIngester(t, second)
 	defer stop()
@@ -1053,64 +967,20 @@ func TestAsyncIngesterShedGapsSurviveRestart(t *testing.T) {
 }
 
 // A corrupted journal record surfaces as attributed gap rows, never vanished.
-func TestAsyncIngesterSurfacesJournalCorruption(t *testing.T) {
-	t.Parallel()
 
+func TestAsyncIngesterRetainsMalformedJournalPayload(t *testing.T) {
 	store := &fakeFlushStore{enabled: true}
-	spoolDir := t.TempDir()
-	first := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir})
-	if first.EnqueueAgentBatch("agent-1", testAgentBatch("svc-1", "alloc-1", 3)) != AdmitAccepted {
-		t.Fatal("enqueue must accept-or-shed, never fail")
+	a := newTestIngester(t, store, AsyncIngesterConfig{})
+	if err := a.backlog.Append(logpipeline.Record{ObservedAt: time.Now(), Payload: []byte("invalid journal JSON")}); err != nil {
+		t.Fatal(err)
 	}
-
-	entries, err := os.ReadDir(spoolDir)
-	if err != nil {
-		t.Fatalf("read spool dir: %v", err)
+	if _, _, _, err := a.nextFlush(context.Background()); err == nil {
+		t.Fatal("malformed durable record was silently consumed")
 	}
-	var corrupted bool
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Name() == "drops.json" {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(spoolDir, entry.Name()))
-		if err != nil || len(raw) < 40 {
-			continue
-		}
-		for i := 20; i < 36; i++ {
-			raw[i] ^= 0xFF
-		}
-		if err := os.WriteFile(filepath.Join(spoolDir, entry.Name()), raw, 0o600); err != nil {
-			t.Fatalf("corrupt segment: %v", err)
-		}
-		corrupted = true
-		break
+	if stats := a.Stats(); stats.QueuedFlushes != 1 || stats.FlushedLines != 0 {
+		t.Fatalf("malformed record was acknowledged: %+v", stats)
 	}
-	if !corrupted {
-		t.Fatal("no journal segment to corrupt")
-	}
-
-	second := newTestIngester(t, store, AsyncIngesterConfig{SpoolDir: spoolDir})
-	stop := runIngester(t, second)
-	defer stop()
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		store.mu.Lock()
-		var gaps []GapInput
-		for _, gap := range store.gaps {
-			if gap.Reason == logpipeline.ReasonCorruptSpool && gap.ServiceID == "svc-1" {
-				gaps = append(gaps, gap)
-			}
-		}
-		store.mu.Unlock()
-		if len(gaps) > 0 {
-			if gaps[0].DroppedCount < 3 {
-				t.Fatalf("corruption gap undercounts: %+v", gaps[0])
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("journal corruption never surfaced as a gap")
-		}
-		time.Sleep(10 * time.Millisecond)
+	if _, _, _, err := a.nextFlush(context.Background()); err == nil {
+		t.Fatal("malformed payload did not remain available on retry")
 	}
 }

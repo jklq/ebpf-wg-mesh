@@ -154,7 +154,7 @@ func TestBuildLogReporterOrphansOnLeaseLoss(t *testing.T) {
 	if !reporter.orphaned.Load() {
 		t.Fatal("lease loss must orphan the reporter")
 	}
-	drops, err := logpipeline.LoadDrops(spoolDir)
+	drops, err := testLoadDrops(spoolDir)
 	if err != nil {
 		t.Fatalf("LoadDrops: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestBuildLogReporterPersistsRateLimitBeforeFlush(t *testing.T) {
 	t.Parallel()
 
 	client := &recordingBuilderServiceClient{calls: make(chan struct{}, 4)}
-	cfg, dir := testBuildLogShipConfig(t, "build-1")
+	cfg, _ := testBuildLogShipConfig(t, "build-1")
 	cfg.RatePerSec = 1
 	cfg.Burst = 1
 	cfg.FlushInterval = time.Hour
@@ -185,7 +185,7 @@ func TestBuildLogReporterPersistsRateLimitBeforeFlush(t *testing.T) {
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "kept"})
 	reporter.Report(context.Background(), commandOutputLine{ObservedAt: now, Stream: "stdout", Line: "denied"})
 
-	drops, err := logpipeline.LoadDrops(dir)
+	drops, err := reporter.spool.PendingDrops()
 	if err != nil {
 		t.Fatalf("LoadDrops: %v", err)
 	}
@@ -213,10 +213,10 @@ func TestBuildLogReporterRateLimitsWithGapSummaries(t *testing.T) {
 	reporter.Close()
 
 	requests := client.ReportRequests()
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 report request, got %d", len(requests))
+	if len(requests) != 2 {
+		t.Fatalf("expected separate drop and line requests, got %d", len(requests))
 	}
-	if got := len(requests[0].GetLines()); got != 1 {
+	if got := len(requests[1].GetLines()); got != 1 {
 		t.Fatalf("expected burst of 1 shipped line, got %d", got)
 	}
 	if got := requests[0].GetDroppedLines(); got != 4 {
@@ -306,7 +306,7 @@ func TestGCStaleBuildLogSpools(t *testing.T) {
 
 // A build reclaimed under a new lease epoch must start from a fresh spool,
 // not re-emit the previous attempt's records.
-func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
+func TestBuildLogReporterAccountsForPreviousEpochWithoutReplayingIt(t *testing.T) {
 	t.Parallel()
 
 	if buildLogSpoolDir("/base", "build-1", 1) == buildLogSpoolDir("/base", "build-1", 2) {
@@ -326,11 +326,11 @@ func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
 		t.Fatalf("marshal stale line: %v", err)
 	}
 	oldDir := buildLogSpoolDir(base, "build-1", 1)
-	oldSpool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: oldDir, MaxBytes: 1 << 20, SyncWrites: true})
+	oldSpool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: oldDir, MaxBytes: 1 << 20})
 	if err != nil {
 		t.Fatalf("open old spool: %v", err)
 	}
-	if err := oldSpool.Append("stdout", staleID, now, payload); err != nil {
+	if err := oldSpool.Append(logpipeline.Record{DropKey: logpipeline.DropKey{BuildID: "build-1", ServiceID: "svc-1", Stream: "stdout", LogType: platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD}, ObservedAt: now, Payload: payload}); err != nil {
 		t.Fatalf("append old spool: %v", err)
 	}
 	if err := oldSpool.Close(); err != nil {
@@ -346,19 +346,21 @@ func TestBuildLogReporterDoesNotReclaimPreviousEpochSpool(t *testing.T) {
 	reporter.Close()
 
 	requests := client.ReportRequests()
-	if len(requests) != 1 {
-		t.Fatalf("expected 1 report request, got %d", len(requests))
+	if len(requests) != 2 {
+		t.Fatalf("expected gap and fresh-line requests, got %d", len(requests))
 	}
-	lines := requests[0].GetLines()
+	lines := requests[1].GetLines()
 	if len(lines) != 1 {
 		t.Fatalf("new lease re-emitted the previous attempt's output: %+v", lines)
 	}
 	if lines[0].GetLineId() == staleID {
 		t.Fatalf("new lease reported a stale-epoch line: %q", lines[0].GetLineId())
 	}
-	// The crashed attempt's spool survives untouched for garbage collection.
-	if _, err := os.Stat(oldDir); err != nil {
-		t.Fatalf("previous attempt spool must survive for GC: %v", err)
+	if len(requests[0].GetDrops()) != 1 || requests[0].GetDrops()[0].GetDroppedCount() != 1 {
+		t.Fatalf("dead attempt output vanished without a gap: %+v", requests)
+	}
+	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
+		t.Fatalf("previous attempt remains after durable takeover: %v", err)
 	}
 }
 
@@ -449,11 +451,10 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 		for i := 0; i < 5; i++ {
 			reporter.Report(context.Background(), commandOutputLine{ObservedAt: base, Stream: "stdout", Line: "flood"})
 		}
-		reporter.collectDrops(base.Add(time.Duration(round) * time.Second))
 		reporter.flush() // Report fails; the summaries must fold back.
 	}
 	reporter.mu.Lock()
-	summaries := reporter.pending.Summaries()
+	summaries := testPendingDrops(t, reporter.spool)
 	reporter.mu.Unlock()
 	if len(summaries) != 1 {
 		t.Fatalf("pending drop summaries not coalesced: %d entries after 20 outage rounds", len(summaries))
@@ -478,7 +479,7 @@ func TestBuildLogReporterCoalescesDropSummariesAcrossOutage(t *testing.T) {
 	client.mu.Unlock()
 	reporter.flush()
 	reporter.mu.Lock()
-	left := reporter.pending.Summaries()
+	left := testPendingDrops(t, reporter.spool)
 	reporter.mu.Unlock()
 	if len(left) != 0 {
 		t.Fatalf("reported summaries not cleared: %+v", left)
@@ -572,7 +573,7 @@ func TestBuildLogReporterInheritsPriorAttemptDropSummaries(t *testing.T) {
 	if err := reporter1.Close(); err == nil {
 		t.Fatal("expected abandoned delivery for attempt 1")
 	}
-	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.PendingDropsFile)); err != nil {
+	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.SpoolFile)); err != nil {
 		t.Fatalf("drop summaries must persist beside the attempt spool: %v", err)
 	}
 
@@ -597,10 +598,10 @@ func TestBuildLogReporterInheritsPriorAttemptDropSummaries(t *testing.T) {
 	for _, drop := range requests[0].GetDrops() {
 		inherited += drop.GetDroppedCount()
 	}
-	if inherited != 4 {
-		t.Fatalf("expected the 4 dropped lines of attempt 1, got %d in %+v", inherited, requests[0].GetDrops())
+	if inherited != 5 {
+		t.Fatalf("expected all 5 lost lines of attempt 1, got %d in %+v", inherited, requests[0].GetDrops())
 	}
-	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.PendingDropsFile)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg1.SpoolDir, logpipeline.SpoolFile)); !os.IsNotExist(err) {
 		t.Fatalf("taken-over summaries must be consumed: %v", err)
 	}
 }
@@ -641,51 +642,46 @@ func TestBuildLogReporterCapsBatchBytes(t *testing.T) {
 	}
 }
 
-func TestBuildLogReporterKeepsInheritedDropsWhenSaveFails(t *testing.T) {
-	t.Parallel()
-
+func TestBuildLogReporterKeepsPriorAttemptWhenDestinationCannotOpen(t *testing.T) {
 	base := t.TempDir()
-	now := time.Now().UTC()
-
 	prior := buildLogSpoolDir(base, "build-1", 1)
-	if err := os.MkdirAll(prior, 0o700); err != nil {
-		t.Fatalf("create prior attempt dir: %v", err)
-	}
-	if err := logpipeline.SaveDrops(prior, []*platformv1.LogDropSummary{{
-		ServiceId:    "svc-1",
-		BuildId:      "build-1",
-		LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD,
-		Stream:       "stdout",
-		DroppedCount: 3,
-		Reason:       logpipeline.ReasonRateLimited,
-		WindowStart:  timestamppb.New(now),
-		WindowEnd:    timestamppb.New(now),
-	}}); err != nil {
-		t.Fatalf("save prior drops: %v", err)
-	}
-
-	// The merged snapshot cannot commit: the summary path is occupied by a directory.
-	own := buildLogSpoolDir(base, "build-1", 2)
-	if err := os.MkdirAll(filepath.Join(own, logpipeline.PendingDropsFile), 0o700); err != nil {
-		t.Fatalf("block pending drops file: %v", err)
-	}
-	cfg := buildLogShipConfig{
-		SpoolDir:      own,
-		SpoolMaxBytes: 1 << 20,
-		RatePerSec:    100000,
-		Burst:         100000,
-		BatchSize:     10,
-		FlushInterval: time.Hour,
-		CloseTimeout:  5 * time.Second,
-	}
-	reporter, err := newBuildLogReporter(context.Background(), &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}, "builder-1", "build-1", "svc-1", 2, cfg)
+	old, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: prior})
 	if err != nil {
-		t.Fatalf("new build log reporter: %v", err)
+		t.Fatal(err)
 	}
-	defer reporter.Close()
+	now := time.Now()
+	if err := old.AddDrops(logpipeline.Drop{Key: logpipeline.DropKey{BuildID: "build-1", ServiceID: "svc-1", Stream: "stdout"}, Count: 3, Start: now, End: now}); err != nil {
+		t.Fatal(err)
+	}
+	_ = old.Close()
+	own := buildLogSpoolDir(base, "build-1", 2)
+	if err := os.MkdirAll(filepath.Join(own, logpipeline.SpoolFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := buildLogShipConfig{SpoolDir: own}
+	if r, err := newBuildLogReporter(context.Background(), &recordingBuilderServiceClient{calls: make(chan struct{}, 8)}, "builder-1", "build-1", "svc-1", 2, cfg); err == nil {
+		_ = r.Close()
+		t.Fatal("opened blocked destination")
+	}
+	rows, err := testLoadDrops(prior)
+	if err != nil || len(rows) != 1 || rows[0].GetDroppedCount() != 3 {
+		t.Fatalf("prior attempt accounting changed: %+v %v", rows, err)
+	}
+}
 
-	// The takeover copy must survive until a merged snapshot is durable.
-	if _, err := os.Stat(filepath.Join(prior, logpipeline.PendingDropsFile)); err != nil {
-		t.Fatalf("inherited drop summaries removed before the merge was durable: %v", err)
+func testPendingDrops(t *testing.T, spool *logpipeline.Spool) []*platformv1.LogDropSummary {
+	t.Helper()
+	rows, err := spool.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
 	}
+	return rows
+}
+func testLoadDrops(dir string) ([]*platformv1.LogDropSummary, error) {
+	spool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: dir})
+	if err != nil {
+		return nil, err
+	}
+	defer spool.Close()
+	return spool.PendingDrops()
 }

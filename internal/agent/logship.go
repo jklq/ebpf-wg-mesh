@@ -19,10 +19,6 @@ const (
 	defaultShipBatchSize     = 256
 	defaultShipFlushInterval = time.Second
 	defaultShipReplayWindow  = 5 * time.Minute
-	// pendingDropsFile durably holds unreported drop summaries next to the spool.
-	pendingDropsFile = "pending-drops.json"
-	// maxAgentPendingDrops caps distinct gap identities saved beside the spool.
-	maxAgentPendingDrops = 256
 )
 
 // shipAdmitRate caps one allocation at the shipper's drain rate. Non-positive rates disable limiting.
@@ -60,12 +56,6 @@ type logShipConfig struct {
 	ReplayWindow  time.Duration
 }
 
-type allocMeta struct {
-	serviceID string
-	envID     string
-	logType   platformv1.ServiceLogType
-}
-
 type logShipStats struct {
 	Accepted     uint64
 	Limited      uint64
@@ -80,7 +70,6 @@ type logShipStats struct {
 // counted per allocation and reported as explicit read gaps.
 type logShipper struct {
 	agentID          string
-	spoolDir         string
 	spool            *logpipeline.Spool
 	limiter          *logpipeline.Limiter
 	aggregateLimiter *logpipeline.Limiter
@@ -93,12 +82,8 @@ type logShipper struct {
 	// AppendLog, so logging never blocks on the network.
 	shipMu sync.Mutex
 
-	mu               sync.Mutex
-	send             func(*agentv1.AgentClientMessage) error
-	meta             map[string]allocMeta
-	overflow         map[string]uint64
-	aggregateLimited map[string]uint64
-	pending          *logpipeline.DropSet
+	mu   sync.Mutex
+	send func(*agentv1.AgentClientMessage) error
 
 	accepted atomic.Uint64
 	limited  atomic.Uint64
@@ -121,34 +106,23 @@ func newLogShipper(agentID string, cfg logShipConfig) (*logShipper, error) {
 		cfg.ReplayWindow = defaultShipReplayWindow
 	}
 	spool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{
-		Dir:        cfg.SpoolDir,
-		MaxBytes:   cfg.SpoolMaxBytes,
-		SyncWrites: true,
-		// Acknowledgement is queue admission, so committed segments stay for the
+		Dir:      cfg.SpoolDir,
+		MaxBytes: cfg.SpoolMaxBytes,
+		// Acknowledgement is durable journal admission, so committed records stay for the
 		// replay window: a reconnect re-sends what was acknowledged but not ingested.
 		Retention: cfg.ReplayWindow,
 	})
 	if err != nil {
 		return nil, err
 	}
-	pending, err := loadPendingDrops(cfg.SpoolDir)
-	if err != nil {
-		slog.Warn("load pending log drop summaries", "agent_id", agentID, "error", err)
-		pending = logpipeline.NewDropSet()
-	}
 	return &logShipper{
 		agentID:          agentID,
-		spoolDir:         cfg.SpoolDir,
 		spool:            spool,
 		limiter:          logpipeline.NewLimiter(shipAdmitRate(cfg.RatePerSec, cfg.BatchSize, cfg.FlushInterval), cfg.Burst),
 		aggregateLimiter: logpipeline.NewLimiter(aggregateAdmitRate(cfg.RatePerSec, cfg.BatchSize, cfg.FlushInterval), cfg.BatchSize),
 		batchSize:        cfg.BatchSize,
 		flushInterval:    cfg.FlushInterval,
 		replayWindow:     cfg.ReplayWindow,
-		meta:             make(map[string]allocMeta),
-		overflow:         make(map[string]uint64),
-		aggregateLimited: make(map[string]uint64),
-		pending:          pending,
 	}, nil
 }
 
@@ -158,53 +132,48 @@ func (s *logShipper) AppendLog(entry *agentv1.LogEntry) {
 		return
 	}
 	key := entry.GetAllocationId()
-	s.recordMeta(key, entry)
 	if !s.limiter.Allow(key) {
+		s.noteDrop(entry, logpipeline.ReasonRateLimited)
 		s.limited.Add(1)
 		return
 	}
 	if !s.aggregateLimiter.Allow("agent") {
-		s.mu.Lock()
-		s.aggregateLimited[key]++
-		s.mu.Unlock()
+		s.noteDrop(entry, logpipeline.ReasonRateLimited)
 		s.limited.Add(1)
 		return
 	}
 	payload, err := proto.Marshal(entry)
 	if err != nil {
 		slog.Warn("marshal log entry", "agent_id", s.agentID, "error", err)
-		s.countOverflow(key, 1)
+		s.noteDrop(entry, logpipeline.ReasonSpoolOverflow)
 		return
 	}
 	observedAt := entry.GetObservedAt().AsTime()
 	if observedAt.IsZero() {
 		observedAt = time.Now().UTC()
 	}
-	if err := s.spool.Append(key, entry.GetLineId(), observedAt, payload); err != nil {
+	if err := s.spool.Append(logpipeline.Record{DropKey: agentLogDropKey(entry), ObservedAt: observedAt, Payload: payload}); err != nil {
 		slog.Warn("spool log entry", "agent_id", s.agentID, "error", err)
-		s.countOverflow(key, 1)
+		s.noteDrop(entry, logpipeline.ReasonSpoolOverflow)
 		return
 	}
 	s.accepted.Add(1)
 }
 
-func (s *logShipper) recordMeta(key string, entry *agentv1.LogEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.meta[key]; ok {
-		return
-	}
-	s.meta[key] = allocMeta{
-		serviceID: entry.GetServiceId(),
-		envID:     entry.GetEnvironmentId(),
-		logType:   entry.GetLogType(),
-	}
+func agentLogDropKey(entry *agentv1.LogEntry) logpipeline.DropKey {
+	return logpipeline.DropKey{ServiceID: entry.GetServiceId(), AllocationID: entry.GetAllocationId(), LogType: entry.GetLogType(), Stream: entry.GetStream()}
 }
 
-func (s *logShipper) countOverflow(key string, count uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.overflow[key] += count
+func (s *logShipper) noteDrop(entry *agentv1.LogEntry, reason string) {
+	key := agentLogDropKey(entry)
+	key.Reason = reason
+	now := entry.GetObservedAt().AsTime()
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	if err := s.spool.AddDrops(logpipeline.Drop{Key: key, Count: 1, Start: now, End: now}); err != nil {
+		slog.Error("persist producer log loss", "agent_id", s.agentID, "allocation_id", key.AllocationID, "error", err)
+	}
 }
 
 // Attach connects the ship loop to a session's send function and replays the
@@ -250,18 +219,13 @@ func (s *logShipper) Run(ctx context.Context) error {
 	}
 }
 
-// Close waits for an in-flight flush, drains drop counters into durable pending
-// summaries, and closes the spool.
+// Close waits for an in-flight flush and closes the durable queue.
 func (s *logShipper) Close() error {
 	if s == nil {
 		return nil
 	}
 	s.shipMu.Lock()
 	defer s.shipMu.Unlock()
-	s.collectDrops(time.Now().UTC())
-	s.mu.Lock()
-	s.persistPendingLocked()
-	s.mu.Unlock()
 	return s.spool.Close()
 }
 
@@ -269,7 +233,10 @@ func (s *logShipper) Stats() logShipStats {
 	if s == nil {
 		return logShipStats{}
 	}
-	spoolStats := s.spool.Stats()
+	spoolStats, err := s.spool.Stats()
+	if err != nil {
+		slog.Error("read log spool health", "agent_id", s.agentID, "error", err)
+	}
 	return logShipStats{
 		Accepted:     s.accepted.Load(),
 		Limited:      s.limited.Load(),
@@ -287,13 +254,8 @@ func (s *logShipper) currentSend() func(*agentv1.AgentClientMessage) error {
 func (s *logShipper) flush() {
 	s.shipMu.Lock()
 	defer s.shipMu.Unlock()
-	now := time.Now().UTC()
-	// Drop accounting persists even while detached: a crash must not lose counted losses.
-	s.collectDrops(now)
-	s.mu.Lock()
-	s.pending.Bound(maxAgentPendingDrops)
-	s.pruneMetaLocked()
-	s.mu.Unlock()
+	s.limiter.DrainDrops()
+	s.aggregateLimiter.DrainDrops()
 	send := s.currentSend()
 	if send == nil {
 		return
@@ -303,14 +265,18 @@ func (s *logShipper) flush() {
 		slog.Warn("read log spool", "agent_id", s.agentID, "error", err)
 		return
 	}
-	s.mu.Lock()
-	taken := s.pending.Take()
-	s.mu.Unlock()
+	taken, err := s.spool.PendingDrops()
+	if err != nil {
+		s.spool.Release()
+		slog.Error("read producer log losses", "agent_id", s.agentID, "error", err)
+		return
+	}
 	var dropped uint64
 	for _, summary := range taken {
 		dropped += summary.GetDroppedCount()
 	}
 	if len(records) == 0 && len(taken) == 0 {
+		s.spool.Release()
 		return
 	}
 	entries := make([]*agentv1.LogEntry, 0, len(records))
@@ -318,7 +284,11 @@ func (s *logShipper) flush() {
 		var entry agentv1.LogEntry
 		if err := proto.Unmarshal(record.Payload, &entry); err != nil {
 			slog.Warn("decode spooled log entry", "agent_id", s.agentID, "error", err)
-			s.countOverflow(record.Key, 1)
+			if err := s.spool.Discard(record); err != nil {
+				s.spool.Release()
+				slog.Error("record corrupt producer log loss", "error", err)
+				return
+			}
 			continue
 		}
 		entries = append(entries, &entry)
@@ -337,7 +307,6 @@ func (s *logShipper) flush() {
 		})
 		if err != nil {
 			slog.Warn("send container log batch failed", "agent_id", s.agentID, "error", err)
-			s.restorePending(taken)
 			s.spool.Release()
 			return
 		}
@@ -348,114 +317,12 @@ func (s *logShipper) flush() {
 		})
 		if err != nil {
 			slog.Warn("send container log batch failed", "agent_id", s.agentID, "error", err)
-			s.restorePending(taken)
 			s.spool.Release()
 			return
 		}
 	}
-	if err := s.spool.Commit(cursor); err != nil {
+	if err := s.spool.Commit(cursor, taken); err != nil {
 		slog.Warn("commit log spool", "agent_id", s.agentID, "error", err)
-		s.restorePending(taken)
 		return
 	}
-	s.mu.Lock()
-	s.persistPendingLocked()
-	s.mu.Unlock()
-}
-
-// restorePending merges unsent summaries back so a failed send keeps its accounting.
-func (s *logShipper) restorePending(taken []*platformv1.LogDropSummary) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.pending.Restore(taken)
-	s.persistPendingLocked()
-}
-
-// loadPendingDrops reads drop summaries persisted by an earlier process.
-func loadPendingDrops(dir string) (*logpipeline.DropSet, error) {
-	rows, err := logpipeline.LoadDrops(dir)
-	if err != nil {
-		return nil, err
-	}
-	pending := logpipeline.NewDropSet()
-	pending.Restore(rows)
-	return pending, nil
-}
-
-// persistPendingLocked snapshots the pending drop summaries next to the spool.
-func (s *logShipper) persistPendingLocked() {
-	s.pending.Bound(maxAgentPendingDrops)
-	s.pruneMetaLocked()
-	if err := logpipeline.SaveDrops(s.spoolDir, s.pending.Summaries()); err != nil {
-		slog.Warn("persist pending log drop summaries", "agent_id", s.agentID, "error", err)
-	}
-}
-
-// pruneMetaLocked drops allocation metadata nothing pending still needs.
-func (s *logShipper) pruneMetaLocked() {
-	if len(s.meta) == 0 {
-		return
-	}
-	live := make(map[string]struct{}, s.pending.Len())
-	for _, summary := range s.pending.Summaries() {
-		live[summary.GetAllocationId()] = struct{}{}
-	}
-	for key := range s.meta {
-		if _, ok := live[key]; !ok {
-			delete(s.meta, key)
-		}
-	}
-}
-
-// collectDrops drains limiter, spool, and overflow counters into the pending gap
-// summaries, coalescing by identity, then durably snapshots them.
-func (s *logShipper) collectDrops(now time.Time) {
-	windowStart := now.Add(-s.flushInterval)
-	limited := s.limiter.DrainDrops()
-	s.aggregateLimiter.DrainDrops()
-	evicted, corrupt := s.spool.DrainDrops()
-	s.mu.Lock()
-	if limited == nil && len(s.aggregateLimited) > 0 {
-		limited = make(map[string]uint64)
-	}
-	for key, count := range s.aggregateLimited {
-		limited[key] += count
-	}
-	s.aggregateLimited = make(map[string]uint64)
-	overflow := s.overflow
-	s.overflow = make(map[string]uint64)
-	s.mu.Unlock()
-	if len(limited) == 0 && len(evicted) == 0 && len(corrupt) == 0 && len(overflow) == 0 {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for key, count := range limited {
-		s.notePendingLocked(key, count, logpipeline.ReasonRateLimited, windowStart, now)
-	}
-	for key, count := range evicted {
-		s.notePendingLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
-	}
-	for key, count := range corrupt {
-		s.notePendingLocked(key, count, logpipeline.ReasonCorruptSpool, windowStart, now)
-	}
-	for key, count := range overflow {
-		s.notePendingLocked(key, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
-	}
-	s.persistPendingLocked()
-}
-
-// notePendingLocked attributes one drop count to its allocation's pending entry.
-// The service ID is advisory; counts surface even when local metadata is gone.
-func (s *logShipper) notePendingLocked(key string, count uint64, reason string, windowStart, windowEnd time.Time) {
-	if key == "" {
-		return
-	}
-	meta := s.meta[key]
-	s.pending.Add(logpipeline.DropKey{
-		ServiceID:    meta.serviceID,
-		AllocationID: key,
-		LogType:      meta.logType,
-		Reason:       reason,
-	}, count, windowStart, windowEnd)
 }

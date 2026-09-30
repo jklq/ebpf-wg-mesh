@@ -59,84 +59,66 @@ deduplicate by identity.
 
 ## Producer pipelines (agents and builders)
 
-Container output funnels through a per-allocation token bucket
-(default 200 lines/s, burst 1000) into a bounded disk-backed FIFO
-spool (agent default 256 MiB under the runtime data dir; builders use a
-per-attempt spool under the work dir, default 64 MiB). A ship loop
-forwards batches with retry and exponential backoff; the spool cursor
-commits only after acceptance. Every shipped message is capped by
-marshaled bytes as well as line count, so batches of maximum-size
-lines stay under the transport's receive limit instead of wedging
-delivery. A read batch pins its segments against
-overflow eviction until it commits or is released: a delivered batch
-is never evicted mid-send, which would report a false gap and fail the
-commit. Committed sealed segments stay for
-the replay window after their newest record: acknowledgement is
-durable queueing on the control plane — one acceptance ack per batch
-(`LogBatchAck`) sent after the batch lands in the control plane's
-durable ingest journal, and the agent commits its spool cursor only
-after it arrives — so a batch lost before acceptance always retries,
-and the retained copy is what reconnect replay re-sends when the
-backend acknowledged but did not durably ingest (server-side dedup
-collapses
-the overlap). Builders
-need no retention: their report RPC writes durably before it
-returns. Nothing on this path blocks workload
-reconciliation: agent log shipping failure costs only log
-latency and, past the spool cap, dropped lines. Builds are held to a
-stricter rule because completion is a durable claim about the
-transcript: without a log pipeline the build does not run, and a
-reporter that never gets its output accepted fails the build. The cap also clamps
-the spool segment size, so a small configured cap still bounds one
-active file instead of overshooting until rotation. A failed append
-rolls its partial frame back out of the segment so later records can
-never hide behind damaged bytes; when the file cannot be repaired the
-segment is sealed and rotated and its readable prefix survives
-recovery. Records larger than the segment cap are rejected and
-counted as drops, and a cursor commit only advances after its save
-succeeds: a failed save leaves the read cursor unchanged, so the
-batch re-sends (deduplicated server-side) instead of being skipped.
+Container output passes through per-allocation and aggregate token buckets
+into a durable FIFO (agent default 256 MiB under the runtime data directory;
+builders default 64 MiB per attempt under the work directory). The FIFO is
+one bbolt database, `logs.db`, containing records, the acknowledgement cursor,
+and pending drop summaries. Each append, eviction, and acknowledgement uses a
+synced transaction. There is no segment framing, checksum repair, cursor file,
+or separate pending-drop file.
 
-Every shed line is counted and reported with the next batch as a drop
-summary, keyed per allocation (or stream for builders), and persisted
-as an explicit gap row. Summary sets ride their own byte-bounded
-messages, so an accumulated set can never oversize a retry and block
-line delivery. Shutdown drains the counters into pending
-drop summaries persisted next to the spool (file and directory synced
-before the snapshot counts as durable), so they report after the
-restart, and every flush collects and persists them even while
-detached, so counted losses survive a crash without a session or
-clean shutdown. Builders persist theirs next to the attempt spool and a
-retried attempt takes them over: it re-emits its own output from
-scratch but can never recreate the lines a dead attempt dropped, so
-their gap accounting survives across the retry. The takeover copies
-are removed only after the merged snapshot is durable. Pending summaries coalesce by identity — counts sum and the
-covered window widens — so a sustained outage holds one entry per
-identity instead of one per flush interval, and a failed send folds
-its taken summaries back into the pending set. Spool records lost to crash corruption are counted the same
-way with reason `corrupt_spool`, attributed best-effort from the
-damaged frame's key (frames whose key bytes are gone stay in the
-process counters only), and compaction remaps the durable cursor
-through its rewrite so unshipped records after the damage are never
-skipped. Drop summaries carry the allocation as their
-identity; the service is derived from the allocation owner at ingest.
-Shed flushes keep producer summary identity in their owed gaps, so a
-replayed summary replaces the same gap row instead of double counting.
-Build spools are removed on clean completion and leftovers are
-garbage-collected at startup once 24 hours pass without a write
-(staleness follows the newest write in the spool, so a long-running
-attempt keeps its unshipped output); a retried attempt re-emits its
-own output from scratch and never re-opens the previous attempt's
-spool records — attempt spools are keyed by build ID and lease epoch.
-Close
-always flushes once before deciding the
-attempt drained, so limiter and overflow drops report even when the
-spool holds no records. A build never completes successfully with
-its transcript undelivered: if the backend never accepts the attempt's
-output within the close timeout, the reporter reports abandonment and
-the build fails — the abandoned spool is garbage-collected and the
-output would be lost, while a failed build is retried and re-emits
-its output from scratch.
+`MaxBytes` bounds retained encoded record bytes, including attribution and
+payload encoding, and `MaxRecords` independently caps record count (default
+1,000,000). bbolt's `MaxSize` enforces a separate physical file limit of
+`4 * MaxBytes + 8 MiB`, allowing pages, copy-on-write transactions, and drop
+metadata. Deleted pages are reused; the file retains its high-water size.
+Drop identities consume that same hard disk budget and never fold across
+allocations or services. If an append or loss-accounting transaction cannot
+fit, it fails without deleting the prior records or accounting. The agent
+reports that persistence failure loudly; a builder fails the attempt rather
+than completing with unaccounted output.
+
+Shipping is at least once. A read pins only the returned records against
+eviction while the network call runs. Unread records can be shed under
+pressure; every such deletion atomically adds an exactly attributed loss
+window. When all capacity is pinned, admission fails. Successful delivery
+atomically advances the cursor and acknowledges the delivered drop snapshot;
+a storage failure replays both. Released or stale read tokens cannot
+acknowledge a later batch. Network delivery never holds a database transaction.
+
+Line batches and drop snapshots use separate byte-bounded messages below the
+transport's receive limit, so large lines or accumulated gap identities
+cannot wedge delivery. Agent acceptance is a `LogBatchAck` after the complete
+batch commits to the control plane's durable ingest journal. Agents retain
+acknowledged records for a recent replay window (default five minutes), and
+serialize reconnect rewinds with flushes. Replay copies yield to unaccepted
+output under pressure without being reported as losses. Builders need no
+retention: their report RPC writes durably before returning.
+
+Producer denials and failed admissions persist their drop windows immediately,
+even while detached. Windows with the same allocation or build, stream,
+log type and reason coalesce under a stable summary ID. Failed sends leave the
+snapshot durable with its existing IDs. Losses arriving during a successful
+send remain pending under a fresh ID after acknowledgement, so a reduced
+count never overwrites an already delivered window. An undecodable producer
+payload becomes an exactly attributed `corrupt_spool` gap in the same
+transaction that discards it; subsequent records remain deliverable. Torn
+bbolt commits recover through its transaction machinery. A damaged database
+is refused explicitly; there is no best-effort page salvage or silent reset.
+
+Build output readers use a bounded in-memory channel before disk writes, so
+normal output never waits for a per-line fsync. Close drains that channel,
+ships at least one final round (including gap-only attempts), and returns an
+error if the backend has not accepted the transcript within the close
+deadline. A lease loss or abandonment converts unaccepted stored records to
+per-stream gaps transactionally. A later lease imports dead attempts' gap
+snapshots with their stable IDs, then acknowledges and removes the source
+only after the import is durable. Repeating an interrupted takeover replaces
+the snapshot instead of adding its counts again. A retry re-emits its own
+output under its new epoch and never ships the old attempt's lines.
+Clean completion removes the drained database; stale attempt directories
+are collected after 24 hours without a write, following database modification
+time rather than the directory's creation time.
 
 ## Control-plane ingest
 
@@ -162,12 +144,11 @@ that outlast the replay window and control-plane restarts — only a
 lost journal directory can drop it. Each replica keeps its own
 journal directory inside the shared state volume, so failover never
 races two drainers over one journal. Journal overflow
-sheds whole batches with owed gap rows so the loss still surfaces in
-reads; past the owed-gap key cap shed windows fold into service-level
-aggregate gaps rather than vanishing. Batches over 2000 entries are trimmed with the tail counted as
+sheds a complete batch only when its exact gap accounting fits durably;
+otherwise admission returns retry and the producer retains its copy. Batches over 2000 entries are trimmed with the tail counted as
 ingest gaps per affected service and allocation.
 Shutdown drains the journal under a 15s grace deadline:
-the batch caught mid-retry, journaled batches, and owed gap windows
+the batch caught mid-retry and journaled line and gap batches
 flush before the process exits,
 even when the run context is already canceled, and the server waits
 for the drain before closing the log store so every flush runs
@@ -194,8 +175,8 @@ retried reports of the same coalesced drop lineage collapse onto one
 row even after their totals or window grew, so retries never double
 count. Internally derived gaps are immutable per event and key on
 their full content. The same identity keeps shed reports honest:
-when a re-sent summary sheds again before its write, it replaces its
-owed window instead of adding to it. Reads return the gaps overlapping the queried range
+a replayed producer summary keeps its ID in the journal and at the sink,
+so its repeated reports replace the same gap row. Reads return the gaps overlapping the queried range
 alongside lines, paginated with their own opaque cursor
 (`gap_page_token`/`next_gap_page_token`, oldest first by window) so a
 range with more rows than one response may carry keeps every gap
@@ -251,3 +232,14 @@ against such a table the control plane drops it and recreates the
 ReplacingMergeTree schema; the pre-2.9 rows are lost deliberately, as
 telemetry is not customer authority and the row semantics are
 incompatible. `service_log_gaps` is created alongside.
+
+## Local spool format cutover
+
+This release replaces the segmented local spool with `logs.db` everywhere:
+agents, builder attempts, and control-plane ingest journals. Opening a
+directory containing old segments or cursor/drop JSON files fails with an
+explicit format error. Drain those directories using the previous release,
+then remove them before deploying this release, or deliberately reset their
+contents if losing the old local telemetry is acceptable. There is no format
+migration or compatibility reader. Existing ClickHouse line/gap tables and
+producer identities remain the same.
