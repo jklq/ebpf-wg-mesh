@@ -1,165 +1,133 @@
 package logpipeline
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 )
 
-func TestDropSetCoalescesByIdentity(t *testing.T) {
-	t.Parallel()
-
-	set := NewDropSet()
-	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	limited := DropKey{AllocationID: "alloc-1", Reason: ReasonRateLimited}
-	overflow := DropKey{AllocationID: "alloc-1", Reason: ReasonSpoolOverflow}
-
-	set.Add(limited, 3, base, base.Add(time.Second))
-	set.Add(limited, 4, base.Add(2*time.Second), base.Add(3*time.Second))
-	set.Add(overflow, 5, base, base)
-
-	if set.Len() != 2 {
-		t.Fatalf("expected 2 coalesced identities, got %d", set.Len())
+func TestDurableDropsCoalesceWithoutChangingAttribution(t *testing.T) {
+	s := openTestSpool(t, SpoolConfig{})
+	base := time.Now().UTC()
+	key := DropKey{ServiceID: "svc", AllocationID: "a", Reason: ReasonRateLimited}
+	if err := s.AddDrops(Drop{Key: key, Count: 3, Start: base, End: base}, Drop{Key: key, Count: 4, Start: base.Add(time.Second), End: base.Add(time.Second)}, Drop{Key: DropKey{ServiceID: "svc", AllocationID: "b", Reason: ReasonRateLimited}, Count: 2, Start: base, End: base}); err != nil {
+		t.Fatal(err)
 	}
-	for _, summary := range set.Summaries() {
-		switch summary.GetReason() {
-		case ReasonRateLimited:
-			if summary.GetDroppedCount() != 7 {
-				t.Fatalf("counts must sum, got %d", summary.GetDroppedCount())
-			}
-			if got := summary.GetWindowStart().AsTime(); !got.Equal(base) {
-				t.Fatalf("window start must widen to the earliest, got %v", got)
-			}
-			if got := summary.GetWindowEnd().AsTime(); !got.Equal(base.Add(3 * time.Second)) {
-				t.Fatalf("window end must widen to the latest, got %v", got)
-			}
-		case ReasonSpoolOverflow:
-			if summary.GetDroppedCount() != 5 {
-				t.Fatalf("distinct identity must keep its own count, got %d", summary.GetDroppedCount())
-			}
+	rows, err := s.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("coalescing: %+v", rows)
+	}
+	for _, row := range rows {
+		if row.GetAllocationId() == "a" && (row.GetDroppedCount() != 7 || !row.GetWindowStart().AsTime().Equal(base) || !row.GetWindowEnd().AsTime().Equal(base.Add(time.Second))) {
+			t.Fatalf("lost window: %+v", row)
 		}
 	}
 }
 
-func TestDropSetTakeRestoreKeepsAccountingExact(t *testing.T) {
-	t.Parallel()
-
-	set := NewDropSet()
-	key := DropKey{
-		ServiceID:    "svc-1",
-		AllocationID: "alloc-1",
-		LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
-		Reason:       ReasonRateLimited,
+func TestDurableDropRetryAndConcurrentGrowth(t *testing.T) {
+	dir := t.TempDir()
+	s := openTestSpool(t, SpoolConfig{Dir: dir})
+	base := time.Now()
+	key := DropKey{AllocationID: "a", Reason: ReasonRateLimited}
+	if err := s.AddDrops(Drop{Key: key, Count: 3, Start: base, End: base}); err != nil {
+		t.Fatal(err)
 	}
-	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	set.Add(key, 3, base, base)
-
-	taken := set.Take()
-	if set.Len() != 0 {
-		t.Fatalf("Take must empty the set, %d left", set.Len())
+	snapshot, err := s.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(taken) != 1 || taken[0].GetDroppedCount() != 3 {
-		t.Fatalf("Take lost summaries: %+v", taken)
+	id := snapshot[0].GetSummaryId()
+	if err := s.AddDrops(Drop{Key: key, Count: 4, Start: base.Add(time.Second), End: base.Add(time.Second)}); err != nil {
+		t.Fatal(err)
 	}
-
-	// Drops arriving while the send is in flight must not be lost
-	// when the failed send restores its taken summaries.
-	set.Add(key, 4, base.Add(time.Minute), base.Add(time.Minute))
-	set.Restore(taken)
-
-	summaries := set.Summaries()
-	if len(summaries) != 1 {
-		t.Fatalf("restore must coalesce into one identity, got %d", len(summaries))
+	_ = s.Close()
+	s = openTestSpool(t, SpoolConfig{Dir: dir})
+	grown, err := s.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if summaries[0].GetDroppedCount() != 7 {
-		t.Fatalf("restore lost counts, got %d", summaries[0].GetDroppedCount())
+	if len(grown) != 1 || grown[0].GetSummaryId() != id || grown[0].GetDroppedCount() != 7 {
+		t.Fatalf("retry changed identity: %+v", grown)
 	}
-	if got := summaries[0].GetWindowStart().AsTime(); !got.Equal(base) {
-		t.Fatalf("restore lost the earlier window start, got %v", got)
+	// Only the original snapshot reached the sink. New losses cannot overwrite
+	// its accepted count with a reduced value under the same ID.
+	_, c := readSpool(t, s, 1)
+	if err := s.Commit(c, snapshot); err != nil {
+		t.Fatal(err)
 	}
-	if got := summaries[0].GetWindowEnd().AsTime(); !got.Equal(base.Add(time.Minute)) {
-		t.Fatalf("restore lost the later window end, got %v", got)
+	fresh, err := s.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestDropSetBoundFoldsAllocationChurnWithinAService(t *testing.T) {
-	t.Parallel()
-
-	set := NewDropSet()
-	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < 4; i++ {
-		set.Add(DropKey{
-			ServiceID:    "svc-1",
-			AllocationID: fmt.Sprintf("alloc-%d", i),
-			Reason:       ReasonRateLimited,
-		}, uint64(i+1), base.Add(time.Duration(i)*time.Second), base.Add(time.Duration(i)*time.Second))
-	}
-	// A different service stays attributable on its own.
-	set.Add(DropKey{ServiceID: "svc-2", AllocationID: "other", Reason: ReasonRateLimited}, 9, base, base)
-	survivor := ""
-	for _, summary := range set.Summaries() {
-		if summary.GetAllocationId() == "alloc-3" {
-			survivor = summary.GetSummaryId()
-		}
-	}
-	set.Bound(2)
-
-	if set.Len() != 2 {
-		t.Fatalf("bound left %d identities, want 2", set.Len())
-	}
-	var total uint64
-	var sawOther, sawSurvivor bool
-	for _, summary := range set.Summaries() {
-		total += summary.GetDroppedCount()
-		switch summary.GetAllocationId() {
-		case "other":
-			sawOther = summary.GetDroppedCount() == 9 && summary.GetServiceId() == "svc-2"
-		case "alloc-3":
-			sawSurvivor = summary.GetSummaryId() == survivor && summary.GetDroppedCount() == 10
-		}
-	}
-	if total != 19 {
-		t.Fatalf("bound lost counts: %d", total)
-	}
-	if !sawOther || !sawSurvivor {
-		t.Fatalf("bound merged across services or changed the survivor: %+v", set.Summaries())
+	if len(fresh) != 1 || fresh[0].GetDroppedCount() != 4 || fresh[0].GetSummaryId() == id {
+		t.Fatalf("snapshot acknowledgement lost concurrent additions: %+v", fresh)
 	}
 }
 
-func TestDropSetSummaryIDStableAcrossGrowthAndRetry(t *testing.T) {
-	t.Parallel()
-
-	set := NewDropSet()
-	key := DropKey{AllocationID: "alloc-1", Reason: ReasonRateLimited}
-	base := time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)
-	set.Add(key, 3, base, base)
-
-	original := set.Summaries()[0].GetSummaryId()
-	if original == "" {
-		t.Fatal("summary must carry a stable identity")
+func TestDropAcknowledgementFailureDoesNotAdvanceCursor(t *testing.T) {
+	s := openTestSpool(t, SpoolConfig{})
+	mustAppend(t, s, testRecord("a", 1, time.Now()))
+	if err := s.AddDrops(Drop{Key: DropKey{AllocationID: "a"}, Count: 1, Start: time.Now(), End: time.Now()}); err != nil {
+		t.Fatal(err)
 	}
-
-	// A failed send restores the summary and later drops grow it. The
-	// identity must survive the growth, or at-least-once retries
-	// double-count server-side.
-	taken := set.Take()
-	set.Add(key, 4, base.Add(time.Minute), base.Add(time.Minute))
-	set.Restore(taken)
-
-	grown := set.Summaries()[0]
-	if grown.GetSummaryId() != original {
-		t.Fatalf("summary identity changed across retry: %q vs %q", grown.GetSummaryId(), original)
+	snapshot, err := s.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if grown.GetDroppedCount() != 7 {
-		t.Fatalf("restore lost counts, got %d", grown.GetDroppedCount())
+	snapshot[0].DroppedCount = 2
+	_, c := readSpool(t, s, 1)
+	if err := s.Commit(c, snapshot); err == nil {
+		t.Fatal("acknowledged nonexistent drops")
 	}
+	rows, c := readSpool(t, s, 1)
+	if len(rows) != 1 || pendingDrops(t, s) != 1 {
+		t.Fatal("failed ack skipped records or losses")
+	}
+	snapshot, err = s.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Commit(c, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if pendingDrops(t, s) != 0 || spoolStats(t, s).PendingRecords != 0 {
+		t.Fatal("confirmed acknowledgement did not consume both")
+	}
+}
 
-	// A fresh lineage after a confirmed send gets its own identity.
-	set.Take()
-	set.Add(key, 2, base.Add(2*time.Minute), base.Add(2*time.Minute))
-	if fresh := set.Summaries()[0].GetSummaryId(); fresh == original {
-		t.Fatal("fresh lineage must not reuse a sent summary identity")
+func TestBuildAbandonmentAndIdempotentTakeover(t *testing.T) {
+	old := openTestSpool(t, SpoolConfig{})
+	base := time.Now()
+	for _, stream := range []string{"stdout", "stderr", "stdout"} {
+		mustAppend(t, old, Record{DropKey: DropKey{ServiceID: "svc", BuildID: "build", LogType: platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD, Stream: stream}, ObservedAt: base, Payload: []byte("lost")})
+	}
+	if err := old.Abandon(); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := old.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pendingDrops(t, old) != 3 || spoolStats(t, old).Records != 0 || len(rows) != 2 {
+		t.Fatalf("abandonment: %+v", rows)
+	}
+	fresh := openTestSpool(t, SpoolConfig{})
+	for i := 0; i < 2; i++ {
+		if err := fresh.MergeDrops(rows); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if pendingDrops(t, fresh) != 3 {
+		t.Fatal("takeover replay added counts twice")
+	}
+	if err := old.AcknowledgeDrops(rows); err != nil {
+		t.Fatal(err)
+	}
+	if pendingDrops(t, old) != 0 || pendingDrops(t, fresh) != 3 {
+		t.Fatal("takeover cleared the surviving copy")
 	}
 }

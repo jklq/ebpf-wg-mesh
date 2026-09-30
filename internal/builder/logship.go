@@ -69,6 +69,7 @@ type buildLogReporter struct {
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
+	closeErr  error
 	orphaned  atomic.Bool
 	abandoned atomic.Bool
 
@@ -78,8 +79,6 @@ type buildLogReporter struct {
 	linesStop   chan struct{}
 	writerDone  chan struct{}
 	linesClosed bool
-	pending     *logpipeline.DropSet
-	overflow    map[string]uint64
 }
 
 func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceClient, builderID, buildID, serviceID string, leaseEpoch int64, cfg buildLogShipConfig) (*buildLogReporter, error) {
@@ -102,9 +101,8 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		cfg.CloseTimeout = defaultBuildLogCloseTimeout
 	}
 	spool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{
-		Dir:        cfg.SpoolDir,
-		MaxBytes:   cfg.SpoolMaxBytes,
-		SyncWrites: true,
+		Dir:      cfg.SpoolDir,
+		MaxBytes: cfg.SpoolMaxBytes,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("open build log spool: %w", err)
@@ -125,76 +123,72 @@ func newBuildLogReporter(ctx context.Context, client platformv1.BuilderServiceCl
 		ctx:           ctx,
 		stop:          make(chan struct{}),
 		done:          make(chan struct{}),
-		pending:       logpipeline.NewDropSet(),
-		overflow:      make(map[string]uint64),
 		lineQueue:     make(chan queuedBuildLine, buildLineQueueCap),
 		linesStop:     make(chan struct{}),
 		writerDone:    make(chan struct{}),
 	}
-	go reporter.writeLoop()
-	// Take over dead attempts' drop summaries first: a retry re-emits its own output
-	// but can never recreate lines the dead attempt dropped.
-	consumed := loadAttemptDrops(filepath.Dir(cfg.SpoolDir), buildID, cfg.SpoolDir, reporter.pending)
-	if err := reporter.persistPendingLocked(); err != nil {
-		// The merge is not durable: keep the takeover copies as the surviving record.
-		slog.Warn("persist inherited build log drops", "builder_id", builderID, "build_id", buildID, "error", err)
-	} else {
-		for _, dir := range consumed {
-			_ = os.Remove(filepath.Join(dir, logpipeline.PendingDropsFile))
-		}
+	// A retry inherits loss accounting with stable identities before it starts
+	// producing output. Source snapshots stay intact until the import commits.
+	if err := reporter.inheritAttemptDrops(); err != nil {
+		_ = spool.Close()
+		return nil, fmt.Errorf("inherit dead build attempt logs: %w", err)
 	}
+	go reporter.writeLoop()
 	go reporter.run()
 	return reporter, nil
 }
 
-// loadAttemptDrops folds this attempt's and earlier attempts' persisted drop
-// summaries into pending, returning the taken-over sibling directories.
-func loadAttemptDrops(baseDir, buildID, ownDir string, pending *logpipeline.DropSet) []string {
-	if rows, err := logpipeline.LoadDrops(ownDir); err != nil {
-		slog.Warn("load pending build log drops", "build_id", buildID, "error", err)
-	} else {
-		pending.Restore(rows)
-	}
-	entries, err := os.ReadDir(baseDir)
+func (r *buildLogReporter) inheritAttemptDrops() error {
+	base := filepath.Dir(r.spoolDir)
+	entries, err := os.ReadDir(base)
 	if err != nil {
-		return nil
+		return err
 	}
-	prefix := sanitizeBuildSpoolName(buildID) + "-e"
-	var consumed []string
+	prefix := sanitizeBuildSpoolName(r.buildID) + "-e"
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
 			continue
 		}
-		dir := filepath.Join(baseDir, entry.Name())
-		if filepath.Clean(dir) == filepath.Clean(ownDir) {
+		epoch, err := strconv.ParseInt(strings.TrimPrefix(entry.Name(), prefix), 10, 64)
+		if err != nil || epoch >= r.leaseEpoch {
 			continue
 		}
-		rows, err := logpipeline.LoadDrops(dir)
+		dir := filepath.Join(base, entry.Name())
+		if filepath.Clean(dir) == filepath.Clean(r.spoolDir) {
+			continue
+		}
+		previous, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: dir, MaxBytes: defaultBuildLogSpoolMaxBytes})
 		if err != nil {
-			slog.Warn("load inherited build log drops", "build_id", buildID, "dir", dir, "error", err)
-			continue
+			return err
 		}
-		inherited := make([]*platformv1.LogDropSummary, 0, len(rows))
-		for _, row := range rows {
-			if row.GetBuildId() == buildID {
-				inherited = append(inherited, row)
+		err = func() error {
+			if err := previous.Abandon(); err != nil {
+				return err
 			}
+			rows, err := previous.PendingDrops()
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				if row.GetBuildId() != r.buildID {
+					return errors.New("dead build attempt contains another build's log losses")
+				}
+			}
+			if err := r.spool.MergeDrops(rows); err != nil {
+				return err
+			}
+			return previous.AcknowledgeDrops(rows)
+		}()
+		closeErr := previous.Close()
+		if err != nil {
+			return err
 		}
-		if len(inherited) == 0 {
-			continue
+		if closeErr != nil {
+			return closeErr
 		}
-		pending.Restore(inherited)
-		consumed = append(consumed, dir)
-	}
-	return consumed
-}
-
-// persistPendingLocked snapshots the pending drop summaries next to the attempt
-// spool so a dead attempt's accounting survives into the retry. Callers hold r.mu.
-func (r *buildLogReporter) persistPendingLocked() error {
-	if err := logpipeline.SaveDrops(r.spoolDir, r.pending.Summaries()); err != nil {
-		slog.Warn("persist pending build log drops", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
-		return err
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -210,18 +204,8 @@ func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 	default:
 	}
 	if !r.limiter.Allow(r.buildID) {
-		// Persist the denial now: a crash before the next flush would lose the count.
-		denied := r.limiter.DrainDrops()
-		observedAt := line.ObservedAt.UTC()
-		if observedAt.IsZero() {
-			observedAt = time.Now().UTC()
-		}
-		r.mu.Lock()
-		for _, count := range denied {
-			r.notePendingLocked(line.Stream, count, logpipeline.ReasonRateLimited, observedAt, observedAt)
-		}
-		_ = r.persistPendingLocked()
-		r.mu.Unlock()
+		r.limiter.DrainDrops()
+		r.noteDrop(line.Stream, 1, logpipeline.ReasonRateLimited, line.ObservedAt)
 		return
 	}
 	text, truncated := logpipeline.TruncateLine(strings.TrimRight(line.Line, "\r\n"))
@@ -240,12 +224,12 @@ func (r *buildLogReporter) Report(ctx context.Context, line commandOutputLine) {
 	})
 	if err != nil {
 		slog.Warn("marshal build log line", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
-		r.countOverflow(line.Stream, 1)
+		r.noteDrop(line.Stream, 1, logpipeline.ReasonSpoolOverflow, observedAt)
 		return
 	}
 	if err := r.enqueueLine(line.Stream, observedAt, payload); err != nil {
 		slog.Warn("spool build log line", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
-		r.countOverflow(line.Stream, 1)
+		r.noteDrop(line.Stream, 1, logpipeline.ReasonSpoolOverflow, observedAt)
 		return
 	}
 }
@@ -295,16 +279,24 @@ func (r *buildLogReporter) writeLoop() {
 }
 
 func (r *buildLogReporter) appendQueued(queued queuedBuildLine) {
-	if err := r.spool.Append(queued.stream, "", queued.observedAt, queued.payload); err != nil {
+	if err := r.spool.Append(logpipeline.Record{DropKey: r.dropKey(queued.stream, ""), ObservedAt: queued.observedAt, Payload: queued.payload}); err != nil {
 		slog.Warn("spool build log line", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
-		r.countOverflow(queued.stream, 1)
+		r.noteDrop(queued.stream, 1, logpipeline.ReasonSpoolOverflow, queued.observedAt)
 	}
 }
 
-func (r *buildLogReporter) countOverflow(stream string, count uint64) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.overflow[stream] += count
+func (r *buildLogReporter) dropKey(stream, reason string) logpipeline.DropKey {
+	return logpipeline.DropKey{ServiceID: r.serviceID, BuildID: r.buildID, LogType: platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD, Stream: stream, Reason: reason}
+}
+
+func (r *buildLogReporter) noteDrop(stream string, count uint64, reason string, observedAt time.Time) {
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	if err := r.spool.AddDrops(logpipeline.Drop{Key: r.dropKey(stream, reason), Count: count, Start: observedAt, End: observedAt}); err != nil {
+		r.abandoned.Store(true)
+		slog.Error("persist build log loss", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
+	}
 }
 
 // Close stops shipping, makes a best-effort final flush, and removes the attempt
@@ -330,76 +322,40 @@ func (r *buildLogReporter) Close() error {
 			r.abandoned.Store(true)
 			return
 		}
-		r.cleanup()
+		r.closeErr = r.cleanup()
 	})
 	if r.abandoned.Load() && !r.orphaned.Load() {
 		return fmt.Errorf("build log delivery abandoned: attempt output for build %s was not accepted within %s", r.buildID, r.closeTimeout)
 	}
-	return nil
+	return r.closeErr
 }
 
-func (r *buildLogReporter) cleanup() {
-	unshipped := int64(0)
-	if r.spool != nil {
-		unshipped = r.spool.Stats().PendingRecords
-		_ = r.spool.Close()
-		r.spool = nil
+func (r *buildLogReporter) cleanup() error {
+	if r.spool == nil || r.abandoned.Load() || r.orphaned.Load() {
+		return nil
 	}
-	r.mu.Lock()
-	summaries := int64(r.pending.Len())
-	r.mu.Unlock()
-	left := unshipped + summaries
-	if r.orphaned.Load() {
-		slog.Warn("build log reporter orphaned by lease loss; attempt output is incomplete",
-			"builder_id", r.builderID, "build_id", r.buildID, "unshipped", left)
-		r.persistOrphanGap(unshipped)
-		r.removeSpoolSegments()
-		return
+	rows, err := r.spool.PendingDrops()
+	stats, statsErr := r.spool.Stats()
+	if err != nil || statsErr != nil || stats.PendingRecords > 0 || len(rows) > 0 {
+		slog.Warn("build log spool retained for the next attempt", "builder_id", r.builderID, "build_id", r.buildID, "unshipped", stats.PendingRecords, "error", errors.Join(err, statsErr))
+		return errors.Join(err, statsErr, r.spool.Close())
 	}
-	if left != 0 {
-		slog.Warn("build log spool left behind for garbage collection",
-			"builder_id", r.builderID, "build_id", r.buildID, "unshipped", left)
-		return
+	if err := r.spool.Close(); err != nil {
+		return err
 	}
-	_ = os.RemoveAll(r.spoolDir)
-}
-
-// persistOrphanGap records unshipped spool lines as a gap and keeps the summary on
-// disk for the next lease to inherit.
-func (r *buildLogReporter) persistOrphanGap(unshipped int64) {
-	if r.spool != nil {
-		_ = r.spool.Close()
-		r.spool = nil
-	}
-	if unshipped <= 0 {
-		return
-	}
-	now := time.Now().UTC()
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.notePendingLocked("combined", uint64(unshipped), logpipeline.ReasonSpoolOverflow, now, now)
-	_ = r.persistPendingLocked()
-}
-
-// removeSpoolSegments deletes the attempt's log bytes, leaving the pending-drops
-// file for the next lease to inherit.
-func (r *buildLogReporter) removeSpoolSegments() {
-	entries, err := os.ReadDir(r.spoolDir)
-	if err != nil {
-		return
-	}
-	for _, entry := range entries {
-		if entry.Name() == logpipeline.PendingDropsFile {
-			continue
-		}
-		_ = os.RemoveAll(filepath.Join(r.spoolDir, entry.Name()))
-	}
+	return os.RemoveAll(r.spoolDir)
 }
 
 func (r *buildLogReporter) run() {
 	defer func() {
-		if r.abandoned.Load() && r.spool != nil {
-			_ = r.spool.Close()
+		if r.abandoned.Load() || r.orphaned.Load() {
+			r.spool.Release()
+			if err := r.spool.Abandon(); err != nil {
+				slog.Error("persist abandoned build transcript gaps", "build_id", r.buildID, "error", err)
+			}
+			if err := r.spool.Close(); err != nil {
+				slog.Error("close abandoned build log spool", "build_id", r.buildID, "error", err)
+			}
 		}
 		close(r.done)
 	}()
@@ -426,29 +382,32 @@ func (r *buildLogReporter) drained() bool {
 	if r.spool == nil {
 		return true
 	}
-	if r.spool.Stats().PendingRecords > 0 {
+	stats, err := r.spool.Stats()
+	if err != nil || stats.PendingRecords > 0 {
 		return false
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.pending.Len() == 0
+	drops, err := r.spool.PendingDrops()
+	return err == nil && len(drops) == 0
 }
 
 func (r *buildLogReporter) flush() {
 	if r.orphaned.Load() {
 		return
 	}
-	now := time.Now().UTC()
-	r.collectDrops(now)
+	r.limiter.DrainDrops()
 	records, cursor, err := r.spool.Read(r.batchSize)
 	if err != nil {
 		slog.Warn("read build log spool", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
 		return
 	}
-	r.mu.Lock()
-	taken := r.pending.Take()
-	r.mu.Unlock()
+	taken, err := r.spool.PendingDrops()
+	if err != nil {
+		r.spool.Release()
+		slog.Error("read build log losses", "build_id", r.buildID, "error", err)
+		return
+	}
 	if len(records) == 0 && len(taken) == 0 {
+		r.spool.Release()
 		return
 	}
 	lines := make([]*platformv1.BuildLogLine, 0, len(records))
@@ -456,7 +415,12 @@ func (r *buildLogReporter) flush() {
 		var line platformv1.BuildLogLine
 		if err := proto.Unmarshal(record.Payload, &line); err != nil {
 			slog.Warn("decode spooled build log line", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
-			r.countOverflow(record.Key, 1)
+			if err := r.spool.Discard(record); err != nil {
+				r.spool.Release()
+				r.abandoned.Store(true)
+				slog.Error("record corrupt build log loss", "error", err)
+				return
+			}
 			continue
 		}
 		lines = append(lines, &line)
@@ -467,94 +431,38 @@ func (r *buildLogReporter) flush() {
 	}
 	// Every request stays within the wire budget; a batch past the transport
 	// receive limit would wedge delivery and fail the build.
-	chunks := logpipeline.ChunkByBytes(lines, func(l *platformv1.BuildLogLine) int { return proto.Size(l) }, logpipeline.MaxBatchBytes)
-	if len(chunks) == 0 {
-		chunks = [][]*platformv1.BuildLogLine{nil}
-	}
-	for i, chunk := range chunks {
-		req := &platformv1.ReportBuildLogsRequest{
-			BuilderId:  r.builderID,
-			BuildId:    r.buildID,
-			Lines:      chunk,
-			LeaseEpoch: r.leaseEpoch,
-		}
+	lineChunks := logpipeline.ChunkByBytes(lines, func(l *platformv1.BuildLogLine) int { return proto.Size(l) }, logpipeline.MaxBatchBytes)
+	dropChunks := logpipeline.ChunkByBytes(taken, func(d *platformv1.LogDropSummary) int { return proto.Size(d) }, logpipeline.MaxBatchBytes)
+	requests := make([]*platformv1.ReportBuildLogsRequest, 0, len(lineChunks)+len(dropChunks))
+	for i, chunk := range dropChunks {
+		req := &platformv1.ReportBuildLogsRequest{BuilderId: r.builderID, BuildId: r.buildID, LeaseEpoch: r.leaseEpoch, Drops: chunk}
 		if i == 0 {
 			req.DroppedLines = dropped
-			req.Drops = taken
 		}
+		requests = append(requests, req)
+	}
+	for _, chunk := range lineChunks {
+		requests = append(requests, &platformv1.ReportBuildLogsRequest{BuilderId: r.builderID, BuildId: r.buildID, LeaseEpoch: r.leaseEpoch, Lines: chunk})
+	}
+	for _, req := range requests {
 		reportCtx, cancel := context.WithTimeout(r.ctx, r.reportTimeout)
 		_, err = r.client.ReportBuildLogs(reportCtx, req)
 		cancel()
 		if err != nil {
-			r.restorePending(taken)
 			r.spool.Release()
 			if status.Code(err) == codes.PermissionDenied {
 				r.orphaned.Store(true)
 				slog.Warn("build log reporter orphaned by lease loss", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
 				return
 			}
-			slog.Warn("report build logs",
-				"builder_id", r.builderID, "build_id", r.buildID, "line_count", len(chunk), "error", err)
+			slog.Warn("report build logs", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
 			return
 		}
 	}
-	if err := r.spool.Commit(cursor); err != nil {
+	if err := r.spool.Commit(cursor, taken); err != nil {
 		slog.Warn("commit build log spool", "builder_id", r.builderID, "build_id", r.buildID, "error", err)
-		r.restorePending(taken)
 		return
 	}
-	r.mu.Lock()
-	r.persistPendingLocked()
-	r.mu.Unlock()
-}
-
-// restorePending merges unsent summaries back so a failed report keeps its accounting.
-func (r *buildLogReporter) restorePending(taken []*platformv1.LogDropSummary) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.pending.Restore(taken)
-	r.persistPendingLocked()
-}
-
-// collectDrops drains limiter, spool, and overflow counters into the pending gap
-// summaries, coalescing by identity so an outage cannot grow the pending set.
-func (r *buildLogReporter) collectDrops(now time.Time) {
-	windowStart := now.Add(-r.flushInterval)
-	limited := r.limiter.DrainDrops()
-	evicted, corrupt := r.spool.DrainDrops()
-	r.mu.Lock()
-	overflow := r.overflow
-	r.overflow = make(map[string]uint64)
-	r.mu.Unlock()
-	if len(limited) == 0 && len(evicted) == 0 && len(corrupt) == 0 && len(overflow) == 0 {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for _, count := range limited {
-		r.notePendingLocked("", count, logpipeline.ReasonRateLimited, windowStart, now)
-	}
-	for stream, count := range evicted {
-		r.notePendingLocked(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
-	}
-	for stream, count := range corrupt {
-		r.notePendingLocked(stream, count, logpipeline.ReasonCorruptSpool, windowStart, now)
-	}
-	for stream, count := range overflow {
-		r.notePendingLocked(stream, count, logpipeline.ReasonSpoolOverflow, windowStart, now)
-	}
-	r.persistPendingLocked()
-}
-
-// notePendingLocked coalesces one drop window into the pending entry for its identity.
-func (r *buildLogReporter) notePendingLocked(stream string, count uint64, reason string, windowStart, windowEnd time.Time) {
-	r.pending.Add(logpipeline.DropKey{
-		ServiceID: r.serviceID,
-		BuildID:   r.buildID,
-		LogType:   platformv1.ServiceLogType_SERVICE_LOG_TYPE_BUILD,
-		Stream:    stream,
-		Reason:    reason,
-	}, count, windowStart, windowEnd)
 }
 
 // sanitizeBuildSpoolName maps a build ID onto a safe single path segment.
@@ -586,7 +494,7 @@ func buildLogSpoolDir(baseDir, buildID string, leaseEpoch int64) string {
 
 // gcStaleBuildLogSpools deletes per-attempt spool directories with no writes in
 // the last maxAge. Staleness follows the newest write inside the spool, not the
-// directory entry: appends touch the active segment while the directory mtime
+// directory entry: writes touch the database file while the directory mtime
 // stays old on a long-running attempt.
 func gcStaleBuildLogSpools(baseDir string, maxAge time.Duration) (int, error) {
 	entries, err := os.ReadDir(baseDir)

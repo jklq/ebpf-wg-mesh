@@ -439,13 +439,14 @@ func TestLogShipperCoalescesPendingDropSummariesAcrossOutage(t *testing.T) {
 	for round := 0; round < 20; round++ {
 		for i := 0; i < 5; i++ {
 			seq++
-			shipper.AppendLog(testEntry("alloc-1", "svc-1", "flood", seq))
+			entry := testEntry("alloc-1", "svc-1", "flood", seq)
+			entry.ObservedAt = timestamppb.New(base.Add(time.Duration(round) * time.Second))
+			shipper.AppendLog(entry)
 		}
-		shipper.collectDrops(base.Add(time.Duration(round) * time.Second))
 		shipper.flush() // Send fails; the summaries must fold back.
 	}
 	shipper.mu.Lock()
-	summaries := shipper.pending.Summaries()
+	summaries := testPendingDrops(t, shipper.spool)
 	shipper.mu.Unlock()
 	if len(summaries) != 1 {
 		t.Fatalf("pending drop summaries not coalesced: %d entries after 20 outage rounds", len(summaries))
@@ -466,7 +467,7 @@ func TestLogShipperCoalescesPendingDropSummariesAcrossOutage(t *testing.T) {
 	sender.mu.Unlock()
 	shipper.flush()
 	shipper.mu.Lock()
-	left := shipper.pending.Summaries()
+	left := testPendingDrops(t, shipper.spool)
 	shipper.mu.Unlock()
 	if len(left) != 0 {
 		t.Fatalf("sent summaries not cleared: %+v", left)
@@ -555,7 +556,7 @@ func TestLogShipperPersistsDropsWhileDetached(t *testing.T) {
 	// A detached flush must still persist the losses, so a crash keeps the gap.
 	shipper.flush()
 
-	drops, err := logpipeline.LoadDrops(dir)
+	drops, err := shipper.spool.PendingDrops()
 	if err != nil {
 		t.Fatalf("LoadDrops after detached flush: %v", err)
 	}
@@ -650,14 +651,18 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 	}
 	// Allocation churn must not leave one durable summary per allocation.
 	now := time.Now().UTC()
+	var additions []logpipeline.Drop
 	for i := 0; i < 30000; i++ {
-		shipper.pending.Add(logpipeline.DropKey{
+		additions = append(additions, logpipeline.Drop{Key: logpipeline.DropKey{
 			ServiceID:    "svc-1",
 			AllocationID: fmt.Sprintf("alloc-%d", i),
 			LogType:      platformv1.ServiceLogType_SERVICE_LOG_TYPE_RUNTIME,
 			Stream:       "stdout",
 			Reason:       logpipeline.ReasonRateLimited,
-		}, 1, now, now)
+		}, Count: 1, Start: now, End: now})
+	}
+	if err := shipper.spool.AddDrops(additions...); err != nil {
+		t.Fatal(err)
 	}
 	sender := &recordingSender{}
 	shipper.Attach(sender.send)
@@ -677,8 +682,8 @@ func TestLogShipperSplitsOversizedDropSets(t *testing.T) {
 			dropped += drop.GetDroppedCount()
 		}
 	}
-	if identities > maxAgentPendingDrops {
-		t.Fatalf("shipped %d drop identities, cap is %d", identities, maxAgentPendingDrops)
+	if identities != 30000 {
+		t.Fatalf("changed allocation attribution: %d identities", identities)
 	}
 	if dropped != 30000 {
 		t.Fatalf("bounded summaries lost drop accounting: %d of 30000", dropped)
@@ -725,6 +730,7 @@ func TestLogShipperAggregateLimitCapsConcurrentAllocations(t *testing.T) {
 		t.Fatalf("newLogShipper: %v", err)
 	}
 	defer shipper.Close()
+	shipper.aggregateLimiter = logpipeline.NewLimiter(0.000001, 4)
 	for i := uint64(1); i <= 50; i++ {
 		shipper.AppendLog(testEntry("alloc-a", "svc-1", "a", i))
 		shipper.AppendLog(testEntry("alloc-b", "svc-1", "b", i))
@@ -732,32 +738,6 @@ func TestLogShipperAggregateLimitCapsConcurrentAllocations(t *testing.T) {
 	// Each allocation's own burst would admit all 50; together they stop at one flush batch.
 	if got := shipper.Stats().Accepted; got != 4 {
 		t.Fatalf("accepted %d lines, one flush drains 4", got)
-	}
-}
-
-func TestLogShipperDropsAllocationMetadataAfterReporting(t *testing.T) {
-	t.Parallel()
-
-	shipper, err := newLogShipper("agent-1", logShipConfig{
-		SpoolDir:      t.TempDir(),
-		RatePerSec:    100000,
-		Burst:         100000,
-		BatchSize:     100,
-		FlushInterval: time.Hour,
-	})
-	if err != nil {
-		t.Fatalf("newLogShipper: %v", err)
-	}
-	defer shipper.Close()
-	for i := 0; i < 40; i++ {
-		shipper.AppendLog(testEntry(fmt.Sprintf("alloc-%d", i), "svc-1", "line", uint64(i+1)))
-	}
-	shipper.flush()
-	shipper.mu.Lock()
-	left := len(shipper.meta)
-	shipper.mu.Unlock()
-	if left != 0 {
-		t.Fatalf("retained metadata for %d allocations with nothing pending", left)
 	}
 }
 
@@ -776,11 +756,13 @@ func TestLogShipperCloseWaitsForInflightDropSend(t *testing.T) {
 		t.Fatalf("newLogShipper: %v", err)
 	}
 	now := time.Now().UTC()
-	shipper.pending.Add(logpipeline.DropKey{
+	if err := shipper.spool.AddDrops(logpipeline.Drop{Key: logpipeline.DropKey{
 		ServiceID:    "svc-1",
 		AllocationID: "alloc-1",
 		Reason:       logpipeline.ReasonRateLimited,
-	}, 4, now, now)
+	}, Count: 4, Start: now, End: now}); err != nil {
+		t.Fatal(err)
+	}
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	var once sync.Once
@@ -810,7 +792,7 @@ func TestLogShipperCloseWaitsForInflightDropSend(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Close did not finish after the send returned")
 	}
-	drops, err := logpipeline.LoadDrops(dir)
+	drops, err := testLoadDrops(dir)
 	if err != nil {
 		t.Fatalf("LoadDrops: %v", err)
 	}
@@ -820,5 +802,50 @@ func TestLogShipperCloseWaitsForInflightDropSend(t *testing.T) {
 	}
 	if dropped != 4 {
 		t.Fatalf("in-flight summaries persisted as %d, want 4", dropped)
+	}
+}
+
+func testPendingDrops(t *testing.T, spool *logpipeline.Spool) []*platformv1.LogDropSummary {
+	t.Helper()
+	rows, err := spool.PendingDrops()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
+}
+func testLoadDrops(dir string) ([]*platformv1.LogDropSummary, error) {
+	spool, err := logpipeline.OpenSpool(logpipeline.SpoolConfig{Dir: dir})
+	if err != nil {
+		return nil, err
+	}
+	defer spool.Close()
+	return spool.PendingDrops()
+}
+
+func TestLogShipperReportsUndecodablePayloadWithoutBlockingLaterLogs(t *testing.T) {
+	shipper, err := newLogShipper("agent-1", logShipConfig{SpoolDir: t.TempDir(), BatchSize: 10, RatePerSec: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shipper.Close()
+	if err := shipper.spool.Append(logpipeline.Record{DropKey: logpipeline.DropKey{ServiceID: "svc-1", AllocationID: "bad", Stream: "stdout"}, ObservedAt: time.Now(), Payload: []byte{0xff}}); err != nil {
+		t.Fatal(err)
+	}
+	shipper.AppendLog(testEntry("good", "svc-1", "kept", 1))
+	sender := &recordingSender{}
+	shipper.Attach(sender.send)
+	shipper.flush()
+	shipper.flush()
+	var good, bad int
+	for _, batch := range sender.batches {
+		good += len(batch.GetEntries())
+		for _, drop := range batch.GetDrops() {
+			if drop.GetAllocationId() == "bad" && drop.GetReason() == logpipeline.ReasonCorruptSpool && drop.GetDroppedCount() == 1 {
+				bad++
+			}
+		}
+	}
+	if good != 1 || bad != 1 {
+		t.Fatalf("payload recovery lost lines/gaps: good=%d bad=%d", good, bad)
 	}
 }

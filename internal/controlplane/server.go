@@ -165,6 +165,15 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, err
 	}
+	var logIngester *logs.AsyncIngester
+	logsOwnedByServer := false
+	defer func() {
+		if !logsOwnedByServer {
+			_ = logIngester.Close()
+			_ = logStore.Close()
+			_ = store.Close()
+		}
+	}()
 	if logStore != nil {
 		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	}
@@ -174,7 +183,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if replicaID == "" {
 		replicaID = "default"
 	}
-	logIngester, err := logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
+	logIngester, err = logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
 		SpoolDir:   filepath.Join(cfg.StateDir, "log-ingest", replicaID),
 		QueueBytes: int64(cfg.Logs.IngestQueueBytes),
 		RatePerSec: float64(cfg.Logs.IngestRatePerSec),
@@ -345,6 +354,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		}
 		server.healthShutdown = shutdown
 	}
+	logsOwnedByServer = true
 	return server, nil
 }
 
@@ -720,6 +730,9 @@ func (s *Server) Close() error {
 			errs = append(errs, s.store.secrets.Close())
 		}
 		errs = append(errs, s.store.Close())
+	}
+	if s.logIngester != nil {
+		errs = append(errs, s.logIngester.Close())
 	}
 	if s.logStore != nil {
 		errs = append(errs, s.logStore.Close())

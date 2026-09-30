@@ -6,9 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -25,7 +22,6 @@ const (
 	ingestAttributeOverheadBytes = 48
 	defaultIngestRatePerSec      = 2000.0
 	defaultIngestBurst           = 10000
-	maxIngestOwedGaps            = 4096
 	maxIngestCoalescedLines      = 5000
 	defaultIngestShutdownGrace   = 15 * time.Second
 	reporterControlPlane         = "controlplane"
@@ -52,7 +48,6 @@ type IngesterStats struct {
 	QueuedBytes   int64
 	AcceptedLines uint64
 	ShedLines     uint64
-	OwedGaps      int
 	GapsLost      uint64
 	FlushedLines  uint64
 	LastFlush     time.Time
@@ -72,12 +67,11 @@ type flushStore interface {
 // outage never loses acknowledged batches. Overload sheds whole batches
 // with gap accounting; Run flushes with unbounded retry.
 type AsyncIngester struct {
-	store          flushStore
-	backlog        *logpipeline.Spool
-	wake           chan struct{}
-	queueByteLimit int64
-	limiter        *logpipeline.Limiter
-	backoff        *logpipeline.Backoff
+	store   flushStore
+	backlog *logpipeline.Spool
+	wake    chan struct{}
+	limiter *logpipeline.Limiter
+	backoff *logpipeline.Backoff
 
 	acceptedLines atomic.Uint64
 	shedLines     atomic.Uint64
@@ -85,8 +79,6 @@ type AsyncIngester struct {
 	gapsLost      atomic.Uint64
 
 	mu          sync.Mutex
-	owed        map[owedGapKey]*owedGap
-	owedFold    map[owedGapKey]*owedGap
 	drainDone   bool
 	lastFlush   time.Time
 	lastError   string
@@ -96,9 +88,8 @@ type AsyncIngester struct {
 }
 
 type pendingFlush struct {
-	lines        []LogLineInput
-	gaps         []GapInput
-	corruptDrops map[string]logpipeline.CorruptDrop
+	lines []LogLineInput
+	gaps  []GapInput
 }
 
 // journalRecord is one durable queue entry.
@@ -107,86 +98,8 @@ type journalRecord struct {
 	Gaps  []GapInput     `json:"gaps"`
 }
 
-type owedGapKey struct {
-	serviceID    string
-	allocationID string
-	buildID      string
-	logType      string
-	stream       string
-	reason       string
-	reporter     string
-	// summaryID is the producer's stable summary identity; replays replace
-	// the same gap row instead of double-counting.
-	summaryID string
-}
-
-type owedGap struct {
-	key          owedGapKey
-	droppedCount uint64
-	windowStart  time.Time
-	windowEnd    time.Time
-}
-
-func (o *owedGap) add(count uint64, start, end time.Time) {
-	o.widen(start, end)
-	o.droppedCount += count
-}
-
-// replay replaces the count for a re-reported window instead of double-counting.
-func (o *owedGap) replay(count uint64, start, end time.Time) {
-	o.widen(start, end)
-	o.droppedCount = count
-}
-
-func (o *owedGap) widen(start, end time.Time) {
-	if o.droppedCount == 0 && o.windowStart.IsZero() && o.windowEnd.IsZero() {
-		o.windowStart = start
-		if o.windowStart.IsZero() {
-			o.windowStart = end
-		}
-		o.windowEnd = end
-		return
-	}
-	if !start.IsZero() && start.Before(o.windowStart) {
-		o.windowStart = start
-	}
-	if end.After(o.windowEnd) {
-		o.windowEnd = end
-	}
-}
-
-// noteOwedLocked records one shed window. Past the detailed key cap the
-// window folds into a service-level aggregate; past that it lands in GapsLost.
-func (a *AsyncIngester) noteOwedLocked(key owedGapKey, count uint64, start, end time.Time) {
-	if owed, ok := a.owed[key]; ok {
-		if key.summaryID != "" {
-			owed.replay(count, start, end)
-		} else {
-			owed.add(count, start, end)
-		}
-		return
-	}
-	if len(a.owed) < maxIngestOwedGaps {
-		owed := &owedGap{key: key}
-		owed.add(count, start, end)
-		a.owed[key] = owed
-		return
-	}
-	fold := key
-	fold.allocationID = ""
-	fold.buildID = ""
-	fold.summaryID = ""
-	if owed, ok := a.owedFold[fold]; ok {
-		owed.add(count, start, end)
-		return
-	}
-	if len(a.owedFold) >= maxIngestOwedGaps {
-		a.gapsLost.Add(count)
-		return
-	}
-	owed := &owedGap{key: fold}
-	owed.add(count, start, end)
-	a.owedFold[fold] = owed
+type gapKey struct {
+	serviceID, allocationID, buildID, logType, stream, reason, reporter string
 }
 
 // NewAsyncIngester builds the ingest queue. A nil or disabled store makes
@@ -214,7 +127,6 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) (*AsyncIngester
 		backlog, err = logpipeline.OpenSpool(logpipeline.SpoolConfig{
 			Dir:          cfg.SpoolDir,
 			MaxBytes:     queueBytes,
-			SyncWrites:   true,
 			RejectOnFull: true,
 		})
 		if err != nil {
@@ -222,15 +134,12 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) (*AsyncIngester
 		}
 	}
 	return &AsyncIngester{
-		store:          store,
-		backlog:        backlog,
-		wake:           make(chan struct{}, 1),
-		queueByteLimit: queueBytes,
-		limiter:        logpipeline.NewLimiter(rate, burst),
-		backoff:        &logpipeline.Backoff{},
-		owed:           make(map[owedGapKey]*owedGap),
-		owedFold:       make(map[owedGapKey]*owedGap),
-		shutdownGrace:  grace,
+		store:         store,
+		backlog:       backlog,
+		wake:          make(chan struct{}, 1),
+		limiter:       logpipeline.NewLimiter(rate, burst),
+		backoff:       &logpipeline.Backoff{},
+		shutdownGrace: grace,
 	}, nil
 }
 
@@ -281,7 +190,7 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 	inputs, gaps := convertAgentBatch(agentID, batch)
 	now := time.Now().UTC()
 	kept := inputs[:0]
-	limited := make(map[owedGapKey]uint64)
+	limited := make(map[gapKey]uint64)
 	for _, in := range inputs {
 		key := in.AllocationID
 		if key == "" {
@@ -291,7 +200,7 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 			kept = append(kept, in)
 			continue
 		}
-		limited[owedGapKey{
+		limited[gapKey{
 			serviceID:    in.ServiceID,
 			allocationID: in.AllocationID,
 			buildID:      in.BuildID,
@@ -304,7 +213,7 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 	// Producer drop reports consume the same guard; gap rows are retained
 	// writes too.
 	keptGaps := gaps[:0]
-	deniedGaps := make(map[owedGapKey]GapInput)
+	deniedGaps := make(map[gapKey]GapInput)
 	for _, gap := range gaps {
 		key := gap.AllocationID
 		if key == "" {
@@ -320,7 +229,7 @@ func (a *AsyncIngester) EnqueueAgentBatch(agentID string, batch *agentv1.LogBatc
 			keptGaps = append(keptGaps, gap)
 			continue
 		}
-		mergeKey := owedGapKey{
+		mergeKey := gapKey{
 			serviceID:    gap.ServiceID,
 			allocationID: gap.AllocationID,
 			buildID:      gap.BuildID,
@@ -424,37 +333,34 @@ func (a *AsyncIngester) enqueue(flush pendingFlush) Admit {
 	if a.drainDone {
 		return AdmitClosed
 	}
-	result := AdmitAccepted
-	for _, record := range splitJournalRecords(flush) {
+	records := splitJournalRecords(flush)
+	queued := make([]logpipeline.Record, 0, len(records))
+	for _, record := range records {
 		payload, err := json.Marshal(record)
 		if err != nil {
-			slog.Error("encode log ingest journal record", "error", err)
-			if !a.shedRecord(record) {
-				result = AdmitRetry
-				break
-			}
-			continue
+			slog.Error("encode log ingest journal", "error", err)
+			return AdmitRetry
 		}
-		err = a.backlog.Append(journalRecordKey(record), "", time.Now().UTC(), payload)
-		if err != nil {
-			if !a.shedRecord(record) {
-				// An acknowledged gap may never live only in memory; the
-				// producer's copy still carries the lines.
-				result = AdmitRetry
-				break
-			}
-			if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
-				slog.Warn("append log ingest journal", "error", err)
-			}
-			continue
+		queued = append(queued, logpipeline.Record{ObservedAt: time.Now().UTC(), Payload: payload})
+	}
+	if err := a.backlog.Append(queued...); err != nil {
+		if !a.journalGaps(a.shedToGaps(flush)) {
+			// No acceptance is acknowledged unless either the entire batch
+			// or its exact loss accounting commits durably.
+			return AdmitRetry
 		}
-		a.acceptedLines.Add(uint64(len(record.Lines)))
+		a.shedLines.Add(uint64(len(flush.lines)))
+		if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
+			slog.Warn("append log ingest journal", "error", err)
+		}
+	} else {
+		a.acceptedLines.Add(uint64(len(flush.lines)))
 	}
 	select {
 	case a.wake <- struct{}{}:
 	default:
 	}
-	return result
+	return AdmitAccepted
 }
 
 // splitJournalRecords cuts one flush into journal records bounded by rows
@@ -517,137 +423,43 @@ func (a *AsyncIngester) Run(ctx context.Context) error {
 				return nil
 			}
 		}
-		attached := a.attachOwed(&flush)
 		if err := a.flushWithRetry(ctx, flush); err != nil {
 			a.backlog.Release()
-			a.reoweGaps(flush.gaps[len(flush.gaps)-attached:])
 			if ctx.Err() != nil {
 				a.drainShutdown(ctx)
 				return nil
 			}
 			return err
 		}
-		if err := a.backlog.AcknowledgeCorruptDrops(flush.corruptDrops); err != nil {
-			slog.Warn("acknowledge log journal corruption gaps", "error", err)
-		}
-		if err := a.backlog.Commit(cursor); err != nil {
+		if err := a.backlog.Commit(cursor, nil); err != nil {
 			slog.Warn("commit log ingest journal", "error", err)
 		}
 	}
 }
 
-// maxIngestAttributionKeyBytes bounds the per-service attribution in one
-// journal record's key.
-const maxIngestAttributionKeyBytes = 512
-
-// journalRecordKey attributes a record to the services it carries, so a
-// corrupted record surfaces as per-service gap rows instead of vanishing.
-func journalRecordKey(record journalRecord) string {
-	counts := make(map[string]uint64)
-	for _, in := range record.Lines {
-		counts[in.ServiceID]++
-	}
-	for _, gap := range record.Gaps {
-		counts[gap.ServiceID] += gap.DroppedCount
-	}
-	services := make([]string, 0, len(counts))
-	for service := range counts {
-		services = append(services, service)
-	}
-	sort.Strings(services)
-	var b strings.Builder
-	b.WriteString("ingest")
-	for _, service := range services {
-		part := fmt.Sprintf("|%s:%d", service, counts[service])
-		if b.Len()+len(part) > maxIngestAttributionKeyBytes {
-			break
-		}
-		b.WriteString(part)
-	}
-	return b.String()
-}
-
-func parseIngestKeyCounts(key string) map[string]uint64 {
-	counts := make(map[string]uint64)
-	for _, part := range strings.Split(strings.TrimPrefix(key, "ingest"), "|") {
-		if part == "" {
-			continue
-		}
-		service, raw, ok := strings.Cut(part, ":")
-		if !ok || service == "" {
-			continue
-		}
-		n, err := strconv.ParseUint(raw, 10, 64)
-		if err != nil {
-			continue
-		}
-		counts[service] += n
-	}
-	return counts
-}
-
-// spoolDropsToGaps converts corrupted journal records into gap rows.
-func (a *AsyncIngester) spoolDropsToGaps() ([]GapInput, map[string]logpipeline.CorruptDrop) {
-	corrupt := a.backlog.PendingCorruptDrops()
-	if len(corrupt) == 0 {
-		return nil, nil
-	}
-	now := time.Now().UTC()
-	var gaps []GapInput
-	reported := make(map[string]logpipeline.CorruptDrop)
-	for key, drop := range corrupt {
-		for service, count := range parseIngestKeyCounts(key) {
-			gaps = append(gaps, GapInput{
-				ServiceID:    service,
-				LogType:      normalizeLogType(""),
-				WindowStart:  now,
-				WindowEnd:    now,
-				DroppedCount: count * drop.Count,
-				Reason:       logpipeline.ReasonCorruptSpool,
-				Reporter:     reporterControlPlane,
-				SummaryID:    drop.ID + ":" + service,
-			})
-			reported[key] = drop
-		}
-	}
-	return gaps, reported
-}
-
 // nextFlush merges one bounded round of journal records into a single store
 // write. Every read pairs with a commit or release.
 func (a *AsyncIngester) nextFlush(ctx context.Context) (pendingFlush, logpipeline.Cursor, bool, error) {
-	drops, corruptDrops := a.spoolDropsToGaps()
 	records, cursor, err := a.backlog.Read(ingestFlushRecords)
 	if err != nil {
 		return pendingFlush{}, cursor, false, err
 	}
 	if len(records) == 0 {
-		// Gap-only pump: owed shed windows must reach reads even when idle.
-		a.mu.Lock()
-		hasOwed := len(a.owed) > 0 || len(a.owedFold) > 0
-		a.mu.Unlock()
-		if !hasOwed && len(drops) == 0 {
-			return pendingFlush{}, cursor, false, nil
-		}
-		owed := pendingFlush{gaps: drops, corruptDrops: corruptDrops}
-		a.attachOwed(&owed)
-		if len(owed.gaps) == 0 {
-			return pendingFlush{}, cursor, false, nil
-		}
-		return owed, cursor, true, nil
+		a.backlog.Release()
+		return pendingFlush{}, cursor, false, nil
 	}
-	flush := pendingFlush{gaps: drops, corruptDrops: corruptDrops}
+	flush := pendingFlush{}
 	for _, record := range records {
 		var decoded journalRecord
 		if err := json.Unmarshal(record.Payload, &decoded); err != nil {
-			slog.Error("decode log ingest journal record", "error", err, "key", record.Key, "id", record.ID)
-			continue
+			a.backlog.Release()
+			return pendingFlush{}, cursor, false, fmt.Errorf("decode durable log journal payload: %w", err)
 		}
 		flush.lines = append(flush.lines, decoded.Lines...)
 		flush.gaps = append(flush.gaps, decoded.Gaps...)
 	}
 	if len(flush.lines) == 0 && len(flush.gaps) == 0 {
-		if err := a.backlog.Commit(cursor); err != nil {
+		if err := a.backlog.Commit(cursor, nil); err != nil {
 			return pendingFlush{}, cursor, false, err
 		}
 		return a.nextFlush(ctx)
@@ -664,22 +476,19 @@ func (a *AsyncIngester) drainShutdown(ctx context.Context) {
 	a.seal()
 	for {
 		flush, cursor, ok, err := a.nextFlush(graceCtx)
-		if err != nil || !ok {
+		if err != nil {
+			slog.Error("read log journal during shutdown", "error", err)
 			return
 		}
-		attached := a.attachOwed(&flush)
+		if !ok {
+			return
+		}
 		if err := a.flushWithRetry(graceCtx, flush); err != nil {
 			a.backlog.Release()
-			a.reoweGaps(flush.gaps[len(flush.gaps)-attached:])
-			slog.Warn("log ingest shutdown drain expired; queued lines stay journaled for the next boot",
-				"pending_records", a.backlog.Stats().PendingRecords,
-				"error", err)
+			slog.Warn("log ingest shutdown drain expired; queued lines stay journaled for the next boot", "error", err)
 			return
 		}
-		if err := a.backlog.AcknowledgeCorruptDrops(flush.corruptDrops); err != nil {
-			slog.Warn("acknowledge log journal corruption gaps", "error", err)
-		}
-		if err := a.backlog.Commit(cursor); err != nil {
+		if err := a.backlog.Commit(cursor, nil); err != nil {
 			slog.Warn("commit log ingest journal", "error", err)
 		}
 	}
@@ -693,7 +502,11 @@ func (a *AsyncIngester) Stats() IngesterStats {
 	defer a.mu.Unlock()
 	queuedFlushes, queuedBytes := 0, int64(0)
 	if a.backlog != nil {
-		backlogStats := a.backlog.Stats()
+		backlogStats, err := a.backlog.Stats()
+		if err != nil {
+			a.lastError = err.Error()
+			a.lastErrorAt = time.Now().UTC()
+		}
 		queuedFlushes = int(backlogStats.PendingRecords)
 		queuedBytes = backlogStats.Bytes
 	}
@@ -702,24 +515,12 @@ func (a *AsyncIngester) Stats() IngesterStats {
 		QueuedBytes:   queuedBytes,
 		AcceptedLines: a.acceptedLines.Load(),
 		ShedLines:     a.shedLines.Load(),
-		OwedGaps:      len(a.owed) + len(a.owedFold),
 		GapsLost:      a.gapsLost.Load(),
 		FlushedLines:  a.flushedLines.Load(),
 		LastFlush:     a.lastFlush,
 		LastError:     a.lastError,
 		LastErrorAt:   a.lastErrorAt,
 	}
-}
-
-// shedRecord journals an unjournaled record's loss as gap rows. False means
-// the loss accounting itself is not durable and the caller must reject.
-func (a *AsyncIngester) shedRecord(record journalRecord) bool {
-	gaps := a.shedToGaps(pendingFlush{lines: record.Lines, gaps: record.Gaps})
-	if !a.journalGaps(gaps) {
-		return false
-	}
-	a.shedLines.Add(uint64(len(record.Lines)))
-	return true
 }
 
 // journalGaps appends one durable gap-only record.
@@ -732,7 +533,7 @@ func (a *AsyncIngester) journalGaps(gaps []GapInput) bool {
 		slog.Error("encode log ingest gap record", "error", err)
 		return false
 	}
-	if err := a.backlog.Append(journalRecordKey(journalRecord{Gaps: gaps}), "", time.Now().UTC(), payload); err != nil {
+	if err := a.backlog.Append(logpipeline.Record{ObservedAt: time.Now().UTC(), Payload: payload}); err != nil {
 		if !errors.Is(err, logpipeline.ErrSpoolFull) && !errors.Is(err, logpipeline.ErrRecordTooLarge) {
 			slog.Warn("append log ingest gap record", "error", err)
 		}
@@ -745,9 +546,9 @@ func (a *AsyncIngester) journalGaps(gaps []GapInput) bool {
 func (a *AsyncIngester) shedToGaps(flush pendingFlush) []GapInput {
 	now := time.Now().UTC()
 	gaps := make([]GapInput, 0, len(flush.gaps)+8)
-	counts := make(map[owedGapKey]uint64)
+	counts := make(map[gapKey]uint64)
 	for _, in := range flush.lines {
-		counts[owedGapKey{
+		counts[gapKey{
 			serviceID:    in.ServiceID,
 			allocationID: in.AllocationID,
 			buildID:      in.BuildID,
@@ -774,67 +575,6 @@ func (a *AsyncIngester) shedToGaps(flush pendingFlush) []GapInput {
 	// Producer gap reports inside a shed flush keep their own rows.
 	gaps = append(gaps, flush.gaps...)
 	return gaps
-}
-
-// noteGapLocked re-owes one gap row. The admission lock must be held.
-func (a *AsyncIngester) noteGapLocked(gap GapInput) {
-	if gap.ServiceID == "" || gap.DroppedCount == 0 {
-		return
-	}
-	key := owedGapKey{
-		serviceID:    gap.ServiceID,
-		allocationID: gap.AllocationID,
-		buildID:      gap.BuildID,
-		logType:      string(normalizeLogType(gap.LogType)),
-		stream:       normalizeLogStream(gap.Stream),
-		reason:       logpipeline.NormalizeDropReason(gap.Reason),
-		reporter:     normalizeReporter(gap.Reporter),
-		summaryID:    gap.SummaryID,
-	}
-	a.noteOwedLocked(key, gap.DroppedCount, gap.WindowStart, gap.WindowEnd)
-}
-
-// reoweGaps returns a failed flush's gap rows to the owed maps.
-func (a *AsyncIngester) reoweGaps(gaps []GapInput) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	for _, gap := range gaps {
-		a.noteGapLocked(gap)
-	}
-}
-
-// attachOwed pops owed gap rows into the outgoing flush.
-func (a *AsyncIngester) attachOwed(flush *pendingFlush) int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.attachOwedLocked(flush)
-}
-
-func (a *AsyncIngester) attachOwedLocked(flush *pendingFlush) int {
-	if len(a.owed) == 0 && len(a.owedFold) == 0 {
-		return 0
-	}
-	attached := 0
-	for _, owedMap := range []map[owedGapKey]*owedGap{a.owed, a.owedFold} {
-		for key, owed := range owedMap {
-			flush.gaps = append(flush.gaps, GapInput{
-				ServiceID:    key.serviceID,
-				AllocationID: key.allocationID,
-				BuildID:      key.buildID,
-				LogType:      LogType(key.logType),
-				Stream:       key.stream,
-				WindowStart:  owed.windowStart,
-				WindowEnd:    owed.windowEnd,
-				DroppedCount: owed.droppedCount,
-				Reason:       key.reason,
-				Reporter:     key.reporter,
-				SummaryID:    key.summaryID,
-			})
-			delete(owedMap, key)
-			attached++
-		}
-	}
-	return attached
 }
 
 func (a *AsyncIngester) flushWithRetry(ctx context.Context, flush pendingFlush) error {
@@ -869,4 +609,14 @@ func (a *AsyncIngester) flushWithRetry(ctx context.Context, flush pendingFlush) 
 		case <-time.After(a.backoff.Next()):
 		}
 	}
+}
+
+// Close releases the journal after admission and Run have stopped. Accepted
+// records not written during the shutdown grace remain durable for the next boot.
+func (a *AsyncIngester) Close() error {
+	if a == nil || a.backlog == nil {
+		return nil
+	}
+	a.seal()
+	return a.backlog.Close()
 }
