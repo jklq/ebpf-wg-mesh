@@ -1,6 +1,6 @@
 # Secret keyring runbook
 
-Sealed service secrets ([2.3a](todo/landed.md#23a-secret-envelope-key-provider)) are
+Sealed service secrets ([2.3a](completed-work.md#23a-secret-envelope-key-provider)) are
 envelope-encrypted by a small in-process key manager. There is no external KMS:
 versioned AES-256 master keys live in a provisioned keyring file that the
 operator replicates to every control-plane replica, separately from the

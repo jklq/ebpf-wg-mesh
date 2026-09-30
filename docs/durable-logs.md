@@ -6,7 +6,7 @@ build output into ClickHouse (`service_logs`, `service_log_gaps`). The
 shared primitives live in `internal/logpipeline`; the control-plane
 store in `internal/controlplane/logs`. Console search surfaces are
 backlog item 3.6; the read API contract for them is in
-[frontend-handoff/2.9.md](frontend-handoff/2.9.md).
+[durable-logs frontend handoff in the GitHub project](https://github.com/users/jklq/projects/6?pane=issue&itemId=259053070).
 
 ## Line contract
 

@@ -1,9 +1,9 @@
 # Platform signing keys runbook
 
-The platform's short-lived signing keys ([2.3b](todo/02-host-untrusted-code.md#23b-platform-signing-key-lifecycle))
+The platform's short-lived signing keys ([2.3b](https://github.com/users/jklq/projects/6?pane=issue&itemId=259050895))
 live in the `platform_signing_keys` table, one row per key, with private
 material wrapped by the envelope key provider from
-[2.3a](todo/landed.md#23a-secret-envelope-key-provider)
+[2.3a](completed-work.md#23a-secret-envelope-key-provider)
 (`internal/controlplane/signkeys`, `internal/controlplane/secretkeys`).
 CockroachDB holds the wrapped bytes and the shared active/retiring state;
 the master keyring file stays provisioned to every replica separately from
@@ -133,7 +133,7 @@ Same flow as `user-assertion` with a 31-day overlap: `rotate-start`,
 export the active secret to the dashboard's session-secret store, wait
 out refresh-token drain, `rotate-finish`. The dashboard must verify
 sessions against both the previous and the new secret during the
-overlap; see `docs/frontend-handoff/2.3b.md`.
+overlap; see the [dashboard secret rotation handoff in the GitHub project](https://github.com/users/jklq/projects/6?pane=issue&itemId=259052945).
 
 ## Envelope interplay
 
