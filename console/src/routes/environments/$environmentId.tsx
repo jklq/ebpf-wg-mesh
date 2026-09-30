@@ -1,10 +1,8 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { DashboardCanvasSkeleton } from "#/features/dashboard/canvas/canvas-skeleton";
 
-import {
-	DashboardCanvasSkeleton,
-	DashboardPage,
-} from "../-dashboard/dashboard-page";
-import { loadHome } from "../-dashboard/server-fns";
+import { DashboardPage } from "#/features/dashboard/dashboard-page";
+import { loadHome } from "#/lib/dashboard/server-functions";
 
 export const Route = createFileRoute("/environments/$environmentId")({
 	validateSearch: (

@@ -40,7 +40,12 @@ describe("GitHub OAuth token encryption", () => {
 	it("does not include token material in authentication errors", () => {
 		const cipher = createGitHubTokenCipher(key);
 		const encrypted = cipher.encrypt("never-log-this-token", binding);
-		const tampered = `${encrypted.slice(0, -1)}A`;
+		// Flip ciphertext bytes; replacing the final base64 character can leave
+		// the payload unchanged because padding bits are ignored.
+		const [prefix, encoded] = encrypted.split(".");
+		const payload = Buffer.from(encoded, "base64url");
+		payload[payload.length - 1] ^= 1;
+		const tampered = `${prefix}.${payload.toString("base64url")}`;
 
 		expect(() => cipher.decrypt(tampered, binding)).toThrowError(
 			new Error("GitHub OAuth token decryption failed"),

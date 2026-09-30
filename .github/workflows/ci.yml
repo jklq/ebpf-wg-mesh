@@ -30,6 +30,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Cache Bun packages
         uses: actions/cache@v4
         with:
@@ -53,6 +56,8 @@ jobs:
         run: bun --cwd=console run check
       - name: Typecheck console
         run: bun --cwd=console run typecheck
+      - name: Build console
+        run: bun --cwd=console run build
       - name: Run Go unit tests
         run: make test-unit-go
       - name: Run console unit tests
@@ -170,6 +175,9 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - name: Cache Bun packages
         uses: actions/cache@v4
         with:
