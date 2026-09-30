@@ -43,7 +43,7 @@ export const buttonStyles = stylex.create({
 		display: "inline-flex",
 		alignItems: "center",
 		justifyContent: "center",
-		gap: space.sm,
+		gap: 6,
 		cursor: { default: "pointer", ":disabled": "not-allowed" },
 		borderRadius: shape.control,
 		borderWidth: 1,
@@ -65,12 +65,16 @@ export const buttonStyles = stylex.create({
 	},
 	primary: {
 		backgroundColor: colors.accent,
-		borderColor: "transparent",
-		color: colors.canvas,
+		borderWidth: 0,
+		color: "#0f0e0d",
+		letterSpacing: "0.09em",
+		transitionProperty: "filter, transform",
 		filter: { default: "none", ":enabled:hover": "brightness(1.1)" },
 		transform: { default: "none", ":enabled:active": "translateY(1px)" },
 	},
 	secondary: {
+		fontWeight: 600,
+		transitionProperty: "border-color, background-color",
 		backgroundColor: {
 			default: "transparent",
 			":enabled:hover": colors.surfaceHover,
@@ -79,7 +83,8 @@ export const buttonStyles = stylex.create({
 		color: colors.ink,
 	},
 	ghost: {
-		borderColor: "transparent",
+		borderWidth: 0,
+		transitionProperty: "background-color, color",
 		backgroundColor: {
 			default: "transparent",
 			":enabled:hover": colors.surfaceHover,
@@ -97,21 +102,29 @@ export const buttonStyles = stylex.create({
 		borderColor: colors.failed,
 		backgroundColor: {
 			default: colors.failedDim,
-			":enabled:hover": "rgba(208,85,85,0.22)",
+			":enabled:hover": "rgba(184,66,66,0.22)",
 		},
 		color: colors.failed,
 	},
 	dangerSolid: {
-		borderColor: colors.failed,
-		backgroundColor: colors.failed,
-		color: colors.ink,
+		borderColor: { default: colors.failed, ":disabled": "rgba(184,66,66,0.4)" },
+		backgroundColor: {
+			default: colors.failed,
+			":disabled": "rgba(184,66,66,0.35)",
+		},
+		color: { default: "#f5eceb", ":disabled": "rgba(245,236,235,0.55)" },
+		opacity: 1,
+		letterSpacing: "0.09em",
+		transitionProperty: "filter, transform",
+		transform: { default: "none", ":enabled:active": "translateY(1px)" },
 		paddingInline: 18,
 		paddingBlock: space.sm,
 		filter: { default: "none", ":enabled:hover": "brightness(1.1)" },
 	},
 	dangerOutline: {
+		transitionProperty: "background-color, border-color",
 		borderColor: {
-			default: "rgba(208,85,85,0.5)",
+			default: "rgba(184,66,66,0.5)",
 			":enabled:hover": colors.failed,
 		},
 		backgroundColor: {
@@ -124,6 +137,7 @@ export const buttonStyles = stylex.create({
 	icon: {
 		width: 30,
 		height: 30,
+		transitionProperty: "none",
 		padding: 0,
 		backgroundColor: {
 			default: "transparent",
@@ -135,6 +149,9 @@ export const buttonStyles = stylex.create({
 	panelIcon: {
 		width: 32,
 		height: 32,
+		borderRadius: 0,
+		transitionProperty: "color, background-color, border-color",
+		opacity: { default: 1, ":disabled": 0.45 },
 		padding: 0,
 		backgroundColor: {
 			default: "transparent",

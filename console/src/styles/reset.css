@@ -15,7 +15,8 @@
 		tab-size: 4;
 	}
 	html,
-	body {
+	body,
+	#app {
 		height: 100%;
 		min-height: 100%;
 	}
@@ -94,6 +95,20 @@
 	input::placeholder,
 	textarea::placeholder {
 		opacity: 1;
+	}
+	::-webkit-scrollbar {
+		width: 8px;
+		height: 8px;
+	}
+	::-webkit-scrollbar-track {
+		background: #181613;
+	}
+	::-webkit-scrollbar-thumb {
+		background: #6a6258;
+		border-radius: 0;
+	}
+	::-webkit-scrollbar-thumb:hover {
+		background: #7d756b;
 	}
 	[hidden] {
 		/* Hidden content must stay hidden even when a component sets display. */

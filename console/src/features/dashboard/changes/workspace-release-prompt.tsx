@@ -126,7 +126,7 @@ const styles = stylex.create({
 		paddingInline: space.xl,
 	},
 	promptHiddenOnMobile: {
-		display: { default: null, "@media (width < 900px)": "none" },
+		display: { default: "flex", "@media (width < 900px)": "none" },
 	},
 	prompt: {
 		pointerEvents: "auto",

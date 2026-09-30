@@ -6,8 +6,10 @@ import { defineConfig } from "vite";
 import { buildAllowedDevHosts } from "./src/lib/vite-dev-hosts";
 import { stylexPlugin } from "./tooling/stylex";
 
-const config = defineConfig({
+const config = defineConfig(({ command }) => ({
 	resolve: { tsconfigPaths: true },
+	// The compiler adds this import after dependency scanning.
+	optimizeDeps: { include: ["@stylexjs/stylex/lib/stylex-inject"] },
 	plugins: [
 		{
 			name: "extend-dev-idle-timeout",
@@ -16,7 +18,7 @@ const config = defineConfig({
 			},
 		},
 		devtools(),
-		stylexPlugin(),
+		stylexPlugin({ development: command === "serve" }),
 		tanstackStart(),
 		nitro(
 			process.env.NITRO_PRESET === "bun"
@@ -35,6 +37,6 @@ const config = defineConfig({
 			process.env.DASHBOARD_INGRESS_TARGET_HOST,
 		),
 	},
-});
+}));
 
 export default config;

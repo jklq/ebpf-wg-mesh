@@ -25,6 +25,7 @@ export function DeploymentProgress({
 	completing?: boolean;
 	delay?: string;
 	styles?: stylex.StyleXStyles;
+	segmentStyles?: stylex.StyleXStyles;
 }) {
 	return (
 		<ProgressRail

@@ -56,7 +56,12 @@ export function DeploymentCardHeader({
 				</div>
 			</button>
 			{tone === "running" && stages.length > 0 && (
-				<DeploymentProgress stages={stages} label="Deploy steps" />
+				<DeploymentProgress
+					stages={stages}
+					label="Deploy steps"
+					styles={styles.progress}
+					segmentStyles={styles.progressSegment}
+				/>
 			)}
 			<Button
 				variant="secondary"
@@ -64,9 +69,11 @@ export function DeploymentCardHeader({
 				disabled={!logsEnabled}
 				styles={[
 					styles.logsButton,
-					health === "healthy" && styles.healthyLogs,
-					health === "building" && styles.buildingLogs,
-					health === "failed" && styles.failedLogs,
+					tone === "active" && styles.healthyLogs,
+					tone === "running" && styles.buildingLogs,
+					tone === "failed" && styles.failedLogs,
+					tone === "draining" && styles.completedLogs,
+					!tone && styles.neutralLogs,
 				]}
 			>
 				View logs
@@ -139,8 +146,20 @@ const styles = stylex.create({
 		top: { default: 0, "@media (max-width: 899px)": 10 },
 		right: { default: 0, "@media (max-width: 899px)": 28 },
 	},
+	progress: { width: 64 },
+	progressSegment: {
+		transitionDuration: "280ms",
+		transitionTimingFunction: "ease-in-out",
+	},
 	logsButton: {
 		minHeight: 32,
+		flexShrink: 0,
+		paddingInline: 12,
+		paddingBlock: 0,
+		fontWeight: 700,
+		cursor: { default: "pointer", ":disabled": "default" },
+		opacity: { default: 1, ":disabled": 0.5 },
+		transitionProperty: "none",
 		fontFamily: fonts.condensed,
 		fontSize: 11,
 		letterSpacing: "0.09em",
@@ -149,34 +168,90 @@ const styles = stylex.create({
 	healthyLogs: {
 		borderColor: {
 			default: "rgba(109,190,130,0.38)",
-			":hover": "rgba(109,190,130,0.62)",
+			":enabled:hover": "rgba(109,190,130,0.62)",
+			":focus-visible": "rgba(109,190,130,0.62)",
+			[stylex.when.ancestor(":hover")]: "rgba(109,190,130,0.62)",
 		},
 		backgroundColor: {
-			default: colors.healthyDim,
-			":hover": "rgba(109,190,130,0.2)",
+			default: "rgba(109,190,130,0.1)",
+			":enabled:hover": "rgba(109,190,130,0.2)",
+			":focus-visible": "rgba(109,190,130,0.2)",
+			[stylex.when.ancestor(":hover")]: "rgba(109,190,130,0.2)",
 		},
-		color: colors.healthy,
+		color: {
+			default: colors.healthy,
+			":enabled:hover": "#9ad6aa",
+			":focus-visible": "#9ad6aa",
+			[stylex.when.ancestor(":hover")]: "#9ad6aa",
+		},
 	},
 	buildingLogs: {
 		borderColor: {
-			default: "rgba(192,133,32,0.34)",
-			":hover": "rgba(192,133,32,0.5)",
+			default: "rgba(212,154,42,0.4)",
+			":enabled:hover": "rgba(212,154,42,0.64)",
+			":focus-visible": "rgba(212,154,42,0.64)",
+			[stylex.when.ancestor(":hover")]: "rgba(212,154,42,0.64)",
 		},
 		backgroundColor: {
-			default: colors.buildingDim,
-			":hover": "rgba(192,133,32,0.2)",
+			default: "rgba(212,154,42,0.1)",
+			":enabled:hover": "rgba(212,154,42,0.2)",
+			":focus-visible": "rgba(212,154,42,0.2)",
+			[stylex.when.ancestor(":hover")]: "rgba(212,154,42,0.2)",
 		},
-		color: colors.building,
+		color: {
+			default: colors.building,
+			":enabled:hover": "#e4b65a",
+			":focus-visible": "#e4b65a",
+			[stylex.when.ancestor(":hover")]: "#e4b65a",
+		},
+	},
+	completedLogs: {
+		borderColor: {
+			default: "rgba(125,117,107,0.42)",
+			":enabled:hover": "rgba(183,174,162,0.45)",
+			":focus-visible": "rgba(183,174,162,0.45)",
+			[stylex.when.ancestor(":hover")]: "rgba(183,174,162,0.45)",
+		},
+		backgroundColor: {
+			default: "rgba(80,76,71,0.22)",
+			":enabled:hover": "rgba(108,102,94,0.32)",
+			":focus-visible": "rgba(108,102,94,0.32)",
+			[stylex.when.ancestor(":hover")]: "rgba(108,102,94,0.32)",
+		},
+		color: {
+			default: colors.muted,
+			":enabled:hover": colors.ink,
+			":focus-visible": colors.ink,
+			[stylex.when.ancestor(":hover")]: colors.ink,
+		},
 	},
 	failedLogs: {
 		borderColor: {
-			default: "rgba(208,85,85,0.34)",
-			":hover": "rgba(208,85,85,0.6)",
+			default: "rgba(208,85,85,0.38)",
+			":enabled:hover": "rgba(208,85,85,0.6)",
+			":focus-visible": "rgba(208,85,85,0.6)",
+			[stylex.when.ancestor(":hover")]: "rgba(208,85,85,0.6)",
 		},
 		backgroundColor: {
-			default: colors.failedDim,
-			":hover": "rgba(208,85,85,0.2)",
+			default: "rgba(208,85,85,0.1)",
+			":enabled:hover": "rgba(208,85,85,0.2)",
+			":focus-visible": "rgba(208,85,85,0.2)",
+			[stylex.when.ancestor(":hover")]: "rgba(208,85,85,0.2)",
 		},
-		color: colors.failed,
+		color: {
+			default: colors.failed,
+			":enabled:hover": "#e08989",
+			":focus-visible": "#e08989",
+			[stylex.when.ancestor(":hover")]: "#e08989",
+		},
+	},
+	neutralLogs: {
+		borderColor: colors.line,
+		backgroundColor: {
+			default: "rgba(255,255,255,0.03)",
+			":enabled:hover": colors.surfaceHover,
+			":focus-visible": colors.surfaceHover,
+		},
+		color: colors.ink,
 	},
 });

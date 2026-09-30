@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
-import { colors, motion } from "#/styles/tokens.stylex";
+import { colors } from "#/styles/tokens.stylex";
 
 export type ProgressState = "queued" | "running" | "succeeded" | "failed";
 export interface ProgressStep {
@@ -15,6 +15,7 @@ export function ProgressRail({
 	completing = false,
 	delay,
 	styles,
+	segmentStyles,
 }: {
 	steps: readonly ProgressStep[];
 	label: string;
@@ -22,6 +23,7 @@ export function ProgressRail({
 	completing?: boolean;
 	delay?: string;
 	styles?: stylex.StyleXStyles;
+	segmentStyles?: stylex.StyleXStyles;
 }) {
 	return (
 		<div
@@ -36,6 +38,7 @@ export function ProgressRail({
 					data-state={completing ? "succeeded" : step.state}
 					{...stylex.props(
 						railStyles.segment,
+						segmentStyles,
 						railStyles[completing ? "succeeded" : step.state],
 						building &&
 							step.state === "succeeded" &&
@@ -68,7 +71,8 @@ const railStyles = stylex.create({
 	segment: {
 		borderRadius: 999,
 		transitionProperty: "background-color",
-		transitionDuration: motion.normal,
+		transitionDuration: "300ms",
+		transitionTimingFunction: "cubic-bezier(0.4, 0, 0.2, 1)",
 	},
 	queued: { backgroundColor: "rgba(80,76,71,0.7)" },
 	running: {
