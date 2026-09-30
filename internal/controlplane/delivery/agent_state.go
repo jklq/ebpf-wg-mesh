@@ -9,21 +9,27 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
+	"google.golang.org/protobuf/proto"
 )
 
 func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*agentv1.DesiredNodeState, error) {
 	if d == nil || d.live == nil {
 		return nil, fmt.Errorf("live view is not available")
 	}
-	state, err := d.live.DesiredStateForAgent(agentID, d.store.mesh)
+	view, err := d.live.agentView(agentID)
+	if err != nil {
+		return nil, err
+	}
+	state, err := view.checkpoint(d.store.mesh)
 	if err != nil {
 		return nil, err
 	}
 	// Sealed values decrypt here for this agent's assignments only; agents never get keys.
-	if err := d.resolveSealedEnv(ctx, state); err != nil {
+	if err := d.resolveSealedEnv(ctx, view.product, state); err != nil {
 		return nil, err
 	}
 	// Credentials travel in PullCredentialSet only; checkpoints and diffs must never carry them.
@@ -32,39 +38,16 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 		svc.RegistryPassword = ""
 	}
 	state.NodeConfigVersion = reconciliation.HashNodeConfig(state.GetNodeConfig())
-	if d.allocSync != nil {
-		d.allocSync.recordCurrent(agentID, state)
-	}
 	return state, nil
 }
 
-// AllocationDiffsFrom returns retained diffs from base to latest. ok=false means send a checkpoint.
-func (d *Delivery) AllocationDiffsFrom(agentID string, base int64) (diffs []*agentv1.AllocationDiff, target int64, ok bool) {
-	if d == nil || d.allocSync == nil {
-		return nil, 0, false
-	}
-	stored, target, ok := d.allocSync.diffsFrom(agentID, base)
-	if !ok {
-		return nil, target, false
-	}
-	for _, s := range stored {
-		diffs = append(diffs, s.ToProto(agentID))
-	}
-	return diffs, target, true
-}
-
-// RebaseAllocationDiffs moves the retained diff baseline to state after a delivered checkpoint.
-func (d *Delivery) RebaseAllocationDiffs(agentID string, state *agentv1.DesiredNodeState) {
-	if d == nil || d.allocSync == nil {
-		return
-	}
-	d.allocSync.rebase(agentID, state)
-}
-
-func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.DesiredVolume, error) {
+func desiredVolumes(product *journal.Projection, agentID string) ([]*agentv1.DesiredVolume, error) {
+	live := product.DurableState
 	wanted := make(map[string]bool)
-	for _, a := range live.Assignments {
-		if a.AgentID != agentID {
+	environments := make(map[string]bool)
+	for _, id := range product.AssignmentIDsForAgent(agentID) {
+		a := live.Assignments[id]
+		if a.RolloutState == AllocationRolloutLost || live.Rollouts[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredRolloutGeneration)].ImageDigest == "" {
 			continue
 		}
 		service := live.Services[a.ServiceID]
@@ -75,12 +58,16 @@ func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.Desir
 		}
 		if name := ServiceVolumeName(spec); name != "" {
 			wanted[volumeKey(service.EnvironmentID, name)] = true
+			environments[service.EnvironmentID] = true
 		}
 	}
 	var volumes []journal.Volume
-	for _, v := range live.Volumes {
-		if wanted[volumeKey(v.EnvironmentID, v.Name)] {
-			volumes = append(volumes, v)
+	for environmentID := range environments {
+		for _, id := range product.VolumeIDsForEnvironment(environmentID) {
+			v := live.Volumes[id]
+			if wanted[volumeKey(v.EnvironmentID, v.Name)] {
+				volumes = append(volumes, v)
+			}
 		}
 	}
 	slices.SortFunc(volumes, func(a, b journal.Volume) int {
@@ -96,11 +83,12 @@ func desiredVolumes(live journal.DurableState, agentID string) ([]*agentv1.Desir
 	return out, nil
 }
 
-func workloadIdentities(live journal.DurableState, indexes liveIndexes, agentID string) ([]*agentv1.WorkloadIdentity, error) {
+func workloadIdentities(product *journal.Projection, agentID string) ([]*agentv1.WorkloadIdentity, error) {
+	live := product.DurableState
 	var assignments []journal.Assignment
-	for _, environmentID := range indexes.environmentsByAgent[agentID] {
-		for _, serviceID := range indexes.servicesByEnvironment[environmentID] {
-			for _, assignmentID := range indexes.assignmentsByService[serviceID] {
+	for _, environmentID := range product.EnvironmentIDsForAgent(agentID) {
+		for _, serviceID := range product.ServiceIDsForEnvironment(environmentID) {
+			for _, assignmentID := range product.AssignmentIDsForService(serviceID) {
 				a := live.Assignments[assignmentID]
 				if a.RolloutState != AllocationRolloutLost {
 					assignments = append(assignments, a)
@@ -127,213 +115,170 @@ func workloadIdentities(live journal.DurableState, indexes liveIndexes, agentID 
 	return identities, nil
 }
 
+type agentView struct {
+	agentID            string
+	product            *journal.Projection
+	sessions           map[string]AgentSession
+	observations       map[liveObsKey]AllocationObservation
+	now                time.Time
+	ttl                time.Duration
+	epoch              uint64
+	hostsByEnvironment map[string][]*agentv1.InternalHost
+}
+
 func (l *Live) DesiredStateForAgent(agentID string, mesh config.ControlPlaneMeshConfig) (*agentv1.DesiredNodeState, error) {
+	view, err := l.agentView(agentID)
+	if err != nil {
+		return nil, err
+	}
+	return view.checkpoint(mesh)
+}
+
+func (l *Live) agentView(agentID string) (*agentView, error) {
 	if l == nil {
 		return nil, sql.ErrNoRows
 	}
 	l.mu.Lock()
-	durable := l.durable.Clone()
-	epoch := l.authorityEpoch
-	now := l.now().UTC()
-	ttl := l.ttl
-	sessions := make(map[string]AgentSession, len(l.sessions))
-	for id, session := range l.sessions {
-		if session != nil {
-			sessions[id] = *session
+	product := l.product
+	epoch, now, ttl := l.authorityEpoch, l.now().UTC(), l.ttl
+	// Only observations and presence in the agent's private network scopes
+	// affect its rendering. Durable rows and indexes are already immutable.
+	assignmentIDs := make(map[string]bool)
+	for _, id := range product.AssignmentIDsForAgent(agentID) {
+		assignmentIDs[id] = true
+	}
+	for _, env := range product.EnvironmentIDsForAgent(agentID) {
+		for _, service := range product.ServiceIDsForEnvironment(env) {
+			for _, id := range product.AssignmentIDsForService(service) {
+				assignmentIDs[id] = true
+			}
 		}
 	}
-	observations := make(map[liveObsKey]AllocationObservation, len(l.observations))
-	for key, obs := range l.observations {
-		observations[key] = obs
+	sessions := make(map[string]AgentSession)
+	observations := make(map[liveObsKey]AllocationObservation)
+	for id := range assignmentIDs {
+		a := product.Assignments[id]
+		if session := l.sessions[a.AgentID]; session != nil {
+			sessions[a.AgentID] = *session
+		}
+		key := liveObsKey{AllocationID: id, Generation: a.DesiredRolloutGeneration}
+		if obs, ok := l.observations[key]; ok {
+			observations[key] = obs
+		}
 	}
-	indexes := cloneLiveIndexes(l.indexes)
 	l.mu.Unlock()
-	return buildDesiredState(agentID, durable, sessions, observations, indexes, now, ttl, epoch, mesh)
-}
-
-func cloneLiveIndexes(idx liveIndexes) liveIndexes {
-	out := newLiveIndexes()
-	for k, v := range idx.environmentsByAgent {
-		out.environmentsByAgent[k] = append([]string(nil), v...)
-	}
-	for k, v := range idx.agentsByEnvironment {
-		out.agentsByEnvironment[k] = append([]string(nil), v...)
-	}
-	for k, v := range idx.assignmentsByAgent {
-		out.assignmentsByAgent[k] = append([]string(nil), v...)
-	}
-	for k, v := range idx.assignmentsByService {
-		out.assignmentsByService[k] = append([]string(nil), v...)
-	}
-	for k, v := range idx.domainsByService {
-		out.domainsByService[k] = append([]string(nil), v...)
-	}
-	for k, v := range idx.servicesByEnvironment {
-		out.servicesByEnvironment[k] = append([]string(nil), v...)
-	}
-	return out
-}
-
-func buildDesiredState(agentID string, durable journal.DurableState, sessions map[string]AgentSession, observations map[liveObsKey]AllocationObservation, indexes liveIndexes, now time.Time, ttl time.Duration, epoch uint64, mesh config.ControlPlaneMeshConfig) (*agentv1.DesiredNodeState, error) {
-	agent, exists := durable.Agents[agentID]
-	if !exists {
+	if _, exists := product.Agents[agentID]; !exists {
 		return nil, sql.ErrNoRows
 	}
-	candidate := &agentv1.DesiredNodeState{
-		AgentId: agentID, ReconciliationCursor: agent.DesiredRevision,
-		AuthorityEpoch: epoch, Scope: agentv1.SnapshotScope_SNAPSHOT_SCOPE_AGENT, GeneratedAt: ts(now),
-	}
+	return &agentView{agentID: agentID, product: product, sessions: sessions, observations: observations, now: now, ttl: ttl, epoch: epoch}, nil
+}
+
+func (v *agentView) checkpoint(mesh config.ControlPlaneMeshConfig) (*agentv1.DesiredNodeState, error) {
+	candidate := &agentv1.DesiredNodeState{AgentId: v.agentID, ReconciliationCursor: v.product.Agents[v.agentID].DesiredRevision,
+		AuthorityEpoch: v.epoch, Scope: agentv1.SnapshotScope_SNAPSHOT_SCOPE_AGENT, GeneratedAt: ts(v.now), Complete: true}
 	var err error
-	candidate.Volumes, err = desiredVolumes(durable, agentID)
+	candidate.Volumes, err = desiredVolumes(v.product, v.agentID)
 	if err != nil {
 		return nil, err
 	}
-	candidate.Services, err = listDesiredServices(durable, sessions, observations, indexes, agentID, now, ttl)
+	candidate.Services, err = v.services(candidate.Volumes, v.product.AssignmentIDsForAgent(v.agentID))
 	if err != nil {
 		return nil, err
 	}
-	candidate.NodeConfig, err = assignedNodeConfigForAgent(durable, indexes, mesh, agentID)
+	candidate.NodeConfig, err = assignedNodeConfigForAgent(v.product, mesh, v.agentID)
 	if err != nil {
 		return nil, err
 	}
-	candidate.Complete = true
 	return candidate, nil
 }
 
-func listDesiredServices(durable journal.DurableState, sessions map[string]AgentSession, observations map[liveObsKey]AllocationObservation, indexes liveIndexes, agentID string, now time.Time, ttl time.Duration) ([]*agentv1.DesiredService, error) {
-	volumes, err := desiredVolumes(durable, agentID)
-	if err != nil {
-		return nil, err
-	}
+func (v *agentView) services(volumes []*agentv1.DesiredVolume, assignmentIDs []string) ([]*agentv1.DesiredService, error) {
+	product := v.product
 	volumeIDs := make(map[string]string, len(volumes))
 	for _, vol := range volumes {
 		volumeIDs[volumeKey(vol.GetEnvironmentId(), vol.GetName())] = vol.GetVolumeId()
 	}
-
-	samples := make(map[string][]byte)
-	for _, id := range indexes.assignmentsByAgent[agentID] {
-		a := durable.Assignments[id]
-		obs, ok := observations[liveObsKey{AllocationID: id, Generation: a.DesiredRolloutGeneration}]
-		if !ok || obs.Restart == nil {
-			continue
-		}
-		raw, err := encodeRestartObservation(obs.Restart)
-		if err != nil {
-			return nil, err
-		}
-		samples[id] = raw
-	}
-
-	type serviceRow struct {
-		svc                                     *agentv1.DesiredService
-		resolvedImage                           string
-		rawSpec                                 []byte
-		networkIdentity                         int64
-		environmentName, projectID, projectName string
-		restartRaw                              []byte
-		rolloutState, intent                    string
-		drainDeadline                           sql.NullTime
-	}
-	var pending []serviceRow
 	var assignments []journal.Assignment
-	for _, id := range indexes.assignmentsByAgent[agentID] {
-		assignments = append(assignments, durable.Assignments[id])
+	for _, id := range assignmentIDs {
+		a, exists := product.Assignments[id]
+		if exists && a.AgentID == v.agentID && a.RolloutState != AllocationRolloutLost {
+			assignments = append(assignments, a)
+		}
 	}
 	slices.SortFunc(assignments, func(a, b journal.Assignment) int {
-		if n := durable.Services[a.ServiceID].CreatedAt.Compare(durable.Services[b.ServiceID].CreatedAt); n != 0 {
+		if n := product.Services[a.ServiceID].CreatedAt.Compare(product.Services[b.ServiceID].CreatedAt); n != 0 {
 			return n
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
+	var out []*agentv1.DesiredService
 	for _, a := range assignments {
-		service := durable.Services[a.ServiceID]
-		environment := durable.Environments[service.EnvironmentID]
-		project := durable.Projects[environment.ProjectID]
-		rollout := durable.Rollouts[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredRolloutGeneration)]
+		service := product.Services[a.ServiceID]
+		environment := product.Environments[service.EnvironmentID]
+		project := product.Projects[environment.ProjectID]
+		rollout := product.Rollouts[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredRolloutGeneration)]
 		if rollout.ImageDigest == "" {
 			continue
 		}
-		revision := durable.Revisions[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredSpecRevision)]
+		if environment.NetworkIdentity <= 0 || environment.NetworkIdentity > int64(^uint32(0)) {
+			return nil, fmt.Errorf("environment %s has invalid network identity %d", service.EnvironmentID, environment.NetworkIdentity)
+		}
+		revision := product.Revisions[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredSpecRevision)]
+		spec, err := LoadServiceSpec(revision.SpecJSON)
+		if err != nil {
+			return nil, err
+		}
 		svc := &agentv1.DesiredService{AllocationId: a.ID, ServiceId: a.ServiceID, EnvironmentId: service.EnvironmentID, Name: service.Name, DeploymentId: a.DeploymentID,
-			DesiredSpecRevision: a.DesiredSpecRevision, DesiredRolloutGeneration: a.DesiredRolloutGeneration, OperatorRestartNonce: a.OperatorRestartNonce, PrivateIpv4: a.AllocationIPv4, PrivateIpv6: a.AllocationIPv6}
-		deadline := sql.NullTime{}
-		if a.DrainDeadline != nil {
-			deadline = sql.NullTime{Time: *a.DrainDeadline, Valid: true}
-		}
-		restartRaw := samples[a.ID]
-		if len(restartRaw) == 0 {
-			restartRaw = []byte("{}")
-		}
-		pending = append(pending, serviceRow{svc, rollout.ImageDigest, revision.SpecJSON, environment.NetworkIdentity, environment.Name, project.ID, project.Name, restartRaw, a.RolloutState, a.Intent, deadline})
-	}
-	var out []*agentv1.DesiredService
-	for _, row := range pending {
-		svc, resolvedImage, rawSpec, networkIdentity := row.svc, row.resolvedImage, row.rawSpec, row.networkIdentity
-		environmentName, projectID, projectName := row.environmentName, row.projectID, row.projectName
-		restartRaw, rolloutState, intent, drainDeadline := row.restartRaw, row.rolloutState, row.intent, row.drainDeadline
-		if rolloutState == AllocationRolloutLost {
-			continue
-		}
-		svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_RUN
-		if intent == allocationIntentDrain {
+			DesiredSpecRevision: a.DesiredSpecRevision, DesiredRolloutGeneration: a.DesiredRolloutGeneration, OperatorRestartNonce: a.OperatorRestartNonce,
+			PrivateIpv4: a.AllocationIPv4, PrivateIpv6: a.AllocationIPv6, NetworkIdentity: uint32(environment.NetworkIdentity), Intent: agentv1.AllocationIntent_ALLOCATION_INTENT_RUN}
+		if a.Intent == allocationIntentDrain {
 			svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_DRAIN
-			if drainDeadline.Valid {
-				svc.DrainDeadline = ts(drainDeadline.Time)
+			if a.DrainDeadline != nil {
+				svc.DrainDeadline = ts(*a.DrainDeadline)
 			}
 		}
-		if networkIdentity <= 0 || networkIdentity > int64(^uint32(0)) {
-			return nil, fmt.Errorf("environment %s has invalid network identity %d", svc.EnvironmentId, networkIdentity)
+		if obs := v.observations[liveObsKey{AllocationID: a.ID, Generation: a.DesiredRolloutGeneration}]; obs.Restart != nil {
+			svc.RestartObservation = proto.Clone(obs.Restart).(*platformv1.RestartObservation)
 		}
-		svc.NetworkIdentity = uint32(networkIdentity)
-		spec, err := LoadServiceSpec(rawSpec)
-		if err != nil {
-			return nil, err
-		}
-		obs, err := decodeRestartObservation(restartRaw)
-		if err != nil {
-			return nil, err
-		}
-		svc.RestartObservation = obs
-		svc.Spec = resolvedDesiredServiceSpec(spec, resolvedImage, domainTargetPortsFromDurable(durable, indexes.domainsByService[svc.ServiceId], svc.ServiceId))
+		svc.Spec = resolvedDesiredServiceSpec(spec, rollout.ImageDigest, domainTargetPortsFromDurable(product.DurableState, product.DomainHostnamesForService(a.ServiceID), a.ServiceID))
 		if svc.Spec.Runtime.Env == nil {
 			svc.Spec.Runtime.Env = make(map[string]string)
 		}
-		platformEnv := map[string]string{
-			"PLATFORM_PROJECT_ID": projectID, "PLATFORM_PROJECT_NAME": projectName,
-			"PLATFORM_ENVIRONMENT_ID": svc.EnvironmentId, "PLATFORM_ENVIRONMENT_NAME": environmentName,
-			"PLATFORM_SERVICE_ID": svc.ServiceId, "PLATFORM_SERVICE_NAME": svc.Name,
-			"PLATFORM_DEPLOYMENT_ID": svc.GetDeploymentId(),
-		}
-		for key, value := range platformEnv {
+		for key, value := range map[string]string{
+			"PLATFORM_PROJECT_ID": project.ID, "PLATFORM_PROJECT_NAME": project.Name, "PLATFORM_ENVIRONMENT_ID": environment.ID, "PLATFORM_ENVIRONMENT_NAME": environment.Name,
+			"PLATFORM_SERVICE_ID": service.ID, "PLATFORM_SERVICE_NAME": service.Name, "PLATFORM_DEPLOYMENT_ID": a.DeploymentID,
+		} {
 			svc.Spec.Runtime.Env[key] = value
 		}
-		if volumeName := ServiceVolumeName(spec); volumeName != "" {
-			svc.VolumeId = volumeIDs[volumeKey(svc.EnvironmentId, volumeName)]
+		if name := ServiceVolumeName(spec); name != "" {
+			svc.VolumeId = volumeIDs[volumeKey(service.EnvironmentID, name)]
 		}
-		svc.InternalHostname = InternalServiceHostname(svc.Name, svc.ServiceId)
-		svc.InternalHosts, err = internalHostsForEnvironment(durable, sessions, observations, indexes, now, ttl, svc.EnvironmentId)
-		if err != nil {
-			return nil, err
-		}
+		svc.InternalHostname = InternalServiceHostname(service.Name, a.ServiceID)
+		svc.InternalHosts = v.internalHostsForEnvironment(service.EnvironmentID)
 		out = append(out, svc)
 	}
 	return out, nil
 }
 
-func internalHostsForEnvironment(durable journal.DurableState, sessions map[string]AgentSession, observations map[liveObsKey]AllocationObservation, indexes liveIndexes, now time.Time, ttl time.Duration, environmentID string) ([]*agentv1.InternalHost, error) {
+func (v *agentView) internalHostsForEnvironment(environmentID string) []*agentv1.InternalHost {
+	if hosts, known := v.hostsByEnvironment[environmentID]; known {
+		return hosts
+	}
+	product := v.product
+	durable := product.DurableState
 	type hostRow struct {
 		created              time.Time
 		id, name, ipv4, ipv6 string
 	}
 	var rows []hostRow
-	for _, serviceID := range indexes.servicesByEnvironment[environmentID] {
+	for _, serviceID := range product.ServiceIDsForEnvironment(environmentID) {
 		service := durable.Services[serviceID]
-		for _, assignmentID := range indexes.assignmentsByService[serviceID] {
+		for _, assignmentID := range product.AssignmentIDsForService(serviceID) {
 			assignment := durable.Assignments[assignmentID]
 			rec := allocationRecordFromAssignment(durable, assignment)
-			session, hasSession := sessions[rec.AgentID]
-			obs, hasObs := observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
-			rec = overlayAllocation(rec, session, hasSession, obs, hasObs, now, ttl)
+			session, hasSession := v.sessions[rec.AgentID]
+			obs, hasObs := v.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
+			rec = overlayAllocation(rec, session, hasSession, obs, hasObs, v.now, v.ttl)
 			if !rec.Healthy || rec.RolloutState != AllocationRolloutServing ||
 				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration {
 				continue
@@ -362,18 +307,23 @@ func internalHostsForEnvironment(durable journal.DurableState, sessions map[stri
 			Ipv6:     row.ipv6,
 		})
 	}
-	return hosts, nil
+	if v.hostsByEnvironment == nil {
+		v.hostsByEnvironment = make(map[string][]*agentv1.InternalHost)
+	}
+	v.hostsByEnvironment[environmentID] = hosts
+	return hosts
 }
 
-func assignedNodeConfigForAgent(durable journal.DurableState, indexes liveIndexes, mesh config.ControlPlaneMeshConfig, agentID string) (*agentv1.AssignedNodeConfig, error) {
+func assignedNodeConfigForAgent(product *journal.Projection, mesh config.ControlPlaneMeshConfig, agentID string) (*agentv1.AssignedNodeConfig, error) {
+	durable := product.DurableState
 	agent, ok := durable.Agents[agentID]
 	if !ok {
 		return nil, sql.ErrNoRows
 	}
 	var agents []journal.AgentRegistration
 	seen := make(map[string]bool)
-	for _, environmentID := range indexes.environmentsByAgent[agentID] {
-		for _, peerID := range indexes.agentsByEnvironment[environmentID] {
+	for _, environmentID := range product.EnvironmentIDsForAgent(agentID) {
+		for _, peerID := range product.AgentIDsForEnvironment(environmentID) {
 			if !seen[peerID] {
 				if peer, ok := durable.Agents[peerID]; ok {
 					agents = append(agents, peer)
@@ -392,7 +342,7 @@ func assignedNodeConfigForAgent(durable journal.DurableState, indexes liveIndexe
 		WireguardAddresses:     []string{agent.WireguardIPv6},
 		WireguardListenPort:    int32(agent.WireguardListenPort),
 	}
-	identities, err := workloadIdentities(durable, indexes, agentID)
+	identities, err := workloadIdentities(product, agentID)
 	assigned.WorkloadIdentities = identities
 	if err != nil {
 		return nil, err

@@ -25,11 +25,15 @@ func platformv1RestartClone(in *platformv1.RestartObservation) *platformv1.Resta
 	return out
 }
 
+func (l *Live) applyTestState(state journal.DurableState) {
+	l.ApplyProduct(journal.Applied{Projection: journal.NewProjection(state), Reset: true})
+}
+
 func startLive(t *testing.T) *Live {
 	t.Helper()
 	l := NewLive()
-	if err := l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
-		return fn(nil, journal.DurableState{ClusterID: "test"})
+	if err := l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, *journal.Projection) error) error {
+		return fn(nil, journal.NewProjection(journal.DurableState{ClusterID: "test"}))
 	}, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -43,13 +47,13 @@ func TestBecomeDoesNotServeUntilDurableApplied(t *testing.T) {
 	release := make(chan struct{})
 	errc := make(chan error, 1)
 	go func() {
-		errc <- l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
+		errc <- l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, *journal.Projection) error) error {
 			close(started)
 			<-release
-			return fn(nil, journal.DurableState{
+			return fn(nil, journal.NewProjection(journal.DurableState{
 				ClusterID: "next",
 				Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: time.Now().UTC()}},
-			})
+			}))
 		}, nil)
 	}()
 	<-started
@@ -80,8 +84,8 @@ func TestBecomeAfterResignReloadsSameDurableSnapshot(t *testing.T) {
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent"}},
 	}
-	readState := func(_ context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
-		return fn(nil, state)
+	readState := func(_ context.Context, fn func(*sql.Tx, *journal.Projection) error) error {
+		return fn(nil, journal.NewProjection(state))
 	}
 	if err := l.become(context.Background(), readState, nil); err != nil {
 		t.Fatal(err)
@@ -101,41 +105,41 @@ func TestBecomeAfterResignReloadsSameDurableSnapshot(t *testing.T) {
 
 func TestLiveDurableApplicationIsMonotonic(t *testing.T) {
 	l := NewLive()
-	l.ApplyDurable(journal.DurableState{ClusterID: "test", LogIndex: 2, Agents: map[string]journal.AgentRegistration{"new": {ID: "new"}}})
-	l.ApplyDurable(journal.DurableState{ClusterID: "test", LogIndex: 1})
-	if got := l.Durable().LogIndex; got != 2 {
+	l.applyTestState(journal.DurableState{ClusterID: "test", LogIndex: 2, Agents: map[string]journal.AgentRegistration{"new": {ID: "new"}}})
+	l.applyTestState(journal.DurableState{ClusterID: "test", LogIndex: 1})
+	if got := l.Product().LogIndex; got != 2 {
 		t.Fatalf("durable log index regressed to %d", got)
 	}
-	if _, ok := l.Durable().Agents["new"]; !ok {
+	if _, ok := l.Product().Agents["new"]; !ok {
 		t.Fatal("stale snapshot deleted newer durable content")
 	}
 }
 
 func TestLiveDurableApplicationRemembersClusterPositionAcrossSwitches(t *testing.T) {
 	l := NewLive()
-	l.ApplyDurable(journal.DurableState{ClusterID: "a", LogIndex: 4, Agents: map[string]journal.AgentRegistration{"new": {ID: "new"}}})
-	l.ApplyDurable(journal.DurableState{ClusterID: "b", LogIndex: 1})
-	l.ApplyDurable(journal.DurableState{ClusterID: "a", LogIndex: 3})
-	if got := l.Durable(); got.ClusterID != "b" || got.LogIndex != 1 {
+	l.applyTestState(journal.DurableState{ClusterID: "a", LogIndex: 4, Agents: map[string]journal.AgentRegistration{"new": {ID: "new"}}})
+	l.applyTestState(journal.DurableState{ClusterID: "b", LogIndex: 1})
+	l.applyTestState(journal.DurableState{ClusterID: "a", LogIndex: 3})
+	if got := l.Product(); got.ClusterID != "b" || got.LogIndex != 1 {
 		t.Fatalf("stale prior-cluster state was reapplied: cluster=%q index=%d", got.ClusterID, got.LogIndex)
 	}
 }
 
 func TestBecomeDoesNotOverwriteConcurrentNewerDurableState(t *testing.T) {
 	l := NewLive()
-	err := l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, journal.DurableState) error) error {
-		return fn(nil, journal.DurableState{ClusterID: "test", LogIndex: 1})
+	err := l.become(context.Background(), func(_ context.Context, fn func(*sql.Tx, *journal.Projection) error) error {
+		return fn(nil, journal.NewProjection(journal.DurableState{ClusterID: "test", LogIndex: 1}))
 	}, func(context.Context) (uint64, error) {
-		l.ApplyDurable(journal.DurableState{ClusterID: "test", LogIndex: 2, Agents: map[string]journal.AgentRegistration{"new": {ID: "new"}}})
+		l.applyTestState(journal.DurableState{ClusterID: "test", LogIndex: 2, Agents: map[string]journal.AgentRegistration{"new": {ID: "new"}}})
 		return 3, nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := l.Durable().LogIndex; got != 2 {
+	if got := l.Product().LogIndex; got != 2 {
 		t.Fatalf("become regressed durable log index to %d", got)
 	}
-	if _, ok := l.Durable().Agents["new"]; !ok {
+	if _, ok := l.Product().Agents["new"]; !ok {
 		t.Fatal("become overwrote newer durable content")
 	}
 }
@@ -143,7 +147,7 @@ func TestBecomeDoesNotOverwriteConcurrentNewerDurableState(t *testing.T) {
 func TestRejectedStatusReportDoesNotConsumeSequence(t *testing.T) {
 	l := startLive(t)
 	now := time.Now().UTC()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
@@ -179,7 +183,7 @@ func TestRejectedStatusReportDoesNotConsumeSequence(t *testing.T) {
 func TestStatusReportPublishesInvalidationForEvidenceOnlyObservation(t *testing.T) {
 	l := startLive(t)
 	now := time.Now().UTC()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
@@ -263,7 +267,7 @@ func TestStatusReportPublishesInvalidationForEvidenceOnlyObservation(t *testing.
 func TestStatusReportPublishesInvalidationWhenEvaluationChangesNothing(t *testing.T) {
 	l := startLive(t)
 	now := time.Now().UTC()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
@@ -372,7 +376,7 @@ func TestLiveHeartbeatResetsTimerAndStaleSession(t *testing.T) {
 func TestLiveAdmissionReevaluatedOnStatusReport(t *testing.T) {
 	l := startLive(t)
 	now := time.Now().UTC()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", Name: "agent", CreatedAt: now}},
@@ -588,7 +592,7 @@ func TestLiveOverlayPreservesCrashEvidenceWhenUnavailable(t *testing.T) {
 func TestAdvanceRolloutSkipsTxWhenIdle(t *testing.T) {
 	l := startLive(t)
 	now := time.Now().UTC()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Services: map[string]journal.ServiceIntent{
@@ -752,7 +756,7 @@ func TestLiveReadAndSubscribeSeesApply(t *testing.T) {
 	l := startLive(t)
 	ch, stop := l.Watch("agent")
 	defer stop()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Agents: map[string]journal.AgentRegistration{
@@ -784,7 +788,7 @@ func TestLiveDesiredStateUsesMemory(t *testing.T) {
 	}
 	raw := json.RawMessage(`{"runtime":{"cpuMillis":100,"memoryMebibytes":128}}`)
 	now := time.Now().UTC()
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  4,
 		Projects:  map[string]journal.Project{"proj": {ID: "proj", Name: "demo"}},
@@ -874,18 +878,18 @@ func TestAllocationsByServiceTracksAppliedDurableMutations(t *testing.T) {
 		}
 	}
 
-	l.ApplyDurable(durable(1, map[string]journal.Assignment{"alloc": assignment}))
+	l.applyTestState(durable(1, map[string]journal.Assignment{"alloc": assignment}))
 	assertLiveAllocationIDs(t, l, "svc", []string{"alloc"})
 
 	draining := assignment
 	draining.RolloutState = AllocationRolloutDraining
-	l.ApplyDurable(durable(2, map[string]journal.Assignment{"alloc": draining}))
+	l.applyTestState(durable(2, map[string]journal.Assignment{"alloc": draining}))
 	assertLiveAllocationIDs(t, l, "svc", []string{"alloc"})
 	if got := l.AllocationsByService("svc"); len(got) != 1 || got[0].RolloutState != AllocationRolloutDraining {
 		t.Fatalf("drain view = %+v", got)
 	}
 
-	l.ApplyDurable(durable(3, nil))
+	l.applyTestState(durable(3, nil))
 	assertLiveAllocationIDs(t, l, "svc", nil)
 }
 
@@ -907,7 +911,7 @@ func assertLiveAllocationIDs(t *testing.T, l *Live, serviceID string, want []str
 
 func TestAllocationsByEnvironmentUsesOneConsistentLiveView(t *testing.T) {
 	l := startLive(t)
-	l.ApplyDurable(journal.DurableState{
+	l.applyTestState(journal.DurableState{
 		ClusterID: "test",
 		LogIndex:  1,
 		Services: map[string]journal.ServiceIntent{

@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -181,7 +182,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 		{AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)}},
 		{AllocationId: "allocation-2", ServiceId: "service-2", EnvironmentId: "environment-2", Spec: &platformv1.ResolvedServiceSpec{Image: "docker.io/library/nginx:latest"}},
 	}}
-	creds, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	creds, err := service.pullCredentialsForAgent(context.Background(), "agent-1", pullImagesForTest(state))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func TestAgentServiceAttachesExactPullCredentialOnlyToPlatformImages(t *testing.
 		t.Fatal("checkpoint still carries pull credentials")
 	}
 	foreign := &agentv1.DesiredNodeState{Services: []*agentv1.DesiredService{{AllocationId: "allocation-3", EnvironmentId: "environment-2", ServiceId: "service-2", Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("b", 64)}}}}
-	if _, err := service.pullCredentialsForAgent(context.Background(), "agent-1", foreign); err == nil {
+	if _, err := service.pullCredentialsForAgent(context.Background(), "agent-1", pullImagesForTest(foreign)); err == nil {
 		t.Fatal("expected a sibling platform repository to be rejected")
 	}
 }
@@ -276,13 +277,13 @@ func TestPullCredentialCacheReusesOnlyWhileValidThroughNextSession(t *testing.T)
 		AllocationId: "allocation-1", ServiceId: "service-1", EnvironmentId: "environment-1",
 		Spec: &platformv1.ResolvedServiceSpec{Image: "registry.example.test:5000/mesh/project-1/environment-1/build-1/service-1@sha256:" + strings.Repeat("a", 64)},
 	}}}
-	first, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	first, err := service.pullCredentialsForAgent(context.Background(), "agent-1", pullImagesForTest(state))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Well within validity the minted credential is reused across syncs.
 	now = now.Add(20 * time.Second)
-	reused, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	reused, err := service.pullCredentialsForAgent(context.Background(), "agent-1", pullImagesForTest(state))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +293,7 @@ func TestPullCredentialCacheReusesOnlyWhileValidThroughNextSession(t *testing.T)
 	// A token that would expire before the next session rotation must be
 	// re-minted now, not reused from the cache.
 	now = now.Add(20 * time.Second)
-	renewed, err := service.pullCredentialsForAgent(context.Background(), "agent-1", state)
+	renewed, err := service.pullCredentialsForAgent(context.Background(), "agent-1", pullImagesForTest(state))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,4 +416,12 @@ func TestCrashLoopLinesRouteThroughDurableQueue(t *testing.T) {
 	if len(sink.lines) != 1 || sink.lines[0].ID != line.ID {
 		t.Fatalf("queued event not delivered intact: %+v", sink.lines)
 	}
+}
+
+func pullImagesForTest(state *agentv1.DesiredNodeState) []deliverycore.PullImage {
+	var images []deliverycore.PullImage
+	for _, svc := range state.GetServices() {
+		images = append(images, deliverycore.PullImage{AllocationID: svc.GetAllocationId(), ServiceID: svc.GetServiceId(), EnvironmentID: svc.GetEnvironmentId(), Image: svc.GetSpec().GetImage()})
+	}
+	return images
 }

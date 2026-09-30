@@ -204,7 +204,7 @@ func (p *persistence) listExpiredDeletions(ctx context.Context, cutoff time.Time
 func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDeletion, cutoff time.Time) (bool, error) {
 	switch deletion.Kind {
 	case expiredDeletionProject:
-		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
+		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff, journal.ProjectTree(deletion.ID),
 			`SELECT id FROM projects WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
 				if err := detachArtifactReferencesTx(ctx, tx,
@@ -212,11 +212,11 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDel
 					id); err != nil {
 					return err
 				}
-				return journal.RecordProjectRemoval(ctx, tx, id)
+				return nil
 			},
 			`DELETE FROM projects WHERE id = $1`)
 	case expiredDeletionEnvironment:
-		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
+		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff, journal.EnvironmentTree(deletion.ID),
 			`SELECT id FROM environments WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
 				if err := detachArtifactReferencesTx(ctx, tx,
@@ -224,23 +224,23 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDel
 					id); err != nil {
 					return err
 				}
-				return journal.RecordEnvironmentRemoval(ctx, tx, id)
+				return nil
 			},
 			`DELETE FROM environments WHERE id = $1`)
 	case expiredDeletionService:
-		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
+		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff, journal.ServiceTree(deletion.ID),
 			`SELECT id FROM services WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
 				if err := detachArtifactReferencesTx(ctx, tx, `service_id = $1`, id); err != nil {
 					return err
 				}
-				return journal.RecordServiceRemoval(ctx, tx, id)
+				return nil
 			},
 			`DELETE FROM services WHERE id = $1`)
 	case expiredDeletionVolume:
-		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff,
+		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff, journal.VolumeRow(deletion.ID),
 			`SELECT id FROM volumes WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
-			func(ctx context.Context, tx *sql.Tx, id string) error { journal.RecordVolume(ctx, id); return nil },
+			nil,
 			`DELETE FROM volumes WHERE id = $1`)
 	case expiredDeletionDomain:
 		return hardDeleteExpiredDomain(ctx, p.database, deletion.ID, cutoff)
@@ -269,7 +269,7 @@ func detachArtifactReferencesTx(ctx context.Context, tx *sql.Tx, servicePredicat
 	return nil
 }
 
-func hardDeleteExpiredRow(ctx context.Context, db *database, id string, cutoff time.Time, lockQuery string, record func(context.Context, *sql.Tx, string) error, deleteQuery string) (bool, error) {
+func hardDeleteExpiredRow(ctx context.Context, db *database, id string, cutoff time.Time, effect journal.Mutation, lockQuery string, beforeDelete func(context.Context, *sql.Tx, string) error, deleteQuery string) (bool, error) {
 	var collected bool
 	err := db.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var found string
@@ -279,10 +279,12 @@ func hardDeleteExpiredRow(ctx context.Context, db *database, id string, cutoff t
 			}
 			return err
 		}
-		if err := record(ctx, tx, found); err != nil {
-			return err
+		if beforeDelete != nil {
+			if err := beforeDelete(ctx, tx, found); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.ExecContext(ctx, deleteQuery, found); err != nil {
+		if _, err := effect.Exec(ctx, tx, deleteQuery, found); err != nil {
 			return err
 		}
 		collected = true
@@ -305,8 +307,7 @@ func hardDeleteExpiredDomain(ctx context.Context, db *database, hostname string,
 			}
 			return err
 		}
-		journal.RecordDomain(ctx, hostname, serviceID)
-		if _, err := tx.ExecContext(ctx, `DELETE FROM domain_bindings WHERE hostname = $1`, hostname); err != nil {
+		if _, err := journal.DomainRow(hostname).Exec(ctx, tx, `DELETE FROM domain_bindings WHERE hostname = $1`, hostname); err != nil {
 			return err
 		}
 		collected = true

@@ -28,34 +28,39 @@ type Entry struct {
 // Apply is deterministic and atomic. Authority is checked at append, never
 // during replay: a committed decision outlives the lease that authorized it.
 func (s DurableState) Apply(entry Entry) (DurableState, error) {
+	next, _, err := s.applyEntry(entry)
+	return next, err
+}
+
+func (s DurableState) applyEntry(entry Entry) (DurableState, Batch, error) {
 	if entry.ClusterID != s.ClusterID || entry.LogIndex != s.LogIndex+1 {
-		return s, fmt.Errorf("journal prefix mismatch: cluster %q index %d, expected %q index %d", entry.ClusterID, entry.LogIndex, s.ClusterID, s.LogIndex+1)
+		return s, Batch{}, fmt.Errorf("journal prefix mismatch: cluster %q index %d, expected %q index %d", entry.ClusterID, entry.LogIndex, s.ClusterID, s.LogIndex+1)
 	}
 	if entry.CommandID == "" || entry.CommandVersion != CommandVersion || entry.CommandType != CommandType {
-		return s, fmt.Errorf("unsupported journal command %q version %d", entry.CommandType, entry.CommandVersion)
+		return s, Batch{}, fmt.Errorf("unsupported journal command %q version %d", entry.CommandType, entry.CommandVersion)
 	}
 	var batch Batch
 	var payload bytes.Buffer
 	if err := json.Compact(&payload, entry.Payload); err != nil {
-		return s, err
+		return s, Batch{}, err
 	}
 	decoder := json.NewDecoder(&payload)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&batch); err != nil {
-		return s, err
+		return s, Batch{}, err
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return s, fmt.Errorf("trailing journal payload")
+		return s, Batch{}, fmt.Errorf("trailing journal payload")
 	}
 	if batch.BaseIndex != s.LogIndex {
-		return s, fmt.Errorf("stale durable precondition: %d != %d", batch.BaseIndex, s.LogIndex)
+		return s, Batch{}, fmt.Errorf("stale durable precondition: %d != %d", batch.BaseIndex, s.LogIndex)
 	}
 	next, err := s.applyBatch(batch)
 	if err != nil {
-		return s, err
+		return s, Batch{}, err
 	}
 	next.LogIndex = entry.LogIndex
-	return next, nil
+	return next, batch, nil
 }
 
 func applyChanges[T any](previous map[string]T, changes []Change[T]) (map[string]T, error) {
@@ -131,7 +136,7 @@ func (s DurableState) validateReservations() error {
 }
 
 func (s DurableState) Clone() DurableState {
-	return DurableState{
+	next := DurableState{
 		Projects:       maps.Clone(s.Projects),
 		ClusterID:      s.ClusterID,
 		LogIndex:       s.LogIndex,
@@ -146,6 +151,51 @@ func (s DurableState) Clone() DurableState {
 		Volumes:        maps.Clone(s.Volumes),
 		Domains:        maps.Clone(s.Domains),
 	}
+	for id, v := range next.Projects {
+		v.SystemKey = clonePointer(v.SystemKey)
+		next.Projects[id] = v
+	}
+	for id, v := range next.Revisions {
+		v.SpecJSON = bytes.Clone(v.SpecJSON)
+		next.Revisions[id] = v
+	}
+	for id, v := range next.Assignments {
+		v.DrainStartedAt = clonePointer(v.DrainStartedAt)
+		v.DrainDeadline = clonePointer(v.DrainDeadline)
+		next.Assignments[id] = v
+	}
+	for id, v := range next.Rollouts {
+		v.StrategyJSON = bytes.Clone(v.StrategyJSON)
+		v.CompletedAt = clonePointer(v.CompletedAt)
+		next.Rollouts[id] = v
+	}
+	for id, v := range next.Deployments {
+		v.ResolvedSpecJSON = bytes.Clone(v.ResolvedSpecJSON)
+		v.VariableVersionsJSON = bytes.Clone(v.VariableVersionsJSON)
+		v.SealedVersionsJSON = bytes.Clone(v.SealedVersionsJSON)
+		next.Deployments[id] = v
+	}
+	for id, v := range next.Agents {
+		v.RuntimeCapabilities = bytes.Clone(v.RuntimeCapabilities)
+		next.Agents[id] = v
+	}
+	for id, v := range next.Administration {
+		v.CredentialRevokedAt = clonePointer(v.CredentialRevokedAt)
+		next.Administration[id] = v
+	}
+	for id, v := range next.Environments {
+		v.CopiedFromEnvironmentID = clonePointer(v.CopiedFromEnvironmentID)
+		next.Environments[id] = v
+	}
+	return next
+}
+
+func clonePointer[T any](v *T) *T {
+	if v == nil {
+		return nil
+	}
+	copy := *v
+	return &copy
 }
 
 func (s DurableState) applyBatch(batch Batch) (DurableState, error) {

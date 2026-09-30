@@ -38,7 +38,7 @@ func (d *Delivery) createFleetAgent(ctx context.Context, _ authz.Operator, req *
 	var rec AgentRecord
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		now := time.Now().UTC()
-		_, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
+		_, err := journal.AgentRow(req.GetAgentId()).Exec(ctx, tx, `INSERT INTO agent_registrations(
 			id, name, region, zone, failure_domain,
 			reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
@@ -48,12 +48,11 @@ func (d *Delivery) createFleetAgent(ctx context.Context, _ authz.Operator, req *
 		if err != nil {
 			return err
 		}
-		journal.RecordAgent(ctx, req.GetAgentId())
-		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
+
+		if _, err := journal.AdministrationRow(req.GetAgentId()).Exec(ctx, tx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
 			VALUES ($1, 'enrolling', $2)`, req.GetAgentId(), now); err != nil {
 			return err
 		}
-		journal.RecordAdministration(ctx, req.GetAgentId())
 		if err := insertAgentBootstrapTokenTx(ctx, tx, req.GetAgentId(), token, "operator", now); err != nil {
 			return err
 		}
@@ -95,7 +94,7 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, _ authz.Operator, req *
 		if req.GetReservedMemoryMebibytes() > current.MemoryMebibytesCapcity && current.MemoryMebibytesCapcity > 0 {
 			return fmt.Errorf("%w: reserved memory exceeds observed node capacity", ErrInvalidFleetAgentInput)
 		}
-		_, err = tx.ExecContext(ctx, `UPDATE agent_registrations SET name = $1, region = $2, zone = $3,
+		_, err = journal.AgentRow(req.GetAgentId()).Exec(ctx, tx, `UPDATE agent_registrations SET name = $1, region = $2, zone = $3,
 			failure_domain = $4, reserved_cpu_millis = $5, reserved_memory_mebibytes = $6,
 			updated_at = $7 WHERE id = $8`, strings.TrimSpace(req.GetName()), strings.TrimSpace(req.GetRegion()),
 			strings.TrimSpace(req.GetZone()), strings.TrimSpace(req.GetFailureDomain()), req.GetReservedCpuMillis(),
@@ -103,7 +102,7 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, _ authz.Operator, req *
 		if err != nil {
 			return err
 		}
-		journal.RecordAgent(ctx, req.GetAgentId())
+
 		rec, err = agentByIDQuerier(ctx, tx, req.GetAgentId(), false)
 		return err
 	})
@@ -150,12 +149,11 @@ func (d *Delivery) SetAgentLifecycle(ctx context.Context, user authz.User, agent
 			}); err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET advertise_addr = '',
+			if _, err := journal.AgentRow(agentID).Exec(ctx, tx, `UPDATE agent_registrations SET advertise_addr = '',
 				workload_ipv4_subnet = '', workload_ipv6_subnet = '', wireguard_public_key = '',
 				wireguard_listen_port = 0, wireguard_endpoint = '', wireguard_ipv6 = '', updated_at = $1 WHERE id = $2`, now, agentID); err != nil {
 				return err
 			}
-			journal.RecordAgent(ctx, agentID)
 		} else {
 			message := ""
 			if target == AgentStateCordoned {
@@ -372,22 +370,20 @@ func BootstrapTokenHash(token string) [sha256.Size]byte {
 }
 
 func (s *persistence) setAgentAdministrationTx(ctx context.Context, tx *sql.Tx, administration AgentAdministration) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_administration
+	if _, err := journal.AdministrationRow(administration.AgentID).Exec(ctx, tx, `UPDATE agent_administration
 		SET lifecycle_state = $2, operator_intent = $3, maintenance_message = $4,
 		    credential_revoked_at = $5, updated_at = $6
 		WHERE agent_id = $1`, administration.AgentID, administration.LifecycleState, administration.OperatorIntent,
 		administration.MaintenanceMessage, administration.CredentialRevokedAt, administration.UpdatedAt); err != nil {
 		return err
 	}
-	journal.RecordAdministration(ctx, administration.AgentID)
 	return nil
 }
 
 func (s *persistence) setAgentMaintenanceMessageTx(ctx context.Context, tx *sql.Tx, agentID, message string, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE agent_administration SET maintenance_message = $2, updated_at = $3
+	if _, err := journal.AdministrationRow(agentID).Exec(ctx, tx, `UPDATE agent_administration SET maintenance_message = $2, updated_at = $3
 		WHERE agent_id = $1 AND lifecycle_state = 'draining'`, agentID, message, now); err != nil {
 		return err
 	}
-	journal.RecordAdministration(ctx, agentID)
 	return nil
 }

@@ -98,21 +98,19 @@ func (d *Delivery) applyAllocationMutationsTx(ctx context.Context, tx *sql.Tx, n
 			}
 		case mutationRetarget:
 			assignment := mutation.Allocation
-			if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
+			if _, err := journal.AssignmentRow(assignment.ID).Exec(ctx, tx, `UPDATE allocation_assignments
 				SET deployment_id = $2, desired_spec_revision = $3, desired_rollout_generation = $4,
 				    intent = $5, intent_message = '', updated_at = $6 WHERE id = $1`,
 				assignment.ID, assignment.DeploymentID, assignment.SpecRevision, assignment.RolloutGeneration,
 				assignment.Intent, now); err != nil {
 				return err
 			}
-			journal.RecordAssignment(ctx, assignment.ID)
 		case mutationReserveAddress:
-			if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
+			if _, err := journal.AssignmentRow(mutation.AllocationID).Exec(ctx, tx, `UPDATE allocation_assignments
 				SET allocation_ipv4 = $2, updated_at = $3 WHERE id = $1`,
 				mutation.AllocationID, mutation.Allocation.IPv4, now); err != nil {
 				return err
 			}
-			journal.RecordAssignment(ctx, mutation.AllocationID)
 		default:
 			return fmt.Errorf("allocation mutation has unknown kind %q", mutation.Kind)
 		}
@@ -238,7 +236,7 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 }
 
 func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
-	result, err := tx.ExecContext(ctx,
+	result, err := journal.ServiceRow(serviceID).Exec(ctx, tx,
 		`UPDATE service_delivery_status
 		 SET placement_message = NULLIF($1, ''), updated_at = $2
 		 WHERE service_id = $3
@@ -255,7 +253,7 @@ func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.
 	if changed == 0 {
 		return nil
 	}
-	journal.RecordService(ctx, serviceID)
+
 	return nil
 }
 
@@ -549,19 +547,18 @@ type allocationAssignmentState struct {
 }
 
 func (s *persistence) setAllocationStateTx(ctx context.Context, tx *sql.Tx, state allocationAssignmentState) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
+	if _, err := journal.AssignmentRow(state.AllocationID).Exec(ctx, tx, `UPDATE allocation_assignments
 		SET rollout_state = $2, intent = $3, intent_message = $4,
 		    drain_started_at = $5, drain_deadline = $6, updated_at = $7
 		WHERE id = $1`, state.AllocationID, state.RolloutState, state.Intent, state.IntentMessage,
 		state.DrainStarted, state.DrainDeadline, state.UpdatedAt); err != nil {
 		return err
 	}
-	journal.RecordAssignment(ctx, state.AllocationID)
 	return nil
 }
 
 func (s *persistence) insertAllocationAssignmentTx(ctx context.Context, tx *sql.Tx, assignment AllocationAssignment) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO allocation_assignments(
+	if _, err := journal.AssignmentRow(assignment.ID).Exec(ctx, tx, `INSERT INTO allocation_assignments(
 		id, service_id, deployment_id, agent_id, desired_spec_revision,
 		desired_rollout_generation, allocation_ipv4, allocation_ipv6,
 		operator_restart_nonce, rollout_state, intent, intent_message,
@@ -573,33 +570,29 @@ func (s *persistence) insertAllocationAssignmentTx(ctx context.Context, tx *sql.
 		assignment.DrainStartedAt, assignment.DrainDeadline, assignment.CreatedAt, assignment.UpdatedAt); err != nil {
 		return err
 	}
-	journal.RecordAssignment(ctx, assignment.ID)
 	return nil
 }
 
 func (s *persistence) deleteAllocationAssignmentTx(ctx context.Context, tx *sql.Tx, allocationID string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE id = $1`, allocationID); err != nil {
+	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `DELETE FROM allocation_assignments WHERE id = $1`, allocationID); err != nil {
 		return err
 	}
-	journal.RecordAssignment(ctx, allocationID)
 	return nil
 }
 
 func (s *persistence) markAssignmentLostTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
+	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `UPDATE allocation_assignments
 		SET rollout_state = $2, intent = $3, intent_message = $4,
 		    allocation_ipv4 = '', allocation_ipv6 = '', updated_at = $5
 		WHERE id = $1`, allocationID, AllocationRolloutLost, allocationIntentRun, message, now); err != nil {
 		return err
 	}
-	journal.RecordAssignment(ctx, allocationID)
 	return nil
 }
 
 func (s *persistence) setAssignmentMessageTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET intent_message = $2, updated_at = $3 WHERE id = $1`, allocationID, message, now); err != nil {
+	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `UPDATE allocation_assignments SET intent_message = $2, updated_at = $3 WHERE id = $1`, allocationID, message, now); err != nil {
 		return err
 	}
-	journal.RecordAssignment(ctx, allocationID)
 	return nil
 }

@@ -46,7 +46,7 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 		Bootstrap: config.BootstrapConfig{
 			Users: []config.BootstrapUser{{ID: "user-1", Email: "user@example.com", Projects: []string{"demo"}}},
 		},
-		Ingress:   config.IngressConfig{PublicAddr: "platform.local"},
+		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-overlay-drift"},
 		Mesh:      testMeshConfig(),
 	}
@@ -253,7 +253,7 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 			MaxIdleConns: 4,
 		},
 		StateDir:  t.TempDir(),
-		Ingress:   config.IngressConfig{PublicAddr: "platform.local"},
+		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-overlay-repair"},
 		Mesh:      testMeshConfig(),
 	}

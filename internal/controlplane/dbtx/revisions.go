@@ -48,17 +48,5 @@ func BumpDesiredRevisions(ctx context.Context, tx *sql.Tx, agentIDs []string) er
 		`UPDATE agent_registrations SET desired_revision = desired_revision + 1 WHERE id IN (%s) RETURNING id`,
 		strings.Join(placeholders, ", "),
 	)
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return err
-		}
-		journal.RecordAgent(ctx, id)
-	}
-	return rows.Err()
+	return journal.UpdateRows(ctx, tx, journal.TableAgents, query, args...)
 }

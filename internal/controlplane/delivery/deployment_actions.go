@@ -302,13 +302,12 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 		return "", err
 	}
 	if targetAllocationID != "" {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := journal.RolloutRow(service.ID, nextRollout).Exec(ctx, tx,
 			`UPDATE service_rollouts SET target_allocation_id = $1 WHERE service_id = $2 AND rollout_generation = $3`,
 			targetAllocationID, service.ID, nextRollout,
 		); err != nil {
 			return "", err
 		}
-		journal.RecordRollout(ctx, service.ID, nextRollout)
 	}
 	actor := deploymentActor{Kind: DeploymentCauseUser, ID: userID}
 	if strings.TrimSpace(userID) == "" {
@@ -328,10 +327,9 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET variable_versions_json = $1, sealed_versions_json = $2 WHERE id = $3`, variableVersionsJSON, sealedVersionsJSON, dep.ID); err != nil {
+	if _, err := journal.DeploymentRow(dep.ID).Exec(ctx, tx, `UPDATE deployments SET variable_versions_json = $1, sealed_versions_json = $2 WHERE id = $3`, variableVersionsJSON, sealedVersionsJSON, dep.ID); err != nil {
 		return "", err
 	}
-	journal.RecordDeployment(ctx, dep.ID)
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
 	service.RolloutGeneration = nextRollout
@@ -353,13 +351,12 @@ func (s *persistence) insertCopiedServiceRevisionTx(ctx context.Context, tx *sql
 	if err != nil {
 		return 0, err
 	}
-	if _, err = tx.ExecContext(ctx,
+	if _, err = journal.RevisionRow(serviceID, revision).Exec(ctx, tx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
 		serviceID, revision, raw, time.Now().UTC(),
 	); err != nil {
 		return 0, err
 	}
-	journal.RecordRevision(ctx, serviceID, revision)
 	return revision, nil
 }
 
@@ -434,10 +431,9 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, nil, now); err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status SET current_artifact_id = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
+	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx, `UPDATE service_delivery_status SET current_artifact_id = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
 		return "", err
 	}
-	journal.RecordService(ctx, service.ID)
 	return "", nil
 }
 
@@ -455,7 +451,7 @@ func (d *Delivery) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, 
 	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, &service.RolloutGeneration, now); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.RolloutRow(service.ID, service.RolloutGeneration).Exec(ctx, tx,
 		`UPDATE service_rollouts
 		    SET state = $1, failure_reason = $2, completed_at = $3, progress_at = $3
 		  WHERE service_id = $4 AND rollout_generation = $5 AND state IN ($6, $7)`,
@@ -464,7 +460,6 @@ func (d *Delivery) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, 
 	); err != nil {
 		return err
 	}
-	journal.RecordRollout(ctx, service.ID, service.RolloutGeneration)
 	return nil
 }
 
@@ -509,13 +504,12 @@ func (s *persistence) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.T
 	}); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.ServiceRow(serviceID).Exec(ctx, tx,
 		`UPDATE service_delivery_status SET current_artifact_id = NULL, placement_message = NULL, updated_at = $1 WHERE service_id = $2`,
 		now, serviceID,
 	); err != nil {
 		return err
 	}
-	journal.RecordService(ctx, serviceID)
 	return nil
 }
 
@@ -551,10 +545,9 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	if err != nil {
 		return "", err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, updated_at = $2 WHERE id = $3`, nextSpecRevision, time.Now().UTC(), service.ID); err != nil {
+	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx, `UPDATE services SET current_spec_revision = $1, updated_at = $2 WHERE id = $3`, nextSpecRevision, time.Now().UTC(), service.ID); err != nil {
 		return "", err
 	}
-	journal.RecordService(ctx, service.ID)
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
 	_, dep, reused, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: DeploymentCauseUser, ID: userID}, source.BuildTransition{})
@@ -568,10 +561,9 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	if reused {
 		detail = "Retry reusing previously built image"
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET reason_code = $1, detail = $2 WHERE id = $3`, reasonUserRetry, detail, dep.ID); err != nil {
+	if _, err := journal.DeploymentRow(dep.ID).Exec(ctx, tx, `UPDATE deployments SET reason_code = $1, detail = $2 WHERE id = $3`, reasonUserRetry, detail, dep.ID); err != nil {
 		return "", err
 	}
-	journal.RecordDeployment(ctx, dep.ID)
 	return dep.ID, nil
 }
 

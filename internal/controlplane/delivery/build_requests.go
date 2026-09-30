@@ -147,7 +147,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx,
 		`UPDATE service_delivery_status
 		    SET latest_build_id = $1,
 		        updated_at = $2
@@ -156,7 +156,6 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-	journal.RecordService(ctx, service.ID)
 	reasonCode := reasonBuildQueued
 	detail := "Build queued"
 	if actor.Kind == DeploymentCauseWebhook {
@@ -205,7 +204,7 @@ func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service
 	case err != nil:
 		return DeploymentRecord{}, err
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx,
 		`UPDATE service_delivery_status
 		    SET latest_build_id = $1,
 		        updated_at = $2
@@ -221,7 +220,7 @@ func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service
 	if ok && current.ArtifactID == artifact.ID && current.SpecRevision == service.SpecRevision &&
 		current.State != DeploymentStateFailed && current.State != DeploymentStateCancelled &&
 		current.State != DeploymentStateCrashed && current.State != DeploymentStateRemoved {
-		journal.RecordService(ctx, service.ID)
+
 		return current, nil
 	}
 	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateStaged, actor, reasonBuildReused,

@@ -55,7 +55,7 @@ func TestAgentEnrollAndSyncOverLiveTLS(t *testing.T) {
 			MaxIdleConns: 4,
 		},
 		StateDir:  t.TempDir(),
-		Ingress:   config.IngressConfig{PublicAddr: "platform.local"},
+		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-test"},
 		Mesh:      testMeshConfig(),
 	}
@@ -524,7 +524,7 @@ func TestOlderGenerationObservationCannotSatisfyCurrentAssignment(t *testing.T) 
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET desired_rollout_generation = $1 WHERE id = $2`, allocation.DesiredRolloutGeneration+1, allocation.ID); err != nil {
 			return err
 		}
-		journal.RecordAssignment(ctx, allocation.ID)
+		journal.AssignmentRow(allocation.ID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

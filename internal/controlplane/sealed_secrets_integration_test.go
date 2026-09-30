@@ -10,12 +10,15 @@ import (
 	"sync"
 	"testing"
 
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
+	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestSealedSecretsLifecycle(t *testing.T) {
@@ -114,10 +117,10 @@ func TestSealedSecretsDesiredStateMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	delivery := testDelivery(store)
-	first, err := createService(ctx, store, "owner", environmentID, "first",
+	first, err := createScheduledService(ctx, store, "owner", environmentID, "first",
 		directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
 			Env: map[string]string{"PUBLIC": "one"},
-		}), "node-1")
+		}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +129,9 @@ func TestSealedSecretsDesiredStateMerge(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), first.ID, "TOKEN", []byte("node-1-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "owner", environmentID, first.ID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -150,6 +156,178 @@ func TestSealedSecretsDesiredStateMerge(t *testing.T) {
 	}
 	if _, ok := other.GetServices()[0].GetSpec().GetRuntime().GetEnv()["TOKEN"]; ok {
 		t.Fatal("sealed value leaked to another agent's service")
+	}
+}
+
+func TestAgentSyncDecryptsOnlyChangedAllocations(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "scoped-sync")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, project.ID)
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	delivery := testDelivery(store)
+	first, err := createScheduledService(ctx, store, "owner", environmentID, "first", directImageServiceSpec(pinnedImage("a"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), first.ID, "TOKEN", []byte("first-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "owner", environmentID, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	baseline, err := delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{AgentID: "node-1", RequireCheckpoint: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baseline.Checkpoint.GetServices()) != 1 || baseline.Checkpoint.GetServices()[0].GetSpec().GetRuntime().GetEnv()["TOKEN"] != "first-secret" {
+		t.Fatal("checkpoint did not establish the decrypted allocation baseline")
+	}
+	delivery.AgentCheckpointSent(baseline.Checkpoint)
+	// Fault injection makes any unnecessary re-decryption of the unchanged
+	// allocation observable. No product row or desired revision changed.
+	if _, err := store.db.ExecContext(ctx, `UPDATE service_secret_versions SET ciphertext = $1 WHERE service_id = $2`, []byte("corrupt"), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := createScheduledService(ctx, store, "owner", environmentID, "second", directImageServiceSpec(pinnedImage("b"), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), second.ID, "TOKEN", []byte("second-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "owner", environmentID, second.ID); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{AgentID: "node-1", BaseRevision: baseline.Cursor, OverlayVersion: baseline.OverlayVersion})
+	if err != nil {
+		t.Fatalf("adding an allocation read the unchanged allocation's sealed values: %v", err)
+	}
+	if plan.Checkpoint != nil || len(plan.Diffs) != 1 || len(plan.Diffs[0].GetStarts()) != 1 || len(plan.Diffs[0].GetUpdates()) != 0 {
+		t.Fatalf("expected only the new allocation in a diff: %+v", plan)
+	}
+	added := plan.Diffs[0].GetStarts()[0]
+	if added.GetServiceId() != second.ID || added.GetSpec().GetRuntime().GetEnv()["TOKEN"] != "second-secret" || added.GetRegistryPassword() != "" {
+		t.Fatal("diff did not carry the new allocation's decrypted environment without registry credentials")
+	}
+	// A real invalidation of the first allocation must still surface corruption.
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := journal.AssignmentRow(baseline.Checkpoint.GetServices()[0].GetAllocationId()).Exec(ctx, tx,
+			`UPDATE allocation_assignments SET operator_restart_nonce = operator_restart_nonce + 1 WHERE id = $1`, baseline.Checkpoint.GetServices()[0].GetAllocationId())
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{AgentID: "node-1", BaseRevision: plan.Cursor, OverlayVersion: plan.OverlayVersion}); err == nil {
+		t.Fatal("changed allocation silently ignored corrupted sealed values")
+	}
+}
+
+func TestAgentSyncPreservesSealedPinsAcrossCoexistingDeployments(t *testing.T) {
+	t.Parallel()
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "overlapping-pins")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, project.ID)
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
+		t.Fatal(err)
+	}
+	delivery := testDelivery(store)
+	service, err := createService(ctx, store, "owner", environmentID, "web", directImageServiceSpec(pinnedImage("a"), nil), "node-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), service.ID, "TOKEN", []byte("v1-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := desiredEnvForTest(t, store, ctx, "node-1", service.ID)["TOKEN"]; exists {
+		t.Fatal("new sealed name reached an allocation whose deployment captured no secrets")
+	}
+	release := func(image string) {
+		t.Helper()
+		if _, _, err := updateService(ctx, store, "owner", service.ID, service.Name, directImageServiceSpec(pinnedImage(image), nil)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := releaseEnvironmentServiceForTest(ctx, store, "owner", environmentID, service.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release("b")
+	completeActionRollout(t, store, service.ID)
+	firstDeployment := currentDeploymentForTest(t, store, ctx, service.ID)
+	baseline, err := delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{AgentID: "node-1", RequireCheckpoint: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baseline.Checkpoint.GetServices()) != 1 || baseline.Checkpoint.GetServices()[0].GetSpec().GetRuntime().GetEnv()["TOKEN"] != "v1-secret" {
+		t.Fatal("first deployment did not establish its pinned sealed environment")
+	}
+	delivery.AgentCheckpointSent(baseline.Checkpoint)
+	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), service.ID, "TOKEN", []byte("v2-secret")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), service.ID, "LATER", []byte("new-name")); err != nil {
+		t.Fatal(err)
+	}
+	stillPinned := desiredEnvForTest(t, store, ctx, "node-1", service.ID)
+	if stillPinned["TOKEN"] != "v1-secret" {
+		t.Fatal("draft secret version changed an existing deployment's captured value")
+	}
+	if _, exists := stillPinned["LATER"]; exists {
+		t.Fatal("new sealed name reached an existing pinned deployment before release")
+	}
+	release("c") // Keep the prior serving allocation until the replacement is ready.
+	secondDeployment := currentDeploymentForTest(t, store, ctx, service.ID)
+	if firstDeployment.SealedVersions["TOKEN"] != 1 || secondDeployment.SealedVersions["TOKEN"] != 2 {
+		t.Fatal("fixture did not capture distinct immutable deployment versions")
+	}
+	incremental, err := delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{AgentID: "node-1", BaseRevision: baseline.Cursor, OverlayVersion: baseline.OverlayVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if incremental.Checkpoint != nil || len(incremental.Diffs) == 0 {
+		t.Fatal("coexisting rollout should extend the retained diff baseline")
+	}
+	accepted := make(map[string]*agentv1.DesiredService)
+	for _, svc := range baseline.Checkpoint.GetServices() {
+		accepted[svc.GetAllocationId()] = svc
+	}
+	for _, diff := range incremental.Diffs {
+		for _, svc := range append(append([]*agentv1.DesiredService(nil), diff.GetStarts()...), diff.GetUpdates()...) {
+			accepted[svc.GetAllocationId()] = svc
+		}
+		for _, id := range diff.GetStops() {
+			delete(accepted, id)
+		}
+	}
+	checkpoint, err := delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{AgentID: "node-1", RequireCheckpoint: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accepted) != 2 || len(checkpoint.Checkpoint.GetServices()) != 2 {
+		t.Fatalf("expected old and new allocations together, got diff=%d checkpoint=%d", len(accepted), len(checkpoint.Checkpoint.GetServices()))
+	}
+	wanted := map[string]string{firstDeployment.ID: "v1-secret", secondDeployment.ID: "v2-secret"}
+	for _, svc := range checkpoint.Checkpoint.GetServices() {
+		if value := svc.GetSpec().GetRuntime().GetEnv()["TOKEN"]; value != wanted[svc.GetDeploymentId()] {
+			t.Fatalf("deployment %s resolved another deployment's sealed version", svc.GetDeploymentId())
+		}
+		later, exists := svc.GetSpec().GetRuntime().GetEnv()["LATER"]
+		if svc.GetDeploymentId() == firstDeployment.ID && exists || svc.GetDeploymentId() == secondDeployment.ID && later != "new-name" {
+			t.Fatalf("new sealed name did not follow its captured deployment: %s", svc.GetDeploymentId())
+		}
+		if !proto.Equal(accepted[svc.GetAllocationId()], svc) {
+			t.Fatalf("checkpoint and applied diffs disagree for allocation %s", svc.GetAllocationId())
+		}
 	}
 }
 

@@ -33,7 +33,6 @@ type Delivery struct {
 	rolloutNow     func() time.Time
 	failoverNow    func() time.Time
 	buildScheduler BuildSchedulerConfig
-	allocSync      *allocSync
 	imageResolver  registry.ImageResolver
 }
 
@@ -74,7 +73,7 @@ type Dependencies struct {
 	ProductTransaction Transaction
 	// Publishes status invalidations for workless observation changes. Nil in tests.
 	ObservationTransaction ObservationTransaction
-	ReadState              func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	ReadState              func(context.Context, func(*sql.Tx, *journal.Projection) error) error
 	Authorizer             *authz.Authorizer
 	Notifier               PlatformNotifier
 	Ingress                PlatformIngress
@@ -123,7 +122,7 @@ type persistence struct {
 	deletionGrace     time.Duration
 	withProductTx     Transaction
 	withObservationTx ObservationTransaction
-	readState         func(context.Context, func(*sql.Tx, journal.DurableState) error) error
+	readState         func(context.Context, func(*sql.Tx, *journal.Projection) error) error
 	secrets           *secretkeys.Service
 }
 
@@ -139,7 +138,6 @@ func New(deps Dependencies) *Delivery {
 	scheduler := deps.BuildScheduler.WithDefaults()
 	return &Delivery{
 		buildScheduler: scheduler,
-		allocSync:      newAllocSync(),
 		imageResolver:  deps.ImageResolver,
 		store: &persistence{
 			db:                       deps.DB,

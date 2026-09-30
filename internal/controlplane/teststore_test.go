@@ -95,12 +95,12 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 		) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
 			return err
 		}
-		journal.RecordAgent(ctx, id)
+		journal.AgentRow(id).Capture(ctx)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
 			VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now); err != nil {
 			return err
 		}
-		journal.RecordAdministration(ctx, id)
+		journal.AdministrationRow(id).Capture(ctx)
 		return nil
 	})
 }
@@ -279,15 +279,15 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 		query  string
 		record func(context.Context, string)
 	}{
-		{`SELECT id::STRING FROM projects`, journal.RecordProject},
-		{`SELECT id::STRING FROM services`, journal.RecordService},
-		{`SELECT id::STRING FROM allocation_assignments`, journal.RecordAssignment},
-		{`SELECT id::STRING FROM deployments`, journal.RecordDeployment},
-		{`SELECT id::STRING FROM agent_registrations`, journal.RecordAgent},
-		{`SELECT agent_id::STRING FROM agent_administration`, journal.RecordAdministration},
-		{`SELECT id::STRING FROM environments`, journal.RecordEnvironment},
-		{`SELECT id::STRING FROM volumes`, journal.RecordVolume},
-		{`SELECT hostname::STRING FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.RecordDomain(ctx, hostname, "") }},
+		{`SELECT id::STRING FROM projects`, func(ctx context.Context, id string) { _ = journal.ProjectRow(id).Capture(ctx) }},
+		{`SELECT id::STRING FROM services`, func(ctx context.Context, id string) { _ = journal.ServiceRow(id).Capture(ctx) }},
+		{`SELECT id::STRING FROM allocation_assignments`, func(ctx context.Context, id string) { _ = journal.AssignmentRow(id).Capture(ctx) }},
+		{`SELECT id::STRING FROM deployments`, func(ctx context.Context, id string) { _ = journal.DeploymentRow(id).Capture(ctx) }},
+		{`SELECT id::STRING FROM agent_registrations`, func(ctx context.Context, id string) { _ = journal.AgentRow(id).Capture(ctx) }},
+		{`SELECT agent_id::STRING FROM agent_administration`, func(ctx context.Context, id string) { _ = journal.AdministrationRow(id).Capture(ctx) }},
+		{`SELECT id::STRING FROM environments`, func(ctx context.Context, id string) { _ = journal.EnvironmentRow(id).Capture(ctx) }},
+		{`SELECT id::STRING FROM volumes`, func(ctx context.Context, id string) { _ = journal.VolumeRow(id).Capture(ctx) }},
+		{`SELECT hostname::STRING FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.DomainRow(hostname).Capture(ctx) }},
 	}
 	for _, item := range single {
 		rows, err := tx.QueryContext(ctx, item.query)
@@ -317,7 +317,7 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 			revisionRows.Close()
 			return err
 		}
-		journal.RecordRevision(ctx, serviceID, revision)
+		journal.RevisionRow(serviceID, revision).Capture(ctx)
 	}
 	if err := revisionRows.Close(); err != nil {
 		return err
@@ -333,7 +333,7 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 			rolloutRows.Close()
 			return err
 		}
-		journal.RecordRollout(ctx, serviceID, generation)
+		journal.RolloutRow(serviceID, generation).Capture(ctx)
 	}
 	return rolloutRows.Close()
 }

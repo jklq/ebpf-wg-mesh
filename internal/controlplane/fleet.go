@@ -358,7 +358,7 @@ func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, token
 			if err := deliverycore.ValidateFleetAgentInput(agentID, name, region, bootstrap.Zone, failureDomain, bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes); err != nil {
 				return fmt.Errorf("configured agent %s: %w", agentID, err)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(
+			if _, err := journal.AgentRow(agentID).Exec(ctx, tx, `INSERT INTO agent_registrations(
 				id, name, region, zone, failure_domain,
 				reserved_cpu_millis, reserved_memory_mebibytes, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
@@ -366,12 +366,10 @@ func (s *fleetPersistence) ensureAgentBootstrapTokens(ctx context.Context, token
 				bootstrap.ReservedCPUMillis, bootstrap.ReservedMemoryMebibytes, now); err != nil {
 				return fmt.Errorf("store configured fleet agent %s: %w", agentID, err)
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
+			if _, err := journal.AdministrationRow(agentID).Exec(ctx, tx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
 				VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, agentID, now); err != nil {
 				return err
 			}
-			journal.RecordAgent(ctx, agentID)
-			journal.RecordAdministration(ctx, agentID)
 			hash := deliverycore.BootstrapTokenHash(token)
 			configured[string(hash[:])] = struct{}{}
 			if _, err := tx.ExecContext(ctx,

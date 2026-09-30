@@ -115,7 +115,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 			if existing.TargetPort == targetPort {
 				return nil
 			}
-			if _, err := tx.ExecContext(ctx,
+			if _, err := journal.DomainRow(attemptHostname).Exec(ctx, tx,
 				`UPDATE domain_bindings
 				    SET service_id = $1,
 				        target_port = $2,
@@ -126,7 +126,6 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 			); err != nil {
 				return err
 			}
-			journal.RecordDomain(ctx, attemptHostname, service.ID())
 			binding.TargetPort = targetPort
 			binding.PlatformGenerated = attemptPlatformGenerated
 			binding.UpdatedAt = now
@@ -143,7 +142,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 				return err
 			}
 		}
-		if _, err := tx.ExecContext(ctx,
+		if _, err := journal.DomainRow(attemptHostname).Exec(ctx, tx,
 			`INSERT INTO domain_bindings(hostname, service_id, target_port, platform_generated, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			attemptHostname, service.ID(), targetPort, attemptPlatformGenerated, now, now,
@@ -154,7 +153,6 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 			}
 			return err
 		}
-		journal.RecordDomain(ctx, attemptHostname, service.ID())
 		binding = deliverycore.DomainBindingRecord{
 			Hostname:          attemptHostname,
 			ProjectID:         service.ProjectID(),
@@ -211,7 +209,7 @@ func (s *routingPersistence) updateDomainBinding(ctx context.Context, binding au
 			return nil
 		}
 		now := time.Now().UTC()
-		if _, err := tx.ExecContext(ctx,
+		if _, err := journal.DomainRow(existing.Hostname).Exec(ctx, tx,
 			`UPDATE domain_bindings
 			    SET service_id = $1,
 			        target_port = $2,
@@ -221,10 +219,6 @@ func (s *routingPersistence) updateDomainBinding(ctx context.Context, binding au
 			service.ID(), targetPort, existing.PlatformGenerated, now, existing.Hostname,
 		); err != nil {
 			return err
-		}
-		journal.RecordDomain(ctx, existing.Hostname, service.ID())
-		if existing.ServiceID != service.ID() {
-			journal.RecordDomain(ctx, existing.Hostname, existing.ServiceID)
 		}
 		out.ServiceID = service.ID()
 		out.ProjectID = service.ProjectID()
@@ -352,7 +346,7 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 		if !tombstoned {
 			return nil
 		}
-		journal.RecordDomain(ctx, binding.Hostname, binding.ServiceID)
+
 		if !binding.PlatformGenerated {
 			generated, err := queryGeneratedDomainHostnames(ctx, tx, binding.ServiceID)
 			if err != nil {
@@ -367,7 +361,7 @@ func (s *routingPersistence) DeleteDomainBindingRecord(ctx context.Context, user
 					if _, err := s.tombstoneDomainBindingTx(ctx, tx, platformHostname, user.ID(), now); err != nil {
 						return err
 					}
-					journal.RecordDomain(ctx, platformHostname, binding.ServiceID)
+
 				}
 			}
 		}
@@ -409,7 +403,7 @@ func (s *routingPersistence) RestoreDomainBindingRecord(ctx context.Context, use
 		if !cleared {
 			return deliverycore.ErrDeletionExpired
 		}
-		journal.RecordDomain(ctx, binding.Hostname, binding.ServiceID)
+
 		if !binding.PlatformGenerated {
 			generated, err := queryGeneratedDomainHostnames(ctx, tx, binding.ServiceID)
 			if err != nil {
@@ -419,7 +413,7 @@ func (s *routingPersistence) RestoreDomainBindingRecord(ctx context.Context, use
 				if _, err := s.clearDomainBindingTombstoneTx(ctx, tx, platformHostname); err != nil {
 					return err
 				}
-				journal.RecordDomain(ctx, platformHostname, binding.ServiceID)
+
 			}
 		}
 		restored, err = s.domainBindingByScopeQuerier(ctx, tx, scope)
@@ -456,7 +450,7 @@ func (s *routingPersistence) lockDomainBindingTx(ctx context.Context, tx *sql.Tx
 }
 
 func (s *routingPersistence) tombstoneDomainBindingTx(ctx context.Context, tx *sql.Tx, hostname, userID string, now time.Time) (bool, error) {
-	result, err := tx.ExecContext(ctx,
+	result, err := journal.DomainRow(hostname).Exec(ctx, tx,
 		`UPDATE domain_bindings
 		    SET deleted_at = $1,
 		        deleted_by_user_id = $2,
@@ -475,7 +469,7 @@ func (s *routingPersistence) tombstoneDomainBindingTx(ctx context.Context, tx *s
 }
 
 func (s *routingPersistence) clearDomainBindingTombstoneTx(ctx context.Context, tx *sql.Tx, hostname string) (bool, error) {
-	result, err := tx.ExecContext(ctx,
+	result, err := journal.DomainRow(hostname).Exec(ctx, tx,
 		`UPDATE domain_bindings
 		    SET deleted_at = NULL,
 		        deleted_by_user_id = '',
@@ -571,14 +565,13 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		).Scan(&binding.Hostname, &binding.ProjectID, &binding.EnvironmentID, &binding.ServiceID, &binding.TargetPort, &binding.CreatedAt, &binding.UpdatedAt)
 		switch {
 		case err == sql.ErrNoRows:
-			if _, err := tx.ExecContext(ctx,
+			if _, err := journal.DomainRow(hostname).Exec(ctx, tx,
 				`INSERT INTO domain_bindings(hostname, service_id, target_port, created_at, updated_at)
 				 VALUES ($1, $2, $3, $4, $5)`,
 				hostname, serviceID, targetPort, now, now,
 			); err != nil {
 				return err
 			}
-			journal.RecordDomain(ctx, hostname, serviceID)
 			binding = deliverycore.DomainBindingRecord{
 				Hostname:      hostname,
 				ProjectID:     projectID,
@@ -596,7 +589,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		case binding.ServiceID == serviceID && binding.TargetPort == targetPort:
 			return nil
 		default:
-			if _, err := tx.ExecContext(ctx,
+			if _, err := journal.DomainRow(hostname).Exec(ctx, tx,
 				`UPDATE domain_bindings
 				    SET service_id = $1,
 				        target_port = $2,
@@ -605,10 +598,6 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 				serviceID, targetPort, now, hostname,
 			); err != nil {
 				return err
-			}
-			journal.RecordDomain(ctx, hostname, serviceID)
-			if binding.ServiceID != serviceID {
-				journal.RecordDomain(ctx, hostname, binding.ServiceID)
 			}
 			binding.ServiceID = serviceID
 			binding.TargetPort = targetPort
@@ -624,7 +613,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 
 type ingressLiveReader interface {
 	Publishing() bool
-	Durable() journal.DurableState
+	Product() *journal.Projection
 	OverlayAllocation(deliverycore.AllocationRecord) deliverycore.AllocationRecord
 }
 
@@ -634,10 +623,11 @@ func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]xds.
 	if live == nil || !live.Publishing() {
 		return nil, nil
 	}
-	return healthyIngressBackends(live.Durable(), live), nil
+	return healthyIngressBackends(live.Product(), live), nil
 }
 
-func healthyIngressBackends(durable journal.DurableState, live ingressLiveReader) []xds.Backend {
+func healthyIngressBackends(product *journal.Projection, live ingressLiveReader) []xds.Backend {
+	durable := product.DurableState
 	type row struct {
 		hostname, allocationID, ipv4, ipv6 string
 		port                               int32
@@ -645,10 +635,8 @@ func healthyIngressBackends(durable journal.DurableState, live ingressLiveReader
 	}
 	var rows []row
 	for _, domain := range durable.Domains {
-		for _, assignment := range durable.Assignments {
-			if assignment.ServiceID != domain.ServiceID {
-				continue
-			}
+		for _, id := range product.AssignmentIDsForService(domain.ServiceID) {
+			assignment := durable.Assignments[id]
 			rec := live.OverlayAllocation(deliverycore.AllocationRecord{
 				ID: assignment.ID, ServiceID: assignment.ServiceID, AgentID: assignment.AgentID,
 				DesiredSpecRevision: assignment.DesiredSpecRevision, DesiredRolloutGeneration: assignment.DesiredRolloutGeneration,

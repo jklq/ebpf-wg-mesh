@@ -1,6 +1,6 @@
 # Authoritative agent reconciliation
 
-The stream uses checkpoint-plus-diff (2.10). The control plane remains
+The stream uses checkpoint-plus-diff. The control plane remains
 authoritative for placement. After reconciling the allocation inventory and
 accepted cursor in hello, it sends only bounded start, update, and stop
 changes ordered by the monotonic per-node allocation revision
@@ -8,8 +8,7 @@ changes ordered by the monotonic per-node allocation revision
 repairs the desired set on initialization, recovery, compaction, cursor
 mismatch, or epoch change, but an unchanged reconnect sends nothing for
 allocations. Node config, pull credentials, and replica discovery are
-independently versioned content hashes, not allocation changes; 2.11/2.12
-split node config further using the same seam.
+independently versioned content hashes.
 
 ## Identity and sessions
 
@@ -38,9 +37,13 @@ protocol.
 
 ## Checkpoint and diff acceptance
 
-The server reads the cursor, epoch, node/network configuration, identities,
-volumes and allocations in one database transaction. Only a successful read
-produces a checkpoint with `complete = true` and scope `AGENT`. The
+The journal and live owner share one immutable product projection of a committed
+database prefix. Journal replay copies only changed tables and relationship
+index buckets. A sync plan captures that projection, its authority epoch, and
+the sessions and observations in the agent's hosted environment scopes under
+the live lock. Cursor, node/network configuration, identities and allocation
+changes are rendered from that capture. A checkpoint has `complete = true` and
+scope `AGENT` only after its full desired state and sealed values resolve. The
 authenticated cluster ID and agent ID identify the scope; a checkpoint or diff
 cannot authorize cleanup on another node. Every delivered message also names
 its stream and carries an authority expiry, and a single grant covers a whole
@@ -110,6 +113,31 @@ allocations per payload). Oversized changes and compacted cursors fall back
 to a checkpoint. Failover resets history; the new owner sends checkpoints
 until agents re-establish, then resumes diffs.
 
+Committed batches invalidate assignment IDs through the projection's
+agent, service, environment, domain and volume relationships. Ordinary diffs
+parse specs and decrypt sealed values only for those assignments and allocations
+whose live host or restart overlay changed. Histories retain allocation and
+volume fingerprints plus bounded wire patches, rather than full desired-state
+snapshots. A peer-only revision advances the allocation cursor with an empty
+patch while delivering node configuration independently. Histories cover at
+most 512 agents; eviction costs a checkpoint when that agent next needs a patch.
+
+Sealed environments resolve from each allocation's deployment row in the
+captured product prefix. Old and new rollout generations can carry different
+sealed versions of the same service simultaneously. Only captured names and
+versions reach an allocation: sealing, re-sealing or deleting a draft secret
+does not change an existing deployment. A new release captures the new set.
+Checkpoints and incremental patches therefore preserve the same sealed values.
+
+Rendering a diff cannot consume invalidations from a command that commits while
+the plan is being prepared. A changed invalidation prefix rejects that patch
+and sends the captured checkpoint; an unrelated command leaves the plan valid.
+The baseline comes from the checkpoint actually sent. If its prefix changed
+while it was in flight, the next batch establishes a fresh baseline. A delayed
+callback cannot discard an already newer baseline. If a later journal callback
+arrives before its predecessor, the live owner adopts its complete projection,
+wakes agents changed across the skipped prefix, and resets patch history.
+
 ## Authority expiration and takeover
 
 Authority is the shared database, rather than an individual streaming replica.
@@ -156,9 +184,14 @@ that it cannot become runtime-visible. `internal/agent/local_state_diff_test.go`
 covers diff start/update/stop, idempotent duplicates, gaps, stale-epoch diffs,
 checkpoint baselines, independent node/credential/replica versions, and recovery
 quarantine under diffs. `internal/controlplane/delivery/allocation_sync_test.go`
-covers diff computation, credential stripping, ordered bounded history,
-compaction fallback, failover fallback, oversized fallback, inventory matching,
-and independent version hashing.
+covers start/update/stop patches, ordered bounded history, compaction and failover
+fallback, oversized fallback, inventory matching, same-cursor overlay repair,
+independent version hashing, out-of-order callbacks and commits during rendering
+or checkpoint delivery. `internal/controlplane/journal/projection_test.go`
+checks prefix immutability, relationship refcounts, service movement, pruning
+and recovery. `TestAgentSyncDecryptsOnlyChangedAllocations` exercises changed
+allocation decryption against CockroachDB while an unchanged allocation's
+sealed ciphertext is corrupt.
 `internal/reconciliation/grant_test.go` checks isolated-agent expiry at both clock
 skew extremes and takeover boundaries. The database integration tests in
 `internal/controlplane/agent_authority_integration_test.go` wait through a real

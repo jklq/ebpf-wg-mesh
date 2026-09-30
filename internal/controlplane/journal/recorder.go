@@ -22,39 +22,27 @@ const (
 	TableDomains        Table = "domain_bindings"
 )
 
-type Recorder struct {
-	tx             *sql.Tx
-	keys           map[Table]map[string]struct{}
-	domainServices map[string]map[string]struct{}
+type recorder struct {
+	tx   *sql.Tx
+	keys map[Table]map[string]struct{}
 }
 
-func newRecorder(tx *sql.Tx) *Recorder {
-	return &Recorder{tx: tx, keys: make(map[Table]map[string]struct{}), domainServices: make(map[string]map[string]struct{})}
+func newRecorder(tx *sql.Tx) *recorder {
+	return &recorder{tx: tx, keys: make(map[Table]map[string]struct{})}
 }
 
 type recorderContextKey struct{}
 
-func withRecorder(ctx context.Context, recorder *Recorder) context.Context {
+func withRecorder(ctx context.Context, recorder *recorder) context.Context {
 	return context.WithValue(ctx, recorderContextKey{}, recorder)
 }
 
-func RecorderFromContext(ctx context.Context) *Recorder {
-	recorder, _ := ctx.Value(recorderContextKey{}).(*Recorder)
+func recorderFromContext(ctx context.Context) *recorder {
+	recorder, _ := ctx.Value(recorderContextKey{}).(*recorder)
 	return recorder
 }
 
-func (r *Recorder) DomainServices() map[string][]string {
-	if r == nil {
-		return nil
-	}
-	out := make(map[string][]string, len(r.domainServices))
-	for hostname, services := range r.domainServices {
-		out[hostname] = sortedKeys(services)
-	}
-	return out
-}
-
-func (r *Recorder) record(table Table, key string) {
+func (r *recorder) record(table Table, key string) {
 	if key == "" {
 		panic(fmt.Sprintf("journal: empty durable key recorded for %s", table))
 	}
@@ -67,46 +55,15 @@ func (r *Recorder) record(table Table, key string) {
 }
 
 func record(ctx context.Context, table Table, key string) {
-	recorder := RecorderFromContext(ctx)
+	recorder := recorderFromContext(ctx)
 	if recorder == nil {
 		panic(fmt.Sprintf("journal: %s row %q changed outside a journal command", table, key))
 	}
 	recorder.record(table, key)
 }
 
-func RecordProject(ctx context.Context, id string)        { record(ctx, TableProjects, id) }
-func RecordService(ctx context.Context, id string)        { record(ctx, TableServices, id) }
-func RecordAssignment(ctx context.Context, id string)     { record(ctx, TableAssignments, id) }
-func RecordDeployment(ctx context.Context, id string)     { record(ctx, TableDeployments, id) }
-func RecordAgent(ctx context.Context, id string)          { record(ctx, TableAgents, id) }
-func RecordAdministration(ctx context.Context, id string) { record(ctx, TableAdministration, id) }
-func RecordEnvironment(ctx context.Context, id string)    { record(ctx, TableEnvironments, id) }
-func RecordVolume(ctx context.Context, id string)         { record(ctx, TableVolumes, id) }
-
-func RecordDomain(ctx context.Context, hostname, serviceID string) {
-	record(ctx, TableDomains, hostname)
-	recorder := RecorderFromContext(ctx)
-	if recorder == nil || serviceID == "" {
-		return
-	}
-	services := recorder.domainServices[hostname]
-	if services == nil {
-		services = make(map[string]struct{})
-		recorder.domainServices[hostname] = services
-	}
-	services[serviceID] = struct{}{}
-}
-
-func RecordRevision(ctx context.Context, serviceID string, revision int64) {
-	record(ctx, TableRevisions, compositeKey(serviceID, revision))
-}
-
-func RecordRollout(ctx context.Context, serviceID string, generation int64) {
-	record(ctx, TableRollouts, compositeKey(serviceID, generation))
-}
-
-func RecordServiceRemoval(ctx context.Context, tx *sql.Tx, serviceID string) error {
-	RecordService(ctx, serviceID)
+func recordServiceTree(ctx context.Context, tx *sql.Tx, serviceID string) error {
+	record(ctx, TableServices, serviceID)
 	queries := []struct {
 		table Table
 		sql   string
@@ -126,13 +83,13 @@ func RecordServiceRemoval(ctx context.Context, tx *sql.Tx, serviceID string) err
 		return err
 	}
 	for _, hostname := range hostnames {
-		RecordDomain(ctx, hostname, serviceID)
+		record(ctx, TableDomains, hostname)
 	}
 	return nil
 }
 
-func RecordEnvironmentRemoval(ctx context.Context, tx *sql.Tx, environmentID string) error {
-	RecordEnvironment(ctx, environmentID)
+func recordEnvironmentTree(ctx context.Context, tx *sql.Tx, environmentID string) error {
+	record(ctx, TableEnvironments, environmentID)
 	serviceIDs, err := queryKeys(ctx, tx, `SELECT id::STRING FROM services WHERE environment_id = $1`, environmentID)
 	if err != nil {
 		return err
@@ -141,21 +98,21 @@ func RecordEnvironmentRemoval(ctx context.Context, tx *sql.Tx, environmentID str
 		return err
 	}
 	for _, serviceID := range serviceIDs {
-		if err := RecordServiceRemoval(ctx, tx, serviceID); err != nil {
+		if err := recordServiceTree(ctx, tx, serviceID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func RecordProjectRemoval(ctx context.Context, tx *sql.Tx, projectID string) error {
-	RecordProject(ctx, projectID)
+func recordProjectTree(ctx context.Context, tx *sql.Tx, projectID string) error {
+	record(ctx, TableProjects, projectID)
 	environmentIDs, err := queryKeys(ctx, tx, `SELECT id::STRING FROM environments WHERE project_id = $1`, projectID)
 	if err != nil {
 		return err
 	}
 	for _, environmentID := range environmentIDs {
-		if err := RecordEnvironmentRemoval(ctx, tx, environmentID); err != nil {
+		if err := recordEnvironmentTree(ctx, tx, environmentID); err != nil {
 			return err
 		}
 	}

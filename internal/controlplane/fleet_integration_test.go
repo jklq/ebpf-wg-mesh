@@ -533,7 +533,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 					if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET workload_ipv4_subnet = '10.42.0.1/30' WHERE id = 'node-2'`); err != nil {
 						return err
 					}
-					journal.RecordAgent(ctx, "node-2")
+					journal.AgentRow("node-2").Capture(ctx)
 					return nil
 				}); err != nil {
 					t.Fatal(err)

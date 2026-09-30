@@ -195,7 +195,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 			MaxIdleConns: 4,
 		},
 		StateDir:  t.TempDir(),
-		Ingress:   config.IngressConfig{PublicAddr: "platform.local"},
+		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-peer-bump"},
 		Mesh:      testMeshConfig(),
 	}

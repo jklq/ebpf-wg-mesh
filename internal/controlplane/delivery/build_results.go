@@ -339,7 +339,7 @@ func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, 
 	if !usePendingRollout {
 		nextRolloutGeneration++
 	}
-	if _, err := tx.ExecContext(ctx,
+	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx,
 		`UPDATE service_delivery_status
 		    SET current_artifact_id = NULLIF($1, ''),
 		        last_successful_commit_sha = NULLIF($2, ''),
@@ -351,9 +351,8 @@ func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, 
 	); err != nil {
 		return DeploymentRecord{}, false, err
 	}
-	journal.RecordService(ctx, service.ID)
 	if usePendingRollout {
-		if _, err := tx.ExecContext(ctx,
+		if _, err := journal.RolloutRow(service.ID, nextRolloutGeneration).Exec(ctx, tx,
 			`UPDATE service_rollouts
 			    SET state = $1, artifact_id = NULLIF($2, ''), build_id = $3
 			  WHERE service_id = $4 AND rollout_generation = $5`,
@@ -361,7 +360,6 @@ func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, 
 		); err != nil {
 			return DeploymentRecord{}, false, err
 		}
-		journal.RecordRollout(ctx, service.ID, nextRolloutGeneration)
 	} else if err := s.insertServiceRolloutTx(ctx, tx, service.ID, nextRolloutGeneration, service.SpecRevision, "build-success", buildID, "", now); err != nil {
 		return DeploymentRecord{}, false, err
 	}
