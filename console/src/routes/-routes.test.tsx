@@ -13,6 +13,8 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { LoginPageView } from "#/features/auth/login-page";
+import { NewServiceModal } from "#/features/dashboard/services/new-service-modal";
 import {
 	beginGitHubLogin,
 	clearSession,
@@ -24,8 +26,6 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 import { GitHubApiError } from "#/lib/dashboard/core/types.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
-import { NewServiceModal } from "#/routes/-dashboard/new-service-modal";
-import { LoginPageView } from "#/routes/login";
 import { logoutRouteResponse } from "#/routes/logout";
 import {
 	readBoundedRequestBody,

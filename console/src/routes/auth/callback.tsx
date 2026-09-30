@@ -1,6 +1,8 @@
+import * as stylex from "@stylexjs/stylex";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { colors, shape, space } from "#/styles/tokens.stylex";
 
 export interface AuthCallbackService {
 	completeAuthCallback(input: {
@@ -100,10 +102,8 @@ export const Route = createFileRoute("/auth/callback")({
 
 function CallbackPage() {
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-canvas px-4">
-			<div className="rounded-sm border border-line bg-surface px-5 py-4 text-sm text-muted">
-				Completing sign-in...
-			</div>
+		<main {...stylex.props(styles.page)}>
+			<div {...stylex.props(styles.statusCard)}>Completing sign-in...</div>
 		</main>
 	);
 }
@@ -173,3 +173,26 @@ function parseAuthCallbackSearch(input: unknown): {
 		}))
 		.parse(input);
 }
+
+const styles = stylex.create({
+	page: {
+		display: "flex",
+		minHeight: "100vh",
+		alignItems: "center",
+		justifyContent: "center",
+		backgroundColor: colors.canvas,
+		paddingInline: space.lg,
+	},
+	statusCard: {
+		borderRadius: shape.card,
+		borderStyle: "solid",
+		borderWidth: "1px",
+		borderColor: colors.line,
+		backgroundColor: colors.surface,
+		paddingInline: "1.25rem",
+		paddingBlock: space.lg,
+		fontSize: "0.875rem",
+		lineHeight: "calc(1.25 / 0.875)",
+		color: colors.muted,
+	},
+});

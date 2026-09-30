@@ -1,4 +1,9 @@
-FROM oven/bun:1.3.11-slim AS build
+FROM oven/bun:1.3.11-slim AS bun
+
+FROM node:22-bookworm-slim AS build
+RUN apt-get update && apt-get install --yes --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
+RUN ln -s /usr/local/bin/bun /usr/local/bin/bunx
 
 WORKDIR /app/console
 

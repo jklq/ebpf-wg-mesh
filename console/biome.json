@@ -12,9 +12,10 @@
 			"**/.vscode/**/*",
 			"**/index.html",
 			"**/vite.config.ts",
+			"**/vitest*.config.ts",
+			"**/tooling/**/*.ts",
 			"!**/src/routeTree.gen.ts",
-			"!**/src/lib/platform-gen",
-			"!**/src/styles.css"
+			"!**/src/lib/platform-gen"
 		]
 	},
 	"formatter": {
@@ -28,6 +29,12 @@
 			"recommended": true
 		}
 	},
+	"overrides": [
+		{
+			"includes": ["**/src/styles/reset.css"],
+			"linter": { "rules": { "complexity": { "noImportantStyles": "off" } } }
+		}
+	],
 	"javascript": {
 		"formatter": {
 			"quoteStyle": "double"

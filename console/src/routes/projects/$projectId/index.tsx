@@ -1,7 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
-import { DashboardCanvasSkeleton } from "../../-dashboard/dashboard-page";
-import { resolveProjectLanding } from "../../-dashboard/server-fns";
+import { DashboardCanvasSkeleton } from "#/features/dashboard/canvas/canvas-skeleton";
+import { resolveProjectLanding } from "#/lib/dashboard/server-functions";
 
 // Opens a project on its production environment. A project without live
 // environments opens on its settings.

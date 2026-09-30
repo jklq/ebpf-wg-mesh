@@ -1,22 +1,22 @@
-import tailwindcss from "@tailwindcss/vite";
 import { devtools } from "@tanstack/devtools-vite";
 import { tanstackStart } from "@tanstack/react-start/plugin/vite";
 import viteReact from "@vitejs/plugin-react";
 import { nitro } from "nitro/vite";
 import { defineConfig } from "vite";
 import { buildAllowedDevHosts } from "./src/lib/vite-dev-hosts";
+import { stylexPlugin } from "./tooling/stylex";
 
 const config = defineConfig({
 	resolve: { tsconfigPaths: true },
 	plugins: [
 		{
-			name: "extend-bun-dev-idle-timeout",
+			name: "extend-dev-idle-timeout",
 			configureServer(server) {
 				server.httpServer?.setTimeout(120_000);
 			},
 		},
 		devtools(),
-		tailwindcss(),
+		stylexPlugin(),
 		tanstackStart(),
 		nitro(
 			process.env.NITRO_PRESET === "bun"

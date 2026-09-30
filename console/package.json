@@ -7,10 +7,10 @@
     "#/*": "./src/*"
   },
   "scripts": {
-    "dev": "bun run generate:proto && bun --bun vite dev --host 127.0.0.1 --port 3000 --strictPort",
+    "dev": "bun run generate:proto && vite dev --host 127.0.0.1 --port 3000 --strictPort",
     "generate:proto": "bunx buf generate",
-    "build": "bun run generate:proto && NITRO_PRESET=bun bun --bun vite build",
-    "preview": "bun --bun vite preview --host 0.0.0.0 --port 3000 --strictPort",
+    "build": "bun run generate:proto && NITRO_PRESET=bun vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 3000 --strictPort",
     "start": "bun run .output/server/index.mjs",
     "test": "bun run test:unit",
     "test:unit": "bun run generate:proto && bunx vitest run --config vitest.unit.config.ts",
@@ -19,29 +19,29 @@
     "test:e2e:local": "bunx playwright test -c playwright.local.config.ts",
     "format": "bunx biome format",
     "lint": "bunx biome lint",
-    "check": "bun run generate:proto && bunx biome check",
+    "check": "bun run generate:proto && bunx biome check && bun run check:architecture",
+    "check:architecture": "bun run tooling/check-architecture.ts",
     "typecheck": "bun run generate:proto && bunx tsc --noEmit"
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.14.1",
     "@connectrpc/connect": "^2.1.2",
     "@connectrpc/connect-node": "^2.1.2",
-    "@tailwindcss/vite": "^4.1.18",
+    "@stylexjs/stylex": "^0.19.1",
     "@tanstack/react-router": "latest",
     "@tanstack/react-start": "^1.166.17",
     "@tanstack/router-plugin": "^1.132.0",
     "lucide-react": "^0.545.0",
     "pg": "^8.16.3",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "tailwind-merge": "^3.6.0",
-    "tailwindcss": "^4.1.18"
+    "react-dom": "^19.2.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.5",
     "@bufbuild/buf": "^1.72.0",
     "@bufbuild/protoc-gen-es": "^2.14.1",
     "@playwright/test": "^1.55.0",
+    "@stylexjs/unplugin": "^0.19.1",
     "@tanstack/devtools-vite": "latest",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/react": "^16.3.0",

@@ -1,0 +1,210 @@
+import { describe, expect, it } from "vitest";
+import {
+	deploymentMeta,
+	deploymentSubtitle,
+	getDeploymentCardTone,
+	hasActiveDeployment,
+	pendingManualDeployRevision,
+} from "#/features/dashboard/service-panel/deployments/panel-deployments-helpers";
+import type {
+	DashboardBuildState,
+	DashboardBuildStatus,
+	DashboardDeploymentStatus,
+	DashboardServiceRecord,
+} from "#/lib/dashboard/core/types.server";
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	BuildStatusSchema,
+	DeploymentStatusSchema,
+} from "#/lib/platform-gen/platform_pb";
+
+describe("pendingManualDeployRevision", () => {
+	it("reports a pending revision when auto-deploy is off and nothing is building", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "def456",
+			buildSha: "abc123",
+			buildState: "BUILD_STATE_SUCCEEDED",
+		});
+		expect(pendingManualDeployRevision(service, false)).toEqual({
+			commitSha: "def456",
+		});
+	});
+
+	it("stays quiet when the latest commit is live", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "abc123",
+		});
+		expect(pendingManualDeployRevision(service, true)).toBeUndefined();
+		expect(pendingManualDeployRevision(service, false)).toBeUndefined();
+	});
+
+	it("stays quiet when auto-deploy will pick up the commit", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "def456",
+		});
+		expect(pendingManualDeployRevision(service, true)).toBeUndefined();
+	});
+
+	it("stays quiet while a manual build of the commit is running", () => {
+		const service = serviceRecord({
+			lastSuccessfulCommitSha: "abc123",
+			latestRevisionSha: "def456",
+			buildSha: "def456",
+			buildState: "BUILD_STATE_RUNNING",
+		});
+		expect(pendingManualDeployRevision(service, false)).toBeUndefined();
+	});
+
+	it("stays quiet when the newest build already tells the failure story", () => {
+		const service = serviceRecord({
+			latestRevisionSha: "def456",
+			buildSha: "def456",
+			buildState: "BUILD_STATE_FAILED",
+		});
+		expect(pendingManualDeployRevision(service, true)).toBeUndefined();
+	});
+
+	it("stays quiet without an observed revision", () => {
+		expect(
+			pendingManualDeployRevision(serviceRecord({}), true),
+		).toBeUndefined();
+	});
+});
+
+function serviceRecord(input: {
+	lastSuccessfulCommitSha?: string;
+	latestRevisionSha?: string;
+	buildSha?: string;
+	buildState?: DashboardBuildState;
+}): DashboardServiceRecord {
+	return serviceFixture({
+		id: "service-1",
+		environmentId: "environment-1",
+		name: "web",
+		lastSuccessfulCommitSha: input.lastSuccessfulCommitSha,
+		sourceSummary: input.latestRevisionSha
+			? {
+					sourceState: {
+						latestRevision: { commitSha: input.latestRevisionSha },
+					},
+				}
+			: undefined,
+		latestBuild: input.buildSha
+			? {
+					buildId: "build-1",
+					state: input.buildState ?? "BUILD_STATE_SUCCEEDED",
+					commitSha: input.buildSha,
+					imageDigest: "",
+					failureReason: "",
+				}
+			: undefined,
+	});
+}
+
+const NOW_MS = new Date("2026-08-13T10:05:00.000Z").getTime();
+
+function buildWith(
+	timestamps: Partial<
+		Pick<DashboardBuildStatus, "queuedAt" | "startedAt" | "finishedAt">
+	>,
+): DashboardBuildStatus {
+	return jsonFixture(BuildStatusSchema, {
+		buildId: "build-1",
+		state: "BUILD_STATE_RUNNING",
+		commitSha: "abc1234def",
+		imageDigest: "",
+		failureReason: "",
+		...timestamps,
+	});
+}
+
+describe("deploymentSubtitle", () => {
+	it("labels a staged service without times as not deployed", () => {
+		expect(deploymentSubtitle(undefined, "0", NOW_MS)).toBe("Not deployed");
+		expect(deploymentSubtitle(undefined, undefined, NOW_MS)).toBe(
+			"Not deployed",
+		);
+	});
+
+	it("keeps the rollout fallback for deployed generations without times", () => {
+		expect(deploymentSubtitle(undefined, "3", NOW_MS)).toBe("Rollout 3");
+	});
+
+	it("defends against future clock skew", () => {
+		expect(
+			deploymentSubtitle(
+				buildWith({ startedAt: new Date(NOW_MS + 60_000).toISOString() }),
+				"3",
+				NOW_MS,
+			),
+		).toBe("just now");
+	});
+
+	it("formats valid build times relatively", () => {
+		expect(
+			deploymentSubtitle(
+				buildWith({ startedAt: new Date(NOW_MS - 5 * 60_000).toISOString() }),
+				"3",
+				NOW_MS,
+			),
+		).toBe("5 minutes ago");
+	});
+});
+
+describe("deploymentMeta", () => {
+	it("labels missing timestamps instead of omitting them", () => {
+		expect(deploymentMeta(undefined, undefined, NOW_MS)).toEqual([
+			"Not deployed",
+		]);
+	});
+
+	it("formats valid timestamps relatively", () => {
+		expect(
+			deploymentMeta(
+				buildWith({}),
+				new Date(NOW_MS - 5_000).toISOString(),
+				NOW_MS,
+			),
+		).toEqual(["abc1234", "5 seconds ago"]);
+	});
+});
+
+function statusWith(
+	state: DashboardDeploymentStatus["state"],
+): DashboardDeploymentStatus {
+	return jsonFixture(DeploymentStatusSchema, { state });
+}
+
+describe("hasActiveDeployment", () => {
+	it("treats an unspecified state as active", () => {
+		expect(
+			hasActiveDeployment(
+				statusWith("DEPLOYMENT_STATE_UNSPECIFIED"),
+				undefined,
+			),
+		).toBe(true);
+	});
+
+	it("treats a removed deployment as inactive", () => {
+		expect(
+			hasActiveDeployment(statusWith("DEPLOYMENT_STATE_REMOVED"), undefined),
+		).toBe(false);
+	});
+});
+
+describe("getDeploymentCardTone", () => {
+	it("renders a removed deployment as draining", () => {
+		expect(
+			getDeploymentCardTone({
+				build: undefined,
+				allocation: undefined,
+				active: false,
+				isCurrent: false,
+				status: statusWith("DEPLOYMENT_STATE_REMOVED"),
+			}),
+		).toBe("draining");
+	});
+});

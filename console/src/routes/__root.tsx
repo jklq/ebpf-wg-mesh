@@ -1,3 +1,4 @@
+import * as stylex from "@stylexjs/stylex";
 import {
 	createRootRoute,
 	type ErrorComponentProps,
@@ -5,11 +6,12 @@ import {
 	Scripts,
 } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-
-import { cn } from "#/lib/cn";
-import { btnPrimary, modalCard } from "#/lib/ui-classes";
-import appCss from "../styles.css?url";
-import { CreatedServiceCacheProvider } from "./-dashboard/created-service-cache";
+import { Button } from "#/components/ui/button";
+import { dialogStyles } from "#/components/ui/dialog";
+import { CreatedServiceCacheProvider } from "#/features/dashboard/state/created-service-cache";
+import { DevStyles } from "#/styles/dev-styles";
+import { colors, fonts, space } from "#/styles/tokens.stylex";
+import appCss from "../styles/reset.css?url";
 
 export const Route = createRootRoute({
 	head: () => ({
@@ -26,24 +28,21 @@ export const Route = createRootRoute({
 
 function RootError({ error, reset }: ErrorComponentProps) {
 	return (
-		<main
-			className="grid min-h-screen place-items-center bg-canvas p-8"
-			role="alert"
-		>
-			<div className={cn(modalCard, "max-w-xl p-8")}>
-				<h1 className="mt-0 mb-2 font-display text-2xl font-medium text-ink">
+		<main {...stylex.props(styles.errorPage)} role="alert">
+			<div {...stylex.props([dialogStyles.card, styles.errorCard])}>
+				<h1 {...stylex.props(styles.errorTitle)}>
 					The console hit a temporary error
 				</h1>
-				<p className="mb-4 text-muted">
+				<p {...stylex.props(styles.errorDescription)}>
 					Your service is still running. Retry the failed view without leaving
 					the console.
 				</p>
-				<pre className="mb-4 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-sm text-ink">
+				<pre {...stylex.props(styles.errorDetails)}>
 					{error instanceof Error ? error.message : String(error)}
 				</pre>
-				<button type="button" className={btnPrimary} onClick={reset}>
+				<Button type="button" variant="primary" onClick={reset}>
 					Retry
-				</button>
+				</Button>
 			</div>
 		</main>
 	);
@@ -51,14 +50,57 @@ function RootError({ error, reset }: ErrorComponentProps) {
 
 function RootDocument({ children }: { children: ReactNode }) {
 	return (
-		<html lang="en" className="h-full min-h-full" suppressHydrationWarning>
+		<html lang="en" {...stylex.props(styles.document)} suppressHydrationWarning>
 			<head>
 				<HeadContent />
+				<DevStyles />
 			</head>
-			<body className="h-full min-h-full bg-canvas font-sans text-[14px] text-ink antialiased">
+			<body {...stylex.props(styles.body)}>
 				<CreatedServiceCacheProvider>{children}</CreatedServiceCacheProvider>
 				<Scripts />
 			</body>
 		</html>
 	);
 }
+
+const styles = stylex.create({
+	errorPage: {
+		display: "grid",
+		minHeight: "100vh",
+		placeItems: "center",
+		backgroundColor: colors.canvas,
+		padding: space.xxl,
+	},
+	errorCard: { maxWidth: "36rem", padding: space.xxl },
+	errorTitle: {
+		marginTop: "0rem",
+		marginBottom: space.sm,
+		fontFamily: fonts.display,
+		fontSize: "1.5rem",
+		lineHeight: "calc(2 / 1.5)",
+		fontWeight: "500",
+		color: colors.ink,
+	},
+	errorDescription: { marginBottom: space.lg, color: colors.muted },
+	errorDetails: {
+		marginBottom: space.lg,
+		maxHeight: "12rem",
+		overflow: "auto",
+		whiteSpace: "pre-wrap",
+		fontFamily: fonts.mono,
+		fontSize: "0.875rem",
+		lineHeight: "calc(1.25 / 0.875)",
+		color: colors.ink,
+	},
+	document: { height: "100%", minHeight: "100%" },
+	body: {
+		height: "100%",
+		minHeight: "100%",
+		backgroundColor: colors.canvas,
+		fontFamily: fonts.sans,
+		fontSize: "14px",
+		color: colors.ink,
+		WebkitFontSmoothing: "antialiased",
+		MozOsxFontSmoothing: "grayscale",
+	},
+});

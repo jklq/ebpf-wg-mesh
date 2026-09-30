@@ -1,4 +1,6 @@
+import * as stylex from "@stylexjs/stylex";
 import { createFileRoute } from "@tanstack/react-router";
+import { colors, shape, space } from "#/styles/tokens.stylex";
 
 export interface LogoutRouteService {
 	clearSession(): Promise<void>;
@@ -35,10 +37,31 @@ export const Route = createFileRoute("/logout")({
 
 function LogoutPage() {
 	return (
-		<main className="flex min-h-screen items-center justify-center bg-canvas px-4">
-			<div className="rounded-sm border border-line bg-surface px-5 py-4 text-sm text-muted">
-				Signing out...
-			</div>
+		<main {...stylex.props(styles.page)}>
+			<div {...stylex.props(styles.statusCard)}>Signing out...</div>
 		</main>
 	);
 }
+
+const styles = stylex.create({
+	page: {
+		display: "flex",
+		minHeight: "100vh",
+		alignItems: "center",
+		justifyContent: "center",
+		backgroundColor: colors.canvas,
+		paddingInline: space.lg,
+	},
+	statusCard: {
+		borderRadius: shape.card,
+		borderStyle: "solid",
+		borderWidth: "1px",
+		borderColor: colors.line,
+		backgroundColor: colors.surface,
+		paddingInline: "1.25rem",
+		paddingBlock: space.lg,
+		fontSize: "0.875rem",
+		lineHeight: "calc(1.25 / 0.875)",
+		color: colors.muted,
+	},
+});
