@@ -51,7 +51,7 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 	if os.Getenv("LOCALTESTSTACK_CONSOLE_PRODUCTION") == "1" {
 		buildEnv := cloneEnvironmentOverrides(env)
 		buildEnv["NITRO_PRESET"] = "bun"
-		build, err := localteststack.ChildCommand(ctx, "bun", []string{"--bun", "vite", "build"}, buildEnv)
+		build, err := localteststack.ChildCommand(ctx, "node", []string{"node_modules/vite/bin/vite.js", "build"}, buildEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -74,7 +74,9 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 		}
 	} else {
 		var err error
-		cmd, err = localteststack.ChildCommand(ctx, "bun", []string{"--bun", "vite", "dev", "--host", bindAddress, "--port", strconv.Itoa(port), "--strictPort"}, env)
+		// Bun's optimizing JIT miscompiles StyleX's media-query parser after
+		// repeated transforms. Run Vite on Node for both dev and build.
+		cmd, err = localteststack.ChildCommand(ctx, "node", []string{"node_modules/vite/bin/vite.js", "dev", "--host", bindAddress, "--port", strconv.Itoa(port), "--strictPort"}, env)
 		if err != nil {
 			return nil, err
 		}
@@ -82,7 +84,7 @@ func startConsole(ctx context.Context, consoleDir string, env map[string]string,
 	cmd.Dir = consoleDir
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	// bun spawns the dev server as a child. Run the console in its own process
+	// Run the console and any children in their own process
 	// group and signal the whole group, so shutdown never orphans a server
 	// that keeps rewriting console sources for later runs.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

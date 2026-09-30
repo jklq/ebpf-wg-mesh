@@ -343,7 +343,7 @@ const styles = stylex.create({
 	},
 	confirmationInput: {
 		fontFamily: fonts.mono,
-		borderColor: { default: null, ":focus": colors.failed },
+		borderColor: { default: colors.line, ":focus": colors.failed },
 		boxShadow: { default: null, ":focus": `0 0 0 2px ${colors.failedDim}` },
 	},
 	errorMessage: { margin: "0rem" },

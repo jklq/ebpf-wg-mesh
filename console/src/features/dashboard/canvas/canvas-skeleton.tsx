@@ -3,7 +3,8 @@ import { NODE_H, NODE_W } from "#/features/dashboard/canvas/layout";
 import { colors, shape, sizes, space } from "#/styles/tokens.stylex";
 
 const skeletonShimmer = stylex.keyframes({
-	"100%": { transform: "translateX(120%)" },
+	from: { transform: "translateX(-120%)" },
+	to: { transform: "translateX(120%)" },
 });
 
 const styles = stylex.create({
@@ -11,7 +12,6 @@ const styles = stylex.create({
 	shimmer: {
 		position: "absolute",
 		inset: "0rem",
-		translate: "-120% 0",
 		animation: `${skeletonShimmer} 1.25s ease-in-out infinite`,
 		backgroundImage:
 			"linear-gradient(to right in oklab, transparent 0%, rgba(212,205,197,0.08) 50%, transparent 100%)",

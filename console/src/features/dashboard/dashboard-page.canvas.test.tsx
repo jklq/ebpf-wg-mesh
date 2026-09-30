@@ -457,6 +457,26 @@ describe("DashboardPage canvas", () => {
 		expect(container.querySelectorAll("[data-service-node]")).toHaveLength(0);
 	});
 
+	it("closes the picker when creating another service in an existing environment", async () => {
+		const existing = serviceRecord();
+		const state = dashboardState(existing, {
+			repositories: emptyState().repositories,
+		});
+		const creation = deferred<never>();
+		doCreateServiceFastMock.mockReturnValue(creation.promise);
+		const { container } = render(<DashboardPage state={state} />);
+
+		fireEvent.click(screen.getByRole("button", { name: /deploy service/i }));
+		fireEvent.click(
+			await screen.findByRole("button", { name: /octocat\/hello/i }),
+		);
+
+		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(doCreateServiceFastMock).toHaveBeenCalledTimes(1);
+		expect(container.querySelectorAll("[data-service-node]")).toHaveLength(2);
+		expect(screen.getByText("Creating service")).toBeTruthy();
+	});
+
 	it("keeps the panel open after a live snapshot and remount for the first service", async () => {
 		const created = serviceRecord();
 		const environment = jsonFixture(EnvironmentSchema, {

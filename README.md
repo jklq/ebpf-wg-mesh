@@ -115,6 +115,10 @@ make test-integration
 
 Dashboard-local Bun commands:
 
+Install Node.js alongside Bun: Vite runs on Node in both development and builds
+to avoid Bun's JIT miscompiling StyleX media queries. The production server runs
+on Bun.
+
 ```bash
 bun --cwd=console install
 bun --cwd=console run test:unit

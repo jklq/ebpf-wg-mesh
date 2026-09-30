@@ -129,7 +129,7 @@ const styles = stylex.create({
 	},
 	hoverableNode: {
 		borderColor: {
-			default: null,
+			default: colors.line,
 			":hover": { default: null, "@media (hover: hover)": colors.lineBright },
 		},
 		boxShadow: {
