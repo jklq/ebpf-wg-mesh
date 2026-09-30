@@ -388,6 +388,7 @@ describe("PanelSettings replica scaling", () => {
 
 		const input = screen.getByLabelText("Current count");
 		fireEvent.change(input, { target: { value: "2" } });
+		expect(input.closest("[data-unapplied]")).toBeTruthy();
 		await waitFor(() => {
 			expect(doScaleServiceMock).toHaveBeenCalledWith({
 				data: {
@@ -403,6 +404,44 @@ describe("PanelSettings replica scaling", () => {
 				unappliedChangeCount: 1,
 			}),
 		);
+	});
+
+	it("keeps a newer replica draft when an earlier save is acknowledged", async () => {
+		const firstSave = deferred<ReturnType<typeof statusFixture>>();
+		const initial = serviceFixture({
+			...service(),
+			desiredReplicaCount: 1,
+			spec: { ...service().spec, desiredReplicaCount: 1 },
+		});
+		const saved = (count: number) =>
+			serviceFixture({
+				...initial,
+				specRevision: String(count),
+				spec: { ...initial.spec, desiredReplicaCount: count },
+			});
+		doScaleServiceMock
+			.mockReturnValueOnce(firstSave.promise)
+			.mockResolvedValueOnce(statusFixture({ service: saved(3) }));
+		function Harness() {
+			const [current, setCurrent] = useState(initial);
+			return (
+				<PanelSettings
+					service={current}
+					state={state()}
+					onSaved={setCurrent}
+					onDeleted={() => {}}
+				/>
+			);
+		}
+		render(<Harness />);
+		const input = screen.getByLabelText("Current count") as HTMLInputElement;
+		fireEvent.change(input, { target: { value: "2" } });
+		await waitFor(() => expect(doScaleServiceMock).toHaveBeenCalledTimes(1));
+		fireEvent.change(input, { target: { value: "3" } });
+		firstSave.resolve(statusFixture({ service: saved(2) }));
+		await waitFor(() => expect(doScaleServiceMock).toHaveBeenCalledTimes(2));
+		expect(input.value).toBe("3");
+		expect(input.closest("[data-unapplied]")).toBeTruthy();
 	});
 
 	it("rejects a second replica on a volume-backed service", () => {

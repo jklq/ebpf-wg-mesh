@@ -159,6 +159,37 @@ describe("DashboardPage", () => {
 		expect(screen.getByRole("button", { name: /hello/i })).toBeTruthy();
 	});
 
+	it("removes discarded changes immediately and restores them on failure", async () => {
+		const discard = deferred<DashboardServiceRecord>();
+		doDiscardServiceChangesMock.mockReturnValue(discard.promise);
+		const dirty = serviceRecord({
+			rolloutGeneration: "1",
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
+			],
+		});
+		const { container } = render(
+			<DashboardPage state={dashboardState(dirty)} />,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Details" }));
+		fireEvent.click(
+			screen.getByRole("button", { name: "Discard service changes" }),
+		);
+		expect(screen.queryByRole("dialog")).toBeNull();
+		expect(screen.getByText("Discarding 1 change")).toBeTruthy();
+		expect(
+			container.querySelector("[data-service-node]")?.textContent,
+		).not.toMatch(/1 change/i);
+		discard.reject(new Error("Connection lost"));
+		await screen.findAllByText("Discard failed: Connection lost");
+		expect(screen.getByRole("dialog")).toBeTruthy();
+		expect(container.querySelector("[data-service-node]")?.textContent).toMatch(
+			/1 change/i,
+		);
+	});
+
 	it("keeps undeployed changes open until the last service is discarded", async () => {
 		const first = serviceRecord({
 			rolloutGeneration: "1",
@@ -593,6 +624,88 @@ describe("DashboardPage", () => {
 		await waitFor(() =>
 			expect(fetchGitHubCatalogMock).toHaveBeenCalledTimes(2),
 		);
+	});
+
+	it("settles the release banner from its acknowledgement without waiting for polling", async () => {
+		const deployment = deferred<Array<DashboardServiceStatus>>();
+		doReleaseEnvironmentMock.mockReturnValue(deployment.promise);
+		const dirty = serviceRecord({
+			specRevision: "2",
+			rolloutGeneration: "1",
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.FOO", "Variables", "FOO", "old", "new"),
+			],
+		});
+		const other = serviceRecord({ id: "service-2", name: "worker" });
+		const { rerender } = render(
+			<DashboardPage
+				state={dashboardState(dirty, {
+					services: [dirty, other],
+					servicesRevision: "1",
+				})}
+			/>,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
+		expect(screen.getByText("Applying 1 change")).toBeTruthy();
+		rerender(
+			<DashboardPage
+				state={dashboardState(dirty, {
+					services: [dirty, { ...other, name: "renamed" }],
+					servicesRevision: "2",
+				})}
+			/>,
+		);
+		deployment.resolve([
+			statusFixture({
+				service: {
+					...dirty,
+					rolloutGeneration: "2",
+					pendingChanges: false,
+					unappliedChangeCount: 0,
+					unappliedChanges: [],
+				},
+			}),
+		]);
+		await waitFor(() =>
+			expect(screen.queryByText("Undeployed changes")).toBeNull(),
+		);
+		expect(screen.queryByText("Deploying changes")).toBeNull();
+		rerender(
+			<DashboardPage
+				state={dashboardState(dirty, {
+					services: [dirty, other],
+					servicesRevision: "3",
+				})}
+			/>,
+		);
+		expect(screen.queryByText("Undeployed changes")).toBeNull();
+	});
+
+	it("restores ready changes when deployment fails", async () => {
+		const deployment = deferred<Array<DashboardServiceStatus>>();
+		doReleaseEnvironmentMock.mockReturnValue(deployment.promise);
+		const dirty = serviceRecord({
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("runtime.env.FOO", "Variables", "FOO", "old", "new"),
+			],
+		});
+		render(<DashboardPage state={dashboardState(dirty)} />);
+		fireEvent.click(screen.getByRole("button", { name: "Deploy changes" }));
+		expect(screen.getByText("Applying 1 change")).toBeTruthy();
+		deployment.reject(new Error("Connection lost"));
+		await screen.findByText("Deploy stopped: Connection lost");
+		expect(screen.getByText("Apply 1 change")).toBeTruthy();
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Deploy changes",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(false);
 	});
 
 	it("keeps deploy single-flight when newer changes arrive", async () => {

@@ -200,6 +200,70 @@ describe("dashboard-services revision contract", () => {
 		expect(staleDiscard.servicesById["service-1"]?.name).toBe("newer");
 	});
 
+	it("accepts deployment acknowledgements after unrelated service updates", () => {
+		const dirty = record("service-1", {
+			specRevision: "2",
+			rolloutGeneration: "1",
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+		});
+		const state = createNormalizedState(
+			loader([dirty, record("service-2")], "1"),
+		);
+		const advanced = applyServicesSnapshot(state, {
+			services: [dirty, record("service-2", { name: "renamed" })],
+			revision: "2",
+		});
+		const released = record("service-1", {
+			specRevision: "2",
+			rolloutGeneration: "2",
+			pendingChanges: false,
+		});
+		const acknowledged = applyMutationStatus(
+			advanced,
+			statusFixture({ service: released }),
+			"1",
+		);
+		expect(acknowledged.servicesById["service-1"]?.pendingChanges).toBe(false);
+		const delayed = applyServicesSnapshot(acknowledged, {
+			services: [dirty, record("service-2")],
+			revision: "3",
+		});
+		expect(delayed.servicesById["service-1"]?.rolloutGeneration).toBe("2");
+		expect(delayed.servicesById["service-1"]?.pendingChanges).toBe(false);
+	});
+
+	it("keeps edits made while a deployment was in flight", () => {
+		const edited = record("service-1", {
+			specRevision: "3",
+			rolloutGeneration: "2",
+			pendingChanges: true,
+		});
+		const state = createNormalizedState(loader([edited], "5"));
+		const released = record("service-1", {
+			specRevision: "2",
+			rolloutGeneration: "2",
+			pendingChanges: false,
+		});
+		expect(
+			applyMutationStatus(state, statusFixture({ service: released }), "5")
+				.servicesById["service-1"],
+		).toBe(edited);
+	});
+
+	it("accepts saved changes after unrelated stream updates", () => {
+		const state = createNormalizedState(
+			loader([record("service-1", { specRevision: "1" })], "5"),
+		);
+		const saved = record("service-1", {
+			specRevision: "2",
+			pendingChanges: true,
+		});
+		expect(
+			applyMutationRecord(state, saved, "4").servicesById["service-1"],
+		).toBe(saved);
+	});
+
 	it("stores each service once and reconstructs status without duplication", () => {
 		const selected = createNormalizedState(loader([record("service-1")], "1"), {
 			selectedServiceId: "service-1",

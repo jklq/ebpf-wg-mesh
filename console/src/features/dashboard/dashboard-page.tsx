@@ -133,6 +133,7 @@ export function DashboardPage({
 					deployableChanges={release.deployableUnappliedChanges}
 					affectedServices={release.dirtyServices.length}
 					deploying={release.deployingChanges}
+					creationPending={release.pendingCreationCount > 0}
 					deployError={release.deployError}
 					discardingChangeId={release.discardingChangeId}
 					onClose={() => release.setShowChangeDetails(false)}

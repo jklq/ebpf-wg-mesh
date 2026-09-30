@@ -15,7 +15,7 @@ import type {
 export type ApplyingServiceChanges = {
 	serviceId: string;
 	serviceName: string;
-	changeIds: Array<string>;
+	changeKeys: Array<string>;
 	count: number;
 	specRevision?: string;
 };
@@ -27,6 +27,7 @@ export function UnappliedChangesDialog({
 	deployableChanges,
 	affectedServices,
 	deploying,
+	creationPending,
 	deployError,
 	discardingChangeId,
 	onClose,
@@ -40,6 +41,7 @@ export function UnappliedChangesDialog({
 	deployableChanges: number;
 	affectedServices: number;
 	deploying: boolean;
+	creationPending: boolean;
 	deployError?: string;
 	discardingChangeId?: string;
 	onClose: () => void;
@@ -79,7 +81,7 @@ export function UnappliedChangesDialog({
 									type="button"
 									variant="secondary"
 									onClick={() => onDiscardService(service.id)}
-									disabled={discardingChangeId === `service:${service.id}`}
+									disabled={deploying || Boolean(discardingChangeId)}
 								>
 									<Trash2 size={13} />
 									Discard service changes
@@ -141,9 +143,7 @@ export function UnappliedChangesDialog({
 										styles={[styles.discardButton]}
 										aria-label={`Discard ${change.field}`}
 										onClick={() => onDiscardChange(service.id, change.id)}
-										disabled={
-											discardingChangeId === `${service.id}:${change.id}`
-										}
+										disabled={deploying || Boolean(discardingChangeId)}
 									>
 										<Trash2 size={14} />
 									</Button>
@@ -169,7 +169,12 @@ export function UnappliedChangesDialog({
 						type="button"
 						variant="primary"
 						onClick={onDeploy}
-						disabled={deploying || deployableChanges === 0}
+						disabled={
+							deploying ||
+							creationPending ||
+							Boolean(discardingChangeId) ||
+							deployableChanges === 0
+						}
 					>
 						{deploying ? (
 							<Loader2 size={13} {...stylex.props(styles.spinner)} />
@@ -217,10 +222,17 @@ export function snapshotApplyingChanges(
 	return {
 		serviceId: service.id,
 		serviceName: service.name,
-		changeIds:
+		changeKeys:
 			changes.length > 0
-				? changes.map((change) => change.id)
-				: [`service:${service.id}:${service.specRevision ?? "current"}`],
+				? changes.map((change) =>
+						applyingChangeKey(service.id, change.id, change.newValue),
+					)
+				: [
+						applyingChangeKey(
+							service.id,
+							`service:${service.id}:${service.specRevision}`,
+						),
+					],
 		count,
 		specRevision: service.specRevision,
 	};
@@ -257,25 +269,37 @@ export function queuedChangeCount(
 	}
 	return changes.filter(
 		(change) =>
-			!applyingChangeKeys.has(applyingChangeKey(service.id, change.id)),
+			!applyingChangeKeys.has(
+				applyingChangeKey(service.id, change.id, change.newValue),
+			),
 	).length;
 }
 
-export function applyingChangeKey(serviceId: string, changeId: string): string {
-	return `${serviceId}:${changeId}`;
+export function applyingChangeKey(
+	serviceId: string,
+	changeId: string,
+	newValue?: string,
+): string {
+	return JSON.stringify([serviceId, changeId, newValue]);
 }
 
 export function dirtyPromptTitle({
+	discarding = 0,
+	creating = 0,
 	applying,
 	deployError,
 	deploying = false,
 }: {
+	discarding?: number;
+	creating?: number;
 	applying: number;
 	deployError?: string;
 	deploying?: boolean;
 }): string {
-	if (deployError) return "Deploy failed";
+	if (deployError) return "Changes failed";
+	if (discarding > 0) return "Discarding changes";
 	if (deploying || applying > 0) return "Deploying changes";
+	if (creating > 0) return "Creating services";
 	return "Undeployed changes";
 }
 
@@ -289,16 +313,25 @@ export function deployActionLabel({
 }
 
 export function dirtyPromptDetail({
+	discarding = 0,
+	creating = 0,
 	applying,
 	deployable,
 	saving = false,
 	total,
 }: {
+	discarding?: number;
+	creating?: number;
 	applying: number;
 	deployable: number;
 	saving?: boolean;
 	total: number;
 }): string {
+	if (discarding > 0)
+		return `Discarding ${discarding} ${pluralizeChange(discarding)}${deployable > 0 ? `, ${deployable} ready` : ""}`;
+	if (creating > 0) {
+		return `Creating ${creating} ${creating === 1 ? "service" : "services"}${deployable > 0 ? `, ${deployable} changes ready` : ""}`;
+	}
 	if (applying > 0 && deployable > 0) {
 		return `Applying ${applying} ${pluralizeChange(applying)}, ${deployable} ready`;
 	}

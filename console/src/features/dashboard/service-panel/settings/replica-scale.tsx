@@ -23,11 +23,11 @@ export function ReplicaScaleControls({
 	const volumeName = service.spec?.runtime?.volumeName?.trim();
 	const live = service.desiredReplicaCount ?? 1;
 	const queued = service.spec?.desiredReplicaCount ?? live;
-	const pending = queued !== live;
 	const countId = useId();
 	const [draft, setDraft] = useState(String(queued));
 	const [inputError, setInputError] = useState<string>();
 	const {
+		draft: desiredCount,
 		setDraft: setDesiredCount,
 		error,
 		saving,
@@ -51,8 +51,8 @@ export function ReplicaScaleControls({
 	});
 
 	useEffect(() => {
-		setDraft(String(queued));
-	}, [queued]);
+		setDraft(String(desiredCount));
+	}, [desiredCount]);
 
 	useEffect(() => {
 		onSavingChange?.(saving);
@@ -63,7 +63,7 @@ export function ReplicaScaleControls({
 		if (next < MIN_REPLICAS || next > MAX_REPLICAS) return;
 		if (next > 1 && volumeName) {
 			setInputError("Volume-backed services cannot run more than one replica");
-			setDraft(String(queued));
+			setDraft(String(desiredCount));
 			return;
 		}
 		setInputError(undefined);
@@ -76,6 +76,7 @@ export function ReplicaScaleControls({
 		Number.isInteger(parsedDraft) &&
 		parsedDraft >= MIN_REPLICAS &&
 		parsedDraft <= MAX_REPLICAS;
+	const pending = (draftIsValid ? parsedDraft : desiredCount) !== live;
 
 	return (
 		<PanelSection title="Replicas">
@@ -111,7 +112,7 @@ export function ReplicaScaleControls({
 							setInputError(
 								`Enter a whole number from ${MIN_REPLICAS} to ${MAX_REPLICAS}`,
 							);
-							setDraft(String(queued));
+							setDraft(String(desiredCount));
 							return;
 						}
 						queueCount(parsedDraft);

@@ -463,7 +463,11 @@ describe("DashboardPage canvas", () => {
 			repositories: emptyState().repositories,
 		});
 		const creation = deferred<never>();
-		doCreateServiceFastMock.mockReturnValue(creation.promise);
+		let closedBeforeRequest = false;
+		doCreateServiceFastMock.mockImplementation(() => {
+			closedBeforeRequest = screen.queryByRole("dialog") === null;
+			return creation.promise;
+		});
 		const { container } = render(<DashboardPage state={state} />);
 
 		fireEvent.click(screen.getByRole("button", { name: /deploy service/i }));
@@ -471,7 +475,16 @@ describe("DashboardPage canvas", () => {
 			await screen.findByRole("button", { name: /octocat\/hello/i }),
 		);
 
-		await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+		expect(closedBeforeRequest).toBe(true);
+		expect(screen.getByText("Creating services")).toBeTruthy();
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Deploy changes",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+		expect(screen.queryByRole("dialog")).toBeNull();
 		expect(doCreateServiceFastMock).toHaveBeenCalledTimes(1);
 		expect(container.querySelectorAll("[data-service-node]")).toHaveLength(2);
 		expect(screen.getByText("Creating service")).toBeTruthy();

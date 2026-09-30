@@ -105,6 +105,8 @@ export function useDashboardController({
 	const { setNodePositions, nodePositionsRef } = canvas;
 
 	const {
+		discardingChangeCount,
+		visibleServices,
 		dirtyServices,
 		changeSignature,
 		totalUnappliedChanges,
@@ -123,6 +125,7 @@ export function useDashboardController({
 		handleDiscardChange,
 	} = useEnvironmentRelease({
 		services,
+		pendingCreationCount: pendingCreations.length,
 		environmentId,
 		revision: view.servicesRevision,
 		mergeStatusService: (...args) => mergeStatusService(...args),
@@ -264,7 +267,7 @@ export function useDashboardController({
 	};
 
 	const mergeService = (service: DashboardServiceRecord) => {
-		setView((current) => upsertServiceRecord(current, service));
+		mergeServiceRecord(service, revisionRef.current);
 	};
 
 	const handleCreating = (selector: string) => {
@@ -305,9 +308,7 @@ export function useDashboardController({
 			(entry) => entry.selector.trim().toLowerCase() === normalized,
 		);
 		setPendingCreations((current) =>
-			current.filter(
-				(entry) => entry.selector.trim().toLowerCase() !== normalized,
-			),
+			current.filter((entry) => entry.clientId !== failed?.clientId),
 		);
 		if (failed) {
 			setSelectedCreationId((current) =>
@@ -435,7 +436,7 @@ export function useDashboardController({
 		homeState,
 		canvas: {
 			...canvas,
-			services: canvasServices,
+			services: [...visibleServices, ...pendingRecords],
 			pendingServiceIds,
 			selectedId: canvasSelectedId,
 		},
@@ -471,6 +472,8 @@ export function useDashboardController({
 			onFailed: handleCreateFailed,
 		},
 		release: {
+			discardingChangeCount,
+			pendingCreationCount: pendingCreations.length,
 			showPrompt,
 			changeSignature,
 			deployError,

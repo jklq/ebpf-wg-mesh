@@ -20,6 +20,7 @@ import {
 } from "./dashboard-unapplied";
 export function useEnvironmentRelease({
 	services,
+	pendingCreationCount = 0,
 	environmentId,
 	revision,
 	mergeStatusService,
@@ -28,6 +29,7 @@ export function useEnvironmentRelease({
 	onRefresh,
 }: {
 	services: DashboardServiceRecord[];
+	pendingCreationCount?: number;
 	environmentId: string | null;
 	revision: string;
 	mergeStatusService: (
@@ -48,10 +50,14 @@ export function useEnvironmentRelease({
 	const [deployError, setDeployError] = useState<string>();
 	const [showChangeDetails, setShowChangeDetails] = useState(false);
 	const [discardingChangeId, setDiscardingChangeId] = useState<string>();
+	const [pendingDiscard, setPendingDiscard] =
+		useState<ApplyingServiceChanges>();
+	const discardingRef = useRef(false);
 	const [pendingSpecWrites, setPendingSpecWrites] = useState<Set<string>>(
 		() => new Set(),
 	);
 
+	const deployingRef = useRef(false);
 	const servicesRef = useRef(services);
 	servicesRef.current = services;
 	const revisionRef = useRef(revision);
@@ -61,7 +67,31 @@ export function useEnvironmentRelease({
 	const pendingSpecWritesRef = useRef(pendingSpecWrites);
 	pendingSpecWritesRef.current = pendingSpecWrites;
 	const specWriteWaitersRef = useRef<Array<() => void>>([]);
-	const dirtyServices = services.filter(hasUnappliedChanges);
+	const visibleServices = useMemo(
+		() =>
+			services.map((service) => {
+				if (!pendingDiscard || pendingDiscard.serviceId !== service.id)
+					return service;
+				const count = queuedChangeCount(
+					service,
+					new Set(pendingDiscard.changeKeys),
+				);
+				return {
+					...service,
+					pendingChanges: count > 0,
+					unappliedChangeCount: count,
+					unappliedChanges: service.unappliedChanges.filter(
+						(change) =>
+							!pendingDiscard.changeKeys.includes(
+								applyingChangeKey(service.id, change.id, change.newValue),
+							),
+					),
+				};
+			}),
+		[services, pendingDiscard],
+	);
+	const dirtyServices = visibleServices.filter(hasUnappliedChanges);
+	const discardingChangeCount = pendingDiscard?.count ?? 0;
 	const changeSignature = dirtyServices
 		.flatMap((service) =>
 			(service.unappliedChanges ?? []).map(
@@ -76,14 +106,7 @@ export function useEnvironmentRelease({
 		0,
 	);
 	const applyingChangeKeys = useMemo(
-		() =>
-			new Set(
-				applyingServices.flatMap((service) =>
-					service.changeIds.map((changeId) =>
-						applyingChangeKey(service.serviceId, changeId),
-					),
-				),
-			),
+		() => new Set(applyingServices.flatMap((service) => service.changeKeys)),
 		[applyingServices],
 	);
 	const applyingChangeCount = applyingServices.reduce(
@@ -96,6 +119,8 @@ export function useEnvironmentRelease({
 	);
 	const hasPendingSpecWrites = pendingSpecWrites.size > 0;
 	const showPrompt =
+		pendingCreationCount > 0 ||
+		discardingChangeCount > 0 ||
 		deployableUnappliedChanges > 0 ||
 		applyingChangeCount > 0 ||
 		hasPendingSpecWrites ||
@@ -160,31 +185,51 @@ export function useEnvironmentRelease({
 	};
 
 	const handleDeployChanges = async () => {
-		if (deployingChanges) return;
-		if (!environmentId) return;
-		setDeployingChanges(true);
-		if (pendingSpecWritesRef.current.size > 0) {
-			await new Promise<void>((resolve) => {
-				specWriteWaitersRef.current.push(resolve);
-			});
-		}
-		const currentEnvironmentId = environmentIdRef.current;
-		const currentServices = servicesRef.current.filter(hasUnappliedChanges);
-		if (!currentEnvironmentId || currentServices.length === 0) {
-			setDeployingChanges(false);
+		if (
+			discardingRef.current ||
+			deployingRef.current ||
+			pendingCreationCount > 0 ||
+			!environmentId
+		)
 			return;
+		deployingRef.current = true;
+		setDeployingChanges(true);
+		try {
+			if (pendingSpecWritesRef.current.size > 0) {
+				await new Promise<void>((resolve) => {
+					specWriteWaitersRef.current.push(resolve);
+				});
+			}
+			const currentEnvironmentId = environmentIdRef.current;
+			const currentServices = servicesRef.current.filter(hasUnappliedChanges);
+			if (currentEnvironmentId && currentServices.length > 0) {
+				await deployServiceBatch(currentServices, currentEnvironmentId);
+			}
+		} finally {
+			deployingRef.current = false;
+			setDeployingChanges(false);
 		}
-		await deployServiceBatch(currentServices, currentEnvironmentId);
 	};
 
 	const handleDiscardServiceChanges = async (serviceId: string) => {
-		if (discardingChangeId) return;
+		if (discardingRef.current || deployingRef.current) return;
+		const currentService = servicesRef.current.find(
+			(service) => service.id === serviceId,
+		);
+		if (!currentService) return;
+		discardingRef.current = true;
+		setDeployError(undefined);
+		setPendingDiscard(snapshotApplyingChanges(currentService));
 		setDiscardingChangeId(`service:${serviceId}`);
+		if (
+			!servicesRef.current.some(
+				(service) => service.id !== serviceId && hasUnappliedChanges(service),
+			)
+		) {
+			setShowChangeDetails(false);
+		}
 		const basisRevision = revisionRef.current;
 		try {
-			const currentService = servicesRef.current.find(
-				(service) => service.id === serviceId,
-			);
 			const hasOtherUndeployedServices = servicesRef.current.some(
 				(service) => service.id !== serviceId && hasUnappliedChanges(service),
 			);
@@ -207,13 +252,30 @@ export function useEnvironmentRelease({
 			}
 		} catch (error) {
 			setDeployError(`Discard failed: ${formatError(error)}`);
+			setShowChangeDetails(true);
 		} finally {
+			discardingRef.current = false;
+			setPendingDiscard(undefined);
 			setDiscardingChangeId(undefined);
 		}
 	};
 
 	const handleDiscardChange = async (serviceId: string, changeId: string) => {
-		if (discardingChangeId) return;
+		if (discardingRef.current || deployingRef.current) return;
+		const service = servicesRef.current.find(
+			(service) => service.id === serviceId,
+		);
+		const change = service?.unappliedChanges.find(
+			(change) => change.id === changeId,
+		);
+		if (!service || !change) return;
+		discardingRef.current = true;
+		setDeployError(undefined);
+		setPendingDiscard({
+			...snapshotApplyingChanges(service),
+			count: 1,
+			changeKeys: [applyingChangeKey(serviceId, change.id, change.newValue)],
+		});
 		setDiscardingChangeId(`${serviceId}:${changeId}`);
 		const basisRevision = revisionRef.current;
 		try {
@@ -223,12 +285,18 @@ export function useEnvironmentRelease({
 			mergeServiceRecord(service, basisRevision);
 		} catch (error) {
 			setDeployError(`Discard failed: ${formatError(error)}`);
+			setShowChangeDetails(true);
 		} finally {
+			discardingRef.current = false;
+			setPendingDiscard(undefined);
 			setDiscardingChangeId(undefined);
 		}
 	};
 
 	return {
+		pendingCreationCount,
+		discardingChangeCount,
+		visibleServices,
 		dirtyServices,
 		changeSignature,
 		totalUnappliedChanges,
