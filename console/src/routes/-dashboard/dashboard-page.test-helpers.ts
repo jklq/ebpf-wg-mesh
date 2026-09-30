@@ -1,9 +1,13 @@
 import { vi } from "vitest";
-
 import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	EnvironmentSchema,
+	ProjectSchema,
+} from "#/lib/platform-gen/platform_pb";
 
 export class MockEventSource {
 	static instances: MockEventSource[] = [];
@@ -61,31 +65,31 @@ export function dashboardState(
 			id: "user-1",
 			email: "user@example.com",
 		},
-		project: {
+		project: jsonFixture(ProjectSchema, {
 			id: "project-1",
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
-		},
+		}),
 		projects: [],
 
 		environments: [
-			{
+			jsonFixture(EnvironmentSchema, {
 				id: "environment-1",
 				projectId: "project-1",
 				name: "Production",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: true,
 				autoDeploy: false,
-			},
+			}),
 		],
-		environment: {
+		environment: jsonFixture(EnvironmentSchema, {
 			id: "environment-1",
 			projectId: "project-1",
 			name: "Production",
-			kind: "persistent",
+			kind: "ENVIRONMENT_KIND_PERSISTENT",
 			isProduction: true,
 			autoDeploy: false,
-		},
+		}),
 		onboarding: {
 			projectId: "project-1",
 			environmentId: "environment-1",
@@ -99,7 +103,7 @@ export function dashboardState(
 		},
 		repositories: [],
 		services: [service],
-		servicesRevision: 1,
+		servicesRevision: "1",
 		selectedServiceId: null,
 		githubInstallURL:
 			"https://github.example.test/apps/platform/installations/new",
@@ -116,7 +120,7 @@ export function dashboardState(
 export function emptyState(): DashboardHomeState {
 	return dashboardState(serviceRecord(), {
 		services: [],
-		servicesRevision: 1,
+		servicesRevision: "1",
 		selectedServiceId: null,
 		environment: undefined,
 		githubAccount: {
@@ -139,23 +143,25 @@ export function emptyState(): DashboardHomeState {
 }
 
 export function serviceRecord(
-	overrides: Partial<DashboardServiceRecord> = {},
+	overrides: Parameters<typeof serviceFixture>[0] = {},
 ): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "hello",
 		spec: {
 			source: {
-				provider: "github",
-				repositorySelector: "octocat/hello",
-				trackedRef: "main",
+				sourceSpec: {
+					provider: "github",
+					repositorySelector: "octocat/hello",
+					trackedRef: "main",
+				},
 			},
-			runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env: {}, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
 		...overrides,
-	};
+	});
 }
 
 export function unappliedChange(

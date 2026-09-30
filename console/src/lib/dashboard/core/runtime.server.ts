@@ -195,7 +195,7 @@ export function reconcileOnboardingDraft(
 	project: DashboardProject | undefined,
 	service: DashboardServiceRecord | undefined,
 ): DashboardOnboardingDraft {
-	const source = service?.spec?.source;
+	const source = service?.spec?.source?.sourceSpec;
 	return {
 		...defaultOnboardingDraft(),
 		...draft,
@@ -313,29 +313,13 @@ export async function githubCall<A>(
 	}
 }
 
-export async function platformCall<A>(
-	runtime: DashboardRuntime,
-	operation: string,
-	run: (platform: PlatformGateway) => Promise<A>,
-): Promise<A> {
-	try {
-		return await run(runtime.platform);
-	} catch (cause) {
-		throw toPlatformGatewayError(operation, cause);
-	}
-}
-
-export async function safePlatformCall<A>(
-	runtime: DashboardRuntime,
-	operation: string,
-	run: (platform: PlatformGateway) => Promise<A>,
+export async function optionalPlatformResult<A>(
+	result: Promise<A>,
 ): Promise<A | undefined> {
 	try {
-		return await platformCall(runtime, operation, run);
+		return await result;
 	} catch (error) {
-		if (error instanceof PlatformGatewayError) {
-			return undefined;
-		}
+		if (error instanceof PlatformGatewayError) return undefined;
 		throw error;
 	}
 }
@@ -383,21 +367,6 @@ export function toGitHubApiError(
 	});
 }
 
-function toPlatformGatewayError(
-	operation: string,
-	cause: unknown,
-): PlatformGatewayError {
-	if (cause instanceof PlatformGatewayError) {
-		return cause;
-	}
-	return new PlatformGatewayError({
-		operation,
-		message: formatError(cause),
-		cause,
-		grpcCode: readGrpcCode(cause),
-	});
-}
-
 function readStatus(value: unknown): number | undefined {
 	if (
 		value &&
@@ -406,18 +375,6 @@ function readStatus(value: unknown): number | undefined {
 		typeof value.status === "number"
 	) {
 		return value.status;
-	}
-	return undefined;
-}
-
-function readGrpcCode(value: unknown): number | undefined {
-	if (
-		value &&
-		typeof value === "object" &&
-		"code" in value &&
-		typeof value.code === "number"
-	) {
-		return value.code;
 	}
 	return undefined;
 }

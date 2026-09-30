@@ -35,7 +35,7 @@ export async function fetchLogPage(
 	return {
 		lines: linesDone ? [] : page.lines,
 		gaps: gapsDone ? [] : page.gaps,
-		nextPageToken: linesDone ? undefined : page.nextPageToken,
-		nextGapPageToken: gapsDone ? undefined : page.nextGapPageToken,
+		nextPageToken: linesDone ? "" : page.nextPageToken,
+		nextGapPageToken: gapsDone ? "" : page.nextGapPageToken,
 	};
 }

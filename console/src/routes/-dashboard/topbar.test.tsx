@@ -60,7 +60,7 @@ function homeState(overrides: Partial<DashboardHomeState>): DashboardHomeState {
 
 		environments: [],
 		services: [],
-		servicesRevision: 0,
+		servicesRevision: "0",
 		selectedServiceId: null,
 		domainBindings: [],
 		controlPlaneReachable: true,

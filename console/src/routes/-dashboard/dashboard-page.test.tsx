@@ -1,3 +1,15 @@
+import {
+	jsonFixture,
+	serviceFixture,
+	statusFixture,
+} from "#/lib/dashboard/testkit/protocol";
+import {
+	DeploymentStatusSchema,
+	EnvironmentSchema,
+	ProjectSchema,
+	ServiceRuntimeSchema,
+	ServiceSpecSchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -17,7 +29,10 @@ import {
 	vi,
 } from "vitest";
 
-import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import type {
+	DashboardServiceRecord,
+	DashboardServiceStatus,
+} from "#/lib/dashboard/core/types.server";
 import { DashboardPage } from "./dashboard-page";
 import {
 	dashboardState,
@@ -118,7 +133,7 @@ afterEach(() => {
 describe("DashboardPage", () => {
 	it("closes undeployed changes after discarding an existing service's changes", async () => {
 		const dirty = serviceRecord({
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
@@ -147,7 +162,7 @@ describe("DashboardPage", () => {
 
 	it("keeps undeployed changes open until the last service is discarded", async () => {
 		const first = serviceRecord({
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
@@ -157,7 +172,7 @@ describe("DashboardPage", () => {
 		const second = serviceRecord({
 			id: "service-2",
 			name: "worker",
-			rolloutGeneration: 1,
+			rolloutGeneration: "1",
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
@@ -201,23 +216,23 @@ describe("DashboardPage", () => {
 
 	it("removes a never-deployed service when all of its changes are discarded", async () => {
 		const staged = serviceRecord({
-			rolloutGeneration: 0,
+			rolloutGeneration: "0",
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
 				unappliedChange("service", "Service", "Service", "", "hello"),
 			],
-			latestDeployment: {
+			latestDeployment: jsonFixture(DeploymentStatusSchema, {
 				deploymentId: "deployment-1",
 				state: "DEPLOYMENT_STATE_STAGED",
 				causeKind: "DEPLOYMENT_CAUSE_KIND_USER",
 				causeId: "user-1",
 				reasonCode: "SERVICE_STAGED",
 				detail: "Configuration staged",
-				specRevision: 1,
+				specRevision: "1",
 				imageDigest: "",
-				rolloutGeneration: 0,
-			},
+				rolloutGeneration: "0",
+			}),
 		});
 		doDeleteServiceMock.mockResolvedValue(undefined);
 		render(<DashboardPage state={dashboardState(staged)} />);
@@ -263,7 +278,7 @@ describe("DashboardPage", () => {
 
 		save.resolve(
 			serviceRecord({
-				specRevision: 2,
+				specRevision: "2",
 				pendingChanges: true,
 				unappliedChangeCount: 1,
 				unappliedChanges: [
@@ -286,9 +301,14 @@ describe("DashboardPage", () => {
 		const save = deferred<DashboardServiceRecord>();
 		doUpdateServiceMock.mockReturnValue(save.promise);
 		const current = serviceRecord({
-			spec: {
-				runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
-			},
+			spec: jsonFixture(ServiceSpecSchema, {
+				runtime: jsonFixture(ServiceRuntimeSchema, {
+					env: {},
+					cpuMillis: "250",
+					memoryMebibytes: "256",
+					ports: [],
+				}),
+			}),
 		});
 		render(<DashboardPage state={dashboardState(current)} />);
 
@@ -312,15 +332,15 @@ describe("DashboardPage", () => {
 		});
 		save.resolve(
 			serviceRecord({
-				specRevision: 2,
-				spec: {
-					runtime: {
+				specRevision: "2",
+				spec: jsonFixture(ServiceSpecSchema, {
+					runtime: jsonFixture(ServiceRuntimeSchema, {
 						env: { FOO: "bar" },
-						cpuMillis: 250,
-						memoryMebibytes: 256,
+						cpuMillis: "250",
+						memoryMebibytes: "256",
 						ports: [],
-					},
-				},
+					}),
+				}),
 				pendingChanges: true,
 				unappliedChangeCount: 1,
 				unappliedChanges: [
@@ -334,7 +354,7 @@ describe("DashboardPage", () => {
 
 	it("does not let a stale loader rerender clear undeployed changes", async () => {
 		const current = serviceRecord({
-			specRevision: 2,
+			specRevision: "2",
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
@@ -343,7 +363,7 @@ describe("DashboardPage", () => {
 		});
 		const { rerender } = render(
 			<DashboardPage
-				state={dashboardState(current, { servicesRevision: 2 })}
+				state={dashboardState(current, { servicesRevision: "2" })}
 			/>,
 		);
 		expect(await screen.findByText("Undeployed changes")).toBeTruthy();
@@ -352,12 +372,12 @@ describe("DashboardPage", () => {
 			<DashboardPage
 				state={dashboardState(
 					serviceRecord({
-						specRevision: 1,
+						specRevision: "1",
 						pendingChanges: false,
 						unappliedChangeCount: 0,
 						unappliedChanges: [],
 					}),
-					{ servicesRevision: 1 },
+					{ servicesRevision: "1" },
 				)}
 			/>,
 		);
@@ -372,21 +392,23 @@ describe("DashboardPage", () => {
 			unappliedChanges: [],
 		});
 		const { rerender } = render(
-			<DashboardPage state={dashboardState(clean, { servicesRevision: 1 })} />,
+			<DashboardPage
+				state={dashboardState(clean, { servicesRevision: "1" })}
+			/>,
 		);
 
 		rerender(
 			<DashboardPage
 				state={dashboardState(
 					serviceRecord({
-						specRevision: 2,
+						specRevision: "2",
 						pendingChanges: true,
 						unappliedChangeCount: 1,
 						unappliedChanges: [
 							unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "bar"),
 						],
 					}),
-					{ servicesRevision: 2 },
+					{ servicesRevision: "2" },
 				)}
 			/>,
 		);
@@ -418,11 +440,11 @@ describe("DashboardPage", () => {
 		rerender(
 			<DashboardPage
 				state={dashboardState(service, {
-					project: {
+					project: jsonFixture(ProjectSchema, {
 						id: "project-1",
 						name: "renamed",
 						kind: "PROJECT_KIND_USER",
-					},
+					}),
 				})}
 			/>,
 		);
@@ -439,7 +461,7 @@ describe("DashboardPage", () => {
 		const worker = serviceRecord({
 			id: "service-2",
 			name: "worker",
-			specRevision: 2,
+			specRevision: "2",
 			pendingChanges: false,
 			unappliedChangeCount: 0,
 			unappliedChanges: [],
@@ -462,12 +484,12 @@ describe("DashboardPage", () => {
 		// A delayed duplicate snapshot must not clear the badge once the newer revision applied.
 		environmentSource?.emit("services", {
 			services: [service, worker],
-			revision: 1,
+			revision: "1",
 		});
 		environmentSource?.emit("services", {
 			services: [
 				service,
-				{
+				serviceFixture({
 					...worker,
 					pendingChanges: true,
 					unappliedChangeCount: 2,
@@ -475,13 +497,13 @@ describe("DashboardPage", () => {
 						unappliedChange("runtime.env.FOO", "Variables", "FOO", "", "one"),
 						unappliedChange("runtime.env.BAR", "Variables", "BAR", "", "two"),
 					],
-				},
+				}),
 			],
-			revision: 2,
+			revision: "2",
 		});
 		environmentSource?.emit("services", {
 			services: [service, worker],
-			revision: 1,
+			revision: "1",
 		});
 
 		expect(await screen.findByText("2 changes")).toBeTruthy();
@@ -501,31 +523,33 @@ describe("DashboardPage", () => {
 			return source as MockEventSource;
 		});
 
-		const secondService = serviceRecord({
-			id: "service-2",
-			environmentId: "environment-2",
-			name: "worker",
-		});
-		const secondEnvironment = {
+		const secondService = serviceRecord(
+			serviceFixture({
+				id: "service-2",
+				environmentId: "environment-2",
+				name: "worker",
+			}),
+		);
+		const secondEnvironment = jsonFixture(EnvironmentSchema, {
 			id: "environment-2",
 			projectId: "project-1",
 			name: "Staging",
-			kind: "persistent" as const,
+			kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 			isProduction: false,
 			autoDeploy: true,
-		};
+		});
 		rerender(
 			<DashboardPage
 				state={dashboardState(secondService, {
 					environments: [
-						{
+						jsonFixture(EnvironmentSchema, {
 							id: "environment-1",
 							projectId: "project-1",
 							name: "Production",
-							kind: "persistent",
+							kind: "ENVIRONMENT_KIND_PERSISTENT",
 							isProduction: true,
 							autoDeploy: false,
-						},
+						}),
 						secondEnvironment,
 					],
 					environment: secondEnvironment,
@@ -573,14 +597,14 @@ describe("DashboardPage", () => {
 	});
 
 	it("keeps deploy single-flight when newer changes arrive", async () => {
-		const firstDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
-		const secondDeploy = deferred<Array<{ service: DashboardServiceRecord }>>();
+		const firstDeploy = deferred<Array<DashboardServiceStatus>>();
+		const secondDeploy = deferred<Array<DashboardServiceStatus>>();
 		doReleaseEnvironmentMock
 			.mockReturnValueOnce(firstDeploy.promise)
 			.mockReturnValueOnce(secondDeploy.promise);
 
 		const firstEdit = serviceRecord({
-			specRevision: 2,
+			specRevision: "2",
 			pendingChanges: true,
 			unappliedChangeCount: 1,
 			unappliedChanges: [
@@ -589,7 +613,7 @@ describe("DashboardPage", () => {
 		});
 		const { rerender } = render(
 			<DashboardPage
-				state={dashboardState(firstEdit, { servicesRevision: 2 })}
+				state={dashboardState(firstEdit, { servicesRevision: "2" })}
 			/>,
 		);
 
@@ -599,7 +623,7 @@ describe("DashboardPage", () => {
 		expect(doReleaseEnvironmentMock).toHaveBeenCalledTimes(1);
 
 		const secondEdit = serviceRecord({
-			specRevision: 3,
+			specRevision: "3",
 			pendingChanges: true,
 			unappliedChangeCount: 2,
 			unappliedChanges: [
@@ -609,7 +633,7 @@ describe("DashboardPage", () => {
 		});
 		rerender(
 			<DashboardPage
-				state={dashboardState(secondEdit, { servicesRevision: 3 })}
+				state={dashboardState(secondEdit, { servicesRevision: "3" })}
 			/>,
 		);
 
@@ -618,14 +642,14 @@ describe("DashboardPage", () => {
 		expect((deployingButton as HTMLButtonElement).disabled).toBe(true);
 
 		firstDeploy.resolve([
-			{
+			statusFixture({
 				service: serviceRecord({
-					specRevision: 2,
+					specRevision: "2",
 					pendingChanges: false,
 					unappliedChangeCount: 0,
 					unappliedChanges: [],
 				}),
-			},
+			}),
 		]);
 
 		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalled());
@@ -640,14 +664,14 @@ describe("DashboardPage", () => {
 		});
 
 		secondDeploy.resolve([
-			{
+			statusFixture({
 				service: serviceRecord({
-					specRevision: 3,
+					specRevision: "3",
 					pendingChanges: false,
 					unappliedChangeCount: 0,
 					unappliedChanges: [],
 				}),
-			},
+			}),
 		]);
 		await waitFor(() => expect(routerMock.invalidate).toHaveBeenCalledTimes(2));
 	});

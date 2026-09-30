@@ -10,10 +10,12 @@ const beginLogin = createServerFn({ method: "GET" })
 		};
 	})
 	.handler(async ({ data }) => {
-		const service = await import("#/lib/dashboard/server");
-		return service.beginGitHubLogin({
-			redirectTo: data.redirect,
-		});
+		return (await import("#/lib/dashboard/core/auth.server")).beginGitHubLogin(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			{
+				redirectTo: data.redirect,
+			},
+		);
 	});
 
 export const Route = createFileRoute("/auth/start")({

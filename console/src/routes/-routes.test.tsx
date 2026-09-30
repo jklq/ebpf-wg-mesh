@@ -1,3 +1,8 @@
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	EnvironmentSchema,
+	ProjectSchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -280,7 +285,7 @@ function homeState(
 
 		environments: [],
 		services: [],
-		servicesRevision: 0,
+		servicesRevision: "0",
 		selectedServiceId: null,
 		githubInstallURL:
 			"https://github.example.test/apps/platform/installations/new",
@@ -296,33 +301,40 @@ function homeState(
 
 function fastCreateResult(repositorySelector: string): CreateServiceFastResult {
 	return {
-		project: {
+		project: jsonFixture(ProjectSchema, {
 			id: "project-1",
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
-		},
-		environment: {
+		}),
+		environment: jsonFixture(EnvironmentSchema, {
 			id: "environment-1",
 			projectId: "project-1",
 			name: "Production",
-			kind: "persistent",
+			kind: "ENVIRONMENT_KIND_PERSISTENT",
 			isProduction: true,
 			autoDeploy: false,
-		},
-		service: {
+		}),
+		service: serviceFixture({
 			id: "service-1",
 			environmentId: "environment-1",
 			projectId: "project-1",
 			name: "hello",
 			spec: {
 				source: {
-					provider: "github",
-					repositorySelector,
-					trackedRef: "main",
+					sourceSpec: {
+						provider: "github",
+						repositorySelector,
+						trackedRef: "main",
+					},
 				},
-				runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+				runtime: {
+					env: {},
+					cpuMillis: "250",
+					memoryMebibytes: "256",
+					ports: [],
+				},
 			},
-		},
+		}),
 		serviceStatus: null,
 		onboarding: {
 			projectId: "project-1",

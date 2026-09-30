@@ -3,9 +3,8 @@ import {
 	type DashboardRuntime,
 	loadOnboardingDraft,
 	onboardingDraftEquals,
-	platformCall,
+	optionalPlatformResult,
 	reconcileOnboardingDraft,
-	safePlatformCall,
 	saveOnboardingDraft,
 	storeCall,
 } from "#/lib/dashboard/core/runtime.server";
@@ -14,6 +13,7 @@ import {
 	type DashboardServiceRecord,
 	PlatformGatewayError,
 } from "#/lib/dashboard/core/types.server";
+import { OpsService, PlatformService } from "#/lib/platform-gen/platform_pb";
 import {
 	applyServicePositions,
 	publicGitHubAccount,
@@ -49,7 +49,7 @@ export async function loadDashboardHome(
 		projects: [],
 		environments: [],
 		services: [],
-		servicesRevision: 0,
+		servicesRevision: "0",
 		selectedServiceId: null,
 		domainBindings: [],
 		controlPlaneReachable: true,
@@ -57,16 +57,20 @@ export async function loadDashboardHome(
 
 	try {
 		const [projects, fleet] = await Promise.all([
-			platformCall(runtime, "listProjects", (platform) =>
-				platform.listProjects(session.user),
-			),
-			safePlatformCall(runtime, "listFleet", (platform) =>
-				platform.listFleet(session.user),
+			runtime.platform
+				.call(PlatformService.method.listProjects, session.user, {})
+				.then((response) => response.projects ?? []),
+			optionalPlatformResult(
+				runtime.platform.call(OpsService.method.listFleet, session.user, {}),
 			),
 		]);
 		const selectedEnvironment = selectedEnvironmentId
-			? await safePlatformCall(runtime, "getEnvironment", (platform) =>
-					platform.getEnvironment(session.user, selectedEnvironmentId),
+			? await optionalPlatformResult(
+					runtime.platform.call(
+						PlatformService.method.getEnvironment,
+						session.user,
+						{ environmentId: selectedEnvironmentId },
+					),
 				)
 			: undefined;
 		let project = selectedEnvironment
@@ -87,15 +91,15 @@ export async function loadDashboardHome(
 		let environments: DashboardHomeState["environments"] = [];
 		let environment: DashboardHomeState["environment"];
 		let allServices: Array<DashboardServiceRecord> = [];
-		let servicesRevision = 0;
+		let servicesRevision = "0";
 		let selectedServiceId: string | null = null;
 
 		if (project) {
-			environments = await platformCall(
-				runtime,
-				"listEnvironments",
-				(platform) => platform.listEnvironments(session.user, project.id),
-			);
+			environments = await runtime.platform
+				.call(PlatformService.method.listEnvironments, session.user, {
+					projectId: project.id,
+				})
+				.then((response) => response.environments ?? []);
 			environment =
 				environments.find((entry) => entry.id === selectedEnvironment?.id) ??
 				environments.find((entry) => entry.id === onboarding.environmentId) ??
@@ -105,8 +109,12 @@ export async function loadDashboardHome(
 
 		if (environment) {
 			const [servicesSnapshot, positions] = await Promise.all([
-				safePlatformCall(runtime, "listServices", (platform) =>
-					platform.listServices(session.user, environment.id),
+				optionalPlatformResult(
+					runtime.platform.call(
+						PlatformService.method.listServices,
+						session.user,
+						{ environmentId: environment.id },
+					),
 				),
 				storeCall(runtime, "listServicePositions", (store) =>
 					store.listServicePositions(session.user.id, environment.id),
@@ -116,7 +124,7 @@ export async function loadDashboardHome(
 				servicesSnapshot?.services ?? [],
 				positions,
 			);
-			servicesRevision = servicesSnapshot?.index ?? 0;
+			servicesRevision = servicesSnapshot?.index ?? "0";
 		}
 
 		const selectedService =
@@ -128,7 +136,7 @@ export async function loadDashboardHome(
 				? (() => {
 						const matchingServices = allServices.filter(
 							(entry) =>
-								entry.spec?.source?.repositorySelector ===
+								entry.spec?.source?.sourceSpec?.repositorySelector ===
 								onboarding.repositorySelector,
 						);
 						return matchingServices.length === 1

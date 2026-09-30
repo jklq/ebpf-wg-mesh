@@ -35,7 +35,12 @@ export async function loadLoginRouteState(
 
 const loadLoginState = createServerFn({ method: "GET" }).handler(async () => {
 	const service = await import("#/lib/dashboard/server");
-	return loadLoginRouteState(service);
+	const home = await import("#/lib/dashboard/core/operations-home.server");
+	return loadLoginRouteState({
+		...service,
+		loadDashboardHome: () =>
+			home.loadDashboardHome(service.getDashboardRuntime()),
+	});
 });
 
 export const Route = createFileRoute("/login")({

@@ -1,873 +1,779 @@
+import type { DescMethodUnary, MessageShape } from "@bufbuild/protobuf";
+import {
+	Code,
+	ConnectError,
+	createRouterTransport,
+	type HandlerContext,
+} from "@connectrpc/connect";
 import type {
-	DashboardBuildAttempt,
-	DashboardDeletionPreview,
-	DashboardDeploymentAction,
-	DashboardDeploymentRecord,
-	DashboardDomainBinding,
-	DashboardEnvironment,
-	DashboardProject,
-	DashboardRepositoryInspection,
-	DashboardServiceLogGap,
-	DashboardServiceLogLine,
-	DashboardServiceLogType,
 	DashboardServiceRecord,
-	DashboardServiceSecret,
-	DashboardServiceSpec,
-	DashboardServiceStatus,
 	DashboardUser,
-	DashboardVolume,
 	PlatformGateway,
 } from "#/lib/dashboard/core/types.server";
+import * as P from "#/lib/platform-gen/platform_pb";
+import { createAuthenticatedPlatform } from "#/lib/platform-grpc/gateway.server";
+import {
+	fromPlatformJson,
+	type PlatformJson,
+	toPlatformJson,
+} from "#/lib/platform-json";
+import { jsonFixture, serviceFixture, statusFixture } from "./protocol";
+
+type Recorded<D extends DescMethodUnary> = PlatformJson<D["input"]> & {
+	user: DashboardUser;
+};
+type Calls = {
+	[K in
+		| "applyDeploymentAction"
+		| "createDomainBinding"
+		| "createProject"
+		| "createService"
+		| "deleteService"
+		| "discardServiceChanges"
+		| "getService"
+		| "getServiceStatus"
+		| "inspectSource"
+		| "linkGitHubRepository"
+		| "listDomainBindings"
+		| "listEnvironments"
+		| "listProjects"
+		| "listServiceDeployments"
+		| "listServiceLogs"
+		| "listServices"
+		| "scaleService"
+		| "updateService"]: Array<Recorded<(typeof P.PlatformService.method)[K]>>;
+};
 
 export interface FakePlatformGateway extends PlatformGateway {
-	listProjectsCalls: Array<DashboardUser>;
-	createProjectCalls: Array<{ user: DashboardUser; name: string }>;
-	listEnvironmentsCalls: Array<{ user: DashboardUser; projectId: string }>;
-	listServicesCalls: Array<{ user: DashboardUser; environmentId: string }>;
-	inspectRepositorySourceCalls: Array<{
-		user: DashboardUser;
-		projectId: string;
-		provider: string;
-		repositorySelector: string;
-		githubUserAccessToken: string;
-	}>;
-	linkGitHubRepositoryCalls: Array<{
-		user: DashboardUser;
-		projectId: string;
-		repositorySelector: string;
-		githubUserAccessToken: string;
-	}>;
-	createServiceCalls: Array<{
-		user: DashboardUser;
-		environmentId: string;
-		name: string;
-		spec: DashboardServiceSpec;
-	}>;
-	updateServiceCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		name?: string;
-		spec: DashboardServiceSpec;
-	}>;
-	applyDeploymentActionCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		deploymentId: string;
-		action: DashboardDeploymentAction;
-		idempotencyKey: string;
-		allocationId?: string;
-	}>;
-	scaleServiceCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		desiredReplicaCount: number;
-	}>;
-	discardServiceChangesCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		changeIds?: Array<string>;
-		discardAll?: boolean;
-	}>;
-	deleteServiceCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-	}>;
-	getServiceCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-	}>;
-	getServiceStatusCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-	}>;
-	listServiceLogsCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		allocationId?: string;
-		limit?: number;
-		logType?: DashboardServiceLogType;
-		buildId?: string;
-		search?: string;
-		startTime?: Date;
-		endTime?: Date;
-		pageToken?: string;
-		gapPageToken?: string;
-	}>;
-	listServiceDeploymentsCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		limit?: number;
-	}>;
-	listDomainBindingsCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-	}>;
-	createDomainBindingCalls: Array<{
-		user: DashboardUser;
-		serviceId: string;
-		hostname: string;
-		targetPort: number;
-	}>;
-	projects: Array<DashboardProject>;
-	environments: Array<DashboardEnvironment>;
-	services: Array<DashboardServiceRecord>;
+	calls: Calls;
+	projects: PlatformJson<typeof P.ProjectSchema>[];
+	environments: PlatformJson<typeof P.EnvironmentSchema>[];
+	services: DashboardServiceRecord[];
 	servicesIndex: number;
-	serviceStatuses: Map<string, DashboardServiceStatus>;
-	serviceLogs: Array<DashboardServiceLogLine>;
-	serviceLogGaps: Array<DashboardServiceLogGap>;
-	volumes: Array<DashboardVolume>;
-	serviceSecrets: Map<string, Array<DashboardServiceSecret>>;
-	buildAttempts: Array<DashboardBuildAttempt>;
-	deletionPreview: DashboardDeletionPreview;
-	serviceDeployments: Array<DashboardDeploymentRecord>;
-	domainBindings: Array<DashboardDomainBinding>;
-	nextRepositoryInspection?: DashboardRepositoryInspection;
-	errors: {
-		listProjects?: Error;
-		createProject?: Error;
-		listServices?: Error;
-		inspectRepositorySource?: Error;
-		createService?: Error;
-		updateService?: Error;
-		applyDeploymentAction?: Error;
-		scaleService?: Error;
-		discardServiceChanges?: Error;
-		deleteService?: Error;
-		getService?: Error;
-		getServiceStatus?: Error;
-		listServiceLogs?: Error;
-		listServiceDeployments?: Error;
-		listDomainBindings?: Error;
-		createDomainBinding?: Error;
-	};
+	serviceStatuses: Map<string, PlatformJson<typeof P.ServiceStatusSchema>>;
+	serviceLogs: PlatformJson<typeof P.ServiceLogLineSchema>[];
+	serviceLogGaps: PlatformJson<typeof P.ServiceLogGapSchema>[];
+	volumes: PlatformJson<typeof P.VolumeSchema>[];
+	serviceSecrets: Map<
+		string,
+		PlatformJson<typeof P.ServiceSecretMetadataSchema>[]
+	>;
+	buildAttempts: PlatformJson<typeof P.BuildAttemptSchema>[];
+	deletionPreview: PlatformJson<typeof P.DeletionPreviewSchema>;
+	serviceDeployments: PlatformJson<typeof P.DeploymentRecordSchema>[];
+	domainBindings: PlatformJson<typeof P.DomainBindingSchema>[];
+	nextRepositoryInspection?: PlatformJson<typeof P.InspectSourceResponseSchema>;
+	fleet: PlatformJson<typeof P.FleetSchema>;
+	errors: Partial<
+		Record<keyof typeof P.PlatformService.method | "listFleet", Error>
+	>;
 }
 
 export function createFakePlatformGateway(): FakePlatformGateway {
+	const users = new Map<string, DashboardUser>();
+	let gateway: PlatformGateway;
 	const platform: FakePlatformGateway = {
-		listProjectsCalls: [],
-		createProjectCalls: [],
-		listEnvironmentsCalls: [],
-		listServicesCalls: [],
-		inspectRepositorySourceCalls: [],
-		linkGitHubRepositoryCalls: [],
-		createServiceCalls: [],
-		updateServiceCalls: [],
-		applyDeploymentActionCalls: [],
-		scaleServiceCalls: [],
-		discardServiceChangesCalls: [],
-		deleteServiceCalls: [],
-		getServiceCalls: [],
-		getServiceStatusCalls: [],
-		listServiceLogsCalls: [],
-		listServiceDeploymentsCalls: [],
-		listDomainBindingsCalls: [],
-		createDomainBindingCalls: [],
+		call(method, user, input) {
+			users.set(user.id, user);
+			return gateway.call(method, user, input);
+		},
+		calls: {
+			applyDeploymentAction: [],
+			createDomainBinding: [],
+			createProject: [],
+			createService: [],
+			deleteService: [],
+			discardServiceChanges: [],
+			getService: [],
+			getServiceStatus: [],
+			inspectSource: [],
+			linkGitHubRepository: [],
+			listDomainBindings: [],
+			listEnvironments: [],
+			listProjects: [],
+			listServiceDeployments: [],
+			listServiceLogs: [],
+			listServices: [],
+			scaleService: [],
+			updateService: [],
+		},
 		projects: [],
 		environments: [],
 		services: [],
 		servicesIndex: 1,
-		serviceStatuses: new Map<string, DashboardServiceStatus>(),
+		serviceStatuses: new Map(),
 		serviceLogs: [],
 		serviceLogGaps: [],
 		volumes: [],
-		serviceSecrets: new Map<string, Array<DashboardServiceSecret>>(),
+		serviceSecrets: new Map(),
 		buildAttempts: [],
-		deletionPreview: {
-			environments: [],
-			services: [],
-			domains: [],
-			volumes: [],
-		},
 		serviceDeployments: [],
 		domainBindings: [],
-		nextRepositoryInspection: undefined,
+		deletionPreview: jsonFixture(P.DeletionPreviewSchema, {}),
+		fleet: jsonFixture(P.FleetSchema, { capacity: {} }),
 		errors: {},
-		async listFleet() {
-			return {
-				agents: [],
-				capacity: {
-					nodeCount: 0,
-					schedulableNodeCount: 0,
-					schedulableCpuMillis: 0,
-					schedulableMemoryMebibytes: 0,
-					allocatedCpuMillis: 0,
-					allocatedMemoryMebibytes: 0,
-					headroomCpuMillis: 0,
-					headroomMemoryMebibytes: 0,
-				},
-			};
-		},
-		async createFleetAgent() {
-			throw new Error("fleet enrollment is not available in tests");
-		},
-		async updateFleetAgent() {
-			throw new Error("fleet updates are not available in tests");
-		},
-		async setFleetAgentLifecycle() {
-			throw new Error("fleet lifecycle is not available in tests");
-		},
-		async listProjects(user, options): Promise<Array<DashboardProject>> {
-			platform.listProjectsCalls.push(user);
-			if (platform.errors.listProjects) {
-				throw platform.errors.listProjects;
-			}
-			return platform.projects.filter(
-				(project) => options?.includeDeleted || !project.deletion,
-			);
-		},
-		async getProject(_, projectId) {
-			const project = platform.projects.find((entry) => entry.id === projectId);
-			if (!project) throw new Error("project not found");
-			return project;
-		},
-		async updateProjectLogRetention(_, input) {
-			const project = await platform.getProject(_, input.projectId);
-			project.logRetentionDays = input.logRetentionDays;
-			return project;
-		},
-		async previewProjectDeletion() {
-			return platform.deletionPreview;
-		},
-		async deleteProject(_, input) {
-			const project = await platform.getProject(_, input.projectId);
-			if (input.confirmationName !== project.name) {
-				throw new Error(
-					"confirmation name does not match the current resource name",
-				);
-			}
-			project.deletion = { deletedAt: new Date(), inherited: false };
-		},
-		async restoreProject(_, projectId) {
-			const project = await platform.getProject(_, projectId);
-			project.deletion = undefined;
-			return project;
-		},
-		async createProject(user, name): Promise<DashboardProject> {
-			platform.createProjectCalls.push({ user, name });
-			if (platform.errors.createProject) {
-				throw platform.errors.createProject;
-			}
-			const project: DashboardProject = {
-				id: `project-${platform.createProjectCalls.length}`,
-				name,
-				kind: "PROJECT_KIND_USER",
-			};
-			platform.projects = [...platform.projects, project];
-			platform.environments = [
-				...platform.environments,
-				{
-					id: `environment-${platform.createProjectCalls.length}`,
-					projectId: project.id,
-					name: "Production",
-					kind: "persistent",
-					isProduction: true,
-					autoDeploy: true,
-				},
-			];
-			return project;
-		},
-		async listEnvironments(user, projectId, options) {
-			platform.listEnvironmentsCalls.push({ user, projectId });
-			let environments = platform.environments.filter(
-				(entry) =>
-					entry.projectId === projectId &&
-					(options?.includeDeleted || !entry.deletion),
-			);
-			if (
-				environments.length === 0 &&
-				platform.projects.some((entry) => entry.id === projectId)
-			) {
-				const production: DashboardEnvironment = {
-					id: `environment-${projectId}`,
-					projectId,
-					name: "Production",
-					kind: "persistent",
-					isProduction: true,
-					autoDeploy: true,
-				};
-				platform.environments.push(production);
-				environments = [production];
-			}
-			return environments;
-		},
-		async getEnvironment(_, environmentId) {
-			const environment = platform.environments.find(
-				(entry) => entry.id === environmentId,
-			);
-			if (!environment) throw new Error("environment not found");
-			return environment;
-		},
-		async createEnvironment(_, input) {
-			const environment: DashboardEnvironment = {
-				id: `environment-${platform.environments.length + 1}`,
-				projectId: input.projectId,
-				name: input.name,
-				kind: "persistent",
-				isProduction: false,
-				autoDeploy: true,
-			};
-			platform.environments.push(environment);
-			return environment;
-		},
-		async duplicateEnvironment(_, input) {
-			const source = platform.environments.find(
-				(entry) => entry.id === input.sourceEnvironmentId,
-			);
-			if (!source) throw new Error("environment not found");
-			const environment: DashboardEnvironment = {
-				...source,
-				id: `environment-${platform.environments.length + 1}`,
-				name: input.name,
-				isProduction: false,
-				copiedFromEnvironmentId: source.id,
-			};
-			platform.environments.push(environment);
-			return environment;
-		},
-		async renameEnvironment(_, input) {
-			const environment = platform.environments.find(
-				(entry) => entry.id === input.environmentId,
-			);
-			if (!environment) throw new Error("environment not found");
-			environment.name = input.name;
-			return environment;
-		},
-		async updateEnvironmentAutoDeploy(_, input) {
-			const environment = platform.environments.find(
-				(entry) => entry.id === input.environmentId,
-			);
-			if (!environment) throw new Error("environment not found");
-			environment.autoDeploy = input.autoDeploy;
-			return environment;
-		},
-		async previewEnvironmentDeletion() {
-			return platform.deletionPreview;
-		},
-		async deleteEnvironment(_, input) {
-			const environment = await platform.getEnvironment(_, input.environmentId);
-			if (
-				environment.isProduction &&
-				input.confirmationName !== environment.name
-			) {
-				throw new Error(
-					"confirmation name does not match the current resource name",
-				);
-			}
-			environment.deletion = { deletedAt: new Date(), inherited: false };
-			platform.services = platform.services.filter(
-				(entry) => entry.environmentId !== input.environmentId,
-			);
-		},
-		async restoreEnvironment(_, environmentId) {
-			const environment = await platform.getEnvironment(_, environmentId);
-			environment.deletion = undefined;
-			return environment;
-		},
-		async releaseEnvironment(user, environmentId) {
-			void user;
-			const services = platform.services.filter(
-				(entry) => entry.environmentId === environmentId,
-			);
-			const deployed = services.map((service) => {
-				const nextDesired =
-					service.spec?.desiredReplicaCount ?? service.desiredReplicaCount;
-				return {
-					...service,
-					desiredReplicaCount: nextDesired,
-					pendingChanges: false,
-					unappliedChangeCount: 0,
-					unappliedChanges: [],
-				};
-			});
-			platform.services = platform.services.map((service) => {
-				const next = deployed.find((entry) => entry.id === service.id);
-				return next ?? service;
-			});
-			platform.servicesIndex += 1;
-			return deployed.map((service) => ({ service }));
-		},
-		async listServices(user, environmentId, options) {
-			platform.listServicesCalls.push({ user, environmentId });
-			if (platform.errors.listServices) {
-				throw platform.errors.listServices;
-			}
-			return {
-				index: platform.servicesIndex,
-				notModified: false,
-				services: platform.services.filter(
-					(service) =>
-						service.environmentId === environmentId &&
-						(options?.includeDeleted || !service.deletion),
-				),
-			};
-		},
-		async waitForServices(user, input) {
-			const snapshot = await platform.listServices(user, input.environmentId);
-			return {
-				index: Math.max(snapshot.index, input.waitIndex + 1),
-				notModified: false,
-				services: snapshot.services,
-			};
-		},
-		async inspectRepositorySource(
-			user,
-			input,
-		): Promise<DashboardRepositoryInspection> {
-			platform.inspectRepositorySourceCalls.push({ user, ...input });
-			if (platform.errors.inspectRepositorySource) {
-				throw platform.errors.inspectRepositorySource;
-			}
-			return (
-				platform.nextRepositoryInspection ?? {
-					accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-					defaultBranch: "main",
-					dockerfileCandidates: ["Dockerfile"],
-					recommendedBuildRecipe: {
-						builder: "BUILDER_KIND_RAILPACK",
-						dockerfilePath: "",
-						contextDir: ".",
-					},
-					recommendedDockerfileRecipe: {
-						builder: "BUILDER_KIND_DOCKERFILE",
-						dockerfilePath: "Dockerfile",
-						contextDir: ".",
-					},
-					recommendedPorts: [],
-					detectedLanguage: "node",
-					detectedStartCommand: "npm run start",
-					analysisError: "",
-				}
-			);
-		},
-		async linkGitHubRepository(
-			user,
-			input,
-		): Promise<DashboardRepositoryInspection> {
-			platform.linkGitHubRepositoryCalls.push({ user, ...input });
-			if (platform.errors.inspectRepositorySource) {
-				throw platform.errors.inspectRepositorySource;
-			}
-			return (
-				platform.nextRepositoryInspection ?? {
-					accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-					defaultBranch: "main",
-					dockerfileCandidates: ["Dockerfile"],
-					recommendedBuildRecipe: {
-						builder: "BUILDER_KIND_RAILPACK",
-						dockerfilePath: "",
-						contextDir: ".",
-					},
-					recommendedDockerfileRecipe: {
-						builder: "BUILDER_KIND_DOCKERFILE",
-						dockerfilePath: "Dockerfile",
-						contextDir: ".",
-					},
-					recommendedPorts: [],
-					detectedLanguage: "node",
-					detectedStartCommand: "npm run start",
-					analysisError: "",
-				}
-			);
-		},
-		async createService(user, input): Promise<DashboardServiceRecord> {
-			platform.createServiceCalls.push({ user, ...input });
-			if (platform.errors.createService) {
-				throw platform.errors.createService;
-			}
-			const serviceRecord: DashboardServiceRecord = {
-				id: `service-${platform.services.length + 1}`,
-				environmentId: input.environmentId,
-				name: input.name,
-				spec: input.spec,
-				sourceSummary: {
-					desiredSpec: input.spec.source,
-					resolvedBinding: {
-						repositorySelector: input.spec.source?.repositorySelector ?? "",
-						trackedRef: input.spec.source?.trackedRef ?? "",
-						accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-						buildRecipe: input.spec.source?.buildRecipe,
-					},
-				},
-				latestBuild: {
-					buildId: `build-${platform.createServiceCalls.length}`,
-					state: "BUILD_STATE_QUEUED",
-					commitSha: "",
-					imageDigest: "",
-					failureReason: "",
-				},
-				pendingChanges: true,
-			};
-			platform.services = [...platform.services, serviceRecord];
-			platform.servicesIndex += 1;
-			platform.serviceStatuses.set(serviceRecord.id, {
-				service: serviceRecord,
-				allocation: {
-					allocationId: `allocation-${platform.createServiceCalls.length}`,
-					serviceId: serviceRecord.id,
-					agentId: "agent-1",
-					desiredSpecRevision: 1,
-					appliedSpecRevision: 1,
-					phase: "Pending",
-					message: "",
-					allocationIpv4: "",
-					allocationIpv6: "",
-					healthy: false,
-					updatedAt: undefined,
-					desiredRolloutGeneration: 1,
-					appliedRolloutGeneration: 1,
-					healthyIpv4Ports: [],
-					healthyIpv6Ports: [],
-				},
-			});
-			return serviceRecord;
-		},
-		async updateService(user, input): Promise<DashboardServiceRecord> {
-			platform.updateServiceCalls.push({ user, ...input });
-			if (platform.errors.updateService) {
-				throw platform.errors.updateService;
-			}
-			const current = platform.services.find(
-				(service) => service.id === input.serviceId,
-			);
-			if (!current) {
-				throw new Error("service not found");
-			}
-			const updated: DashboardServiceRecord = {
-				...current,
-				name: input.name?.trim() || current.name,
-				spec: input.spec,
-				sourceSummary: {
-					desiredSpec: input.spec.source,
-					resolvedBinding: {
-						repositorySelector: input.spec.source?.repositorySelector ?? "",
-						trackedRef: input.spec.source?.trackedRef ?? "",
-						accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-						buildRecipe: input.spec.source?.buildRecipe,
-					},
-				},
-			};
-			platform.services = platform.services.map((service) =>
-				service.id === updated.id ? updated : service,
-			);
-			platform.servicesIndex += 1;
-			const status = platform.serviceStatuses.get(updated.id);
-			if (status) {
-				platform.serviceStatuses.set(updated.id, {
-					...status,
-					service: updated,
-				});
-			}
-			return updated;
-		},
-		async scaleService(user, input): Promise<DashboardServiceStatus> {
-			platform.scaleServiceCalls.push({ user, ...input });
-			if (platform.errors.scaleService) {
-				throw platform.errors.scaleService;
-			}
-			const current = platform.services.find(
-				(service) => service.id === input.serviceId,
-			);
-			if (!current) {
-				throw new Error("service not found");
-			}
-			const liveDesired = current.desiredReplicaCount ?? 1;
-			const replicaChange = {
-				id: "desiredReplicaCount",
-				section: "Replicas",
-				field: "Desired count",
-				path: "desiredReplicaCount",
-				action:
-					input.desiredReplicaCount === liveDesired
-						? ("SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE" as const)
-						: input.desiredReplicaCount > liveDesired
-							? ("SERVICE_UNAPPLIED_CHANGE_ACTION_ADD" as const)
-							: ("SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE" as const),
-				currentValue: String(liveDesired),
-				newValue: String(input.desiredReplicaCount),
-			};
-			const remainingChanges = (current.unappliedChanges ?? []).filter(
-				(change) => change.id !== "desiredReplicaCount",
-			);
-			const unappliedChanges =
-				input.desiredReplicaCount === liveDesired
-					? remainingChanges
-					: [...remainingChanges, replicaChange];
-			const updated = {
-				...current,
-				spec: current.spec
-					? {
-							...current.spec,
-							desiredReplicaCount: input.desiredReplicaCount,
-						}
-					: current.spec,
-				pendingChanges: unappliedChanges.length > 0,
-				unappliedChangeCount: unappliedChanges.length,
-				unappliedChanges,
-			};
-			platform.services = platform.services.map((service) =>
-				service.id === updated.id ? updated : service,
-			);
-			platform.servicesIndex += 1;
-			const status = platform.serviceStatuses.get(input.serviceId);
-			if (status) {
-				platform.serviceStatuses.set(input.serviceId, {
-					...status,
-					service: updated,
-				});
-			}
-			return (
-				platform.serviceStatuses.get(input.serviceId) ?? { service: updated }
-			);
-		},
-		async applyDeploymentAction(user, input): Promise<DashboardServiceStatus> {
-			platform.applyDeploymentActionCalls.push({ user, ...input });
-			if (platform.errors.applyDeploymentAction) {
-				throw platform.errors.applyDeploymentAction;
-			}
-			const current = platform.services.find(
-				(service) => service.id === input.serviceId,
-			);
-			if (!current) {
-				throw new Error("service not found");
-			}
-			return (
-				platform.serviceStatuses.get(input.serviceId) ?? { service: current }
-			);
-		},
-		async discardServiceChanges(user, input): Promise<DashboardServiceRecord> {
-			platform.discardServiceChangesCalls.push({ user, ...input });
-			if (platform.errors.discardServiceChanges) {
-				throw platform.errors.discardServiceChanges;
-			}
-			const current = platform.services.find(
-				(service) => service.id === input.serviceId,
-			);
-			if (!current) {
-				throw new Error("service not found");
-			}
-			const remainingChanges = input.discardAll
-				? []
-				: (current.unappliedChanges ?? []).filter(
-						(change) => !(input.changeIds ?? []).includes(change.id),
-					);
-			const updated = {
-				...current,
-				pendingChanges: remainingChanges.length > 0,
-				unappliedChangeCount: remainingChanges.length,
-				unappliedChanges: remainingChanges,
-			};
-			platform.services = platform.services.map((service) =>
-				service.id === updated.id ? updated : service,
-			);
-			platform.servicesIndex += 1;
-			return updated;
-		},
-		async deleteService(user, input): Promise<void> {
-			platform.deleteServiceCalls.push({ user, ...input });
-			if (platform.errors.deleteService) {
-				throw platform.errors.deleteService;
-			}
-			platform.services = platform.services.filter(
-				(service) => service.id !== input.serviceId,
-			);
-			platform.servicesIndex += 1;
-			platform.serviceStatuses.delete(input.serviceId);
-		},
-		async restoreService(_, serviceId): Promise<DashboardServiceRecord> {
-			const service = platform.services.find((entry) => entry.id === serviceId);
-			if (!service) throw new Error("service not found");
-			service.deletion = undefined;
-			return service;
-		},
-		async listServiceSecrets(_, serviceId) {
-			return platform.serviceSecrets.get(serviceId) ?? [];
-		},
-		async sealServiceSecret(_, input) {
-			const current = platform.serviceSecrets.get(input.serviceId) ?? [];
-			const previous = current.find((entry) => entry.name === input.name);
-			const sealed: DashboardServiceSecret = {
-				name: input.name,
-				version: (previous?.version ?? 0) + 1,
-				updatedAt: new Date(),
-			};
-			platform.serviceSecrets.set(input.serviceId, [
-				...current.filter((entry) => entry.name !== input.name),
-				sealed,
-			]);
-			return sealed;
-		},
-		async deleteServiceSecret(_, input) {
-			platform.serviceSecrets.set(
-				input.serviceId,
-				(platform.serviceSecrets.get(input.serviceId) ?? []).filter(
-					(entry) => entry.name !== input.name,
-				),
-			);
-		},
-		async listVolumes(_, environmentId, options) {
-			return platform.volumes.filter(
-				(volume) =>
-					volume.environmentId === environmentId &&
-					(options?.includeDeleted || !volume.deletion),
-			);
-		},
-		async previewVolumeDeletion() {
-			return platform.deletionPreview;
-		},
-		async deleteVolume(_, input) {
-			const volume = platform.volumes.find(
-				(entry) => entry.id === input.volumeId,
-			);
-			if (!volume) throw new Error("volume not found");
-			if (input.confirmationName !== volume.name) {
-				throw new Error(
-					"confirmation name does not match the current resource name",
-				);
-			}
-			volume.deletion = { deletedAt: new Date(), inherited: false };
-		},
-		async listBuildAttempts() {
-			return platform.buildAttempts;
-		},
-		async getService(user, input): Promise<DashboardServiceRecord> {
-			platform.getServiceCalls.push({ user, ...input });
-			if (platform.errors.getService) {
-				throw platform.errors.getService;
-			}
-			const service = platform.services.find(
-				(entry) => entry.id === input.serviceId,
-			);
-			if (!service) {
-				throw new Error("service not found");
-			}
-			return service;
-		},
-		async getServiceStatus(user, input): Promise<DashboardServiceStatus> {
-			platform.getServiceStatusCalls.push({ user, ...input });
-			if (platform.errors.getServiceStatus) {
-				throw platform.errors.getServiceStatus;
-			}
-			const status = platform.serviceStatuses.get(input.serviceId);
-			if (!status) {
-				throw new Error("service status not found");
-			}
-			return status;
-		},
-		async waitForServiceStatus(user, input) {
-			return {
-				index: input.waitIndex + 1,
-				notModified: false,
-				status: await platform.getServiceStatus(user, input),
-			};
-		},
-		async listServiceLogs(user, input) {
-			platform.listServiceLogsCalls.push({ user, ...input });
-			if (platform.errors.listServiceLogs) {
-				throw platform.errors.listServiceLogs;
-			}
-			return {
-				lines: platform.serviceLogs.filter(
-					(line) =>
-						(line.allocationId === input.allocationId ||
-							input.allocationId === undefined) &&
-						(line.logType === input.logType || input.logType === undefined) &&
-						(line.buildId === input.buildId || input.buildId === undefined) &&
-						(input.search === undefined || line.line.includes(input.search)),
-				),
-				gaps: platform.serviceLogGaps,
-			};
-		},
-		async listServiceDeployments(
-			user,
-			input,
-		): Promise<Array<DashboardDeploymentRecord>> {
-			platform.listServiceDeploymentsCalls.push({ user, ...input });
-			if (platform.errors.listServiceDeployments) {
-				throw platform.errors.listServiceDeployments;
-			}
-			return platform.serviceDeployments;
-		},
-		async listDomainBindings(
-			user,
-			input,
-		): Promise<Array<DashboardDomainBinding>> {
-			platform.listDomainBindingsCalls.push({ user, ...input });
-			if (platform.errors.listDomainBindings) {
-				throw platform.errors.listDomainBindings;
-			}
-			return platform.domainBindings.filter(
-				(binding) => binding.serviceId === input.serviceId,
-			);
-		},
-		async generateDomainBinding(_, input): Promise<DashboardDomainBinding> {
-			const binding: DashboardDomainBinding = {
-				hostname: `violet-test.platform.example`,
-				serviceId: input.serviceId,
-				targetPort: input.targetPort,
-				platformGenerated: true,
-				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
-			};
-			platform.domainBindings = [
-				...platform.domainBindings.filter(
-					(item) =>
-						!item.platformGenerated || item.serviceId !== input.serviceId,
-				),
-				binding,
-			];
-			return binding;
-		},
-		async createDomainBinding(user, input): Promise<DashboardDomainBinding> {
-			platform.createDomainBindingCalls.push({ user, ...input });
-			if (platform.errors.createDomainBinding) {
-				throw platform.errors.createDomainBinding;
-			}
-			const binding: DashboardDomainBinding = {
-				hostname: input.hostname,
-				serviceId: input.serviceId,
-				targetPort: input.targetPort,
-				platformGenerated: false,
-				ownershipState: "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
-				ownershipMessage:
-					"domain CNAME does not point to the service platform hostname",
-			};
-			platform.domainBindings = [
-				...platform.domainBindings.filter(
-					(item) => item.hostname !== input.hostname,
-				),
-				binding,
-			];
-			return binding;
-		},
-		async updateDomainBinding(_, input): Promise<DashboardDomainBinding> {
-			const existing = platform.domainBindings.find(
-				(b) => b.hostname === input.hostname,
-			);
-			if (!existing) {
-				throw new Error("domain binding not found");
-			}
-			const updated: DashboardDomainBinding = {
-				...existing,
-				serviceId: input.serviceId,
-				targetPort: input.targetPort,
-			};
-			platform.domainBindings = platform.domainBindings.map((b) =>
-				b.hostname === input.hostname ? updated : b,
-			);
-			return updated;
-		},
-		async deleteDomainBinding(_, input): Promise<void> {
-			platform.domainBindings = platform.domainBindings.filter(
-				(b) => b.hostname !== input.hostname,
-			);
-		},
-		async restoreDomainBinding(_, hostname): Promise<DashboardDomainBinding> {
-			const binding = platform.domainBindings.find(
-				(entry) => entry.hostname === hostname,
-			);
-			if (!binding) throw new Error("domain binding not found");
-			binding.deletion = undefined;
-			return binding;
-		},
 	};
+	function user(ctx: HandlerContext): DashboardUser {
+		const token = ctx.requestHeader.get("x-platform-user-assertion");
+		if (!token) throw new Error("missing user assertion");
+		const { sub } = JSON.parse(
+			Buffer.from(token.split(".")[1], "base64url").toString(),
+		);
+		const result = users.get(sub);
+		if (!result) throw new Error("unknown user assertion");
+		return result;
+	}
+	function fail(operation: keyof typeof platform.errors) {
+		const error = platform.errors[operation];
+		if (error) throw new ConnectError(error.message, Code.Internal);
+	}
+	function project(id: string) {
+		const result = platform.projects.find((entry) => entry.id === id);
+		if (!result) throw new Error("project not found");
+		return result;
+	}
+	function environment(id: string) {
+		const result = platform.environments.find((entry) => entry.id === id);
+		if (!result) throw new Error("environment not found");
+		return result;
+	}
+	function service(id: string) {
+		const result = platform.services.find((entry) => entry.id === id);
+		if (!result) throw new Error("service not found");
+		return result;
+	}
+	function nativeService(
+		value: DashboardServiceRecord,
+	): MessageShape<typeof P.ServiceSchema> {
+		const { projectId: _, layoutPosition: __, ...resource } = value;
+		return fromPlatformJson(P.ServiceSchema, resource);
+	}
+	function nativeStatus(id: string) {
+		const result = platform.serviceStatuses.get(id);
+		if (!result) throw new Error("service status not found");
+		return fromPlatformJson(P.ServiceStatusSchema, result);
+	}
+	function replaceService(next: DashboardServiceRecord) {
+		platform.services = platform.services.map((entry) =>
+			entry.id === next.id ? next : entry,
+		);
+		const status = platform.serviceStatuses.get(next.id);
+		if (status)
+			platform.serviceStatuses.set(
+				next.id,
+				statusFixture({ ...status, service: next }),
+			);
+		platform.servicesIndex += 1;
+	}
+	function inspection() {
+		return fromPlatformJson(
+			P.InspectSourceResponseSchema,
+			platform.nextRepositoryInspection ?? {
+				accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+				defaultBranch: "main",
+				dockerfileCandidates: ["Dockerfile"],
+				recommendedBuildRecipe: {
+					builder: "BUILDER_KIND_RAILPACK",
+					contextDir: ".",
+				},
+				recommendedDockerfileRecipe: {
+					builder: "BUILDER_KIND_DOCKERFILE",
+					dockerfilePath: "Dockerfile",
+					contextDir: ".",
+				},
+				detectedLanguage: "node",
+				detectedStartCommand: "npm run start",
+			},
+		);
+	}
+	function tombstone() {
+		return jsonFixture(P.DeletionStateSchema, {
+			deletedAt: new Date().toISOString(),
+		});
+	}
+	const transport = createRouterTransport((router) => {
+		router.service(P.OpsService, {
+			listFleet() {
+				fail("listFleet");
+				return fromPlatformJson(P.FleetSchema, platform.fleet);
+			},
+		});
+		router.service(P.PlatformService, {
+			listProjects(request, ctx) {
+				fail("listProjects");
+				platform.calls.listProjects.push({
+					user: user(ctx),
+					...toPlatformJson(P.ListProjectsRequestSchema, request),
+				});
+				return fromPlatformJson(P.ListProjectsResponseSchema, {
+					projects: platform.projects.filter(
+						(entry) => request.includeDeleted || !entry.deletion,
+					),
+				});
+			},
+			getProject(request) {
+				return fromPlatformJson(P.ProjectSchema, project(request.projectId));
+			},
+			createProject(request, ctx) {
+				fail("createProject");
+				platform.calls.createProject.push({
+					user: user(ctx),
+					...toPlatformJson(P.CreateProjectRequestSchema, request),
+				});
+				const next = jsonFixture(P.ProjectSchema, {
+					id: `project-${platform.calls.createProject.length}`,
+					name: request.name,
+					kind: "PROJECT_KIND_USER",
+				});
+				platform.projects.push(next);
+				platform.environments.push(
+					jsonFixture(P.EnvironmentSchema, {
+						id: `environment-${platform.calls.createProject.length}`,
+						projectId: next.id,
+						name: "Production",
+						kind: "ENVIRONMENT_KIND_PERSISTENT",
+						isProduction: true,
+						autoDeploy: true,
+					}),
+				);
+				return fromPlatformJson(P.ProjectSchema, next);
+			},
+			updateProjectLogRetention(request) {
+				const result = project(request.projectId);
+				result.logRetentionDays = request.logRetentionDays;
+				return fromPlatformJson(P.ProjectSchema, result);
+			},
+			previewProjectDeletion() {
+				return fromPlatformJson(
+					P.DeletionPreviewSchema,
+					platform.deletionPreview,
+				);
+			},
+			deleteProject(request) {
+				const result = project(request.projectId);
+				if (request.confirmationName !== result.name)
+					throw new Error(
+						"confirmation name does not match the current resource name",
+					);
+				result.deletion = tombstone();
+				return {};
+			},
+			restoreProject(request) {
+				const result = project(request.projectId);
+				result.deletion = undefined;
+				return fromPlatformJson(P.ProjectSchema, result);
+			},
+			listEnvironments(request, ctx) {
+				platform.calls.listEnvironments.push({
+					user: user(ctx),
+					...toPlatformJson(P.ListEnvironmentsRequestSchema, request),
+				});
+				let entries = platform.environments.filter(
+					(entry) =>
+						entry.projectId === request.projectId &&
+						(request.includeDeleted || !entry.deletion),
+				);
+				if (
+					!entries.length &&
+					platform.projects.some((entry) => entry.id === request.projectId)
+				) {
+					const next = jsonFixture(P.EnvironmentSchema, {
+						id: `environment-${request.projectId}`,
+						projectId: request.projectId,
+						name: "Production",
+						kind: "ENVIRONMENT_KIND_PERSISTENT",
+						isProduction: true,
+						autoDeploy: true,
+					});
+					platform.environments.push(next);
+					entries = [next];
+				}
+				return fromPlatformJson(P.ListEnvironmentsResponseSchema, {
+					environments: entries,
+				});
+			},
+			getEnvironment(request) {
+				return fromPlatformJson(
+					P.EnvironmentSchema,
+					environment(request.environmentId),
+				);
+			},
+			createEnvironment(request) {
+				const next = jsonFixture(P.EnvironmentSchema, {
+					id: `environment-${platform.environments.length + 1}`,
+					projectId: request.projectId,
+					name: request.name,
+					kind: "ENVIRONMENT_KIND_PERSISTENT",
+					autoDeploy: true,
+				});
+				platform.environments.push(next);
+				return fromPlatformJson(P.EnvironmentSchema, next);
+			},
+			duplicateEnvironment(request) {
+				const source = environment(request.sourceEnvironmentId);
+				const next = jsonFixture(P.EnvironmentSchema, {
+					...source,
+					id: `environment-${platform.environments.length + 1}`,
+					name: request.name,
+					isProduction: false,
+					copiedFromEnvironmentId: source.id,
+				});
+				platform.environments.push(next);
+				return fromPlatformJson(P.EnvironmentSchema, next);
+			},
+			renameEnvironment(request) {
+				const result = environment(request.environmentId);
+				result.name = request.name;
+				return fromPlatformJson(P.EnvironmentSchema, result);
+			},
+			updateEnvironmentAutoDeploy(request) {
+				const result = environment(request.environmentId);
+				result.autoDeploy = request.autoDeploy;
+				return fromPlatformJson(P.EnvironmentSchema, result);
+			},
+			previewEnvironmentDeletion() {
+				return fromPlatformJson(
+					P.DeletionPreviewSchema,
+					platform.deletionPreview,
+				);
+			},
+			deleteEnvironment(request) {
+				const result = environment(request.environmentId);
+				if (result.isProduction && request.confirmationName !== result.name)
+					throw new Error(
+						"confirmation name does not match the current resource name",
+					);
+				result.deletion = tombstone();
+				platform.services = platform.services.filter(
+					(entry) => entry.environmentId !== result.id,
+				);
+				return {};
+			},
+			restoreEnvironment(request) {
+				const result = environment(request.environmentId);
+				result.deletion = undefined;
+				return fromPlatformJson(P.EnvironmentSchema, result);
+			},
+			releaseEnvironment(request) {
+				const services = platform.services
+					.filter((entry) => entry.environmentId === request.environmentId)
+					.map((entry) => {
+						const next = {
+							...entry,
+							desiredReplicaCount:
+								entry.spec?.desiredReplicaCount ?? entry.desiredReplicaCount,
+							pendingChanges: false,
+							unappliedChangeCount: 0,
+							unappliedChanges: [],
+						};
+						replaceService(next);
+						return { service: nativeService(next) };
+					});
+				return { services };
+			},
+			listServices(request, ctx) {
+				fail("listServices");
+				platform.calls.listServices.push({
+					user: user(ctx),
+					...toPlatformJson(P.ListServicesRequestSchema, request),
+				});
+				return {
+					index:
+						BigInt(platform.servicesIndex) > request.waitIndex
+							? BigInt(platform.servicesIndex)
+							: request.waitIndex + 1n,
+					notModified: false,
+					services: platform.services
+						.filter(
+							(entry) =>
+								entry.environmentId === request.environmentId &&
+								(request.includeDeleted || !entry.deletion),
+						)
+						.map(nativeService),
+				};
+			},
+			inspectSource(request, ctx) {
+				fail("inspectSource");
+				platform.calls.inspectSource.push({
+					user: user(ctx),
+					...toPlatformJson(P.InspectSourceRequestSchema, request),
+				});
+				return inspection();
+			},
+			linkGitHubRepository(request, ctx) {
+				fail("inspectSource");
+				platform.calls.linkGitHubRepository.push({
+					user: user(ctx),
+					...toPlatformJson(P.LinkGitHubRepositoryRequestSchema, request),
+				});
+				return inspection();
+			},
+			createService(request, ctx) {
+				fail("createService");
+				platform.calls.createService.push({
+					user: user(ctx),
+					...toPlatformJson(P.CreateServiceRequestSchema, request),
+				});
+				if (!request.service?.spec) throw new Error("service spec missing");
+				const spec = toPlatformJson(P.ServiceSpecSchema, request.service.spec);
+				const next = serviceFixture({
+					id: `service-${platform.services.length + 1}`,
+					environmentId: request.environmentId,
+					name: request.service.name,
+					spec,
+					sourceSummary: {
+						sourceState: {
+							desiredSpec: spec.source?.sourceSpec,
+							resolvedBinding: {
+								...spec.source?.sourceSpec,
+								accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+							},
+						},
+					},
+					latestBuild: {
+						buildId: `build-${platform.calls.createService.length}`,
+						state: "BUILD_STATE_QUEUED",
+					},
+					pendingChanges: true,
+				});
+				platform.services.push(next);
+				platform.servicesIndex += 1;
+				platform.serviceStatuses.set(
+					next.id,
+					statusFixture({
+						service: next,
+						allocation: {
+							allocationId: `allocation-${platform.calls.createService.length}`,
+							serviceId: next.id,
+							agentId: "agent-1",
+							desiredSpecRevision: "1",
+							appliedSpecRevision: "1",
+							phase: "Pending",
+							desiredRolloutGeneration: "1",
+							appliedRolloutGeneration: "1",
+						},
+					}),
+				);
+				return nativeService(next);
+			},
+			updateService(request, ctx) {
+				fail("updateService");
+				platform.calls.updateService.push({
+					user: user(ctx),
+					...toPlatformJson(P.UpdateServiceRequestSchema, request),
+				});
+				if (!request.service?.spec) throw new Error("service spec missing");
+				const current = service(request.serviceId);
+				const spec = toPlatformJson(P.ServiceSpecSchema, request.service.spec);
+				const next = {
+					...current,
+					name: request.service.name?.trim() || current.name,
+					spec,
+					sourceSummary: jsonFixture(P.ServiceSourceSummarySchema, {
+						sourceState: {
+							desiredSpec: spec.source?.sourceSpec,
+							resolvedBinding: {
+								...spec.source?.sourceSpec,
+								accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+							},
+						},
+					}),
+				};
+				replaceService(next);
+				return nativeService(next);
+			},
+			scaleService(request, ctx) {
+				fail("scaleService");
+				platform.calls.scaleService.push({
+					user: user(ctx),
+					...toPlatformJson(P.ScaleServiceRequestSchema, request),
+				});
+				const current = service(request.serviceId);
+				const live = current.desiredReplicaCount || 1;
+				const changes = current.unappliedChanges.filter(
+					(entry) => entry.id !== "desiredReplicaCount",
+				);
+				if (request.desiredReplicaCount !== live)
+					changes.push(
+						jsonFixture(P.ServiceUnappliedChangeSchema, {
+							id: "desiredReplicaCount",
+							section: "Replicas",
+							field: "Desired count",
+							path: "desiredReplicaCount",
+							action:
+								request.desiredReplicaCount > live
+									? "SERVICE_UNAPPLIED_CHANGE_ACTION_ADD"
+									: "SERVICE_UNAPPLIED_CHANGE_ACTION_UPDATE",
+							currentValue: String(live),
+							newValue: String(request.desiredReplicaCount),
+						}),
+					);
+				const next = {
+					...current,
+					spec: current.spec
+						? {
+								...current.spec,
+								desiredReplicaCount: request.desiredReplicaCount,
+							}
+						: undefined,
+					pendingChanges: changes.length > 0,
+					unappliedChangeCount: changes.length,
+					unappliedChanges: changes,
+				};
+				replaceService(next);
+				const status = platform.serviceStatuses.get(next.id);
+				return status
+					? fromPlatformJson(P.ServiceStatusSchema, status)
+					: { service: nativeService(next) };
+			},
+			applyDeploymentAction(request, ctx) {
+				fail("applyDeploymentAction");
+				platform.calls.applyDeploymentAction.push({
+					user: user(ctx),
+					...toPlatformJson(P.ApplyDeploymentActionRequestSchema, request),
+				});
+				const status = platform.serviceStatuses.get(request.serviceId);
+				return status
+					? fromPlatformJson(P.ServiceStatusSchema, status)
+					: { service: nativeService(service(request.serviceId)) };
+			},
+			discardServiceChanges(request, ctx) {
+				fail("discardServiceChanges");
+				platform.calls.discardServiceChanges.push({
+					user: user(ctx),
+					...toPlatformJson(P.DiscardServiceChangesRequestSchema, request),
+				});
+				const current = service(request.serviceId);
+				const changes = request.discardAll
+					? []
+					: current.unappliedChanges.filter(
+							(entry) => !request.changeIds.includes(entry.id),
+						);
+				const next = {
+					...current,
+					pendingChanges: changes.length > 0,
+					unappliedChangeCount: changes.length,
+					unappliedChanges: changes,
+				};
+				replaceService(next);
+				return nativeService(next);
+			},
+			deleteService(request, ctx) {
+				fail("deleteService");
+				platform.calls.deleteService.push({
+					user: user(ctx),
+					...toPlatformJson(P.DeleteServiceRequestSchema, request),
+				});
+				platform.services = platform.services.filter(
+					(entry) => entry.id !== request.serviceId,
+				);
+				platform.servicesIndex += 1;
+				platform.serviceStatuses.delete(request.serviceId);
+				return {};
+			},
+			restoreService(request) {
+				const result = service(request.serviceId);
+				result.deletion = undefined;
+				return nativeService(result);
+			},
+			listServiceSecrets(request) {
+				return fromPlatformJson(P.ListServiceSecretsResponseSchema, {
+					secrets: platform.serviceSecrets.get(request.serviceId) ?? [],
+				});
+			},
+			sealServiceSecret(request) {
+				const entries = platform.serviceSecrets.get(request.serviceId) ?? [];
+				const previous = entries.find((entry) => entry.name === request.name);
+				const secret = jsonFixture(P.ServiceSecretMetadataSchema, {
+					name: request.name,
+					version: String(BigInt(previous?.version ?? "0") + 1n),
+					updatedAt: new Date().toISOString(),
+				});
+				platform.serviceSecrets.set(request.serviceId, [
+					...entries.filter((entry) => entry.name !== request.name),
+					secret,
+				]);
+				return fromPlatformJson(P.SealServiceSecretResponseSchema, {
+					serviceId: request.serviceId,
+					name: secret.name,
+					version: secret.version,
+				});
+			},
+			deleteServiceSecret(request) {
+				platform.serviceSecrets.set(
+					request.serviceId,
+					(platform.serviceSecrets.get(request.serviceId) ?? []).filter(
+						(entry) => entry.name !== request.name,
+					),
+				);
+				return {};
+			},
+			listVolumes(request) {
+				return fromPlatformJson(P.ListVolumesResponseSchema, {
+					volumes: platform.volumes.filter(
+						(entry) =>
+							entry.environmentId === request.environmentId &&
+							(request.includeDeleted || !entry.deletion),
+					),
+				});
+			},
+			previewVolumeDeletion() {
+				return fromPlatformJson(
+					P.DeletionPreviewSchema,
+					platform.deletionPreview,
+				);
+			},
+			deleteVolume(request) {
+				const result = platform.volumes.find(
+					(entry) => entry.id === request.volumeId,
+				);
+				if (!result) throw new Error("volume not found");
+				if (request.confirmationName !== result.name)
+					throw new Error(
+						"confirmation name does not match the current resource name",
+					);
+				result.deletion = tombstone();
+				return {};
+			},
+			listBuildAttempts() {
+				return fromPlatformJson(P.ListBuildAttemptsResponseSchema, {
+					attempts: platform.buildAttempts,
+				});
+			},
+			getService(request, ctx) {
+				fail("getService");
+				platform.calls.getService.push({
+					user: user(ctx),
+					...toPlatformJson(P.GetServiceRequestSchema, request),
+				});
+				return nativeService(service(request.serviceId));
+			},
+			getServiceStatus(request, ctx) {
+				fail("getServiceStatus");
+				platform.calls.getServiceStatus.push({
+					user: user(ctx),
+					...toPlatformJson(P.GetServiceStatusRequestSchema, request),
+				});
+				return {
+					...nativeStatus(request.serviceId),
+					index: request.waitIndex + 1n,
+					notModified: false,
+				};
+			},
+			listServiceLogs(request, ctx) {
+				fail("listServiceLogs");
+				platform.calls.listServiceLogs.push({
+					user: user(ctx),
+					...toPlatformJson(P.ListServiceLogsRequestSchema, request),
+				});
+				return fromPlatformJson(P.ListServiceLogsResponseSchema, {
+					lines: platform.serviceLogs.filter(
+						(entry) =>
+							(!request.allocationId ||
+								entry.allocationId === request.allocationId) &&
+							(!request.logType ||
+								entry.logType ===
+									toPlatformJson(P.ListServiceLogsRequestSchema, request)
+										.logType) &&
+							(!request.buildId || entry.buildId === request.buildId) &&
+							(!request.search || entry.line.includes(request.search)),
+					),
+					gaps: platform.serviceLogGaps,
+				});
+			},
+			listServiceDeployments(request, ctx) {
+				fail("listServiceDeployments");
+				platform.calls.listServiceDeployments.push({
+					user: user(ctx),
+					...toPlatformJson(P.ListServiceDeploymentsRequestSchema, request),
+				});
+				return fromPlatformJson(P.ListServiceDeploymentsResponseSchema, {
+					deployments: platform.serviceDeployments,
+				});
+			},
+			listDomainBindings(request, ctx) {
+				fail("listDomainBindings");
+				platform.calls.listDomainBindings.push({
+					user: user(ctx),
+					...toPlatformJson(P.ListDomainBindingsRequestSchema, request),
+				});
+				return fromPlatformJson(P.ListDomainBindingsResponseSchema, {
+					bindings: platform.domainBindings.filter(
+						(entry) =>
+							entry.serviceId === request.serviceId &&
+							(request.includeDeleted || !entry.deletion),
+					),
+				});
+			},
+			generateDomainBinding(request) {
+				const binding = jsonFixture(P.DomainBindingSchema, {
+					hostname: "violet-test.platform.example",
+					serviceId: request.serviceId,
+					targetPort: request.targetPort,
+					platformGenerated: true,
+					ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+				});
+				platform.domainBindings = [
+					...platform.domainBindings.filter(
+						(entry) =>
+							!entry.platformGenerated || entry.serviceId !== request.serviceId,
+					),
+					binding,
+				];
+				return fromPlatformJson(P.DomainBindingSchema, binding);
+			},
+			createDomainBinding(request, ctx) {
+				fail("createDomainBinding");
+				platform.calls.createDomainBinding.push({
+					user: user(ctx),
+					...toPlatformJson(P.CreateDomainBindingRequestSchema, request),
+				});
+				if (!request.binding) throw new Error("binding missing");
+				const binding = jsonFixture(P.DomainBindingSchema, {
+					...toPlatformJson(P.DomainBindingInputSchema, request.binding),
+					ownershipState: "DOMAIN_OWNERSHIP_STATE_UNVERIFIED",
+					ownershipMessage:
+						"domain CNAME does not point to the service platform hostname",
+				});
+				platform.domainBindings = [
+					...platform.domainBindings.filter(
+						(entry) => entry.hostname !== binding.hostname,
+					),
+					binding,
+				];
+				return fromPlatformJson(P.DomainBindingSchema, binding);
+			},
+			updateDomainBinding(request) {
+				const binding = platform.domainBindings.find(
+					(entry) => entry.hostname === request.hostname,
+				);
+				if (!binding || !request.binding)
+					throw new Error("domain binding not found");
+				Object.assign(binding, {
+					serviceId: request.binding.serviceId,
+					targetPort: request.binding.targetPort,
+				});
+				return fromPlatformJson(P.DomainBindingSchema, binding);
+			},
+			deleteDomainBinding(request) {
+				platform.domainBindings = platform.domainBindings.filter(
+					(entry) => entry.hostname !== request.hostname,
+				);
+				return {};
+			},
+			restoreDomainBinding(request) {
+				const binding = platform.domainBindings.find(
+					(entry) => entry.hostname === request.hostname,
+				);
+				if (!binding) throw new Error("domain binding not found");
+				binding.deletion = undefined;
+				return fromPlatformJson(P.DomainBindingSchema, binding);
+			},
+		});
+	});
+	gateway = createAuthenticatedPlatform(
+		transport,
+		"test-platform-assertion-secret-32-bytes-minimum",
+	);
 	return platform;
 }

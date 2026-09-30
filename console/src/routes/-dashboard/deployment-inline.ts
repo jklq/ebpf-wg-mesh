@@ -67,19 +67,22 @@ export function isErrorLogLine(line: string): boolean {
 export function selectInlineLogSnippet(
 	lines: string[],
 	options?: { max?: number },
-): { lines: string[]; highlightIndexes: number[] } {
+): { lines: string[]; startIndex: number; highlightIndexes: number[] } {
 	const max = options?.max ?? 5;
 	if (lines.length === 0) {
-		return { lines: [], highlightIndexes: [] };
+		return { lines: [], startIndex: 0, highlightIndexes: [] };
 	}
 
 	const errorIndex = findLastIndex(lines, isErrorLogLine);
-	const window =
-		errorIndex >= 0 ? sliceAround(lines, errorIndex, max) : lines.slice(-max);
+	const startIndex =
+		errorIndex >= 0
+			? snippetStart(lines.length, errorIndex, max)
+			: Math.max(0, lines.length - max);
+	const window = lines.slice(startIndex, startIndex + max);
 	const highlightIndexes = window.flatMap((line, index) =>
 		isErrorLogLine(line) ? [index] : [],
 	);
-	return { lines: window, highlightIndexes };
+	return { lines: window, startIndex, highlightIndexes };
 }
 
 export function buildStepHint(lines: string[]): string | undefined {
@@ -427,12 +430,11 @@ function isLikelyEnvKey(key: string): boolean {
 	return key.includes("_") || key.length >= 6;
 }
 
-function sliceAround(lines: string[], center: number, max: number): string[] {
+function snippetStart(length: number, center: number, max: number): number {
 	const before = Math.max(0, Math.ceil((max - 1) / 2) - 1);
 	const start = Math.max(0, center - before);
-	const end = Math.min(lines.length, start + max);
-	const adjustedStart = Math.max(0, end - max);
-	return lines.slice(adjustedStart, end);
+	const end = Math.min(length, start + max);
+	return Math.max(0, end - max);
 }
 
 function findLastIndex(

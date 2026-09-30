@@ -24,7 +24,7 @@ export function ServiceNode({
 	onSelect: () => void;
 }) {
 	const health = serviceHealth(service);
-	const source = service.spec?.source;
+	const source = service.spec?.source?.sourceSpec;
 	const repo = source?.repositorySelector ?? "";
 	const repoShort = repo.split("/").pop() ?? repo;
 	const unappliedCount =

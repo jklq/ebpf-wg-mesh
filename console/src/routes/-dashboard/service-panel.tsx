@@ -320,6 +320,8 @@ export function ServicePanel({
 										onTabChange("variables");
 									}}
 									onRedeployed={(next) => {
+										if (!next.service)
+											throw new Error("Service status is missing its service");
 										onServiceUpdated(next.service);
 										onRefresh();
 									}}
@@ -453,7 +455,7 @@ function EditableServiceHeaderName({
 		const optimisticService: DashboardServiceRecord = {
 			...service,
 			name: nextName,
-			updatedAt: new Date(),
+			updatedAt: new Date().toISOString(),
 		};
 		setSaving(true);
 		setError(undefined);

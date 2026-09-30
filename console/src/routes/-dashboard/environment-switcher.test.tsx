@@ -1,3 +1,8 @@
+import { jsonFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	EnvironmentSchema,
+	ProjectSchema,
+} from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
 import {
@@ -200,29 +205,29 @@ describe("EnvironmentSwitcher", () => {
 });
 
 function state(): DashboardHomeState {
-	const production = {
+	const production = jsonFixture(EnvironmentSchema, {
 		id: "environment-1",
 		projectId: "project-1",
 		name: "production",
-		kind: "persistent" as const,
+		kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 		isProduction: true,
 		autoDeploy: false,
-	};
-	const staging = {
+	});
+	const staging = jsonFixture(EnvironmentSchema, {
 		id: "environment-2",
 		projectId: "project-1",
 		name: "staging",
-		kind: "persistent" as const,
+		kind: "ENVIRONMENT_KIND_PERSISTENT" as const,
 		isProduction: false,
 		autoDeploy: true,
-	};
+	});
 	return {
 		user: { id: "user-1", email: "user@example.com" },
-		project: {
+		project: jsonFixture(ProjectSchema, {
 			id: "project-1",
 			name: "test-project",
 			kind: "PROJECT_KIND_USER",
-		},
+		}),
 		projects: [],
 
 		environments: [production, staging],
@@ -240,7 +245,7 @@ function state(): DashboardHomeState {
 		},
 		repositories: [],
 		services: [],
-		servicesRevision: 0,
+		servicesRevision: "0",
 		selectedServiceId: null,
 		publicBaseURL: "https://dashboard.example.test",
 		ingressTargetHost: "platform.example.test",

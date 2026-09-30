@@ -1,3 +1,4 @@
+import { serviceFixture } from "#/lib/dashboard/testkit/protocol";
 // @vitest-environment jsdom
 
 import {
@@ -174,13 +175,13 @@ function deferred<T>() {
 function variableService(
 	env: Record<string, string> = {},
 ): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "billing-worker",
 		spec: {
-			runtime: { env, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+			runtime: { env, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
 		},
-	};
+	});
 }

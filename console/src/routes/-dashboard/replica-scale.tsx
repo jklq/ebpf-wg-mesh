@@ -24,7 +24,7 @@ export function ReplicaScaleControls({
 	onQueued: (service: DashboardServiceRecord) => void;
 	onSavingChange?: (saving: boolean) => void;
 }) {
-	const volumeName = service.spec?.runtime.volumeName?.trim();
+	const volumeName = service.spec?.runtime?.volumeName?.trim();
 	const live = service.desiredReplicaCount ?? 1;
 	const queued = service.spec?.desiredReplicaCount ?? live;
 	const pending = queued !== live;
@@ -48,6 +48,8 @@ export function ReplicaScaleControls({
 			const updated = await doScaleService({
 				data: { serviceId: service.id, desiredReplicaCount: next },
 			});
+			if (!updated.service)
+				throw new Error("Service status is missing its service");
 			onQueued(updated.service);
 		},
 	});

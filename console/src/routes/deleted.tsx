@@ -19,7 +19,6 @@ import type {
 	DashboardDeletedResourceKind,
 } from "#/lib/dashboard/core/types.server";
 import {
-	cleanDate,
 	formatDateTime,
 	formatRelativeTime,
 	formatTimeUntil,
@@ -335,14 +334,7 @@ function groupResources(resources: Array<DashboardDeletedResource>) {
 		roots: Array<DashboardDeletedResource>;
 	}> = [];
 	for (const raw of resources) {
-		const entry = {
-			...raw,
-			deletion: {
-				...raw.deletion,
-				deletedAt: cleanDate(raw.deletion.deletedAt),
-				deleteExpiresAt: cleanDate(raw.deletion.deleteExpiresAt),
-			},
-		};
+		const entry = raw;
 		const parentKey = entry.deletedWith
 			? resourceKey(entry.deletedWith)
 			: undefined;

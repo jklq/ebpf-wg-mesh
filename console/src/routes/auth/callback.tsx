@@ -37,9 +37,18 @@ const completeLogin = createServerFn({ method: "GET" })
 		};
 	})
 	.handler(async ({ data }) => {
-		const service = await import("#/lib/dashboard/server");
 		try {
-			return await completeLoginRoute(service, data);
+			const auth = await import("#/lib/dashboard/core/auth.server");
+			const runtime = (
+				await import("#/lib/dashboard/server")
+			).getDashboardRuntime();
+			return await completeLoginRoute(
+				{
+					completeAuthCallback: (input) =>
+						auth.completeAuthCallback(runtime, input),
+				},
+				data,
+			);
 		} catch (error) {
 			if (
 				error &&

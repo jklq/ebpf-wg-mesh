@@ -14,16 +14,20 @@ export const Route = createFileRoute("/events/service-status")({
 					return new Response("missing serviceId", { status: 400 });
 				}
 				try {
-					const dashboard = await import("#/lib/dashboard/server");
 					return indexedEventResponse({
 						event: "status",
 						signal: request.signal,
 						load: async (waitIndex) => {
-							const snapshot = await dashboard.waitForServiceStatusFromSession({
-								serviceId,
-								waitIndex,
-								waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
-							});
+							const snapshot = await (
+								await import("#/lib/dashboard/core/operations-services.server")
+							).waitForServiceStatusFromSession(
+								(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+								{
+									serviceId,
+									waitIndex,
+									waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
+								},
+							);
 							return {
 								...snapshot,
 								value: {

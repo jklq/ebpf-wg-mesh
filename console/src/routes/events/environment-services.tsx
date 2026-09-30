@@ -14,17 +14,20 @@ export const Route = createFileRoute("/events/environment-services")({
 					return new Response("missing environmentId", { status: 400 });
 				}
 				try {
-					const dashboard = await import("#/lib/dashboard/server");
 					return indexedEventResponse({
 						event: "services",
 						signal: request.signal,
 						load: async (waitIndex) => {
-							const snapshot =
-								await dashboard.waitForEnvironmentServicesFromSession({
+							const snapshot = await (
+								await import("#/lib/dashboard/core/operations-services.server")
+							).waitForEnvironmentServicesFromSession(
+								(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+								{
 									environmentId,
 									waitIndex,
 									waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
-								});
+								},
+							);
 							return {
 								...snapshot,
 								value: {

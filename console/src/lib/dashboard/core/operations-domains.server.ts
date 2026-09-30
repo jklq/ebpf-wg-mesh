@@ -1,12 +1,12 @@
 import { requireSession } from "#/lib/dashboard/core/auth.server";
 import {
 	type DashboardRuntime,
+	optionalPlatformResult,
 	parseTargetPort,
-	platformCall,
-	safePlatformCall,
 } from "#/lib/dashboard/core/runtime.server";
 import type { DashboardDomainBinding } from "#/lib/dashboard/core/types.server";
 import { normalizeHostname } from "#/lib/dashboard/domain/dns.server";
+import { PlatformService } from "#/lib/platform-gen/platform_pb";
 
 export async function listDomainBindingsFromSession(
 	runtime: DashboardRuntime,
@@ -14,8 +14,10 @@ export async function listDomainBindingsFromSession(
 ): Promise<Array<DashboardDomainBinding>> {
 	const session = await requireSession(runtime);
 	return (
-		(await safePlatformCall(runtime, "listDomainBindings", (platform) =>
-			platform.listDomainBindings(session.user, input),
+		(await optionalPlatformResult(
+			runtime.platform
+				.call(PlatformService.method.listDomainBindings, session.user, input)
+				.then((response) => response.bindings ?? []),
 		)) ?? []
 	);
 }
@@ -29,11 +31,13 @@ export async function generateDomainBindingFromSession(
 ): Promise<DashboardDomainBinding> {
 	const session = await requireSession(runtime);
 	const targetPort = parseTargetPort(input.targetPort);
-	return platformCall(runtime, "generateDomainBinding", (platform) =>
-		platform.generateDomainBinding(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.generateDomainBinding,
+		session.user,
+		{
 			serviceId: input.serviceId,
 			targetPort,
-		}),
+		},
 	);
 }
 
@@ -48,12 +52,16 @@ export async function createDomainBindingFromSession(
 	const session = await requireSession(runtime);
 	const normalizedHostname = normalizeHostname(input.hostname);
 	const targetPort = parseTargetPort(input.targetPort);
-	return platformCall(runtime, "createDomainBinding", (platform) =>
-		platform.createDomainBinding(session.user, {
-			serviceId: input.serviceId,
-			hostname: normalizedHostname,
-			targetPort,
-		}),
+	return runtime.platform.call(
+		PlatformService.method.createDomainBinding,
+		session.user,
+		{
+			binding: {
+				serviceId: input.serviceId,
+				hostname: normalizedHostname,
+				targetPort,
+			},
+		},
 	);
 }
 
@@ -68,12 +76,13 @@ export async function updateDomainBindingFromSession(
 	const session = await requireSession(runtime);
 	const normalizedHostname = normalizeHostname(input.hostname);
 	const targetPort = parseTargetPort(input.targetPort);
-	return platformCall(runtime, "updateDomainBinding", (platform) =>
-		platform.updateDomainBinding(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.updateDomainBinding,
+		session.user,
+		{
 			hostname: normalizedHostname,
-			serviceId: input.serviceId,
-			targetPort,
-		}),
+			binding: { serviceId: input.serviceId, targetPort },
+		},
 	);
 }
 
@@ -82,7 +91,9 @@ export async function deleteDomainBindingFromSession(
 	input: { hostname: string },
 ): Promise<void> {
 	const session = await requireSession(runtime);
-	await platformCall(runtime, "deleteDomainBinding", (platform) =>
-		platform.deleteDomainBinding(session.user, { hostname: input.hostname }),
+	await runtime.platform.call(
+		PlatformService.method.deleteDomainBinding,
+		session.user,
+		{ hostname: input.hostname },
 	);
 }

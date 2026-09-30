@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-
 import type {
 	DashboardBuildState,
 	DashboardBuildStatus,
 	DashboardDeploymentStatus,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	BuildStatusSchema,
+	DeploymentStatusSchema,
+} from "#/lib/platform-gen/platform_pb";
 
 import {
 	deploymentMeta,
@@ -77,13 +81,17 @@ function serviceRecord(input: {
 	buildSha?: string;
 	buildState?: DashboardBuildState;
 }): DashboardServiceRecord {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		name: "web",
 		lastSuccessfulCommitSha: input.lastSuccessfulCommitSha,
 		sourceSummary: input.latestRevisionSha
-			? { latestRevision: { commitSha: input.latestRevisionSha } }
+			? {
+					sourceState: {
+						latestRevision: { commitSha: input.latestRevisionSha },
+					},
+				}
 			: undefined,
 		latestBuild: input.buildSha
 			? {
@@ -94,7 +102,7 @@ function serviceRecord(input: {
 					failureReason: "",
 				}
 			: undefined,
-	};
+	});
 }
 
 const NOW_MS = new Date("2026-08-13T10:05:00.000Z").getTime();
@@ -104,33 +112,33 @@ function buildWith(
 		Pick<DashboardBuildStatus, "queuedAt" | "startedAt" | "finishedAt">
 	>,
 ): DashboardBuildStatus {
-	return {
+	return jsonFixture(BuildStatusSchema, {
 		buildId: "build-1",
 		state: "BUILD_STATE_RUNNING",
 		commitSha: "abc1234def",
 		imageDigest: "",
 		failureReason: "",
 		...timestamps,
-	};
+	});
 }
 
 describe("deploymentSubtitle", () => {
 	it("labels a staged service without times as not deployed", () => {
-		expect(deploymentSubtitle(undefined, 0, NOW_MS)).toBe("Not deployed");
+		expect(deploymentSubtitle(undefined, "0", NOW_MS)).toBe("Not deployed");
 		expect(deploymentSubtitle(undefined, undefined, NOW_MS)).toBe(
 			"Not deployed",
 		);
 	});
 
 	it("keeps the rollout fallback for deployed generations without times", () => {
-		expect(deploymentSubtitle(undefined, 3, NOW_MS)).toBe("Rollout 3");
+		expect(deploymentSubtitle(undefined, "3", NOW_MS)).toBe("Rollout 3");
 	});
 
 	it("defends against future clock skew", () => {
 		expect(
 			deploymentSubtitle(
-				buildWith({ startedAt: new Date(NOW_MS + 60_000) }),
-				3,
+				buildWith({ startedAt: new Date(NOW_MS + 60_000).toISOString() }),
+				"3",
 				NOW_MS,
 			),
 		).toBe("just now");
@@ -139,8 +147,8 @@ describe("deploymentSubtitle", () => {
 	it("formats valid build times relatively", () => {
 		expect(
 			deploymentSubtitle(
-				buildWith({ startedAt: new Date(NOW_MS - 5 * 60_000) }),
-				3,
+				buildWith({ startedAt: new Date(NOW_MS - 5 * 60_000).toISOString() }),
+				"3",
 				NOW_MS,
 			),
 		).toBe("5 minutes ago");
@@ -156,7 +164,11 @@ describe("deploymentMeta", () => {
 
 	it("formats valid timestamps relatively", () => {
 		expect(
-			deploymentMeta(buildWith({}), new Date(NOW_MS - 5_000), NOW_MS),
+			deploymentMeta(
+				buildWith({}),
+				new Date(NOW_MS - 5_000).toISOString(),
+				NOW_MS,
+			),
 		).toEqual(["abc1234", "5 seconds ago"]);
 	});
 });
@@ -164,7 +176,7 @@ describe("deploymentMeta", () => {
 function statusWith(
 	state: DashboardDeploymentStatus["state"],
 ): DashboardDeploymentStatus {
-	return { state } as DashboardDeploymentStatus;
+	return jsonFixture(DeploymentStatusSchema, { state });
 }
 
 describe("hasActiveDeployment", () => {

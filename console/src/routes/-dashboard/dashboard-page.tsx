@@ -21,6 +21,12 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { ServiceSchema } from "#/lib/platform-gen/platform_pb";
+import {
+	fromPlatformJson,
+	integerString,
+	toPlatformJson,
+} from "#/lib/platform-json";
 import { panelIconBtn } from "#/lib/ui-classes";
 
 import { useCreatedServiceCache } from "./created-service-cache";
@@ -29,10 +35,6 @@ import {
 	ServicePanelFallback,
 	serviceLayoutPositions,
 } from "./dashboard-canvas";
-import {
-	hydrateServicesSnapshot,
-	hydrateStatusSnapshot,
-} from "./dashboard-hydrate";
 import {
 	applyLoaderState,
 	applyMutationRecord,
@@ -45,6 +47,10 @@ import {
 	selectServicesArray,
 	upsertServiceRecord,
 } from "./dashboard-services";
+import {
+	parseServicesSnapshot,
+	parseStatusSnapshot,
+} from "./dashboard-snapshots";
 import {
 	type ApplyingServiceChanges,
 	applyingChangeKey,
@@ -84,32 +90,37 @@ function pendingServiceRecord(
 	environmentId: string | null,
 ): DashboardServiceRecord {
 	const id = `pending-${entry.clientId}`;
-	const now = new Date();
-	return {
-		id,
-		environmentId: environmentId ?? "",
-		name: entry.name,
-		spec: {
-			source: {
-				provider: "github",
-				repositorySelector: entry.selector,
-				trackedRef: "main",
-				buildRecipe: {
-					builder: "BUILDER_KIND_RAILPACK",
-					dockerfilePath: "",
-					contextDir: ".",
+	const now = new Date().toISOString();
+	return toPlatformJson(
+		ServiceSchema,
+		fromPlatformJson(ServiceSchema, {
+			id,
+			environmentId: environmentId ?? "",
+			name: entry.name,
+			spec: {
+				source: {
+					sourceSpec: {
+						provider: "github",
+						repositorySelector: entry.selector,
+						trackedRef: "main",
+						buildRecipe: {
+							builder: "BUILDER_KIND_RAILPACK",
+							dockerfilePath: "",
+							contextDir: ".",
+						},
+					},
+				},
+				runtime: {
+					env: {},
+					cpuMillis: integerString(DEFAULT_SERVICE_CPU_MILLIS),
+					memoryMebibytes: integerString(DEFAULT_SERVICE_MEMORY_MEBIBYTES),
+					ports: [],
 				},
 			},
-			runtime: {
-				env: {},
-				cpuMillis: DEFAULT_SERVICE_CPU_MILLIS,
-				memoryMebibytes: DEFAULT_SERVICE_MEMORY_MEBIBYTES,
-				ports: [],
-			},
-		},
-		createdAt: now,
-		updatedAt: now,
-	};
+			createdAt: now,
+			updatedAt: now,
+		}),
+	);
 }
 
 const ServicePanel = lazy(() =>
@@ -148,7 +159,7 @@ function PendingServicePanel({
 						Creating service
 					</div>
 					<div className="mt-1 font-mono text-xs text-muted">
-						{service.spec?.source?.repositorySelector}
+						{service.spec?.source?.sourceSpec?.repositorySelector}
 					</div>
 					<div className="mt-3 text-xs leading-relaxed text-dim">
 						Preparing the service and its first undeployed configuration.
@@ -435,14 +446,14 @@ export function DashboardPage({
 	}, [clearSelection, selectedId, showChangeDetails, showNewService]);
 
 	const mergeStatusService = useCallback(
-		(status: DashboardServiceStatus, basisRevision: number) => {
+		(status: DashboardServiceStatus, basisRevision: string) => {
 			setView((current) => applyMutationStatus(current, status, basisRevision));
 		},
 		[],
 	);
 
 	const mergeServiceRecord = useCallback(
-		(service: DashboardServiceRecord, basisRevision: number) => {
+		(service: DashboardServiceRecord, basisRevision: string) => {
 			setView((current) =>
 				applyMutationRecord(current, service, basisRevision),
 			);
@@ -453,7 +464,7 @@ export function DashboardPage({
 	const mergeEnvironmentServices = useCallback(
 		(snapshot: {
 			services: Array<DashboardServiceRecord>;
-			revision: number;
+			revision: string;
 		}) => {
 			setView((current) => applyServicesSnapshot(current, snapshot));
 		},
@@ -495,9 +506,7 @@ export function DashboardPage({
 		source.addEventListener("services", (event) => {
 			if (!active) return;
 			mergeEnvironmentServices(
-				hydrateServicesSnapshot(
-					JSON.parse((event as MessageEvent<string>).data),
-				),
+				parseServicesSnapshot(JSON.parse((event as MessageEvent<string>).data)),
 			);
 		});
 		return () => {
@@ -516,7 +525,7 @@ export function DashboardPage({
 		);
 		source.addEventListener("status", (event) => {
 			if (!active) return;
-			const snapshot = hydrateStatusSnapshot(
+			const snapshot = parseStatusSnapshot(
 				JSON.parse((event as MessageEvent<string>).data),
 			);
 			setView((current) => applyServiceStatusSnapshot(current, snapshot));
@@ -630,9 +639,10 @@ export function DashboardPage({
 	};
 
 	const handleCreated = (result: CreateServiceFastResult) => {
-		const createdSelector = result.service.spec?.source?.repositorySelector
-			?.trim()
-			.toLowerCase();
+		const createdSelector =
+			result.service.spec?.source?.sourceSpec?.repositorySelector
+				?.trim()
+				.toLowerCase();
 		const matchingPending = createdSelector
 			? pendingCreationsRef.current.find(
 					(entry) => entry.selector.trim().toLowerCase() === createdSelector,
@@ -806,8 +816,8 @@ export function DashboardPage({
 			const rolloutGeneration =
 				currentService?.rolloutGeneration ??
 				currentService?.latestDeployment?.rolloutGeneration ??
-				0;
-			if (currentService && rolloutGeneration === 0) {
+				"0";
+			if (currentService && rolloutGeneration === "0") {
 				await doDeleteService({ data: { serviceId } });
 				handleServiceDeleted(serviceId);
 				if (!hasOtherUndeployedServices) setShowChangeDetails(false);

@@ -4,8 +4,7 @@ import {
 	loadOnboardingDraft,
 	nextGeneratedProjectName,
 	nextGeneratedServiceName,
-	platformCall,
-	safePlatformCall,
+	optionalPlatformResult,
 	saveOnboardingDraft,
 	storeCall,
 } from "#/lib/dashboard/core/runtime.server";
@@ -17,12 +16,12 @@ import {
 	type DashboardGitHubAccount,
 	type DashboardProject,
 	type DashboardRepositoryInspection,
-	type DashboardServiceSpec,
 	type DashboardServiceStatus,
 	DashboardValidationError,
 	type GitHubUserRepository,
 } from "#/lib/dashboard/core/types.server";
 import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
+import { PlatformService } from "#/lib/platform-gen/platform_pb";
 import {
 	buildServiceSpec,
 	loadGitHubCatalog,
@@ -62,8 +61,10 @@ export async function createProjectFromSession(
 			message: "project name is required",
 		});
 	}
-	return platformCall(runtime, "createProject", (platform) =>
-		platform.createProject(session.user, projectName),
+	return runtime.platform.call(
+		PlatformService.method.createProject,
+		session.user,
+		{ name: projectName },
 	);
 }
 
@@ -72,11 +73,13 @@ export async function createEnvironmentFromSession(
 	input: { projectId: string; name: string },
 ): Promise<DashboardEnvironment> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "createEnvironment", (platform) =>
-		platform.createEnvironment(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.createEnvironment,
+		session.user,
+		{
 			...input,
 			name: input.name.trim(),
-		}),
+		},
 	);
 }
 
@@ -85,22 +88,21 @@ export async function duplicateEnvironmentFromSession(
 	input: { sourceEnvironmentId: string; name: string; copyVariables: boolean },
 ): Promise<DashboardEnvironment> {
 	const session = await requireSession(runtime);
-	const duplicate = await platformCall(
-		runtime,
-		"duplicateEnvironment",
-		(platform) =>
-			platform.duplicateEnvironment(session.user, {
-				...input,
-				name: input.name.trim(),
-			}),
+	const duplicate = await runtime.platform.call(
+		PlatformService.method.duplicateEnvironment,
+		session.user,
+		{
+			...input,
+			name: input.name.trim(),
+		},
 	);
 	const [sourceSnapshot, copiedSnapshot, sourcePositions] = await Promise.all([
-		platformCall(runtime, "listServices", (platform) =>
-			platform.listServices(session.user, input.sourceEnvironmentId),
-		),
-		platformCall(runtime, "listServices", (platform) =>
-			platform.listServices(session.user, duplicate.id),
-		),
+		runtime.platform.call(PlatformService.method.listServices, session.user, {
+			environmentId: input.sourceEnvironmentId,
+		}),
+		runtime.platform.call(PlatformService.method.listServices, session.user, {
+			environmentId: duplicate.id,
+		}),
 		storeCall(runtime, "listServicePositions", (store) =>
 			store.listServicePositions(session.user.id, input.sourceEnvironmentId),
 		),
@@ -130,11 +132,13 @@ export async function renameEnvironmentFromSession(
 	input: { environmentId: string; name: string },
 ): Promise<DashboardEnvironment> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "renameEnvironment", (platform) =>
-		platform.renameEnvironment(session.user, {
+	return runtime.platform.call(
+		PlatformService.method.renameEnvironment,
+		session.user,
+		{
 			...input,
 			name: input.name.trim(),
-		}),
+		},
 	);
 }
 
@@ -143,8 +147,10 @@ export async function updateEnvironmentAutoDeployFromSession(
 	input: { environmentId: string; autoDeploy: boolean },
 ): Promise<DashboardEnvironment> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "updateEnvironmentAutoDeploy", (platform) =>
-		platform.updateEnvironmentAutoDeploy(session.user, input),
+	return runtime.platform.call(
+		PlatformService.method.updateEnvironmentAutoDeploy,
+		session.user,
+		input,
 	);
 }
 
@@ -153,9 +159,11 @@ export async function releaseEnvironmentFromSession(
 	environmentId: string,
 ): Promise<Array<DashboardServiceStatus>> {
 	const session = await requireSession(runtime);
-	return platformCall(runtime, "releaseEnvironment", (platform) =>
-		platform.releaseEnvironment(session.user, environmentId),
-	);
+	return runtime.platform
+		.call(PlatformService.method.releaseEnvironment, session.user, {
+			environmentId: environmentId,
+		})
+		.then((response) => response.services ?? []);
 }
 
 export async function createServiceFastFromSession(
@@ -179,24 +187,23 @@ export async function createServiceFastFromSession(
 		selector,
 	);
 	const currentDraft = await loadOnboardingDraft(runtime, session.user.id);
-	const projects = await platformCall(runtime, "listProjects", (platform) =>
-		platform.listProjects(session.user),
-	);
+	const projects = await runtime.platform
+		.call(PlatformService.method.listProjects, session.user, {})
+		.then((response) => response.projects ?? []);
 	const project =
 		(currentDraft.projectId
 			? projects.find((entry) => entry.id === currentDraft.projectId)
 			: undefined) ??
-		(await platformCall(runtime, "createProject", (platform) =>
-			platform.createProject(
-				session.user,
-				nextGeneratedProjectName(projects, runtime.randomUUID()),
-			),
+		(await runtime.platform.call(
+			PlatformService.method.createProject,
+			session.user,
+			{ name: nextGeneratedProjectName(projects, runtime.randomUUID()) },
 		));
-	const environments = await platformCall(
-		runtime,
-		"listEnvironments",
-		(platform) => platform.listEnvironments(session.user, project.id),
-	);
+	const environments = await runtime.platform
+		.call(PlatformService.method.listEnvironments, session.user, {
+			projectId: project.id,
+		})
+		.then((response) => response.environments ?? []);
 	const environment =
 		environments.find((entry) => entry.id === currentDraft.environmentId) ??
 		environments.find((entry) => entry.isProduction) ??
@@ -206,15 +213,14 @@ export async function createServiceFastFromSession(
 			message: "Project has no production environment.",
 		});
 	}
-	const inspection = await platformCall(
-		runtime,
-		"linkGitHubRepository",
-		(platform) =>
-			platform.linkGitHubRepository(session.user, {
-				projectId: project.id,
-				repositorySelector: selector,
-				githubUserAccessToken,
-			}),
+	const inspection = await runtime.platform.call(
+		PlatformService.method.linkGitHubRepository,
+		session.user,
+		{
+			projectId: project.id,
+			repositorySelector: selector,
+			githubUserAccessToken,
+		},
 	);
 	if (inspection.accessState !== "SOURCE_ACCESS_STATE_AVAILABLE") {
 		throw new DashboardValidationError({
@@ -229,13 +235,13 @@ export async function createServiceFastFromSession(
 	const contextDir = buildRecipe.contextDir;
 	const trackedRef =
 		input.trackedRef?.trim() || inspection.defaultBranch || "main";
-	const servicesSnapshot = await platformCall(
-		runtime,
-		"listServices",
-		(platform) => platform.listServices(session.user, environment.id),
+	const servicesSnapshot = await runtime.platform.call(
+		PlatformService.method.listServices,
+		session.user,
+		{ environmentId: environment.id },
 	);
 	const services = servicesSnapshot.services ?? [];
-	const desiredSpec: DashboardServiceSpec = buildServiceSpec(
+	const desiredSpec = buildServiceSpec(
 		{
 			provider: "github",
 			repositorySelector: selector,
@@ -246,16 +252,20 @@ export async function createServiceFastFromSession(
 		input.cpuMillis,
 		input.memoryMebibytes,
 	);
-	const service = await platformCall(runtime, "createService", (platform) =>
-		platform.createService(session.user, {
+	const service = await runtime.platform.call(
+		PlatformService.method.createService,
+		session.user,
+		{
 			environmentId: environment.id,
-			name: nextGeneratedServiceName(
-				services,
-				input.serviceName,
-				runtime.randomUUID(),
-			),
-			spec: desiredSpec,
-		}),
+			service: {
+				name: nextGeneratedServiceName(
+					services,
+					input.serviceName,
+					runtime.randomUUID(),
+				),
+				spec: desiredSpec,
+			},
+		},
 	);
 	const onboarding = await saveOnboardingDraft(runtime, session.user.id, {
 		projectId: project.id,
@@ -269,10 +279,14 @@ export async function createServiceFastFromSession(
 		hostname: "",
 	});
 	const serviceStatus =
-		(await safePlatformCall(runtime, "getServiceStatus", (platform) =>
-			platform.getServiceStatus(session.user, {
-				serviceId: service.id,
-			}),
+		(await optionalPlatformResult(
+			runtime.platform.call(
+				PlatformService.method.getServiceStatus,
+				session.user,
+				{
+					serviceId: service.id,
+				},
+			),
 		)) ?? null;
 	return {
 		project,

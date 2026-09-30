@@ -4,21 +4,22 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { compareIntegers } from "#/lib/platform-json";
 
 export interface ServicesSnapshot {
 	services: Array<DashboardServiceRecord>;
-	revision: number;
+	revision: string;
 }
 
 export interface ServiceStatusSnapshot {
 	status: DashboardServiceStatus;
-	revision: number;
+	revision: string;
 }
 
 export interface ServiceAllocations {
 	allocation?: DashboardAllocationStatus;
 	allocations?: Array<DashboardAllocationStatus>;
-	revision: number;
+	revision: string;
 }
 
 export interface NormalizedDashboardState {
@@ -28,10 +29,10 @@ export interface NormalizedDashboardState {
 	>;
 	servicesById: Record<string, DashboardServiceRecord>;
 	serviceOrder: Array<string>;
-	servicesRevision: number;
+	servicesRevision: string;
 	selectedServiceId: string | null;
 	allocationsByServiceId: Record<string, ServiceAllocations>;
-	statusRevisionByServiceId: Record<string, number>;
+	statusRevisionByServiceId: Record<string, string>;
 }
 
 export function createNormalizedState(
@@ -90,7 +91,9 @@ export function selectSelectedStatus(
 	return {
 		service,
 		allocation: details.allocation,
-		allocations: details.allocations,
+		allocations: details.allocations ?? [],
+		index: details.revision,
+		notModified: false,
 	};
 }
 
@@ -100,7 +103,8 @@ export function applyServicesSnapshot(
 	retained?: Array<DashboardServiceRecord>,
 	force?: boolean,
 ): NormalizedDashboardState {
-	if (!force && snapshot.revision <= state.servicesRevision) return state;
+	if (!force && compareIntegers(snapshot.revision, state.servicesRevision) <= 0)
+		return state;
 	const merged = mergeRetainingCreated(snapshot.services, retained);
 	const byId: Record<string, DashboardServiceRecord> = {};
 	const order: Array<string> = [];
@@ -144,7 +148,7 @@ export function applyLoaderState(
 			true,
 		);
 	}
-	if (loader.servicesRevision <= state.servicesRevision) {
+	if (compareIntegers(loader.servicesRevision, state.servicesRevision) <= 0) {
 		if (!retained || retained.length === 0) return next;
 		const byId = { ...next.servicesById };
 		const order = [...next.serviceOrder];
@@ -189,15 +193,19 @@ export function applyServiceStatusSnapshot(
 	state: NormalizedDashboardState,
 	snapshot: ServiceStatusSnapshot,
 ): NormalizedDashboardState {
-	const serviceId = snapshot.status.service.id;
+	const service = snapshot.status.service;
+	if (!service) throw new Error("Service status is missing its service");
+	const serviceId = service.id;
 	if (
-		(snapshot.revision ?? 0) <=
-		(state.statusRevisionByServiceId[serviceId] ?? -1)
+		compareIntegers(
+			snapshot.revision,
+			state.statusRevisionByServiceId[serviceId] ?? "-1",
+		) <= 0
 	) {
 		return state;
 	}
 	return {
-		...upsertServiceRecord(state, snapshot.status.service),
+		...upsertServiceRecord(state, service),
 		allocationsByServiceId: {
 			...state.allocationsByServiceId,
 			[serviceId]: {
@@ -216,29 +224,31 @@ export function applyServiceStatusSnapshot(
 export function applyMutationRecord(
 	state: NormalizedDashboardState,
 	service: DashboardServiceRecord,
-	basisRevision: number,
+	basisRevision: string,
 ): NormalizedDashboardState {
-	if (basisRevision < state.servicesRevision) return state;
+	if (compareIntegers(basisRevision, state.servicesRevision) < 0) return state;
 	return upsertServiceRecord(state, service);
 }
 
 export function applyMutationStatus(
 	state: NormalizedDashboardState,
 	status: DashboardServiceStatus,
-	basisRevision: number,
+	basisRevision: string,
 ): NormalizedDashboardState {
-	if (basisRevision < state.servicesRevision) return state;
+	if (compareIntegers(basisRevision, state.servicesRevision) < 0) return state;
+	const service = status.service;
+	if (!service) throw new Error("Service status is missing its service");
 	return {
-		...upsertServiceRecord(state, status.service),
+		...upsertServiceRecord(state, service),
 		allocationsByServiceId: {
 			...state.allocationsByServiceId,
-			[status.service.id]: {
+			[service.id]: {
 				allocation: status.allocation,
 				allocations: status.allocations,
 				revision:
-					state.statusRevisionByServiceId[status.service.id] !== undefined
-						? state.statusRevisionByServiceId[status.service.id]
-						: 0,
+					state.statusRevisionByServiceId[service.id] !== undefined
+						? state.statusRevisionByServiceId[service.id]
+						: "0",
 			},
 		},
 	};

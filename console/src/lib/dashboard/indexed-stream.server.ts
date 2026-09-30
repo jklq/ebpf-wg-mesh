@@ -2,7 +2,7 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const RETRY_DELAY_MS = 1_000;
 
 export interface IndexedSnapshot<T> {
-	index: number;
+	index: string;
 	notModified: boolean;
 	value?: T;
 }
@@ -13,7 +13,7 @@ export function indexedEventResponse<T>({
 	signal,
 }: {
 	event: string;
-	load: (after: number) => Promise<IndexedSnapshot<T>>;
+	load: (after: string) => Promise<IndexedSnapshot<T>>;
 	signal: AbortSignal;
 }): Response {
 	return new Response(indexedEventStream({ event, load, signal }), {
@@ -32,12 +32,12 @@ function indexedEventStream<T>({
 	signal,
 }: {
 	event: string;
-	load: (after: number) => Promise<IndexedSnapshot<T>>;
+	load: (after: string) => Promise<IndexedSnapshot<T>>;
 	signal: AbortSignal;
 }): ReadableStream<Uint8Array> {
 	const encoder = new TextEncoder();
 	let closed = false;
-	let lastIndex = 0;
+	let lastIndex = "0";
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
 	let heartbeat: ReturnType<typeof setInterval> | undefined;
 	let closeStream: (() => void) | undefined;

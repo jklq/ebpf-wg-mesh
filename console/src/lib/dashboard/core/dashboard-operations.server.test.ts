@@ -5,6 +5,16 @@ import * as homeOperations from "#/lib/dashboard/core/operations-home.server";
 import * as onboarding from "#/lib/dashboard/core/operations-onboarding.server";
 import * as services from "#/lib/dashboard/core/operations-services.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
+import { jsonFixture, serviceFixture } from "#/lib/dashboard/testkit/protocol";
+import {
+	EnvironmentSchema,
+	InspectSourceResponseSchema,
+	ProjectSchema,
+	ServiceLogLineSchema,
+	ServiceRestartSchema,
+	ServiceRuntimeSchema,
+	ServiceSpecSchema,
+} from "#/lib/platform-gen/platform_pb";
 
 describe("dashboard operations", () => {
 	it("returns degraded home state when the control plane is unavailable", async () => {
@@ -30,9 +40,7 @@ describe("dashboard operations", () => {
 			email: "user@example.com",
 			redirectTo: "/",
 		});
-		harness.platform.listFleet = async () => {
-			throw new Error("operator access required");
-		};
+		harness.platform.errors.listFleet = new Error("operator access required");
 
 		const state = await homeOperations.loadDashboardHome(harness.runtime);
 
@@ -61,17 +69,26 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{ id: "project-1", name: "project", kind: "PROJECT_KIND_USER" },
+			jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "project",
+				kind: "PROJECT_KIND_USER",
+			}),
 		];
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-project-1",
 				name: "hello",
 				spec: {
-					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+					runtime: {
+						env: {},
+						cpuMillis: "250",
+						memoryMebibytes: "256",
+						ports: [],
+					},
 				},
-			},
+			}),
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
 			projectId: "project-1",
@@ -104,44 +121,62 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{ id: "project-1", name: "one", kind: "PROJECT_KIND_USER" },
-			{ id: "project-2", name: "two", kind: "PROJECT_KIND_USER" },
+			jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "one",
+				kind: "PROJECT_KIND_USER",
+			}),
+			jsonFixture(ProjectSchema, {
+				id: "project-2",
+				name: "two",
+				kind: "PROJECT_KIND_USER",
+			}),
 		];
 		harness.platform.environments = [
-			{
+			jsonFixture(EnvironmentSchema, {
 				id: "environment-1",
 				projectId: "project-1",
 				name: "Production",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: true,
 				autoDeploy: false,
-			},
-			{
+			}),
+			jsonFixture(EnvironmentSchema, {
 				id: "environment-2",
 				projectId: "project-2",
 				name: "Staging",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: false,
 				autoDeploy: true,
-			},
+			}),
 		];
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-1",
 				name: "one-service",
 				spec: {
-					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+					runtime: {
+						env: {},
+						cpuMillis: "250",
+						memoryMebibytes: "256",
+						ports: [],
+					},
 				},
-			},
-			{
+			}),
+			serviceFixture({
 				id: "service-2",
 				environmentId: "environment-2",
 				name: "two-service",
 				spec: {
-					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+					runtime: {
+						env: {},
+						cpuMillis: "250",
+						memoryMebibytes: "256",
+						ports: [],
+					},
 				},
-			},
+			}),
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
 			projectId: "project-1",
@@ -184,7 +219,7 @@ describe("dashboard operations", () => {
 		);
 
 		expect(project.name).toBe("demo-app");
-		expect(harness.platform.createProjectCalls).toEqual([
+		expect(harness.platform.calls.createProject).toEqual([
 			{
 				user: {
 					id: "user-1",
@@ -218,18 +253,27 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{ id: "project-1", name: "project", kind: "PROJECT_KIND_USER" },
+			jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "project",
+				kind: "PROJECT_KIND_USER",
+			}),
 		];
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "hello",
 				spec: {
-					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+					runtime: {
+						env: {},
+						cpuMillis: "250",
+						memoryMebibytes: "256",
+						ports: [],
+					},
 				},
-			},
+			}),
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
 			projectId: "project-1",
@@ -248,10 +292,10 @@ describe("dashboard operations", () => {
 		expect(home?.project?.id).toBe("project-1");
 		expect(home?.services).toHaveLength(1);
 		expect(home?.selectedServiceId).toBe("service-1");
-		expect(home?.servicesRevision).toBeGreaterThanOrEqual(1);
+		expect(BigInt(home?.servicesRevision ?? "0")).toBeGreaterThanOrEqual(1n);
 		expect(home?.domainBindings).toEqual([]);
-		expect(harness.platform.getServiceStatusCalls).toEqual([]);
-		expect(harness.platform.listDomainBindingsCalls).toEqual([]);
+		expect(harness.platform.calls.getServiceStatus).toEqual([]);
+		expect(harness.platform.calls.listDomainBindings).toEqual([]);
 	});
 
 	it("initializes the dashboard schema before reading a home page from an existing access token", async () => {
@@ -285,37 +329,39 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.projects = [
-			{
+			jsonFixture(ProjectSchema, {
 				id: "project-1",
 				name: "brisk-harbor",
 				kind: "PROJECT_KIND_USER",
-			},
+			}),
 		];
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "hello",
 				spec: {
 					source: {
-						provider: "github",
-						repositorySelector: "octocat/hello",
-						trackedRef: "main",
-						buildRecipe: {
-							builder: "BUILDER_KIND_DOCKERFILE",
-							dockerfilePath: "Dockerfile",
-							contextDir: ".",
+						sourceSpec: {
+							provider: "github",
+							repositorySelector: "octocat/hello",
+							trackedRef: "main",
+							buildRecipe: {
+								builder: "BUILDER_KIND_DOCKERFILE",
+								dockerfilePath: "Dockerfile",
+								contextDir: ".",
+							},
 						},
 					},
 					runtime: {
 						env: {},
-						cpuMillis: 250,
-						memoryMebibytes: 256,
+						cpuMillis: "250",
+						memoryMebibytes: "256",
 						ports: [{ port: 8080, primary: true }],
 					},
 				},
-			},
+			}),
 		];
 		await harness.store.saveOnboardingDraft("user-1", {
 			projectId: "project-1",
@@ -338,28 +384,37 @@ describe("dashboard operations", () => {
 		);
 		const draft = result.onboarding;
 
-		expect(harness.platform.updateServiceCalls).toHaveLength(0);
-		expect(harness.platform.createServiceCalls).toEqual([
+		expect(harness.platform.calls.updateService).toHaveLength(0);
+		expect(harness.platform.calls.createService).toMatchObject([
 			{
 				user: {
 					id: "user-1",
 					email: "user@example.com",
 				},
 				environmentId: "environment-project-1",
-				name: "talented-harmony",
-				spec: {
-					source: {
-						provider: "github",
-						repositorySelector: "octocat/hello",
-						trackedRef: "main",
-						buildRecipe: {
-							builder: "BUILDER_KIND_RAILPACK",
-							dockerfilePath: "",
-							contextDir: ".",
+				service: {
+					name: "talented-harmony",
+					spec: jsonFixture(ServiceSpecSchema, {
+						source: {
+							sourceSpec: {
+								provider: "github",
+								repositorySelector: "octocat/hello",
+								trackedRef: "main",
+								buildRecipe: {
+									builder: "BUILDER_KIND_RAILPACK",
+									dockerfilePath: "",
+									contextDir: ".",
+								},
+							},
 						},
-					},
-					desiredReplicaCount: 1,
-					runtime: { env: {}, cpuMillis: 250, memoryMebibytes: 256, ports: [] },
+						desiredReplicaCount: 1,
+						runtime: jsonFixture(ServiceRuntimeSchema, {
+							env: {},
+							cpuMillis: "250",
+							memoryMebibytes: "256",
+							ports: [],
+						}),
+					}),
 				},
 			},
 		]);
@@ -374,27 +429,32 @@ describe("dashboard operations", () => {
 			email: "user@example.com",
 			redirectTo: "/",
 		});
-		harness.platform.nextRepositoryInspection = {
-			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-			defaultBranch: "main",
-			dockerfileCandidates: ["Dockerfile"],
-			recommendedBuildRecipe: {
-				builder: "BUILDER_KIND_RAILPACK",
-				dockerfilePath: "",
-				contextDir: ".",
+		harness.platform.nextRepositoryInspection = jsonFixture(
+			InspectSourceResponseSchema,
+			{
+				accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+				defaultBranch: "main",
+				dockerfileCandidates: ["Dockerfile"],
+				recommendedBuildRecipe: {
+					builder: "BUILDER_KIND_RAILPACK",
+					dockerfilePath: "",
+					contextDir: ".",
+				},
+				recommendedPorts: [3000, 8080],
+				detectedLanguage: "node",
+				detectedStartCommand: "npm run start",
+				analysisError: "",
 			},
-			recommendedPorts: [3000, 8080],
-			detectedLanguage: "node",
-			detectedStartCommand: "npm run start",
-			analysisError: "",
-		};
+		);
 
 		await onboarding.createServiceFastFromSession(harness.runtime, {
 			repositorySelector: "octocat/hello",
 			serviceName: "talented-harmony",
 		});
 
-		expect(harness.platform.createServiceCalls[0].spec.runtime.ports).toEqual([
+		expect(
+			harness.platform.calls.createService[0].service?.spec?.runtime?.ports,
+		).toEqual([
 			{ port: 3000, primary: true },
 			{ port: 8080, primary: false },
 		]);
@@ -419,7 +479,9 @@ describe("dashboard operations", () => {
 			},
 		);
 
-		expect(harness.platform.createServiceCalls[0].spec.source).toMatchObject({
+		expect(
+			harness.platform.calls.createService[0].service?.spec?.source?.sourceSpec,
+		).toMatchObject({
 			buildRecipe: {
 				builder: "BUILDER_KIND_DOCKERFILE",
 				dockerfilePath: "deploy/Dockerfile",
@@ -436,20 +498,23 @@ describe("dashboard operations", () => {
 			email: "user@example.com",
 			redirectTo: "/",
 		});
-		harness.platform.nextRepositoryInspection = {
-			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-			defaultBranch: "main",
-			dockerfileCandidates: ["Dockerfile"],
-			recommendedDockerfileRecipe: {
-				builder: "BUILDER_KIND_DOCKERFILE",
-				dockerfilePath: "Dockerfile",
-				contextDir: ".",
+		harness.platform.nextRepositoryInspection = jsonFixture(
+			InspectSourceResponseSchema,
+			{
+				accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+				defaultBranch: "main",
+				dockerfileCandidates: ["Dockerfile"],
+				recommendedDockerfileRecipe: {
+					builder: "BUILDER_KIND_DOCKERFILE",
+					dockerfilePath: "Dockerfile",
+					contextDir: ".",
+				},
+				recommendedPorts: [],
+				detectedLanguage: "node",
+				detectedStartCommand: "",
+				analysisError: 'detected Node.js in "." but no start command was found',
 			},
-			recommendedPorts: [],
-			detectedLanguage: "node",
-			detectedStartCommand: "",
-			analysisError: 'detected Node.js in "." but no start command was found',
-		};
+		);
 
 		const result = await onboarding.createServiceFastFromSession(
 			harness.runtime,
@@ -458,7 +523,9 @@ describe("dashboard operations", () => {
 			},
 		);
 
-		expect(harness.platform.createServiceCalls[0].spec.source).toMatchObject({
+		expect(
+			harness.platform.calls.createService[0].service?.spec?.source?.sourceSpec,
+		).toMatchObject({
 			buildRecipe: {
 				builder: "BUILDER_KIND_DOCKERFILE",
 				dockerfilePath: "Dockerfile",
@@ -475,20 +542,23 @@ describe("dashboard operations", () => {
 			email: "user@example.com",
 			redirectTo: "/",
 		});
-		harness.platform.nextRepositoryInspection = {
-			accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
-			defaultBranch: "main",
-			dockerfileCandidates: ["Dockerfile"],
-			recommendedDockerfileRecipe: {
-				builder: "BUILDER_KIND_DOCKERFILE",
-				dockerfilePath: "Dockerfile",
-				contextDir: ".",
+		harness.platform.nextRepositoryInspection = jsonFixture(
+			InspectSourceResponseSchema,
+			{
+				accessState: "SOURCE_ACCESS_STATE_AVAILABLE",
+				defaultBranch: "main",
+				dockerfileCandidates: ["Dockerfile"],
+				recommendedDockerfileRecipe: {
+					builder: "BUILDER_KIND_DOCKERFILE",
+					dockerfilePath: "Dockerfile",
+					contextDir: ".",
+				},
+				recommendedPorts: [],
+				detectedLanguage: "node",
+				detectedStartCommand: "",
+				analysisError: 'detected Node.js in "." but no start command was found',
 			},
-			recommendedPorts: [],
-			detectedLanguage: "node",
-			detectedStartCommand: "",
-			analysisError: 'detected Node.js in "." but no start command was found',
-		};
+		);
 
 		await expect(
 			onboarding.createServiceFastFromSession(harness.runtime, {
@@ -496,7 +566,7 @@ describe("dashboard operations", () => {
 				builder: "BUILDER_KIND_RAILPACK",
 			}),
 		).rejects.toThrow("no start command was found");
-		expect(harness.platform.createServiceCalls).toEqual([]);
+		expect(harness.platform.calls.createService).toEqual([]);
 	});
 
 	it("switches the builder through settings updates", async () => {
@@ -507,30 +577,32 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "hello",
 				spec: {
 					source: {
-						provider: "github",
-						repositorySelector: "octocat/hello",
-						trackedRef: "main",
-						buildRecipe: {
-							builder: "BUILDER_KIND_RAILPACK",
-							dockerfilePath: "",
-							contextDir: ".",
+						sourceSpec: {
+							provider: "github",
+							repositorySelector: "octocat/hello",
+							trackedRef: "main",
+							buildRecipe: {
+								builder: "BUILDER_KIND_RAILPACK",
+								dockerfilePath: "",
+								contextDir: ".",
+							},
 						},
 					},
 					runtime: {
 						env: {},
-						cpuMillis: 250,
-						memoryMebibytes: 256,
+						cpuMillis: "250",
+						memoryMebibytes: "256",
 						ports: [],
 					},
 				},
-			},
+			}),
 		];
 
 		await services.updateServiceFromSession(harness.runtime, {
@@ -540,7 +612,9 @@ describe("dashboard operations", () => {
 			contextDir: ".",
 		});
 
-		expect(harness.platform.updateServiceCalls[0].spec.source).toMatchObject({
+		expect(
+			harness.platform.calls.updateService[0].service?.spec?.source?.sourceSpec,
+		).toMatchObject({
 			buildRecipe: {
 				builder: "BUILDER_KIND_DOCKERFILE",
 				dockerfilePath: "Dockerfile",
@@ -571,16 +645,18 @@ describe("dashboard operations", () => {
 			environmentId: "environment-1",
 			name: "talented-harmony",
 		});
-		expect(result.serviceStatus?.service.id).toBe("service-1");
+		expect(result.serviceStatus?.service?.id).toBe("service-1");
 		expect(result.onboarding).toMatchObject({
 			projectId: "project-1",
 			environmentId: "environment-1",
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 		});
-		expect(harness.platform.createServiceCalls[0].spec.runtime).toMatchObject({
-			cpuMillis: 250,
-			memoryMebibytes: 256,
+		expect(
+			harness.platform.calls.createService[0].service?.spec?.runtime,
+		).toMatchObject({
+			cpuMillis: "250",
+			memoryMebibytes: "256",
 		});
 	});
 
@@ -599,9 +675,9 @@ describe("dashboard operations", () => {
 		).rejects.toThrow(
 			"The signed-in GitHub account cannot access this repository.",
 		);
-		expect(harness.platform.createProjectCalls).toEqual([]);
-		expect(harness.platform.linkGitHubRepositoryCalls).toEqual([]);
-		expect(harness.platform.createServiceCalls).toEqual([]);
+		expect(harness.platform.calls.createProject).toEqual([]);
+		expect(harness.platform.calls.linkGitHubRepository).toEqual([]);
+		expect(harness.platform.calls.createService).toEqual([]);
 	});
 
 	it("forwards rich service log filters to the platform", async () => {
@@ -612,17 +688,17 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.serviceLogs = [
-			{
+			jsonFixture(ServiceLogLineSchema, {
 				allocationId: "",
 				agentId: "",
 				stream: "deploy",
-				rolloutGeneration: 1,
-				sequence: 1,
+				rolloutGeneration: "1",
+				sequence: "1",
 				line: "initializing service",
 				logType: "SERVICE_LOG_TYPE_DEPLOY",
 				buildId: "build-1",
 				stage: "initialization",
-			},
+			}),
 		];
 
 		const logs = await services.listServiceLogsFromSession(harness.runtime, {
@@ -634,7 +710,7 @@ describe("dashboard operations", () => {
 		});
 
 		expect(logs.lines).toHaveLength(1);
-		expect(harness.platform.listServiceLogsCalls[0]).toMatchObject({
+		expect(harness.platform.calls.listServiceLogs[0]).toMatchObject({
 			serviceId: "service-1",
 			limit: 500,
 			logType: "SERVICE_LOG_TYPE_DEPLOY",
@@ -651,42 +727,44 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "old-name",
 				spec: {
 					source: {
-						provider: "github",
-						repositorySelector: "octocat/hello",
-						trackedRef: "main",
-						buildRecipe: {
-							builder: "BUILDER_KIND_DOCKERFILE",
-							dockerfilePath: "Dockerfile",
-							contextDir: ".",
+						sourceSpec: {
+							provider: "github",
+							repositorySelector: "octocat/hello",
+							trackedRef: "main",
+							buildRecipe: {
+								builder: "BUILDER_KIND_DOCKERFILE",
+								dockerfilePath: "Dockerfile",
+								contextDir: ".",
+							},
 						},
 					},
 					runtime: {
 						env: {},
-						cpuMillis: 250,
-						memoryMebibytes: 256,
+						cpuMillis: "250",
+						memoryMebibytes: "256",
 						ports: [{ port: 8080, primary: true }],
 						healthCheck: { path: "/ready", port: 8080, timeoutSeconds: 3 },
 						volumeName: "data",
 					},
 				},
-			},
+			}),
 		];
 		harness.platform.environments = [
-			{
+			jsonFixture(EnvironmentSchema, {
 				id: "environment-project-1",
 				projectId: "project-1",
 				name: "Production",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: true,
 				autoDeploy: false,
-			},
+			}),
 		];
 
 		const updated = await services.updateServiceFromSession(harness.runtime, {
@@ -700,26 +778,109 @@ describe("dashboard operations", () => {
 		});
 
 		expect(updated.name).toBe("talented-harmony");
-		expect(harness.platform.updateServiceCalls[0]).toMatchObject({
+		expect(harness.platform.calls.updateService[0]).toMatchObject({
 			serviceId: "service-1",
-			name: "talented-harmony",
-			spec: {
-				source: {
-					buildRecipe: {
-						builder: "BUILDER_KIND_DOCKERFILE",
-						dockerfilePath: "Dockerfile",
-						contextDir: ".",
+			service: {
+				name: "talented-harmony",
+				spec: {
+					source: {
+						sourceSpec: {
+							buildRecipe: {
+								builder: "BUILDER_KIND_DOCKERFILE",
+								dockerfilePath: "Dockerfile",
+								contextDir: ".",
+							},
+						},
 					},
-				},
-				runtime: {
-					healthCheck: {
-						path: "/ready",
-						port: 8080,
-						timeoutSeconds: 3,
+					runtime: {
+						healthCheck: {
+							path: "/ready",
+							port: 8080,
+							timeoutSeconds: 3,
+						},
+						volumeName: "data",
 					},
-					volumeName: "data",
 				},
 			},
+		});
+	});
+
+	it("preserves a direct image and unedited runtime fields when changing its name", async () => {
+		const harness = createDashboardTestHarness();
+		await auth.completeAuthCallback(harness.runtime, {
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		const current = serviceFixture({
+			id: "service-1",
+			environmentId: "environment-1",
+			name: "before",
+			spec: {
+				source: { image: { image: "registry.example/app@sha256:abc" } },
+				desiredReplicaCount: 2,
+				runtime: {
+					command: ["/app/server"],
+					args: ["--debug"],
+					env: { MODE: "production" },
+					cpuMillis: "9007199254740993",
+					memoryMebibytes: "512",
+					ports: [{ port: 8080, primary: true }],
+					volumeName: "data",
+					healthCheck: { path: "/ready", port: 8080, timeoutSeconds: 3 },
+					livenessCheck: { path: "/live", port: 8080, timeoutSeconds: 5 },
+				},
+			},
+		});
+		harness.platform.services = [current];
+
+		const updated = await services.updateServiceFromSession(harness.runtime, {
+			serviceId: current.id,
+			serviceName: "after",
+		});
+
+		expect(updated.name).toBe("after");
+		expect(updated.spec).toEqual(current.spec);
+		expect(harness.platform.calls.updateService[0].service?.spec).toEqual(
+			current.spec,
+		);
+		expect(harness.platform.calls.linkGitHubRepository).toEqual([]);
+	});
+
+	it("merges restart settings without resetting custom backoff fields", async () => {
+		const harness = createDashboardTestHarness();
+		await auth.completeAuthCallback(harness.runtime, {
+			userId: "user-1",
+			email: "user@example.com",
+			redirectTo: "/",
+		});
+		const current = serviceFixture({
+			id: "service-1",
+			spec: {
+				runtime: {
+					restart: {
+						policy: "RESTART_POLICY_ON_FAILURE",
+						maxRestarts: 4,
+						windowSeconds: 120,
+						initialDelayMs: 250,
+						maxDelayMs: 5000,
+						backoffMultiplier: 1.5,
+						jitter: 0.2,
+						stableAfterSeconds: 30,
+					},
+				},
+			},
+		});
+		harness.platform.services = [current];
+
+		const updated = await services.updateServiceFromSession(harness.runtime, {
+			serviceId: current.id,
+			restart: { policy: "RESTART_POLICY_NEVER" },
+		});
+
+		expect(updated.spec?.runtime?.restart).toEqual({
+			...current.spec?.runtime?.restart,
+			policy: "RESTART_POLICY_NEVER",
 		});
 	});
 
@@ -735,16 +896,16 @@ describe("dashboard operations", () => {
 		await services.updateServiceFromSession(harness.runtime, {
 			serviceId: "service-1",
 			repositorySelector: " OctoCat / Hello ",
-			restart: {
+			restart: jsonFixture(ServiceRestartSchema, {
 				policy: "RESTART_POLICY_NEVER",
 				maxRestarts: 5,
 				windowSeconds: 300,
-			},
+			}),
 		});
 
 		expect(harness.github.listRepositoriesCalls).toEqual([]);
-		expect(harness.platform.linkGitHubRepositoryCalls).toEqual([]);
-		expect(harness.platform.updateServiceCalls).toHaveLength(1);
+		expect(harness.platform.calls.linkGitHubRepository).toEqual([]);
+		expect(harness.platform.calls.updateService).toHaveLength(1);
 	});
 
 	it("validates and links GitHub when the repository changes", async () => {
@@ -763,14 +924,14 @@ describe("dashboard operations", () => {
 		});
 		harness.platform.services = [repositoryBackedService()];
 		harness.platform.environments = [
-			{
+			jsonFixture(EnvironmentSchema, {
 				id: "environment-1",
 				projectId: "project-1",
 				name: "Production",
-				kind: "persistent",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
 				isProduction: true,
 				autoDeploy: false,
-			},
+			}),
 		];
 
 		await services.updateServiceFromSession(harness.runtime, {
@@ -781,14 +942,14 @@ describe("dashboard operations", () => {
 		expect(harness.github.listRepositoriesCalls).toEqual([
 			"github-access-token",
 		]);
-		expect(harness.platform.linkGitHubRepositoryCalls).toMatchObject([
+		expect(harness.platform.calls.linkGitHubRepository).toMatchObject([
 			{
 				projectId: "project-1",
 				repositorySelector: "octocat/other",
 				githubUserAccessToken: "github-access-token",
 			},
 		]);
-		expect(harness.platform.updateServiceCalls).toHaveLength(1);
+		expect(harness.platform.calls.updateService).toHaveLength(1);
 	});
 
 	it("deletes a service through the platform", async () => {
@@ -799,19 +960,19 @@ describe("dashboard operations", () => {
 			redirectTo: "/",
 		});
 		harness.platform.services = [
-			{
+			serviceFixture({
 				id: "service-1",
 				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "doomed",
-			},
+			}),
 		];
 
 		await services.deleteServiceFromSession(harness.runtime, {
 			serviceId: "service-1",
 		});
 
-		expect(harness.platform.deleteServiceCalls).toMatchObject([
+		expect(harness.platform.calls.deleteService).toMatchObject([
 			{ serviceId: "service-1" },
 		]);
 		expect(harness.platform.services).toEqual([]);
@@ -819,24 +980,26 @@ describe("dashboard operations", () => {
 });
 
 function repositoryBackedService() {
-	return {
+	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "hello",
 		spec: {
 			source: {
-				provider: "github" as const,
-				repositorySelector: "octocat/hello",
-				trackedRef: "main",
-				buildRecipe: { dockerfilePath: "Dockerfile", contextDir: "." },
+				sourceSpec: {
+					provider: "github" as const,
+					repositorySelector: "octocat/hello",
+					trackedRef: "main",
+					buildRecipe: { dockerfilePath: "Dockerfile", contextDir: "." },
+				},
 			},
 			runtime: {
 				env: {},
-				cpuMillis: 250,
-				memoryMebibytes: 256,
+				cpuMillis: "250",
+				memoryMebibytes: "256",
 				ports: [],
 			},
 		},
-	};
+	});
 }

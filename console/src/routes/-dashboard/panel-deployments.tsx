@@ -1,6 +1,5 @@
 import { ArrowLeft, Boxes, EyeOff, Globe2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
 import { cn } from "#/lib/cn";
 import type {
 	DashboardDeploymentAction,
@@ -10,6 +9,7 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { dateMillis } from "#/lib/time";
 import { btnSecondary, errorMsg } from "#/lib/ui-classes";
 
 import {
@@ -24,7 +24,6 @@ import {
 	deploymentTitle,
 	formatError,
 	hasActiveDeployment,
-	hydrateDeploymentRecord,
 	newIdempotencyKey,
 	pendingManualDeployRevision,
 	reconcileCurrentDeployment,
@@ -43,8 +42,8 @@ type DeploymentLogTarget = {
 	title: string;
 	subtitle?: string;
 	build: DashboardDeploymentRecord["build"];
-	allocation: DashboardDeploymentRecord["allocation"];
-	rolloutGeneration?: number;
+	allocation: DashboardServiceStatus["allocation"];
+	rolloutGeneration?: string;
 	active: boolean;
 };
 
@@ -91,7 +90,7 @@ export function PanelDeployments({
 		currentService.latestBuild?.buildId,
 		currentService.latestBuild?.state,
 		currentService.latestDeployment?.state,
-		currentService.latestDeployment?.transitionedAt?.getTime(),
+		dateMillis(currentService.latestDeployment?.transitionedAt),
 	].join(":");
 
 	const loadDeployments = useCallback(async () => {
@@ -110,9 +109,7 @@ export function PanelDeployments({
 			});
 			setDeployments(
 				Array.isArray(nextDeployments)
-					? nextDeployments
-							.map(hydrateDeploymentRecord)
-							.sort(compareDeploymentsNewestFirst)
+					? nextDeployments.sort(compareDeploymentsNewestFirst)
 					: [],
 			);
 			setDeploymentsError(undefined);
@@ -180,7 +177,7 @@ export function PanelDeployments({
 				data: { environmentId: currentService.environmentId },
 			});
 			const next = statuses.find(
-				(entry) => entry.service.id === currentService.id,
+				(entry) => entry.service?.id === currentService.id,
 			);
 			if (next) onRedeployed?.(next);
 			await loadDeployments();
@@ -325,7 +322,11 @@ export function PanelDeployments({
 										nowMs,
 									),
 									build: entry.build,
-									allocation: entry.allocation,
+									allocation: status?.allocations.find(
+										(allocation) =>
+											allocation.desiredRolloutGeneration ===
+											entry.rolloutGeneration,
+									),
 									rolloutGeneration: entry.rolloutGeneration,
 									active: hasActiveDeployment(entry.status, entry.build),
 								})
@@ -357,7 +358,11 @@ export function PanelDeployments({
 										serviceId={service.id}
 										key={entry.id}
 										build={entry.build}
-										allocation={entry.allocation}
+										allocation={status?.allocations.find(
+											(allocation) =>
+												allocation.desiredRolloutGeneration ===
+												entry.rolloutGeneration,
+										)}
 										status={entry.status}
 										record={entry}
 										logsEnabled={Boolean(project)}
@@ -374,7 +379,11 @@ export function PanelDeployments({
 													nowMs,
 												),
 												build: entry.build,
-												allocation: entry.allocation,
+												allocation: status?.allocations.find(
+													(allocation) =>
+														allocation.desiredRolloutGeneration ===
+														entry.rolloutGeneration,
+												),
 												rolloutGeneration: entry.rolloutGeneration,
 												active: hasActiveDeployment(entry.status, entry.build),
 											})

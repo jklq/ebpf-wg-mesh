@@ -8,7 +8,6 @@ import type {
 	DashboardDeploymentAction,
 	DashboardDeploymentRecord,
 	DashboardDeploymentStatus,
-	DashboardServiceLogLine,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
 import { formatRelativeTime, NOT_DEPLOYED_LABEL } from "#/lib/time";
@@ -74,7 +73,9 @@ export function DeploymentCard({
 	) => Promise<void>;
 }) {
 	const build = record.build;
-	const allocation = record.allocation;
+	const allocation = allocations.find(
+		(entry) => entry.desiredRolloutGeneration === record.rolloutGeneration,
+	);
 	const status = record.status;
 	const reportedStages = deploymentStagesForDisplay(
 		status,
@@ -123,23 +124,11 @@ export function DeploymentCard({
 		: undefined;
 	const snippetSource =
 		snippetLines.length > 0
-			? snippetLines
+			? snippetLines.map((line) => line.line)
 			: fallbackLine
-				? [
-						{
-							observedAt: undefined,
-							allocationId: "",
-							agentId: "",
-							stream: "stderr",
-							rolloutGeneration: 0,
-							sequence: 0,
-							line: fallbackLine,
-						} satisfies DashboardServiceLogLine,
-					]
+				? [fallbackLine]
 				: [];
-	const snippet = selectInlineLogSnippet(
-		snippetSource.map((line) => line.line),
-	);
+	const snippet = selectInlineLogSnippet(snippetSource);
 	const missingKeys = extractMissingEnvKeys([
 		...snippet.lines,
 		failedStage?.detail,
@@ -342,10 +331,10 @@ export function DeploymentCard({
 							aria-label={`${failedStage.label || failedStage.key} logs`}
 						>
 							{snippet.lines.map((line, lineIndex) => {
-								const source = snippetSource[lineIndex];
+								const source = snippetLines[snippet.startIndex + lineIndex];
 								return (
 									<div
-										key={`${source?.sequence ?? lineIndex}:${source?.observedAt?.toISOString() ?? "local"}:${line}`}
+										key={`${source?.sequence ?? "fallback"}:${source?.observedAt ?? "local"}:${line}`}
 										className={cn(
 											"px-2.5 py-[3px] whitespace-pre-wrap text-dim [overflow-wrap:anywhere]",
 											snippet.highlightIndexes.includes(lineIndex) &&
@@ -432,7 +421,7 @@ function allocationsForDeployment(
 	push(allocation);
 	// Crash evidence only covers this deployment's rollout generation: no fallback to other
 	// generations, so a failed rollout never displays the previous generation's crashes.
-	if (record.rolloutGeneration > 0) {
+	if (record.rolloutGeneration !== "0") {
 		for (const entry of allocations) {
 			if (
 				entry.desiredRolloutGeneration === record.rolloutGeneration ||

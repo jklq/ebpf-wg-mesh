@@ -40,9 +40,9 @@ export function PanelVariables({
 	seedKey?: string;
 	onSavingChange?: (saving: boolean) => void;
 }) {
-	const savedEnvKey = stableEnvKey(service.spec?.runtime.env ?? {});
+	const savedEnvKey = stableEnvKey(service.spec?.runtime?.env ?? {});
 	const changedEnvKeys = changedRuntimeEnvKeys(service);
-	const savedEnv = service.spec?.runtime.env ?? {};
+	const savedEnv = service.spec?.runtime?.env ?? {};
 	const [rows, setRows] = useState<VariableRow[]>(() =>
 		rowsFromStableEnvKey(savedEnvKey),
 	);

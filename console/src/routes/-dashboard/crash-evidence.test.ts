@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { DashboardAllocationStatus } from "#/lib/dashboard/core/types.server";
+import { jsonFixture } from "#/lib/dashboard/testkit/protocol";
+import type * as P from "#/lib/platform-gen/platform_pb";
+import {
+	AllocationStatusSchema,
+	RestartObservationSchema,
+} from "#/lib/platform-gen/platform_pb";
 import {
 	crashCauseForAllocation,
 	crashCauseLabel,
@@ -9,25 +15,25 @@ import {
 } from "./crash-evidence";
 
 function allocation(
-	overrides: Partial<DashboardAllocationStatus> = {},
+	overrides: P.AllocationStatusJson = {},
 ): DashboardAllocationStatus {
-	return {
+	return jsonFixture(AllocationStatusSchema, {
 		allocationId: "alloc-1",
 		serviceId: "svc-1",
 		agentId: "agent-1",
-		desiredSpecRevision: 1,
-		appliedSpecRevision: 1,
+		desiredSpecRevision: "1",
+		appliedSpecRevision: "1",
 		phase: "Healthy",
 		message: "",
 		allocationIpv4: "10.200.0.2",
 		allocationIpv6: "fd00:200::2",
 		healthy: true,
-		desiredRolloutGeneration: 1,
-		appliedRolloutGeneration: 1,
+		desiredRolloutGeneration: "1",
+		appliedRolloutGeneration: "1",
 		healthyIpv4Ports: [8080],
 		healthyIpv6Ports: [8080],
 		...overrides,
-	};
+	});
 }
 
 describe("crash evidence classification", () => {
@@ -35,7 +41,7 @@ describe("crash evidence classification", () => {
 		const oom = allocation({
 			healthy: false,
 			phase: "CrashLoop",
-			restart: {
+			restart: jsonFixture(RestartObservationSchema, {
 				restartCount: 5,
 				crashLoop: true,
 				lastCause: "RESTART_CAUSE_OOM_KILL",
@@ -43,12 +49,12 @@ describe("crash evidence classification", () => {
 				lastExitCode: 137,
 				lastSignal: 0,
 				awaitingRestart: false,
-			},
+			}),
 		});
 		const liveness = allocation({
 			healthy: false,
 			phase: "Backoff",
-			restart: {
+			restart: jsonFixture(RestartObservationSchema, {
 				restartCount: 2,
 				crashLoop: false,
 				lastCause: "RESTART_CAUSE_LIVENESS",
@@ -56,12 +62,12 @@ describe("crash evidence classification", () => {
 				lastExitCode: 0,
 				lastSignal: 0,
 				awaitingRestart: true,
-			},
+			}),
 		});
 		const nonzero = allocation({
 			healthy: false,
 			phase: "Backoff",
-			restart: {
+			restart: jsonFixture(RestartObservationSchema, {
 				restartCount: 1,
 				crashLoop: false,
 				lastCause: "RESTART_CAUSE_EXIT_NONZERO",
@@ -69,7 +75,7 @@ describe("crash evidence classification", () => {
 				lastExitCode: 1,
 				lastSignal: 0,
 				awaitingRestart: true,
-			},
+			}),
 		});
 		const notReady = allocation({
 			healthy: false,
@@ -79,7 +85,7 @@ describe("crash evidence classification", () => {
 		const disk = allocation({
 			healthy: false,
 			phase: "CrashLoop",
-			restart: {
+			restart: jsonFixture(RestartObservationSchema, {
 				restartCount: 5,
 				crashLoop: true,
 				lastCause: "RESTART_CAUSE_DISK_EXHAUSTED",
@@ -87,7 +93,7 @@ describe("crash evidence classification", () => {
 				lastExitCode: 0,
 				lastSignal: 0,
 				awaitingRestart: false,
-			},
+			}),
 		});
 
 		expect(crashCauseForAllocation(oom)).toBe("oom");
@@ -118,7 +124,7 @@ describe("crash evidence classification", () => {
 			healthy: false,
 			phase: "Starting",
 			message: "HTTP readiness check not ready",
-			restart: {
+			restart: jsonFixture(RestartObservationSchema, {
 				restartCount: 1,
 				crashLoop: false,
 				lastCause: "RESTART_CAUSE_OOM_KILL",
@@ -126,7 +132,7 @@ describe("crash evidence classification", () => {
 				lastExitCode: 137,
 				lastSignal: 0,
 				awaitingRestart: true,
-			},
+			}),
 		});
 		expect(isProbeNotReady(oom)).toBe(false);
 		expect(crashCauseForAllocation(oom)).toBe("oom");
@@ -136,7 +142,7 @@ describe("crash evidence classification", () => {
 		const entry = allocation({
 			healthy: false,
 			phase: "CrashLoop",
-			restart: {
+			restart: jsonFixture(RestartObservationSchema, {
 				restartCount: 5,
 				crashLoop: true,
 				lastCause: "RESTART_CAUSE_OOM_KILL",
@@ -144,7 +150,7 @@ describe("crash evidence classification", () => {
 				lastExitCode: 137,
 				lastSignal: 9,
 				awaitingRestart: false,
-			},
+			}),
 		});
 		const summary = formatCrashSummary(entry);
 		expect(summary).toContain("OOM kill");

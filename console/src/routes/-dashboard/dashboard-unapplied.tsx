@@ -14,7 +14,7 @@ export type ApplyingServiceChanges = {
 	serviceName: string;
 	changeIds: Array<string>;
 	count: number;
-	specRevision?: number;
+	specRevision?: string;
 };
 
 export function UnappliedChangesDialog({
