@@ -77,7 +77,7 @@ func volumeBackedHTTPServiceSpec(marker, volumeName string) *platformv1.ServiceS
 				Port:           8080,
 				TimeoutSeconds: 2,
 			},
-			VolumeName: volumeName,
+			Volume: &platformv1.ServiceVolumeMount{VolumeName: volumeName, MountPath: "/data"},
 		},
 		Source: &platformv1.ServiceSource{
 			Source: &platformv1.ServiceSource_Image{

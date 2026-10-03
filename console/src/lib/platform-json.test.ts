@@ -27,8 +27,8 @@ describe("canonical platform JSON", () => {
 			cpuMillis: "0",
 			memoryMebibytes: "0",
 			ports: [{ port: 8080, primary: false }],
-			volumeName: "",
 		});
+		expect(json.spec?.runtime?.volume).toBeUndefined();
 		expect(json.latestBuild).toMatchObject({
 			state: "BUILD_STATE_UNSPECIFIED",
 			stages: [],

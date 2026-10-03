@@ -74,7 +74,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 
 	state := &agentv1.DesiredNodeState{
 		AgentId: "node-1",
-		Volumes: []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data"}},
+		Volumes: []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data", SizeBytes: 64 << 20}},
 		Services: []*agentv1.DesiredService{{
 			AllocationId:             "alloc-1",
 			ServiceId:                "svc-1",
@@ -95,6 +95,7 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 						Type: platformv1.HealthCheck_TYPE_HTTP,
 						Path: "/",
 					},
+					Volume: &platformv1.ServiceVolumeMount{VolumeName: "data", MountPath: "/var/lib/app"},
 				},
 			},
 		}},
@@ -134,7 +135,8 @@ func TestDockerRuntimeReconcileCreatesContainerAndReportsDNSEndpoint(t *testing.
 	if !runner.hasCommand("network", "connect", "--ip", "10.200.0.2", "--ip6", "fd00:200::2", "mesh-local", "localteststack-svc-alloc-1") {
 		t.Fatalf("expected ingress network connection, got commands %+v", runner.commands)
 	}
-	assertArgContains(t, runArgs, "--mount", "type=bind,src="+filepath.Join(dir, "volumes", "vol-1")+",dst="+localRuntimeVolumeMount)
+	assertArgContains(t, runArgs, "--mount", "type=bind,src="+filepath.Join(dir, "volumes", "vol-1", "data")+",dst=/var/lib/app")
+	assertArgContains(t, runArgs, "--env", "PLATFORM_VOLUME_MOUNT_PATH=/var/lib/app")
 	assertArgContains(t, runArgs, "--publish", "127.0.0.1::8080")
 	assertArgContains(t, runArgs, "--security-opt", "no-new-privileges")
 	assertArgContains(t, runArgs, "--cap-drop", "ALL")
@@ -266,7 +268,7 @@ func TestDockerRuntimeReconcileWithoutHealthCheckIsReadyAfterStart(t *testing.T)
 	}
 }
 
-func TestDockerRuntimeReconcileRemovesStaleContainerAndVolume(t *testing.T) {
+func TestDockerRuntimeReconcileRemovesStaleContainerAndRetainsVolume(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
@@ -294,8 +296,8 @@ func TestDockerRuntimeReconcileRemovesStaleContainerAndVolume(t *testing.T) {
 	if !runner.hasCommand("rm", "--force", "localteststack-svc-stale") {
 		t.Fatalf("expected stale container removal, got commands %+v", runner.commands)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "volumes", "stale-vol")); !os.IsNotExist(err) {
-		t.Fatalf("expected stale volume removal, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(dir, "volumes", "stale-vol")); err != nil {
+		t.Fatalf("undesired volume removed without a destroy instruction: %v", err)
 	}
 }
 
@@ -460,8 +462,8 @@ func TestDockerRuntimeDiscoversStableRuntimeResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDockerRuntime: %v", err)
 	}
-	volumePath := filepath.Join(dir, "volumes", "vol-1")
-	if err := os.MkdirAll(volumePath, 0o755); err != nil {
+	// Volumes are durable data, not prunable runtime resources.
+	if err := os.MkdirAll(filepath.Join(dir, "volumes", "vol-1"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -469,14 +471,11 @@ func TestDockerRuntimeDiscoversStableRuntimeResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DiscoverRuntimeResources: %v", err)
 	}
-	if len(resources) != 2 {
-		t.Fatalf("resources = %+v, want allocation and volume", resources)
+	if len(resources) != 1 {
+		t.Fatalf("resources = %+v, want only the allocation", resources)
 	}
 	if resources[0].AllocationID != "alloc-1" || resources[0].RuntimeID != "localteststack-svc-alloc-1" {
 		t.Fatalf("allocation resource = %+v", resources[0])
-	}
-	if resources[1].VolumeID != "vol-1" || resources[1].RuntimeID != volumePath {
-		t.Fatalf("volume resource = %+v", resources[1])
 	}
 }
 

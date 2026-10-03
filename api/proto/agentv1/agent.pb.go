@@ -358,7 +358,6 @@ type RuntimeResource struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AllocationId  string                 `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
 	RuntimeId     string                 `protobuf:"bytes,2,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
-	VolumeId      string                 `protobuf:"bytes,3,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -403,13 +402,6 @@ func (x *RuntimeResource) GetAllocationId() string {
 func (x *RuntimeResource) GetRuntimeId() string {
 	if x != nil {
 		return x.RuntimeId
-	}
-	return ""
-}
-
-func (x *RuntimeResource) GetVolumeId() string {
-	if x != nil {
-		return x.VolumeId
 	}
 	return ""
 }
@@ -2982,12 +2974,11 @@ const file_agent_proto_rawDesc = "" +
 	"\x1caccepted_node_config_version\x18\x15 \x01(\tR\x19acceptedNodeConfigVersion\x12@\n" +
 	"\x1caccepted_credentials_version\x18\x16 \x01(\tR\x1aacceptedCredentialsVersion\x12:\n" +
 	"\x19accepted_replicas_version\x18\x17 \x01(\tR\x17acceptedReplicasVersion\x12O\n" +
-	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\"r\n" +
+	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\"f\n" +
 	"\x0fRuntimeResource\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
-	"runtime_id\x18\x02 \x01(\tR\truntimeId\x12\x1b\n" +
-	"\tvolume_id\x18\x03 \x01(\tR\bvolumeId\"l\n" +
+	"runtime_id\x18\x02 \x01(\tR\truntimeIdJ\x04\b\x03\x10\x04R\tvolume_id\"l\n" +
 	"\rEnrollRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
 	"\acsr_pem\x18\x02 \x01(\tR\x06csrPem\x12'\n" +

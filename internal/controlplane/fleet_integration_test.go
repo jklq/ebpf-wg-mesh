@@ -449,7 +449,7 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 		t.Fatalf("createScheduledVolume: %v", err)
 	}
 	spec := replicaSpec(100, 64)
-	spec.Runtime.VolumeName = "data"
+	spec.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data"}
 	service, err := createService(ctx, store, "user-1", envID, "disk", spec, "node-a")
 	if err != nil {
 		t.Fatalf("createService: %v", err)

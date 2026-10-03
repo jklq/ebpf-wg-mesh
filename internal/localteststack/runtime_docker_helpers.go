@@ -155,25 +155,6 @@ func (r *DockerRuntime) pruneStaleServices(ctx context.Context, desired map[stri
 	return nil
 }
 
-func (r *DockerRuntime) pruneStaleVolumes(desired map[string]*agentv1.DesiredVolume) error {
-	entries, err := os.ReadDir(r.cfg.VolumesDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read volumes dir: %w", err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if _, ok := desired[entry.Name()]; ok {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(r.cfg.VolumesDir, entry.Name())); err != nil {
-			return fmt.Errorf("remove stale volume %s: %w", entry.Name(), err)
-		}
-	}
-	return nil
-}
-
 func (r *DockerRuntime) persistDesiredService(svc *agentv1.DesiredService) error {
 	path, err := safeRuntimeChildPath(filepath.Join(r.cfg.DataDir, "desired"), "allocation ID", svc.GetAllocationId())
 	if err != nil {

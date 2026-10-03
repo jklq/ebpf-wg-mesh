@@ -369,7 +369,7 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stagingService, err := createScheduledService(ctx, store, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{VolumeName: "data"}))
+	stagingService, err := createScheduledService(ctx, store, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "data"}}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +410,7 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prodService, err := createScheduledService(ctx, store, "owner", production.ID, "db", directImageServiceSpec("example.test/db:1", &platformv1.ServiceRuntime{VolumeName: "pdata"}))
+	prodService, err := createScheduledService(ctx, store, "owner", production.ID, "db", directImageServiceSpec("example.test/db:1", &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "pdata"}}))
 	if err != nil {
 		t.Fatal(err)
 	}

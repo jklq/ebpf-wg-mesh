@@ -11,6 +11,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/restartpolicy"
+	"ebof-wg-mesh/internal/runtimeutil"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -55,6 +56,15 @@ func CanonicalServiceSpec(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec 
 		}
 		if err := restartpolicy.ValidateRestart(runtime.GetRestart()); err == nil {
 			runtime.Restart = restartpolicy.CanonicalRestart(runtime.GetRestart())
+		}
+		if volume := runtime.GetVolume(); volume != nil {
+			volume.VolumeName = strings.TrimSpace(volume.GetVolumeName())
+			volume.MountPath = strings.TrimSpace(volume.GetMountPath())
+			if volume.VolumeName == "" {
+				runtime.Volume = nil
+			} else if volume.MountPath == "" {
+				volume.MountPath = runtimeutil.DefaultVolumeMountPath
+			}
 		}
 	}
 	if desired := out.GetSource(); desired != nil {
@@ -112,7 +122,7 @@ func serviceRuntime(spec *platformv1.ServiceSpec) *platformv1.ServiceRuntime {
 }
 
 func ServiceVolumeName(spec *platformv1.ServiceSpec) string {
-	return serviceRuntime(spec).GetVolumeName()
+	return strings.TrimSpace(serviceRuntime(spec).GetVolume().GetVolumeName())
 }
 
 func validateVolumeReplicaCompatibility(spec *platformv1.ServiceSpec, desiredReplicaCount int32) error {

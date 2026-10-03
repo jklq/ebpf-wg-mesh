@@ -148,11 +148,22 @@ message ServiceRuntime {
   int64 memory_mebibytes = 5;
   repeated ServiceRuntimePort ports = 6;
   HealthCheck health_check = 7;
-  string volume_name = 8;
+  reserved 8;
+  reserved "volume_name";
   ServiceRestart restart = 9;
   HealthCheck liveness_check = 10;
   reserved 11;
   reserved "sandbox_profile";
+  // At most one volume per service. Attaching, detaching, or moving the mount
+  // is a staged change like any other runtime field.
+  ServiceVolumeMount volume = 12;
+}
+
+// ServiceVolumeMount attaches one environment volume at an absolute path
+// inside the container. Root and system paths are rejected.
+message ServiceVolumeMount {
+  string volume_name = 1;
+  string mount_path = 2;
 }
 
 message DirectImageSource {

@@ -25,6 +25,9 @@ ensure_package() {
   apt-get install -y --no-install-recommends "${pkg}"
 }
 
+# Volumes are ext4 images on loop devices; size is enforced by the filesystem.
+ensure_package e2fsprogs
+
 ensure_cni() {
   ensure_package containernetworking-plugins
   ensure_package iproute2

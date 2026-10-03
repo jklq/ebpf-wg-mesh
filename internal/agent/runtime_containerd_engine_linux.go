@@ -22,6 +22,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/meshlabels"
+	"ebof-wg-mesh/internal/volumestore"
 
 	containerd "github.com/containerd/containerd"
 	eventsapi "github.com/containerd/containerd/api/events"
@@ -55,9 +56,10 @@ type containerdEngine struct {
 	oom                     map[string]bool
 	workloadCgroupParent    string
 	ephemeralDiskLimitBytes int64
+	volumes                 *volumestore.Store
 }
 
-func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
+func newContainerdEngine(cfg config.AgentConfig, volumes *volumestore.Store) (serviceEngine, error) {
 	workloadCgroupParent, err := prepareWorkloadSandboxHost(cfg)
 	if err != nil {
 		return nil, err
@@ -90,7 +92,7 @@ func newContainerdEngine(cfg config.AgentConfig) (serviceEngine, error) {
 		_ = client.Close()
 		return nil, fmt.Errorf("mkdir hosts dir: %w", err)
 	}
-	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin, logBootID: logpipeline.NewBootID(), workloadCgroupParent: workloadCgroupParent}, nil
+	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin, logBootID: logpipeline.NewBootID(), workloadCgroupParent: workloadCgroupParent, volumes: volumes}, nil
 }
 
 func (e *containerdEngine) Close() error {
@@ -193,10 +195,8 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	if err := validateRuntimeID("allocation ID", svc.GetAllocationId()); err != nil {
 		return serviceStatus{}, false, err
 	}
-	if volumeID := svc.GetVolumeId(); volumeID != "" {
-		if _, err := runtimeChildPath(e.cfg.Runtime.VolumesDir, "volume ID", volumeID); err != nil {
-			return serviceStatus{}, false, err
-		}
+	if _, _, err := e.volumeMount(svc); err != nil {
+		return serviceStatus{}, false, err
 	}
 	if isManagedDashboardService(svc) {
 		secretsDir := filepath.Clean(e.cfg.Runtime.ManagedDashboardSecretsDir)

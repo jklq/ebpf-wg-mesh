@@ -20,7 +20,7 @@ export function ReplicaScaleControls({
 	onQueued: (service: DashboardServiceRecord) => void;
 	onSavingChange?: (saving: boolean) => void;
 }) {
-	const volumeName = service.spec?.runtime?.volumeName?.trim();
+	const volumeName = service.spec?.runtime?.volume?.volumeName?.trim();
 	const live = service.desiredReplicaCount ?? 1;
 	const queued = service.spec?.desiredReplicaCount ?? live;
 	const countId = useId();

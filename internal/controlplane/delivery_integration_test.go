@@ -39,7 +39,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", &platformv1.ServiceRuntime{VolumeName: "missing"})); err != nil {
+	if _, _, err := updateService(ctx, store, "owner", second.ID, second.Name, directImageServiceSpec("example.test/web:2", &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "missing"}})); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {

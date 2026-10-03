@@ -285,6 +285,9 @@ type RuntimeConfig struct {
 	ManagedDashboardSecretsDir string
 	Snapshotter                string
 	DisableCgroups             bool
+	// VolumeBackend is "loop" (ext4 image per volume; size enforced with
+	// ENOSPC) or "directory" (size reported, not enforced).
+	VolumeBackend string
 }
 
 type MeshConfig struct {

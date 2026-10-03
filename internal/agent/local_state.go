@@ -68,9 +68,10 @@ const (
 	initializationRecovery      initializationState = "recovery"
 )
 
+// RuntimeResource is a prunable runtime object owned by an allocation. Volumes
+// are durable data and are never inventoried for cleanup.
 type RuntimeResource struct {
 	AllocationID string `json:"allocation_id"`
-	VolumeID     string `json:"volume_id"`
 	RuntimeID    string `json:"runtime_id"`
 }
 
@@ -1562,24 +1563,14 @@ func recoveryOwnershipEstablished(bucket *bbolt.Bucket, state *agentv1.DesiredNo
 	for _, service := range state.GetServices() {
 		desiredAllocations[service.GetAllocationId()] = struct{}{}
 	}
-	desiredVolumes := make(map[string]struct{}, len(state.GetVolumes()))
-	for _, volume := range state.GetVolumes() {
-		desiredVolumes[volume.GetVolumeId()] = struct{}{}
-	}
 	established := true
 	err := bucket.ForEach(func(_, value []byte) error {
 		var resource RuntimeResource
 		if err := json.Unmarshal(value, &resource); err != nil {
 			return err
 		}
-		if resource.AllocationID != "" {
-			if _, ok := desiredAllocations[resource.AllocationID]; !ok {
-				established = false
-			}
-		} else if resource.VolumeID != "" {
-			if _, ok := desiredVolumes[resource.VolumeID]; !ok {
-				established = false
-			}
+		if _, ok := desiredAllocations[resource.AllocationID]; !ok {
+			established = false
 		}
 		return nil
 	})
@@ -1587,20 +1578,10 @@ func recoveryOwnershipEstablished(bucket *bbolt.Bucket, state *agentv1.DesiredNo
 }
 
 func runtimeResourceKey(resource RuntimeResource) ([]byte, error) {
-	switch {
-	case resource.AllocationID != "" && resource.VolumeID == "":
-		if err := validateRuntimeID("allocation ID", resource.AllocationID); err != nil {
-			return nil, err
-		}
-		return []byte("allocation:" + resource.AllocationID), nil
-	case resource.VolumeID != "" && resource.AllocationID == "":
-		if err := validateRuntimeID("volume ID", resource.VolumeID); err != nil {
-			return nil, err
-		}
-		return []byte("volume:" + resource.VolumeID), nil
-	default:
-		return nil, errors.New("runtime resource must identify exactly one allocation or volume")
+	if err := validateRuntimeID("allocation ID", resource.AllocationID); err != nil {
+		return nil, err
 	}
+	return []byte("allocation:" + resource.AllocationID), nil
 }
 
 func clearBucket(bucket *bbolt.Bucket) error {

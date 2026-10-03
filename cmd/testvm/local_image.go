@@ -44,6 +44,7 @@ var localImagePackages = []string{
 	"iproute2",
 	"iptables",
 	"wireguard-tools",
+	"e2fsprogs",
 	"jq",
 	"curl",
 	"python3",

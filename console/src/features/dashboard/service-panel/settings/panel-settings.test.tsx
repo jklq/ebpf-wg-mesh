@@ -461,7 +461,7 @@ describe("PanelSettings replica scaling", () => {
 						...spec,
 						runtime: {
 							...spec.runtime,
-							volumeName: "data",
+							volume: { volumeName: "data", mountPath: "/data" },
 						},
 					},
 				})}

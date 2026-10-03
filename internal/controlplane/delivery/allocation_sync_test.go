@@ -212,7 +212,7 @@ func TestAgentSyncCheckpointAndDiffAgreeOnMountedVolumes(t *testing.T) {
 			delete(state.Assignments, "remove")
 			delete(state.Assignments, "update")
 			revision := state.Revisions["s/1"]
-			revision.SpecJSON = []byte(`{"runtime":{"volumeName":"data"}}`)
+			revision.SpecJSON = []byte(`{"runtime":{"volume":{"volumeName":"data","mountPath":"/data"}}}`)
 			state.Revisions["s/1"] = revision
 			state.Volumes = map[string]journal.Volume{"v": {ID: "v", EnvironmentID: "e", Name: "data", SizeBytes: 64 << 20}}
 			applySyncFixture(t, d, state)

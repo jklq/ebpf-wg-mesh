@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"ebof-wg-mesh/internal/runtimeutil"
+
 	"github.com/containerd/containerd/containers"
 	containerdseccomp "github.com/containerd/containerd/contrib/seccomp"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
@@ -30,14 +32,14 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 		},
 		Mounts: []specs.Mount{
 			{Destination: "/proc", Type: "proc", Source: "proc"},
-			{Destination: defaultVolumeMount, Type: "bind", Source: "/var/lib/platform/volume", Options: []string{"rw"}},
+			{Destination: runtimeutil.DefaultVolumeMountPath, Type: "bind", Source: "/var/lib/platform/volume", Options: []string{"rw"}},
 		},
 	}
 	if err := containerdseccomp.WithDefaultProfile()(context.Background(), nil, &containers.Container{}, spec); err != nil {
 		t.Fatalf("default seccomp: %v", err)
 	}
 	allowedBindMounts := map[string]sandboxBindMount{
-		defaultVolumeMount: {source: "/var/lib/platform/volume", writable: true},
+		runtimeutil.DefaultVolumeMountPath: {source: "/var/lib/platform/volume", writable: true},
 	}
 	if err := withWorkloadSandbox("", allowedBindMounts)(context.Background(), nil, &containers.Container{}, spec); err != nil {
 		t.Fatalf("sandbox: %v", err)
@@ -102,7 +104,7 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 			t.Fatalf("%s is not a hardened tmpfs: %+v", destination, mount)
 		}
 	}
-	volume := mountFor(spec.Mounts, defaultVolumeMount)
+	volume := mountFor(spec.Mounts, runtimeutil.DefaultVolumeMountPath)
 	if !slices.Contains(volume.Options, "rbind") || !slices.Contains(volume.Options, "nosuid") || !slices.Contains(volume.Options, "nodev") {
 		t.Fatalf("volume mount options not hardened: %+v", volume)
 	}

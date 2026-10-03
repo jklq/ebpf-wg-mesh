@@ -320,7 +320,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 		t.Fatal(err)
 	}
 	service, err := createService(ctx, store, "owner", source.ID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{
-		Env: map[string]string{"SECRET": "production"}, VolumeName: "data",
+		Env: map[string]string{"SECRET": "production"}, Volume: &platformv1.ServiceVolumeMount{VolumeName: "data"},
 	}), "node-1")
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +345,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if copy.ID == service.ID || copy.RolloutGeneration != 0 || copy.AllocatedAgentID != "" || copy.ResolvedImage != "" {
 		t.Fatalf("duplicate inherited runtime state: %#v", copy)
 	}
-	if len(copy.Spec.GetRuntime().GetEnv()) != 0 || copy.Spec.GetRuntime().GetVolumeName() != "data" {
+	if len(copy.Spec.GetRuntime().GetEnv()) != 0 || copy.Spec.GetRuntime().GetVolume().GetVolumeName() != "data" {
 		t.Fatalf("unexpected copied specification: %#v", copy.Spec)
 	}
 	var allocations, domains, builds int
