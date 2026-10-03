@@ -85,3 +85,16 @@ it("keeps reuse visible after the rollout's reason changes", () => {
 	).toBeTruthy();
 	expect(screen.queryByText(/Build attempts/)).toBeNull();
 });
+it("hides first-attempt history and the pinned image reference", () => {
+	render(
+		<DeploymentDetails
+			serviceId="s"
+			record={{
+				...record,
+				build: record.build && { ...record.build, attemptCount: "1" },
+			}}
+		/>,
+	);
+	expect(screen.queryByText(/Build attempts/)).toBeNull();
+	expect(screen.queryByText(/sha256/)).toBeNull();
+});
