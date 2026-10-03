@@ -100,7 +100,7 @@ func (c *GitHubCoordinator) RequestInstallationRefresh(ctx context.Context, inst
 	return err
 }
 
-func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor string) error {
+func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage string, contributors CommitContributors) error {
 	if !c.Enabled() {
 		return errors.New("github integration disabled")
 	}
@@ -110,7 +110,7 @@ func (c *GitHubCoordinator) ObserveRepositoryRevision(ctx context.Context, repos
 	if repositoryExternalID == "" || trackedRef == "" || commitSHA == "" {
 		return errors.New("repository id, tracked ref, and commit sha are required")
 	}
-	inserted, err := c.work.Enqueue(ctx, RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, commitAuthor))
+	inserted, err := c.work.Enqueue(ctx, RevisionObservedParams(repositoryExternalID, trackedRef, commitSHA, previousCommitSHA, commitMessage, contributors))
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func (c *GitHubCoordinator) syncServiceSource(ctx context.Context, serviceID str
 	}
 	// Unanchored syncs are automatic refreshes, not explicit writes or releases, so they
 	// honor the auto-deploy switch. Their commit is the freshly fetched head.
-	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Author, specRevision == 0, BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom})
+	return c.observeBoundRevision(ctx, binding, commitSHA, metadata.Message, metadata.Contributors, specRevision == 0, BuildTransition{TrackedHead: true, FetchedFromHead: fetchedFrom})
 }
 
 func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload WorkPayload) error {
@@ -304,7 +304,7 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 		if time.Now().UTC().After(binding.FreshUntil) {
 			slog.InfoContext(ctx, "github source binding stale; requesting refresh", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
 			if binding.AccessState == SourceAccessStateAvailable {
-				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, transition); err != nil {
+				if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitContributors, transition); err != nil {
 					return err
 				}
 			}
@@ -318,13 +318,13 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 			continue
 		}
 		if stalePush {
-			if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, transition); err != nil {
+			if _, err := c.recordBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitContributors, transition); err != nil {
 				return err
 			}
 			continue
 		}
 		slog.InfoContext(ctx, "github revision matched bound service", "service_id", binding.ServiceID, "repository_selector", binding.RepositorySelector, "tracked_ref", binding.TrackedRef, "commit_sha", payload.CommitSHA)
-		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitAuthor, true, transition); err != nil {
+		if err := c.observeBoundRevision(ctx, binding, payload.CommitSHA, payload.CommitMessage, payload.CommitContributors, true, transition); err != nil {
 			return err
 		}
 	}
@@ -333,8 +333,8 @@ func (c *GitHubCoordinator) handleRevisionObserved(ctx context.Context, payload 
 
 // observeBoundRevision records the observed commit and queues a build. Automatic observations
 // honor the auto-deploy switch: when off, the revision is held for a manual release.
-func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, automatic bool, transition BuildTransition) error {
-	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, commitAuthor, transition)
+func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage string, contributors CommitContributors, automatic bool, transition BuildTransition) error {
+	revision, err := c.recordBoundRevision(ctx, binding, commitSHA, commitMessage, contributors, transition)
 	if err != nil {
 		return err
 	}
@@ -351,7 +351,7 @@ func (c *GitHubCoordinator) observeBoundRevision(ctx context.Context, binding So
 	return c.queueBoundRevisionBuild(ctx, binding, revision, transition)
 }
 
-func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage, commitAuthor string, transition BuildTransition) (SourceRevisionRecord, error) {
+func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding SourceBindingRecord, commitSHA, commitMessage string, contributors CommitContributors, transition BuildTransition) (SourceRevisionRecord, error) {
 	return c.store.ObserveSourceRevision(ctx, SourceRevisionRecord{
 		SourceBindingID:              binding.ID,
 		ServiceID:                    binding.ServiceID,
@@ -360,7 +360,7 @@ func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding Sou
 		TrackedRef:                   binding.TrackedRef,
 		CommitSHA:                    commitSHA,
 		CommitMessage:                strings.TrimSpace(commitMessage),
-		CommitAuthor:                 strings.TrimSpace(commitAuthor),
+		CommitContributors:           contributors,
 		ObservedAt:                   time.Now().UTC(),
 	}, transition)
 }

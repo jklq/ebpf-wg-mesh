@@ -5,10 +5,13 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -196,8 +199,8 @@ func TestGitHubSyncServiceSourceQueuesBuildIdempotently(t *testing.T) {
 	if status.LatestBuild.GetCommitMessage() != "Public main commit" {
 		t.Fatalf("expected synced build commit message to be persisted, got %+v", status.LatestBuild)
 	}
-	if status.LatestBuild.GetCommitAuthor() != "Octocat" {
-		t.Fatalf("expected synced build commit author to be persisted, got %+v", status.LatestBuild)
+	if contributors := status.LatestBuild.GetCommitContributors(); len(contributors) != 1 || contributors[0].GetName() != "Octocat" {
+		t.Fatalf("expected synced build commit contributors to be persisted, got %+v", status.LatestBuild)
 	}
 
 	if _, err := store.source.Work().Enqueue(ctx, source.SourceSpecChangedParams(service.ID, service.SpecRevision, false)); err != nil {
@@ -366,8 +369,8 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 		"ref":"refs/heads/main",
 		"after":"commit-123",
 		"head_commit":{
-			"message":"Persist dashboard deployment history",
-			"author":{"name":"Alice"},
+			"message":"Persist dashboard deployment history\n\nCo-authored-by: Carol <42+carol@users.noreply.github.com>",
+			"author":{"name":"Alice","email":"alice@example.com","username":"alice"},
 			"committer":{"name":"Bob"}
 		},
 		"repository":{"id":2,"name":"secret","full_name":"private/secret","owner":{"login":"private"}},
@@ -377,22 +380,30 @@ func TestPushWebhookPersistsCommitMetadataOnQueuedWorkItem(t *testing.T) {
 		t.Fatalf("processPushEvent: %v", err)
 	}
 
-	var commitMessage, commitAuthor string
+	var commitMessage, contributorsJSON string
 	if err := store.db.QueryRowContext(ctx,
-		`SELECT payload->>'commit_message', payload->>'commit_author'
+		`SELECT payload->>'commit_message', payload->>'commit_contributors'
 		   FROM durable_work_items
 		  WHERE kind = $1
 		  ORDER BY created_at DESC
 		  LIMIT 1`,
 		source.SourceWorkKindRevisionObserved,
-	).Scan(&commitMessage, &commitAuthor); err != nil {
+	).Scan(&commitMessage, &contributorsJSON); err != nil {
 		t.Fatalf("query queued source work item: %v", err)
 	}
-	if commitMessage != "Persist dashboard deployment history" {
+	if !strings.HasPrefix(commitMessage, "Persist dashboard deployment history") {
 		t.Fatalf("expected queued work item commit message, got %q", commitMessage)
 	}
-	if commitAuthor != "Alice" {
-		t.Fatalf("expected queued work item commit author, got %q", commitAuthor)
+	var contributors source.CommitContributors
+	if err := json.Unmarshal([]byte(contributorsJSON), &contributors); err != nil {
+		t.Fatalf("decode queued contributors: %v", err)
+	}
+	want := source.CommitContributors{
+		{Name: "Alice", Login: "alice", AvatarURL: "https://github.com/alice.png"},
+		{Name: "Carol", Login: "carol", AvatarURL: "https://github.com/carol.png"},
+	}
+	if !reflect.DeepEqual(contributors, want) {
+		t.Fatalf("expected queued work item contributors %+v, got %+v", want, contributors)
 	}
 }
 
@@ -651,7 +662,7 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 	// deleted and recreated at another commit; GitHub reports the recreate push with an all-zero before SHA.
 	const zeroSHA = "0000000000000000000000000000000000000000"
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", zeroSHA, "Public release commit", "Octocat Release"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", zeroSHA, "Public release commit", source.CommitContributors{{Name: "Octocat Release"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision: %v", err)
 	}
 	processed, err := reconciler.ProcessNext(ctx)
@@ -673,7 +684,7 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 	// A recreate push whose commit is no longer the tracked head is stale: a newer push already moved
 	// the ref on, so it must complete without building and without moving the head.
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-stale-recreate", zeroSHA, "Stale recreate", "Octocat"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-stale-recreate", zeroSHA, "Stale recreate", source.CommitContributors{{Name: "Octocat"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(stale): %v", err)
 	}
 	processed, err = reconciler.ProcessNext(ctx)
@@ -698,7 +709,7 @@ func TestRecreatedRefPushBuildsNewHeadWithoutPredecessorChain(t *testing.T) {
 	if _, err := store.db.ExecContext(ctx, `UPDATE source_bindings SET head_commit_sha = '' WHERE id = $1`, binding.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-orphan-create", zeroSHA, "Orphan create", "Octocat"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-orphan-create", zeroSHA, "Orphan create", source.CommitContributors{{Name: "Octocat"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(orphan create): %v", err)
 	}
 	processed, err = reconciler.ProcessNext(ctx)
@@ -765,7 +776,7 @@ func TestPushWithUnobservedPredecessorFetchesTrackedHeadInsteadOfPending(t *test
 	// outside the recorded history. The successor must not pend until the binding expires: the tracked
 	// head is fetched and the commit builds because it is still current.
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-never-observed", "Successor commit", "Octocat"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-never-observed", "Successor commit", source.CommitContributors{{Name: "Octocat"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision: %v", err)
 	}
 	processed, err := reconciler.ProcessNext(ctx)
@@ -791,7 +802,7 @@ func TestPushWithUnobservedPredecessorFetchesTrackedHeadInsteadOfPending(t *test
 	// The same shape of push for a commit that is no longer the tracked head must not build that commit:
 	// a newer push already moved the ref on, and the fetch-verified sync queues only the commit still
 	// current (a fresh attempt at the head, superseding its predecessor).
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-main", "commit-never-observed", "Superseded push", "Octocat"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-main", "commit-never-observed", "Superseded push", source.CommitContributors{{Name: "Octocat"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(stale): %v", err)
 	}
 	for i := 0; i < 2; i++ {
@@ -860,7 +871,7 @@ func TestRecreatedBranchSuccessorBuildsViaTrackedHeadSync(t *testing.T) {
 	// the recreate (zero predecessor) is recorded as history and can never hold the head.
 	const zeroSHA = "0000000000000000000000000000000000000000"
 	server.setBranchHead("/repos/public/hello/git/ref/heads/main", "commit-public-release")
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-history-phantom", zeroSHA, "Recreated tip", "Octocat"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-history-phantom", zeroSHA, "Recreated tip", source.CommitContributors{{Name: "Octocat"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(recreate): %v", err)
 	}
 	if processed, err := reconciler.ProcessNext(ctx); err != nil || !processed {
@@ -873,7 +884,7 @@ func TestRecreatedBranchSuccessorBuildsViaTrackedHeadSync(t *testing.T) {
 	// The successor push names that recorded-but-never-head commit as its predecessor, so the chain
 	// cannot prove currency — and that is not proof of staleness. The tracked head must be reconciled
 	// now and the successor builds because it is still current.
-	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-history-phantom", "Release successor", "Octocat"); err != nil {
+	if err := coordinator.ObserveRepositoryRevision(ctx, "1", "main", "commit-public-release", "commit-history-phantom", "Release successor", source.CommitContributors{{Name: "Octocat"}}); err != nil {
 		t.Fatalf("ObserveRepositoryRevision(successor): %v", err)
 	}
 	processed, err := reconciler.ProcessNext(ctx)

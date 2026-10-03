@@ -15,18 +15,18 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 		return nil
 	}
 	status := &platformv1.BuildStatus{
-		BuildId:       rec.ID,
-		State:         toProtoBuildState(rec.State),
-		CommitSha:     rec.CommitSHA,
-		ImageDigest:   rec.ImageDigest,
-		QueuedAt:      ts(rec.QueuedAt),
-		FailureReason: rec.FailureReason,
-		CommitMessage: rec.CommitMessage,
-		CommitAuthor:  rec.CommitAuthor,
-		Builder:       rec.BuildRecipe.GetBuilder(),
-		AttemptCount:  rec.AttemptCount,
-		AttemptLimit:  rec.AttemptLimit,
-		BuilderId:     rec.BuilderID,
+		BuildId:            rec.ID,
+		State:              toProtoBuildState(rec.State),
+		CommitSha:          rec.CommitSHA,
+		ImageDigest:        rec.ImageDigest,
+		QueuedAt:           ts(rec.QueuedAt),
+		FailureReason:      rec.FailureReason,
+		CommitMessage:      rec.CommitMessage,
+		CommitContributors: toProtoCommitContributors(rec.CommitContributors),
+		Builder:            rec.BuildRecipe.GetBuilder(),
+		AttemptCount:       rec.AttemptCount,
+		AttemptLimit:       rec.AttemptLimit,
+		BuilderId:          rec.BuilderID,
 	}
 	if rec.StartedAt.Valid {
 		status.StartedAt = ts(rec.StartedAt.Time)
@@ -44,6 +44,14 @@ func ToProtoBuildStatus(rec BuildRunRecord) *platformv1.BuildStatus {
 		status.Artifact = ToProtoBuildArtifact(rec.Artifact)
 	}
 	return status
+}
+
+func toProtoCommitContributors(contributors source.CommitContributors) []*platformv1.CommitContributor {
+	out := make([]*platformv1.CommitContributor, 0, len(contributors))
+	for _, c := range contributors {
+		out = append(out, &platformv1.CommitContributor{Name: c.Name, Login: c.Login, AvatarUrl: c.AvatarURL})
+	}
+	return out
 }
 
 // ToProtoBuildArtifact renders the immutable deploy-by-digest record. The

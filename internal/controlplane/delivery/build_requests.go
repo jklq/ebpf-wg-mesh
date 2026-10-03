@@ -119,7 +119,7 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 		EnvironmentID:           service.EnvironmentID,
 		CommitSHA:               revision.CommitSHA,
 		CommitMessage:           revision.CommitMessage,
-		CommitAuthor:            revision.CommitAuthor,
+		CommitContributors:      revision.CommitContributors,
 		State:                   BuildStateQueued,
 		AttemptLimit:            scheduler.AttemptLimit,
 		SourceRevisionID:        revision.ID,
@@ -137,11 +137,11 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	}
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO build_runs(
-			id, service_id, commit_sha, commit_message, commit_author, state,
+			id, service_id, commit_sha, commit_message, commit_contributors, state,
 			source_revision_id, source_snapshot_id, source_snapshot_digest, target_rollout_generation, build_recipe_json,
 			build_actor_kind, build_actor_id, builder_id, queued_at, attempt_limit
 		) VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), NULLIF($8, ''), $9, $10, $11, $12, $13, NULL, $14, $15)`,
-		rec.ID, rec.ServiceID, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.State,
+		rec.ID, rec.ServiceID, rec.CommitSHA, rec.CommitMessage, rec.CommitContributors, rec.State,
 		rec.SourceRevisionID, rec.SourceSnapshotID, rec.SourceSnapshotDigest, rec.TargetRolloutGeneration, recipeJSON,
 		rec.BuildActorKind, rec.BuildActorID, rec.QueuedAt, rec.AttemptLimit,
 	); err != nil {
@@ -182,14 +182,14 @@ func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service
 	var reuseBuildID string
 	err = tx.QueryRowContext(ctx,
 		`INSERT INTO build_runs(
-			id, service_id, commit_sha, commit_message, commit_author, state,
+			id, service_id, commit_sha, commit_message, commit_contributors, state,
 			artifact_id, source_revision_id, source_snapshot_digest, build_recipe_json,
 			build_actor_kind, build_actor_id, queued_at, started_at, finished_at
 		)
 		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $13, $13
 		 WHERE NOT EXISTS (SELECT 1 FROM build_runs WHERE source_revision_id = $8)
 		 RETURNING id`,
-		uuid.NewString(), service.ID, revision.CommitSHA, revision.CommitMessage, revision.CommitAuthor, BuildStateSucceeded,
+		uuid.NewString(), service.ID, revision.CommitSHA, revision.CommitMessage, revision.CommitContributors, BuildStateSucceeded,
 		artifact.ID, revision.ID, artifact.SourceSnapshotDigest, recipeJSON,
 		actor.Kind, actor.ID, now,
 	).Scan(&reuseBuildID)

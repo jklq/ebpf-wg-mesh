@@ -340,6 +340,13 @@ message DeploymentStage {
   google.protobuf.Timestamp finished_at = 6;
 }
 
+message CommitContributor {
+  string name = 1;
+  // Empty when the person is not tied to a GitHub account.
+  string login = 2;
+  string avatar_url = 3;
+}
+
 message BuildStatus {
   string build_id = 1;
   BuildState state = 2;
@@ -350,7 +357,8 @@ message BuildStatus {
   google.protobuf.Timestamp finished_at = 7;
   string failure_reason = 8;
   string commit_message = 9;
-  string commit_author = 10;
+  // Author first, then Co-authored-by trailers.
+  repeated CommitContributor commit_contributors = 10;
   repeated DeploymentStage stages = 11;
   BuilderKind builder = 12;
   // Lease-based scheduler fields (2.5). attempt_count counts every claim

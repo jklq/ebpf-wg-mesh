@@ -77,7 +77,7 @@ func scanBuildRunRow(scanner interface{ Scan(...any) error }) (BuildRunRecord, e
 		&rec.ServiceID,
 		&rec.CommitSHA,
 		&rec.CommitMessage,
-		&rec.CommitAuthor,
+		&rec.CommitContributors,
 		&rec.State,
 		&rec.BuilderID,
 		&rec.OwnerEpoch,
@@ -856,7 +856,7 @@ const (
 	BuildAttemptSuperseded     = "superseded"
 )
 
-const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_author, state, COALESCE(builder_id, ''), owner_epoch, lease_expires_at,
+const buildRunSelectColumns = `id, service_id, commit_sha, commit_message, commit_contributors, state, COALESCE(builder_id, ''), owner_epoch, lease_expires_at,
 		attempt_count, attempt_limit, cancel_requested_at, deadline_at, last_heartbeat_at,
 		COALESCE(artifact_id, ''), COALESCE((SELECT image_ref FROM build_artifacts WHERE id = build_runs.artifact_id), ''), failure_reason,
 	        COALESCE(source_revision_id, ''), COALESCE(source_snapshot_id, ''), source_snapshot_digest, build_actor_kind, build_actor_id, target_rollout_generation, build_recipe_json,

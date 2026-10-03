@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 31
+const currentSchemaVersion = 32
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -392,7 +392,7 @@ var currentSchema = []string{
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			commit_sha STRING NOT NULL,
 			commit_message STRING NOT NULL DEFAULT '',
-			commit_author STRING NOT NULL DEFAULT '',
+			commit_contributors JSONB NOT NULL DEFAULT '[]',
 			state STRING NOT NULL,
 			builder_id STRING NULL REFERENCES builder_workers(id) ON DELETE SET NULL,
 			owner_epoch INT8 NOT NULL DEFAULT 0,
@@ -568,7 +568,7 @@ var currentSchema = []string{
 			tracked_ref STRING NOT NULL DEFAULT '',
 			commit_sha STRING NOT NULL,
 			commit_message STRING NOT NULL DEFAULT '',
-			commit_author STRING NOT NULL DEFAULT '',
+			commit_contributors JSONB NOT NULL DEFAULT '[]',
 			observed_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,
 			UNIQUE (source_binding_id, commit_sha),

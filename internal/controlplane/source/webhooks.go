@@ -275,6 +275,14 @@ func (p *GitHubWebhookProcessor) processDelivery(ctx context.Context, rec GitHub
 	}
 }
 
+// webhookCommitUser is a push payload's git identity; username is set only
+// when GitHub matched the email to an account.
+type webhookCommitUser struct {
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Username string `json:"username"`
+}
+
 func (p *GitHubWebhookProcessor) ProcessPushEvent(ctx context.Context, raw []byte) error {
 	var payload struct {
 		Ref        string `json:"ref"`
@@ -282,13 +290,9 @@ func (p *GitHubWebhookProcessor) ProcessPushEvent(ctx context.Context, raw []byt
 		Before     string `json:"before"`
 		Deleted    bool   `json:"deleted"`
 		HeadCommit struct {
-			Message string `json:"message"`
-			Author  struct {
-				Name string `json:"name"`
-			} `json:"author"`
-			Committer struct {
-				Name string `json:"name"`
-			} `json:"committer"`
+			Message   string            `json:"message"`
+			Author    webhookCommitUser `json:"author"`
+			Committer webhookCommitUser `json:"committer"`
 		} `json:"head_commit"`
 		Repository   webhookRepositoryPayload `json:"repository"`
 		Installation struct {
@@ -308,18 +312,19 @@ func (p *GitHubWebhookProcessor) ProcessPushEvent(ctx context.Context, raw []byt
 		return nil
 	}
 	slog.InfoContext(ctx, "github push observed", "repository_id", payload.Repository.ID, "repository_full_name", payload.Repository.FullName, "tracked_ref", branch, "commit_sha", payload.After, "installation_id", payload.Installation.ID)
-	commitAuthor := strings.TrimSpace(payload.HeadCommit.Author.Name)
-	if commitAuthor == "" {
-		commitAuthor = strings.TrimSpace(payload.HeadCommit.Committer.Name)
+	author := payload.HeadCommit.Author
+	if strings.TrimSpace(author.Name) == "" {
+		author = payload.HeadCommit.Committer
 	}
+	message := strings.TrimSpace(payload.HeadCommit.Message)
 	if err := p.coordinator.ObserveRepositoryRevision(
 		ctx,
 		fmt.Sprintf("%d", payload.Repository.ID),
 		branch,
 		payload.After,
 		payload.Before,
-		strings.TrimSpace(payload.HeadCommit.Message),
-		commitAuthor,
+		message,
+		ResolveCommitContributors(CommitPerson{Name: author.Name, Email: author.Email, Login: author.Username}, message),
 	); err != nil {
 		return err
 	}

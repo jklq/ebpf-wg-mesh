@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex";
 import { useState } from "react";
 import { noticeStyles } from "#/components/ui/notice";
 import { statusDotStylesFor } from "#/components/ui/status-dot";
+import { CommitContributors } from "#/features/dashboard/service-panel/deployments/commit-contributors";
 import { DeploymentActionsMenu } from "#/features/dashboard/service-panel/deployments/deployment-actions-menu";
 import { DeploymentDetails } from "#/features/dashboard/service-panel/deployments/deployment-details";
 import {
@@ -57,6 +58,12 @@ const styles = stylex.create({
 			":hover": { default: null, "@media (hover: hover)": colors.ink },
 		},
 		opacity: { default: null, ":disabled": "55%" },
+	},
+	title: {
+		display: "flex",
+		minWidth: "0rem",
+		alignItems: "center",
+		gap: space.sm,
 	},
 	headline: {
 		minWidth: "0rem",
@@ -159,11 +166,19 @@ export function DeploymentHistoryRow({
 						{...stylex.props(statusDotStylesFor(toneToHealth(tone)))}
 						aria-label={`Status: ${toneToHealth(tone)}`}
 					/>
-					<span {...stylex.props(styles.headline)}>
-						{record.artifact?.kind === "direct_image"
-							? "Image deployment"
-							: deploymentCardHeadline(build)}
-					</span>
+					{record.artifact?.kind === "direct_image" ? (
+						<span {...stylex.props(styles.headline)}>Image deployment</span>
+					) : (
+						<span {...stylex.props(styles.title)}>
+							<CommitContributors
+								contributors={build?.commitContributors}
+								size="sm"
+							/>
+							<span {...stylex.props(styles.headline)}>
+								{deploymentCardHeadline(build)}
+							</span>
+						</span>
+					)}
 					<span {...stylex.props(styles.metadata)}>
 						{build?.commitSha && (
 							<span {...stylex.props(styles.commitSha)}>
