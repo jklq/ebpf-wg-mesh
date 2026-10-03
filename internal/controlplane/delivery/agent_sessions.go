@@ -347,6 +347,11 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 			changedEnvironments[advanced.EnvironmentID] = struct{}{}
 		}
 	}
+	volumesChanged, err := d.recordVolumeReport(ctx, authenticatedAgentID, report, durable, now)
+	if err != nil {
+		return false, nil, err
+	}
+	statusInvalidated = statusInvalidated || volumesChanged
 	if statusInvalidated && !stateChanged {
 		// Rendered status changed but no transaction touched durable state, so no revision was
 		// bumped; publish an explicit invalidation or subscribers keep showing stale status.

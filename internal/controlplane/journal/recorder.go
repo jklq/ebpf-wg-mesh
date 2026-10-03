@@ -19,6 +19,7 @@ const (
 	TableAdministration Table = "agent_administration"
 	TableEnvironments   Table = "environments"
 	TableVolumes        Table = "volumes"
+	TableDestructions   Table = "volume_destructions"
 	TableDomains        Table = "domain_bindings"
 )
 

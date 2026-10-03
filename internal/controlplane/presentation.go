@@ -167,14 +167,24 @@ func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.Doma
 }
 
 func toProtoVolume(rec deliverycore.VolumeRecord) *platformv1.Volume {
-	return &platformv1.Volume{
+	out := &platformv1.Volume{
 		Id:            rec.ID,
 		EnvironmentId: rec.EnvironmentID,
 		Name:          rec.Name,
 		SizeBytes:     rec.SizeBytes,
 		CreatedAt:     ts(rec.CreatedAt),
 		Deletion:      toProtoDeletion(rec.Deletion),
+		AgentId:       rec.AgentID,
+		AgentName:     rec.AgentName,
+		State:         rec.Status.State,
+		StateMessage:  rec.Status.Message,
+		UsedBytes:     rec.Status.UsedBytes,
+		Staged:        rec.Staged,
 	}
+	if !rec.Status.ObservedAt.IsZero() {
+		out.ObservedAt = ts(rec.Status.ObservedAt)
+	}
+	return out
 }
 
 func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {

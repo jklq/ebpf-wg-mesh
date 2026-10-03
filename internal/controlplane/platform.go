@@ -68,6 +68,8 @@ type platformDelivery interface {
 	LiveAllocationsByEnvironment(environmentID string) (map[string][]deliverycore.AllocationRecord, error)
 	BuildAttempts(ctx context.Context, user authz.User, serviceID, buildID string) ([]deliverycore.BuildAttemptRecord, error)
 	ListServiceArtifacts(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.BuildArtifactRecord, error)
+	GrowVolume(ctx context.Context, user authz.User, volumeID string, sizeBytes int64) (deliverycore.VolumeRecord, error)
+	RenderVolumeStatus(rec deliverycore.VolumeRecord) deliverycore.VolumeRecord
 	livePositionReader
 }
 

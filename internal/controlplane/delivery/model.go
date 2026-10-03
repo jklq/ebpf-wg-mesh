@@ -104,8 +104,25 @@ type VolumeRecord struct {
 	EnvironmentID string
 	Name          string
 	SizeBytes     int64
-	CreatedAt     time.Time
-	Deletion      *DeletionInfo
+	// AgentID pins the volume to one node; empty until its service first
+	// deploys.
+	AgentID   string
+	AgentName string
+	// Staged volumes are an unreleased change: the next environment release
+	// commits them, and discarding the drafts that mount them removes them.
+	Staged    bool
+	CreatedAt time.Time
+	Deletion  *DeletionInfo
+	Status    VolumeStatus
+}
+
+// VolumeStatus is the rendered runtime state of a volume: its node's latest
+// report folded with the node's presence and administration.
+type VolumeStatus struct {
+	State      platformv1.VolumeState
+	Message    string
+	UsedBytes  int64
+	ObservedAt time.Time
 }
 
 type ServiceRecord struct {
@@ -398,10 +415,13 @@ var (
 	ErrVolumeInUse              = errors.New("volume still referenced by service")
 	ErrVolumeNotFound           = errors.New("volume not found")
 	ErrVolumeAlreadyExists      = errors.New("volume already exists")
-	ErrInvalidVolume            = errors.New("volume name and positive size are required")
+	ErrInvalidVolume            = errors.New("volume name must be lowercase letters, digits, and hyphens")
 	ErrInvalidServiceEnv        = errors.New("invalid environment variable")
 	ErrLeaseLost                = errors.New("control-plane lease lost")
-	ErrVolumeAgentMismatch      = errors.New("volume bound to different agent")
+	ErrInvalidVolumeMount       = errors.New("invalid volume mount")
+	ErrVolumeAttached           = errors.New("volume is attached to another service")
+	ErrVolumeShrink             = errors.New("volume size can only grow")
+	ErrInvalidVolumeSize        = errors.New("invalid volume size")
 	ErrConcurrentUpdate         = errors.New("concurrent service update")
 	ErrDomainAlreadyExists      = errors.New("domain binding already exists")
 	ErrInvalidPort              = errors.New("port must be an integer between 1 and 65535")
@@ -413,7 +433,6 @@ var (
 	ErrProjectDeleted           = errors.New("project is deleted")
 	ErrDomainDeleted            = errors.New("domain binding is deleted")
 	ErrConfirmationMismatch     = errors.New("confirmation name does not match the current resource name")
-	ErrVolumeNotEmpty           = errors.New("volume may still hold data")
 	ErrAncestorDeleted          = errors.New("cannot restore under a deleted parent; restore the parent first")
 	ErrDeletionExpired          = errors.New("deletion grace period has expired")
 	ErrServiceAlreadyExists     = errors.New("service already exists")

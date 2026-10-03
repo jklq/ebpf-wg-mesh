@@ -41,46 +41,33 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	return state, nil
 }
 
-func desiredVolumes(product *journal.Projection, agentID string) ([]*agentv1.DesiredVolume, error) {
-	live := product.DurableState
-	wanted := make(map[string]bool)
-	environments := make(map[string]bool)
-	for _, id := range product.AssignmentIDsForAgent(agentID) {
-		a := live.Assignments[id]
-		if a.RolloutState == AllocationRolloutLost || live.Rollouts[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredRolloutGeneration)].ImageDigest == "" {
-			continue
-		}
-		service := live.Services[a.ServiceID]
-		revision := live.Revisions[fmt.Sprintf("%s/%d", a.ServiceID, a.DesiredSpecRevision)]
-		spec, err := LoadServiceSpec(revision.SpecJSON)
-		if err != nil {
-			return nil, err
-		}
-		if name := ServiceVolumeName(spec); name != "" {
-			wanted[volumeKey(service.EnvironmentID, name)] = true
-			environments[service.EnvironmentID] = true
-		}
-	}
-	var volumes []journal.Volume
-	for environmentID := range environments {
-		for _, id := range product.VolumeIDsForEnvironment(environmentID) {
-			v := live.Volumes[id]
-			if wanted[volumeKey(v.EnvironmentID, v.Name)] {
-				volumes = append(volumes, v)
-			}
-		}
-	}
-	slices.SortFunc(volumes, func(a, b journal.Volume) int {
-		if n := a.CreatedAt.Compare(b.CreatedAt); n != 0 {
-			return n
-		}
-		return strings.Compare(a.ID, b.ID)
-	})
+// desiredVolumes is every live volume pinned to the agent, attached or not,
+// plus explicit destroy instructions. A tombstoned volume is absent during its
+// deletion grace; the agent retains its data until a destruction arrives.
+func desiredVolumes(product *journal.Projection, agentID string) []*agentv1.DesiredVolume {
 	var out []*agentv1.DesiredVolume
-	for _, v := range volumes {
+	for _, id := range product.VolumeIDsForAgent(agentID) {
+		v := product.Volumes[id]
 		out = append(out, &agentv1.DesiredVolume{VolumeId: v.ID, EnvironmentId: v.EnvironmentID, Name: v.Name, SizeBytes: v.SizeBytes})
 	}
-	return out, nil
+	for _, id := range product.DestructionIDsForAgent(agentID) {
+		if _, live := product.Volumes[id]; live {
+			continue
+		}
+		out = append(out, &agentv1.DesiredVolume{VolumeId: id, Destroy: true})
+	}
+	slices.SortFunc(out, func(a, b *agentv1.DesiredVolume) int { return strings.Compare(a.GetVolumeId(), b.GetVolumeId()) })
+	return out
+}
+
+// environmentVolumeID resolves a service's volume name within its environment.
+func environmentVolumeID(product *journal.Projection, environmentID, name string) string {
+	for _, id := range product.VolumeIDsForEnvironment(environmentID) {
+		if product.Volumes[id].Name == name {
+			return id
+		}
+	}
+	return ""
 }
 
 func workloadIdentities(product *journal.Projection, agentID string) ([]*agentv1.WorkloadIdentity, error) {
@@ -177,11 +164,8 @@ func (v *agentView) checkpoint(mesh config.ControlPlaneMeshConfig) (*agentv1.Des
 	candidate := &agentv1.DesiredNodeState{AgentId: v.agentID, ReconciliationCursor: v.product.Agents[v.agentID].DesiredRevision,
 		AuthorityEpoch: v.epoch, Scope: agentv1.SnapshotScope_SNAPSHOT_SCOPE_AGENT, GeneratedAt: ts(v.now), Complete: true}
 	var err error
-	candidate.Volumes, err = desiredVolumes(v.product, v.agentID)
-	if err != nil {
-		return nil, err
-	}
-	candidate.Services, err = v.services(candidate.Volumes, v.product.AssignmentIDsForAgent(v.agentID))
+	candidate.Volumes = desiredVolumes(v.product, v.agentID)
+	candidate.Services, err = v.services(v.product.AssignmentIDsForAgent(v.agentID))
 	if err != nil {
 		return nil, err
 	}
@@ -192,12 +176,8 @@ func (v *agentView) checkpoint(mesh config.ControlPlaneMeshConfig) (*agentv1.Des
 	return candidate, nil
 }
 
-func (v *agentView) services(volumes []*agentv1.DesiredVolume, assignmentIDs []string) ([]*agentv1.DesiredService, error) {
+func (v *agentView) services(assignmentIDs []string) ([]*agentv1.DesiredService, error) {
 	product := v.product
-	volumeIDs := make(map[string]string, len(volumes))
-	for _, vol := range volumes {
-		volumeIDs[volumeKey(vol.GetEnvironmentId(), vol.GetName())] = vol.GetVolumeId()
-	}
 	var assignments []journal.Assignment
 	for _, id := range assignmentIDs {
 		a, exists := product.Assignments[id]
@@ -250,8 +230,10 @@ func (v *agentView) services(volumes []*agentv1.DesiredVolume, assignmentIDs []s
 		} {
 			svc.Spec.Runtime.Env[key] = value
 		}
+		// The agent refuses to start a mount that is not pinned to it, so a
+		// placement bug surfaces as an error instead of an empty volume.
 		if name := ServiceVolumeName(spec); name != "" {
-			svc.VolumeId = volumeIDs[volumeKey(service.EnvironmentID, name)]
+			svc.VolumeId = environmentVolumeID(product, service.EnvironmentID, name)
 		}
 		svc.InternalHostname = InternalServiceHostname(service.Name, a.ServiceID)
 		svc.InternalHosts = v.internalHostsForEnvironment(service.EnvironmentID)

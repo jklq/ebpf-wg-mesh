@@ -218,6 +218,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"platform_signing_keys",
 		"envelope_data_keys",
 		"envelope_keys",
+		"volume_destructions",
 		"volumes",
 		"project_memberships",
 		"environments",
@@ -285,6 +286,7 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 		{`SELECT agent_id::STRING FROM agent_administration`, func(ctx context.Context, id string) { _ = journal.AdministrationRow(id).Capture(ctx) }},
 		{`SELECT id::STRING FROM environments`, func(ctx context.Context, id string) { _ = journal.EnvironmentRow(id).Capture(ctx) }},
 		{`SELECT id::STRING FROM volumes`, func(ctx context.Context, id string) { _ = journal.VolumeRow(id).Capture(ctx) }},
+		{`SELECT volume_id::STRING FROM volume_destructions`, func(ctx context.Context, id string) { _ = journal.DestructionRow(id).Capture(ctx) }},
 		{`SELECT hostname::STRING FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.DomainRow(hostname).Capture(ctx) }},
 	}
 	for _, item := range single {

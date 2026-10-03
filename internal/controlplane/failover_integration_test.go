@@ -413,7 +413,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != "Unavailable" || !strings.Contains(volumeAllocation.Message, "replicated storage") {
+	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != "Unavailable" || !strings.Contains(volumeAllocation.Message, "not replicated") {
 		t.Fatalf("volume allocation did not surface a pinned-storage reason: %+v", volumeAllocation)
 	}
 	largeAllocation, err := store.primaryAllocationForTest(ctx, largeService.ID)

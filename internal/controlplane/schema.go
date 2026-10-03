@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 33
+const currentSchemaVersion = 35
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -185,6 +185,8 @@ var currentSchema = []string{
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
 			name STRING NOT NULL CHECK (btrim(name) <> ''),
 			size_bytes INT8 NOT NULL CHECK (size_bytes > 0),
+			agent_id STRING NULL REFERENCES agent_registrations(id),
+			staged BOOL NOT NULL DEFAULT false,
 			created_at TIMESTAMPTZ NOT NULL,
 			deleted_at TIMESTAMPTZ NULL,
 			deleted_by_user_id STRING NOT NULL DEFAULT '',
@@ -193,6 +195,16 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_volumes_delete_expires ON volumes(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE INDEX idx_volumes_environment_created ON volumes(environment_id, created_at, id)`,
+	`CREATE INDEX idx_volumes_agent ON volumes(agent_id) WHERE agent_id IS NOT NULL`,
+	// A destruction outlives its volume row (and the environment that owned
+	// it): the pinned agent deletes data only on this explicit instruction,
+	// and the row is removed once the agent reports the data gone.
+	`CREATE TABLE volume_destructions (
+			volume_id STRING PRIMARY KEY,
+			agent_id STRING NOT NULL REFERENCES agent_registrations(id),
+			requested_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_volume_destructions_agent ON volume_destructions(agent_id)`,
 	`CREATE TABLE envelope_keys (
 			id STRING PRIMARY KEY,
 			provider STRING NOT NULL,

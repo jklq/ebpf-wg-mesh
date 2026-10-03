@@ -40,6 +40,7 @@ func readProductState(ctx context.Context, tx *sql.Tx) (DurableState, error) {
 		Administration: make(map[string]AgentAdministration),
 		Environments:   make(map[string]Environment),
 		Volumes:        make(map[string]Volume),
+		Destructions:   make(map[string]VolumeDestruction),
 		Domains:        make(map[string]Domain),
 	}
 	for _, table := range productTables {
@@ -105,6 +106,7 @@ func mergeBatch(into, from Batch) Batch {
 	into.Administration = append(into.Administration, from.Administration...)
 	into.Environments = append(into.Environments, from.Environments...)
 	into.Volumes = append(into.Volumes, from.Volumes...)
+	into.Destructions = append(into.Destructions, from.Destructions...)
 	into.Domains = append(into.Domains, from.Domains...)
 	return into
 }
@@ -228,7 +230,8 @@ const deploymentJSON = `jsonb_build_object('id', id, 'service_id', service_id, '
 const agentJSON = `jsonb_build_object('id', id, 'name', name, 'local_store_id', local_store_id, 'session_incarnation', session_incarnation, 'region', region, 'zone', zone, 'failure_domain', failure_domain, 'reserved_cpu_millis', reserved_cpu_millis, 'reserved_memory_mebibytes', reserved_memory_mebibytes, 'advertise_addr', advertise_addr, 'workload_ipv4_subnet', workload_ipv4_subnet, 'workload_ipv6_subnet', workload_ipv6_subnet, 'wireguard_public_key', wireguard_public_key, 'wireguard_listen_port', wireguard_listen_port, 'wireguard_endpoint', wireguard_endpoint, 'wireguard_ipv6', wireguard_ipv6, 'cpu_millis_capacity', cpu_millis_capacity, 'memory_mebibytes_capacity', memory_mebibytes_capacity, 'runtime_capabilities', runtime_capabilities, 'software_version', software_version, 'created_at', created_at, 'updated_at', updated_at, 'desired_revision', desired_revision)`
 const administrationJSON = `jsonb_build_object('agent_id', agent_id, 'lifecycle_state', lifecycle_state, 'operator_intent', operator_intent, 'maintenance_message', maintenance_message, 'credential_revoked_at', credential_revoked_at, 'updated_at', updated_at)`
 const environmentJSON = `jsonb_build_object('id', id, 'project_id', project_id, 'name', name, 'kind', kind, 'is_production', is_production, 'auto_deploy', auto_deploy, 'network_identity', network_identity, 'copied_from_environment_id', copied_from_environment_id, 'created_at', created_at, 'updated_at', updated_at)`
-const volumeJSON = `jsonb_build_object('id', id, 'environment_id', environment_id, 'name', name, 'size_bytes', size_bytes, 'created_at', created_at)`
+const volumeJSON = `jsonb_build_object('id', id, 'environment_id', environment_id, 'name', name, 'size_bytes', size_bytes, 'agent_id', COALESCE(agent_id, ''), 'created_at', created_at)`
+const destructionJSON = `jsonb_build_object('volume_id', volume_id, 'agent_id', agent_id, 'requested_at', requested_at)`
 const domainJSON = `jsonb_build_object('hostname', hostname, 'service_id', service_id, 'target_port', target_port, 'platform_generated', platform_generated, 'created_at', created_at, 'updated_at', updated_at)`
 
 // Tombstone filters hide soft-deleted rows from durable state. A tombstoned
@@ -378,6 +381,17 @@ var productTables = []productTable{
 		},
 	},
 	{
+		name: "volume_destructions", keySQL: "volume_id::STRING", jsonSQL: destructionJSON,
+		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Destructions, key, raw) },
+		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
+			changes, err := resolveChanges(ctx, tx, base.Destructions, keys, keyedRead[VolumeDestruction]{
+				name: "volume_destructions", keySQL: "volume_id::STRING", jsonSQL: destructionJSON,
+				decode: decodeValue[VolumeDestruction], where: singleKeyWhereVolumeID,
+			})
+			return Batch{Destructions: changes}, err
+		},
+	},
+	{
 		name: "domain_bindings", keySQL: "hostname::STRING", jsonSQL: domainJSON, filter: domainLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Domains, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
@@ -396,6 +410,10 @@ func singleKeyWhereID(keys []string) (string, []any) {
 
 func singleKeyWhereAgentID(keys []string) (string, []any) {
 	return singleKeyWhere("agent_id", keys)
+}
+
+func singleKeyWhereVolumeID(keys []string) (string, []any) {
+	return singleKeyWhere("volume_id", keys)
 }
 
 func singleKeyWhereHostname(keys []string) (string, []any) {

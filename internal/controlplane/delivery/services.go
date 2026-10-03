@@ -102,11 +102,6 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	if agentID == "" {
 		return ServiceRecord{}, errors.New("agent id required")
 	}
-	if volumeName := ServiceVolumeName(spec); volumeName != "" {
-		if err := s.requireVolumeQuerier(ctx, tx, environment.ID, volumeName); err != nil {
-			return ServiceRecord{}, err
-		}
-	}
 	if spec == nil {
 		spec = &platformv1.ServiceSpec{}
 	}
@@ -218,8 +213,11 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if err := ValidateServiceEnv(spec); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
+	if err := ValidateServiceVolume(spec); err != nil {
+		return ServiceRecord{}, false, false, err
+	}
 	if volumeName := ServiceVolumeName(spec); volumeName != "" {
-		if err := s.requireVolumeQuerier(ctx, tx, current.EnvironmentID, volumeName); err != nil {
+		if err := s.requireVolumeAttachableQuerier(ctx, tx, current.EnvironmentID, current.ID, volumeName); err != nil {
 			return ServiceRecord{}, false, false, err
 		}
 	}
@@ -337,6 +335,10 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 			return err
 		}
 		hasBindings = bindings
+		service, err := s.serviceByIDInternalQuerier(ctx, tx, scope.ID())
+		if err != nil {
+			return err
+		}
 		now, err := dbtx.DatabaseTime(ctx, tx)
 		if err != nil {
 			return err
@@ -347,6 +349,9 @@ func (d *Delivery) deleteService(ctx context.Context, scope authz.Service) error
 		}
 		if !tombstoned {
 			return nil
+		}
+		if err := discardUnmountedStagedVolumeTx(ctx, tx, service.EnvironmentID, ServiceVolumeName(service.Spec)); err != nil {
+			return err
 		}
 		if err := quiesceServiceTx(ctx, s, tx, scope.ID(), scope.UserID()); err != nil {
 			return err
@@ -515,6 +520,11 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 		if err := s.insertServiceRevisionTx(ctx, tx, current.EnvironmentID, current.ID, nextRevision, nextSpec, now); err != nil {
 			return err
 		}
+		if dropped := ServiceVolumeName(current.Spec); dropped != ServiceVolumeName(nextSpec) {
+			if err := discardUnmountedStagedVolumeTx(ctx, tx, current.EnvironmentID, dropped); err != nil {
+				return err
+			}
+		}
 		rec = current
 		rec.Spec = nextSpec
 		rec.SpecRevision = nextRevision
@@ -646,6 +656,14 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	}
 	if err := ValidateBuildRecipe(spec); err != nil {
 		return ServiceRecord{}, err
+	}
+	if err := ValidateServiceVolume(spec); err != nil {
+		return ServiceRecord{}, err
+	}
+	if volumeName := ServiceVolumeName(spec); volumeName != "" {
+		if err := s.requireVolumeAttachableQuerier(ctx, tx, environment.ID, "", volumeName); err != nil {
+			return ServiceRecord{}, err
+		}
 	}
 	if !specHasDesiredReplicaCount(spec) {
 		spec.DesiredReplicaCount = replicaCountPtr(DefaultDesiredReplicaCount)

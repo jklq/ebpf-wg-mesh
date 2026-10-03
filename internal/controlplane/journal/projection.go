@@ -69,6 +69,16 @@ func (p *Projection) VolumeIDsForEnvironment(id string) []string {
 	return p.indexes.volumesByEnvironment.keys(id)
 }
 
+// VolumeIDsForAgent lists live volumes pinned to an agent.
+func (p *Projection) VolumeIDsForAgent(id string) []string {
+	return p.indexes.volumesByAgent.keys(id)
+}
+
+// DestructionIDsForAgent lists volumes an agent has been told to destroy.
+func (p *Projection) DestructionIDsForAgent(id string) []string {
+	return p.indexes.destructionsByAgent.keys(id)
+}
+
 // A membership count retains environment peers until their last non-lost
 // assignment disappears. The same relation machinery handles ordinary sets.
 type relation map[string]map[string]int
@@ -123,6 +133,7 @@ type projectionIndexes struct {
 	servicesByEnvironment, domainsByService     relation
 	environmentsByAgent, agentsByEnvironment    relation
 	environmentsByProject, volumesByEnvironment relation
+	volumesByAgent, destructionsByAgent         relation
 }
 
 func updateIndexes(previous projectionIndexes, before, after DurableState, batch Batch) projectionIndexes {
@@ -130,6 +141,7 @@ func updateIndexes(previous projectionIndexes, before, after DurableState, batch
 	environmentsByAgent, agentsByEnvironment := editRelation(previous.environmentsByAgent), editRelation(previous.agentsByEnvironment)
 	servicesByEnvironment, domainsByService := editRelation(previous.servicesByEnvironment), editRelation(previous.domainsByService)
 	environmentsByProject, volumesByEnvironment := editRelation(previous.environmentsByProject), editRelation(previous.volumesByEnvironment)
+	volumesByAgent, destructionsByAgent := editRelation(previous.volumesByAgent), editRelation(previous.destructionsByAgent)
 	for _, c := range batch.Services {
 		old, next := before.Services[c.Key], after.Services[c.Key]
 		if old.EnvironmentID != next.EnvironmentID {
@@ -156,6 +168,17 @@ func updateIndexes(previous projectionIndexes, before, after DurableState, batch
 		if old.EnvironmentID != next.EnvironmentID {
 			volumesByEnvironment.add(old.EnvironmentID, c.Key, -1)
 			volumesByEnvironment.add(next.EnvironmentID, c.Key, 1)
+		}
+		if old.AgentID != next.AgentID {
+			volumesByAgent.add(old.AgentID, c.Key, -1)
+			volumesByAgent.add(next.AgentID, c.Key, 1)
+		}
+	}
+	for _, c := range batch.Destructions {
+		old, next := before.Destructions[c.Key], after.Destructions[c.Key]
+		if old.AgentID != next.AgentID {
+			destructionsByAgent.add(old.AgentID, c.Key, -1)
+			destructionsByAgent.add(next.AgentID, c.Key, 1)
 		}
 	}
 	changedAssignments := make(map[string]struct{}, len(batch.Assignments))
@@ -196,5 +219,6 @@ func updateIndexes(previous projectionIndexes, before, after DurableState, batch
 		}
 	}
 	return projectionIndexes{assignmentsByAgent.next, assignmentsByService.next, servicesByEnvironment.next, domainsByService.next,
-		environmentsByAgent.next, agentsByEnvironment.next, environmentsByProject.next, volumesByEnvironment.next}
+		environmentsByAgent.next, agentsByEnvironment.next, environmentsByProject.next, volumesByEnvironment.next,
+		volumesByAgent.next, destructionsByAgent.next}
 }

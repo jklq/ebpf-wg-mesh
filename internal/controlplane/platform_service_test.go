@@ -167,6 +167,14 @@ func (f *fakePlatformDelivery) ListServiceArtifacts(ctx context.Context, user au
 	return nil, nil
 }
 
+func (f *fakePlatformDelivery) GrowVolume(ctx context.Context, user authz.User, volumeID string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
+	return deliverycore.VolumeRecord{ID: volumeID, SizeBytes: sizeBytes}, nil
+}
+
+func (f *fakePlatformDelivery) RenderVolumeStatus(rec deliverycore.VolumeRecord) deliverycore.VolumeRecord {
+	return rec
+}
+
 func (f *fakePlatformDelivery) LivePosition() deliverycore.LivePosition {
 	return deliverycore.LivePosition{}
 }
@@ -728,25 +736,30 @@ func TestCreateVolumeMapsValidationErrors(t *testing.T) {
 	store := &fakePlatformStore{}
 	service := newPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{}, withPlatformLiveOwner(staticLiveOwner{held: true}))
 
-	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{Name: "data", SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{Name: "data", SizeBytes: 64 << 20}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("empty environment: %v", err)
+	}
+	for _, size := range []int64{1, 32 << 20, 64<<20 + 1} {
+		if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: size}); status.Code(err) != codes.InvalidArgument {
+			t.Fatalf("size %d: %v", size, err)
+		}
 	}
 	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 		return deliverycore.VolumeRecord{}, sql.ErrNoRows
 	}
-	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "missing", Name: "data", SizeBytes: 1}); status.Code(err) != codes.NotFound {
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "missing", Name: "data", SizeBytes: 64 << 20}); status.Code(err) != codes.NotFound {
 		t.Fatalf("unknown environment: %v", err)
 	}
 	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrVolumeAlreadyExists
 	}
-	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1}); status.Code(err) != codes.AlreadyExists {
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 64 << 20}); status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("duplicate name: %v", err)
 	}
 	store.createScheduledVolumeFn = func(context.Context, authz.User, string, string, int64) (deliverycore.VolumeRecord, error) {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrInvalidVolume
 	}
-	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 1}); status.Code(err) != codes.InvalidArgument {
+	if _, err := service.CreateVolume(ctx, &platformv1.CreateVolumeRequest{EnvironmentId: "environment-1", Name: "data", SizeBytes: 64 << 20}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("store validation: %v", err)
 	}
 }

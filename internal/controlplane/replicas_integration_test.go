@@ -147,6 +147,10 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 		t.Fatalf("createService(replicas): %v", err)
 	}
 	mustQueueAndDeployReplicas(t, store, ctx, envID, replicaService.ID, 2)
+	if _, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data-2", 64<<20); err != nil {
+		t.Fatalf("createScheduledVolume: %v", err)
+	}
+	volumeSpec.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data-2"}
 	volumeSpec.Runtime.CpuMillis = replicaService.Spec.GetRuntime().GetCpuMillis()
 	volumeSpec.Runtime.MemoryMebibytes = replicaService.Spec.GetRuntime().GetMemoryMebibytes()
 	volumeSpec.Runtime.Ports = replicaService.Spec.GetRuntime().GetPorts()

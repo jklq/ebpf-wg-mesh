@@ -468,7 +468,7 @@ func TestStatefulDrainRemainsFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(rec.MaintenanceMessage, "Stage 7") {
+	if !strings.Contains(rec.MaintenanceMessage, "is not replicated") {
 		t.Fatalf("expected fenced stateful drain message, got %q", rec.MaintenanceMessage)
 	}
 }

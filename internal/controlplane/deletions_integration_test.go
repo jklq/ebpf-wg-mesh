@@ -49,6 +49,15 @@ func expireTombstone(t *testing.T, store *persistence, table, idColumn, id strin
 	}
 }
 
+// commitVolumeForTest stands in for the environment release that turns a
+// staged volume into a committed one with tombstone semantics.
+func commitVolumeForTest(t *testing.T, store *persistence, volumeID string) {
+	t.Helper()
+	if _, err := store.db.ExecContext(context.Background(), `UPDATE volumes SET staged = false WHERE id = $1`, volumeID); err != nil {
+		t.Fatalf("commit volume %s: %v", volumeID, err)
+	}
+}
+
 func TestDeletionProjectTombstoneRestoreLifecycle(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
@@ -369,6 +378,7 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	commitVolumeForTest(t, store, stagingVolume.ID)
 	stagingService, err := createScheduledService(ctx, store, "owner", staging.ID, "web", directImageServiceSpec("example.test/web:1", &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "data"}}))
 	if err != nil {
 		t.Fatal(err)
@@ -405,11 +415,13 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 		t.Fatalf("repeat delete volume: %v", err)
 	}
 
-	// A production volume that was ever attached is refused as possibly non-empty even after the referencing service is gone.
+	// A production volume that was attached deletes like any other once
+	// detached: typed confirmation, then the grace, then an explicit destroy.
 	prodVolume, err := store.catalog.createScheduledVolume(ctx, testUser("owner"), production.ID, "pdata", 64<<20)
 	if err != nil {
 		t.Fatal(err)
 	}
+	commitVolumeForTest(t, store, prodVolume.ID)
 	prodService, err := createScheduledService(ctx, store, "owner", production.ID, "db", directImageServiceSpec("example.test/db:1", &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "pdata"}}))
 	if err != nil {
 		t.Fatal(err)
@@ -417,8 +429,12 @@ func TestDeletionVolumeFailsClosed(t *testing.T) {
 	if err := deleteService(ctx, store, "owner", prodService.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.catalog.deleteVolume(ctx, testUser("owner"), prodVolume.ID, "pdata"); !errors.Is(err, deliverycore.ErrVolumeNotEmpty) {
-		t.Fatalf("delete ever-attached production volume: %v", err)
+	if err := store.catalog.deleteVolume(ctx, testUser("owner"), prodVolume.ID, "pdata"); err != nil {
+		t.Fatalf("delete detached production volume: %v", err)
+	}
+	var tombstoned bool
+	if err := store.db.QueryRowContext(ctx, `SELECT deleted_at IS NOT NULL FROM volumes WHERE id = $1`, prodVolume.ID).Scan(&tombstoned); err != nil || !tombstoned {
+		t.Fatalf("deleted production volume was not tombstoned: %v", err)
 	}
 
 	// A production volume that was never attached deletes normally.
@@ -516,6 +532,7 @@ func TestDeletionGCCollectsExpiredAcrossKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	commitVolumeForTest(t, store, volume.ID)
 	staging, err := store.catalog.createEnvironment(ctx, testUser("owner"), project.ID, "Staging")
 	if err != nil {
 		t.Fatal(err)

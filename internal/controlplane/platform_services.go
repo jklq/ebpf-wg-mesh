@@ -67,7 +67,10 @@ func (s *platformService) CreateService(ctx context.Context, req *platformv1.Cre
 		if errors.Is(err, deliverycore.ErrServiceAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+		if errors.Is(err, deliverycore.ErrInvalidVolumeMount) {
+			return nil, status.Errorf(codes.InvalidArgument, "create service: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAttached) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
 		return nil, writeAccessError("create service", err)
@@ -156,7 +159,10 @@ func (s *platformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "update service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAgentMismatch) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) {
+		if errors.Is(err, deliverycore.ErrInvalidVolumeMount) {
+			return nil, status.Errorf(codes.InvalidArgument, "update service: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAttached) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "update service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "update service: %v", err)

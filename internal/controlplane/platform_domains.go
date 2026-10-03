@@ -27,8 +27,8 @@ func (s *platformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 	if name == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume name is required")
 	}
-	if req.GetSizeBytes() <= 0 {
-		return nil, status.Error(codes.InvalidArgument, "volume size_bytes must be greater than 0")
+	if err := deliverycore.ValidateVolumeSize(req.GetSizeBytes()); err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 	environmentID := strings.TrimSpace(req.GetEnvironmentId())
 	if environmentID == "" {
@@ -45,12 +45,42 @@ func (s *platformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 		if errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create volume: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrInvalidVolume) {
+		if errors.Is(err, deliverycore.ErrInvalidVolume) || errors.Is(err, deliverycore.ErrInvalidVolumeSize) {
 			return nil, status.Errorf(codes.InvalidArgument, "create volume: %v", err)
 		}
 		return nil, writeAccessError("create volume", err)
 	}
 	slog.Info("volume created", "volume_id", volume.ID, "environment_id", volume.EnvironmentID)
+	return toProtoVolume(s.delivery.RenderVolumeStatus(volume)), nil
+}
+
+// UpdateVolume grows a volume. The pinned node resizes it in place.
+func (s *platformService) UpdateVolume(ctx context.Context, req *platformv1.UpdateVolumeRequest) (*platformv1.Volume, error) {
+	if err := s.requireLiveOwner(ctx); err != nil {
+		return nil, err
+	}
+	user, err := authorizedUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.GetVolumeId()) == "" {
+		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
+	}
+	volume, err := s.delivery.GrowVolume(ctx, user, req.GetVolumeId(), req.GetSizeBytes())
+	if err != nil {
+		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+			return nil, mapped
+		}
+		if errors.Is(err, deliverycore.ErrInvalidVolumeSize) {
+			return nil, status.Errorf(codes.InvalidArgument, "update volume: %v", err)
+		}
+		if errors.Is(err, deliverycore.ErrVolumeShrink) || errors.Is(err, deliverycore.ErrVolumeNotFound) {
+			return nil, status.Errorf(codes.FailedPrecondition, "update volume: %v", err)
+		}
+		return nil, writeAccessError("update volume", err)
+	}
+	slog.Info("volume grown", "volume_id", volume.ID, "size_bytes", volume.SizeBytes)
+	s.notifyAllAgents(ctx)
 	return toProtoVolume(volume), nil
 }
 
@@ -69,7 +99,7 @@ func (s *platformService) DeleteVolume(ctx context.Context, req *platformv1.Dele
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrVolumeInUse) || errors.Is(err, deliverycore.ErrVolumeNotEmpty) || errors.Is(err, deliverycore.ErrConfirmationMismatch) {
+		if errors.Is(err, deliverycore.ErrVolumeInUse) || errors.Is(err, deliverycore.ErrConfirmationMismatch) {
 			return nil, status.Errorf(codes.FailedPrecondition, "delete volume: %v", err)
 		}
 		return nil, writeAccessError("delete volume", err)
@@ -89,7 +119,7 @@ func (s *platformService) ListVolumes(ctx context.Context, req *platformv1.ListV
 	}
 	resp := &platformv1.ListVolumesResponse{Volumes: make([]*platformv1.Volume, 0, len(items))}
 	for _, item := range items {
-		resp.Volumes = append(resp.Volumes, toProtoVolume(item))
+		resp.Volumes = append(resp.Volumes, toProtoVolume(s.delivery.RenderVolumeStatus(item)))
 	}
 	return resp, nil
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, preferredAgentID string, now time.Time) ([]AllocationRecord, error) {
@@ -98,9 +99,7 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 func (d *Delivery) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, occupied map[string]struct{}, preferredAgentID string, usePreferred bool) (string, error) {
 	s := d.store
 	if volumeName := ServiceVolumeName(service.Spec); volumeName != "" {
-		if err := s.requireVolumeQuerier(ctx, tx, service.EnvironmentID, volumeName); err != nil {
-			return "", err
-		}
+		return d.chooseVolumeAgentTx(ctx, tx, service, volumeName)
 	}
 	if usePreferred && preferredAgentID != "" {
 		if _, taken := occupied[preferredAgentID]; !taken {
@@ -116,6 +115,66 @@ func (d *Delivery) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, service
 		}
 	}
 	return d.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied)
+}
+
+// chooseVolumeAgentTx places a volume-backed service on the node holding its
+// volume. A volume that has never been placed is pinned to the node chosen for
+// its first allocation, in the same transaction; it never moves afterwards.
+func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, volumeName string) (string, error) {
+	s := d.store
+	var volumeID string
+	var pinned sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT id, agent_id FROM volumes
+		WHERE environment_id = $1 AND name = $2 AND deleted_at IS NULL FOR UPDATE`,
+		service.EnvironmentID, volumeName).Scan(&volumeID, &pinned)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("%w: %q", ErrVolumeNotFound, volumeName)
+	}
+	if err != nil {
+		return "", err
+	}
+	candidates, err := s.placementCandidatesQuerier(ctx, tx)
+	if err != nil {
+		return "", err
+	}
+	if pinned.Valid && pinned.String != "" {
+		for _, candidate := range candidates {
+			if candidate.ID != pinned.String {
+				continue
+			}
+			if !candidateEligible(candidate, service.Spec) {
+				return "", fmt.Errorf("%w: volume %q is on node %s, which lacks capacity or does not match the placement region", ErrNoPlacementAvailable, volumeName, candidate.ID)
+			}
+			return candidate.ID, nil
+		}
+		return "", fmt.Errorf("%w: %s", ErrNoPlacementAvailable, s.volumeNodeUnavailableReason(ctx, tx, volumeName, pinned.String))
+	}
+	agentID, err := d.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, map[string]struct{}{})
+	if err != nil {
+		return "", err
+	}
+	if _, err := journal.VolumeRow(volumeID).Exec(ctx, tx,
+		`UPDATE volumes SET agent_id = $1, staged = false WHERE id = $2 AND agent_id IS NULL`, agentID, volumeID); err != nil {
+		return "", err
+	}
+	return agentID, nil
+}
+
+// volumeNodeUnavailableReason explains why a pinned volume's node cannot run
+// its service. The service never starts elsewhere with an empty volume.
+func (s *persistence) volumeNodeUnavailableReason(ctx context.Context, q ServiceQueryer, volumeName, agentID string) string {
+	var name, state string
+	if err := q.QueryRowContext(ctx, `SELECT name, lifecycle_state FROM agents WHERE id = $1`, agentID).Scan(&name, &state); err != nil {
+		return fmt.Sprintf("volume %q is on node %s, which is unavailable", volumeName, agentID)
+	}
+	switch AgentLifecycleState(state) {
+	case AgentStateRetired:
+		return fmt.Sprintf("volume %q is on node %s, which is retired; its data is not available on any other node", volumeName, name)
+	case AgentStateActive:
+		return fmt.Sprintf("volume %q is on node %s, which is not reachable", volumeName, name)
+	default:
+		return fmt.Sprintf("volume %q is on node %s, which is %s", volumeName, name, state)
+	}
 }
 
 func (d *Delivery) chooseAgentForReplicaQuerier(ctx context.Context, q ServiceQueryer, spec *platformv1.ServiceSpec, occupied map[string]struct{}) (string, error) {

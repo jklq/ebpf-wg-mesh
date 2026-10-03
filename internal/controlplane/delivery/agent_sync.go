@@ -99,8 +99,7 @@ func (d *Delivery) PlanAgentSync(ctx context.Context, request AgentSyncRequest) 
 		services, volumes := baseline.services, baseline.volumes
 		diff := storedDiff{Base: baseline.revision, Target: cursor}
 		if len(ids) > 0 {
-			volumeCandidates := view.volumesForAssignments(ids)
-			currentServices, err := view.services(volumeCandidates, ids)
+			currentServices, err := view.services(ids)
 			if err != nil {
 				return nil, err
 			}
@@ -128,34 +127,24 @@ func (d *Delivery) PlanAgentSync(ctx context.Context, request AgentSyncRequest) 
 					}
 				}
 			}
-			wantedVolumes := make(map[string]bool)
-			for _, service := range services {
-				if service.VolumeID != "" {
-					wantedVolumes[service.VolumeID] = true
-				}
-			}
-			volumes = make(map[string][32]byte, len(wantedVolumes))
-			volumeIDs := slices.Collect(maps.Keys(wantedVolumes))
-			slices.Sort(volumeIDs)
-			for _, volumeID := range volumeIDs {
-				row, exists := view.product.Volumes[volumeID]
-				if !exists {
-					continue
-				}
-				volume := &agentv1.DesiredVolume{VolumeId: row.ID, EnvironmentId: row.EnvironmentID, Name: row.Name, SizeBytes: row.SizeBytes}
-				id, fp := volume.GetVolumeId(), fingerprint(volume)
-				volumes[id] = fp
-				if previous, exists := baseline.volumes[id]; !exists || previous != fp {
-					diff.VolumeStarts = append(diff.VolumeStarts, volume)
-				}
-			}
-			for id := range baseline.volumes {
-				if _, exists := volumes[id]; !exists {
-					diff.VolumeStops = append(diff.VolumeStops, id)
-				}
-			}
-			slices.Sort(diff.VolumeStops)
 		}
+		// The pinned volume set is small and rendered without spec parsing, so
+		// every diff compares it in full.
+		current := desiredVolumes(view.product, request.AgentID)
+		volumes = make(map[string][32]byte, len(current))
+		for _, volume := range current {
+			id, fp := volume.GetVolumeId(), fingerprint(volume)
+			volumes[id] = fp
+			if previous, exists := baseline.volumes[id]; !exists || previous != fp {
+				diff.VolumeStarts = append(diff.VolumeStarts, volume)
+			}
+		}
+		for id := range baseline.volumes {
+			if _, exists := volumes[id]; !exists {
+				diff.VolumeStops = append(diff.VolumeStops, id)
+			}
+		}
+		slices.Sort(diff.VolumeStops)
 		diff.SizeBytes = diffPayloadSize(&diff)
 		if !d.live.allocSync.acceptDiff(request.AgentID, baseline, cursor, services, volumes, diff) {
 			return checkpoint()
@@ -219,26 +208,4 @@ func (v *agentView) overlayAndImages() ([]*agentv1.DesiredService, []PullImage) 
 		images = append(images, PullImage{id, a.ServiceID, service.EnvironmentID, image})
 	}
 	return overlays, images
-}
-
-// Candidate rendering resolves mounts from indexed environment volumes. The
-// retained allocation fingerprints carry only the mounted identity, so unchanged
-// workloads need neither spec parsing nor decryption to derive the volume set.
-func (v *agentView) volumesForAssignments(ids []string) []*agentv1.DesiredVolume {
-	environments := make(map[string]bool)
-	for _, id := range ids {
-		a := v.product.Assignments[id]
-		env := v.product.Services[a.ServiceID].EnvironmentID
-		if env != "" {
-			environments[env] = true
-		}
-	}
-	var volumes []*agentv1.DesiredVolume
-	for env := range environments {
-		for _, id := range v.product.VolumeIDsForEnvironment(env) {
-			row := v.product.Volumes[id]
-			volumes = append(volumes, &agentv1.DesiredVolume{VolumeId: row.ID, EnvironmentId: row.EnvironmentID, Name: row.Name, SizeBytes: row.SizeBytes})
-		}
-	}
-	return volumes
 }

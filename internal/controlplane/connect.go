@@ -185,6 +185,11 @@ func (a connectPlatformService) CreateVolume(ctx context.Context, req *connect.R
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) UpdateVolume(ctx context.Context, req *connect.Request[platformv1.UpdateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
+	result, err := a.service.UpdateVolume(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) DeleteVolume(ctx context.Context, req *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error) {
 	result, err := a.service.DeleteVolume(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

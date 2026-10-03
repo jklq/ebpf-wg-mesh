@@ -154,6 +154,14 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		next:    healthCheckValue(serviceRuntime(current).GetLivenessCheck()),
 	})
 	fields = append(fields, unappliedChangeField{
+		id:      "runtime.volume",
+		section: "Volume",
+		field:   "Mount",
+		path:    "runtime.volume",
+		current: volumeMountValue(serviceRuntime(deployed).GetVolume()),
+		next:    volumeMountValue(serviceRuntime(current).GetVolume()),
+	})
+	fields = append(fields, unappliedChangeField{
 		id:      "desiredReplicaCount",
 		section: "Replicas",
 		field:   "Desired count",
@@ -189,6 +197,13 @@ func buildRecipeBuilderValue(recipe *platformv1.BuildRecipe) string {
 	default:
 		return ""
 	}
+}
+
+func volumeMountValue(volume *platformv1.ServiceVolumeMount) string {
+	if volume.GetVolumeName() == "" {
+		return ""
+	}
+	return volume.GetVolumeName() + " at " + volume.GetMountPath()
 }
 
 func replicaCountValue(spec *platformv1.ServiceSpec) string {
@@ -320,6 +335,12 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 			currentRuntime(current).LivenessCheck = nil
 		} else {
 			currentRuntime(current).LivenessCheck = proto.Clone(deployedCheck).(*platformv1.HealthCheck)
+		}
+	case "runtime.volume":
+		if deployedVolume := serviceRuntime(deployed).GetVolume(); deployedVolume == nil {
+			currentRuntime(current).Volume = nil
+		} else {
+			currentRuntime(current).Volume = proto.Clone(deployedVolume).(*platformv1.ServiceVolumeMount)
 		}
 	case "runtime.restart":
 		deployedRestart := serviceRuntime(deployed).GetRestart()
