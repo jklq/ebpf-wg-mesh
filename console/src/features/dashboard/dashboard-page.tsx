@@ -8,6 +8,11 @@ import { Topbar } from "#/features/dashboard/navigation/topbar";
 import { ServicePanelFallback } from "#/features/dashboard/service-panel/panel-fallback";
 import { PendingServicePanel } from "#/features/dashboard/service-panel/pending-service-panel";
 import { NewServiceModal } from "#/features/dashboard/services/new-service-modal";
+import {
+	CreateVolumeDialog,
+	MountVolumeDialog,
+} from "#/features/dashboard/volumes/volume-dialogs";
+import { VolumePanel } from "#/features/dashboard/volumes/volume-panel";
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 import { colors, motion, sizes } from "#/styles/tokens.stylex";
 
@@ -25,14 +30,25 @@ export function DashboardPage({
 	state: DashboardHomeState;
 	urlSelectedServiceId?: string | null;
 }) {
-	const { homeState, canvas, navigation, selection, creation, release } =
-		useDashboardController({ state, urlSelectedServiceId });
+	const {
+		homeState,
+		canvas,
+		navigation,
+		selection,
+		volumes,
+		creation,
+		release,
+	} = useDashboardController({ state, urlSelectedServiceId });
+	const panelOpen = Boolean(
+		selection.service || selection.pending || volumes.selected,
+	);
 
 	return (
 		<div {...stylex.props(styles.page)}>
 			<Topbar
 				state={homeState}
 				onNewService={creation.open}
+				onNewVolume={volumes.environmentId ? volumes.openCreate : undefined}
 				onPreloadNewService={creation.preload}
 				onRefresh={navigation.refresh}
 				onNewEnvironment={() => navigation.openEnvironmentDialog()}
@@ -56,6 +72,8 @@ export function DashboardPage({
 					if (!id) return;
 					selection.select(id);
 				}}
+				onSelectVolume={volumes.select}
+				onMountVolume={volumes.openMount}
 				onEscape={() => {
 					selection.clear();
 				}}
@@ -65,17 +83,14 @@ export function DashboardPage({
 				onPreloadAdd={creation.preload}
 			>
 				{release.showPrompt && (
-					<WorkspaceReleasePrompt
-						release={release}
-						panelOpen={Boolean(selection.service || selection.pending)}
-					/>
+					<WorkspaceReleasePrompt release={release} panelOpen={panelOpen} />
 				)}
 			</DashboardCanvasStage>
 
 			<div
 				{...stylex.props([
 					styles.servicePanelShell,
-					(selection.service || selection.pending) && styles.servicePanelOpen,
+					panelOpen && styles.servicePanelOpen,
 				])}
 			>
 				<div {...stylex.props(styles.panelGrain)} />
@@ -110,8 +125,45 @@ export function DashboardPage({
 							onSpecSaveStateChange={selection.reportSaving}
 						/>
 					</Suspense>
+				) : volumes.selected ? (
+					<VolumePanel
+						volume={volumes.selected}
+						services={volumes.services}
+						onClose={selection.clear}
+						onMount={() => {
+							if (volumes.selected) volumes.openMount(volumes.selected.id);
+						}}
+						onSelectService={selection.select}
+						onVolumeUpdated={volumes.upsert}
+						onVolumeDeleted={volumes.remove}
+						onServiceUpdated={volumes.serviceUpdated}
+					/>
 				) : null}
 			</div>
+
+			{volumes.createOpen && volumes.environmentId && (
+				<CreateVolumeDialog
+					environmentId={volumes.environmentId}
+					services={volumes.services}
+					volumes={volumes.all}
+					onClose={volumes.closeCreate}
+					onCreated={(volume) => {
+						volumes.upsert(volume);
+						volumes.select(volume.id);
+					}}
+					onServiceUpdated={volumes.serviceUpdated}
+				/>
+			)}
+
+			{volumes.mountTarget && (
+				<MountVolumeDialog
+					volume={volumes.mountTarget}
+					services={volumes.services}
+					volumes={volumes.all}
+					onClose={volumes.closeMount}
+					onServiceUpdated={volumes.serviceUpdated}
+				/>
+			)}
 
 			{creation.isOpen && (
 				<NewServiceModal
@@ -140,6 +192,8 @@ export function DashboardPage({
 					onDeploy={release.handleDeployChanges}
 					onDiscardChange={release.handleDiscardChange}
 					onDiscardService={release.handleDiscardServiceChanges}
+					stagedVolumes={release.stagedVolumes}
+					onDiscardVolume={(id) => void release.handleDiscardVolume(id)}
 				/>
 			)}
 		</div>

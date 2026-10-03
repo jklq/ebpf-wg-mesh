@@ -7,9 +7,11 @@ const spin = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
 
 import { Loader2, Trash2, UploadCloud, X } from "lucide-react";
 import { Dialog } from "#/components/ui/dialog";
+import { formatBytes } from "#/lib/bytes";
 import type {
 	DashboardServiceRecord,
 	DashboardUnappliedChangeAction,
+	DashboardVolume,
 } from "#/lib/dashboard/core/types.server";
 
 export type ApplyingServiceChanges = {
@@ -22,6 +24,7 @@ export type ApplyingServiceChanges = {
 
 export function UnappliedChangesDialog({
 	services,
+	stagedVolumes = [],
 	totalChanges,
 	applyingChanges,
 	deployableChanges,
@@ -34,8 +37,10 @@ export function UnappliedChangesDialog({
 	onDeploy,
 	onDiscardChange,
 	onDiscardService,
+	onDiscardVolume,
 }: {
 	services: Array<DashboardServiceRecord>;
+	stagedVolumes?: Array<DashboardVolume>;
 	totalChanges: number;
 	applyingChanges: number;
 	deployableChanges: number;
@@ -48,6 +53,7 @@ export function UnappliedChangesDialog({
 	onDeploy: () => void;
 	onDiscardChange: (serviceId: string, changeId: string) => void;
 	onDiscardService: (serviceId: string) => void;
+	onDiscardVolume?: (volumeId: string) => void;
 }) {
 	return (
 		<Dialog label="Unapplied changes" onClose={onClose}>
@@ -151,6 +157,63 @@ export function UnappliedChangesDialog({
 							))}
 						</div>
 					))}
+					{stagedVolumes.length > 0 && (
+						<div {...stylex.props(styles.serviceGroup)}>
+							<div {...stylex.props(styles.serviceHeader)}>
+								<strong {...stylex.props(styles.serviceName)}>
+									New volumes
+								</strong>
+							</div>
+							{stagedVolumes.map((volume) => {
+								const owner = services.find(
+									(service) =>
+										service.spec?.runtime?.volume?.volumeName === volume.name,
+								);
+								return (
+									<div {...stylex.props(styles.changeRow)} key={volume.id}>
+										<span
+											{...stylex.props([
+												styles.changeAction,
+												styles.addedAction,
+											])}
+										>
+											add
+										</span>
+										<div>
+											<strong {...stylex.props(styles.serviceName)}>
+												{volume.name}
+											</strong>
+											<span {...stylex.props(styles.serviceSummary)}>
+												{owner ? `Mounted by ${owner.name}` : "Not mounted"}
+											</span>
+										</div>
+										<code {...stylex.props(styles.value)}>
+											{formatBytes(volume.sizeBytes)}
+										</code>
+										<Button
+											type="button"
+											variant="icon"
+											styles={[styles.discardButton]}
+											aria-label={`Discard volume ${volume.name}`}
+											title={
+												owner
+													? `Discarded with ${owner.name}'s changes`
+													: undefined
+											}
+											onClick={() => onDiscardVolume?.(volume.id)}
+											disabled={
+												Boolean(owner) ||
+												deploying ||
+												Boolean(discardingChangeId)
+											}
+										>
+											<Trash2 size={14} />
+										</Button>
+									</div>
+								);
+							})}
+						</div>
+					)}
 				</div>
 				<div {...stylex.props(styles.footer)}>
 					<span>

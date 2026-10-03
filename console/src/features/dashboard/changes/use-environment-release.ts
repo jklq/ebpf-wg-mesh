@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
+	DashboardVolume,
 } from "#/lib/dashboard/core/types.server";
 import {
+	doDeleteResource,
 	doDeleteService,
 	doDiscardServiceChanges,
 	doReleaseEnvironment,
@@ -20,15 +22,19 @@ import {
 } from "./dashboard-unapplied";
 export function useEnvironmentRelease({
 	services,
+	stagedVolumes = [],
 	pendingCreationCount = 0,
 	environmentId,
 	revision,
 	mergeStatusService,
 	mergeServiceRecord,
 	handleServiceDeleted,
+	handleVolumesDiscarded,
 	onRefresh,
 }: {
 	services: DashboardServiceRecord[];
+	/** Volumes created since the last release; each is one pending change. */
+	stagedVolumes?: DashboardVolume[];
 	pendingCreationCount?: number;
 	environmentId: string | null;
 	revision: string;
@@ -41,6 +47,8 @@ export function useEnvironmentRelease({
 		revision: string,
 	) => void;
 	handleServiceDeleted: (id: string) => void;
+	/** Drops staged volumes the server discarded along with a draft. */
+	handleVolumesDiscarded: (volumeIds: Array<string>) => void;
 	onRefresh: () => void;
 }) {
 	const [deployingChanges, setDeployingChanges] = useState(false);
@@ -60,6 +68,8 @@ export function useEnvironmentRelease({
 	const deployingRef = useRef(false);
 	const servicesRef = useRef(services);
 	servicesRef.current = services;
+	const stagedVolumesRef = useRef(stagedVolumes);
+	stagedVolumesRef.current = stagedVolumes;
 	const revisionRef = useRef(revision);
 	revisionRef.current = revision;
 	const environmentIdRef = useRef(environmentId);
@@ -99,12 +109,15 @@ export function useEnvironmentRelease({
 					`${service.id}:${change.id}:${change.action}:${change.newValue}`,
 			),
 		)
+		.concat(stagedVolumes.map((volume) => `volume:${volume.id}`))
 		.sort()
 		.join("|");
-	const totalUnappliedChanges = dirtyServices.reduce(
-		(total, service) => total + unappliedChangeCount(service),
-		0,
-	);
+	const totalUnappliedChanges =
+		stagedVolumes.length +
+		dirtyServices.reduce(
+			(total, service) => total + unappliedChangeCount(service),
+			0,
+		);
 	const applyingChangeKeys = useMemo(
 		() => new Set(applyingServices.flatMap((service) => service.changeKeys)),
 		[applyingServices],
@@ -113,10 +126,13 @@ export function useEnvironmentRelease({
 		(total, service) => total + service.count,
 		0,
 	);
-	const deployableUnappliedChanges = dirtyServices.reduce(
-		(total, service) => total + queuedChangeCount(service, applyingChangeKeys),
-		0,
-	);
+	const deployableUnappliedChanges =
+		(deployingChanges ? 0 : stagedVolumes.length) +
+		dirtyServices.reduce(
+			(total, service) =>
+				total + queuedChangeCount(service, applyingChangeKeys),
+			0,
+		);
 	const hasPendingSpecWrites = pendingSpecWrites.size > 0;
 	const showPrompt =
 		pendingCreationCount > 0 ||
@@ -202,7 +218,10 @@ export function useEnvironmentRelease({
 			}
 			const currentEnvironmentId = environmentIdRef.current;
 			const currentServices = servicesRef.current.filter(hasUnappliedChanges);
-			if (currentEnvironmentId && currentServices.length > 0) {
+			if (
+				currentEnvironmentId &&
+				(currentServices.length > 0 || stagedVolumesRef.current.length > 0)
+			) {
 				await deployServiceBatch(currentServices, currentEnvironmentId);
 			}
 		} finally {
@@ -210,6 +229,26 @@ export function useEnvironmentRelease({
 			setDeployingChanges(false);
 		}
 	};
+
+	// Mirrors the server: discarding a draft takes the staged volume it mounted
+	// with it unless another service still mounts that volume.
+	const stagedVolumesOnlyMountedBy = (
+		serviceId: string,
+		volumeName: string | undefined,
+	) =>
+		volumeName
+			? stagedVolumesRef.current
+					.filter(
+						(volume) =>
+							volume.name === volumeName &&
+							!servicesRef.current.some(
+								(other) =>
+									other.id !== serviceId &&
+									other.spec?.runtime?.volume?.volumeName === volume.name,
+							),
+					)
+					.map((volume) => volume.id)
+			: [];
 
 	const handleDiscardServiceChanges = async (serviceId: string) => {
 		if (discardingRef.current || deployingRef.current) return;
@@ -229,6 +268,8 @@ export function useEnvironmentRelease({
 			setShowChangeDetails(false);
 		}
 		const basisRevision = revisionRef.current;
+		const draftVolume = currentService.spec?.runtime?.volume?.volumeName;
+		const orphaned = stagedVolumesOnlyMountedBy(serviceId, draftVolume);
 		try {
 			const hasOtherUndeployedServices = servicesRef.current.some(
 				(service) => service.id !== serviceId && hasUnappliedChanges(service),
@@ -240,6 +281,7 @@ export function useEnvironmentRelease({
 			if (currentService && rolloutGeneration === "0") {
 				await doDeleteService({ data: { serviceId } });
 				handleServiceDeleted(serviceId);
+				handleVolumesDiscarded(orphaned);
 				if (!hasOtherUndeployedServices) setShowChangeDetails(false);
 				return;
 			}
@@ -247,6 +289,9 @@ export function useEnvironmentRelease({
 				data: { serviceId, discardAll: true },
 			});
 			mergeServiceRecord(service, basisRevision);
+			if (service.spec?.runtime?.volume?.volumeName !== draftVolume) {
+				handleVolumesDiscarded(orphaned);
+			}
 			if (!hasOtherUndeployedServices && !hasUnappliedChanges(service)) {
 				setShowChangeDetails(false);
 			}
@@ -278,11 +323,20 @@ export function useEnvironmentRelease({
 		});
 		setDiscardingChangeId(`${serviceId}:${changeId}`);
 		const basisRevision = revisionRef.current;
+		const draftVolume = service.spec?.runtime?.volume?.volumeName;
 		try {
-			const service = await doDiscardServiceChanges({
+			const updated = await doDiscardServiceChanges({
 				data: { serviceId, changeIds: [changeId] },
 			});
-			mergeServiceRecord(service, basisRevision);
+			mergeServiceRecord(updated, basisRevision);
+			if (
+				draftVolume &&
+				updated.spec?.runtime?.volume?.volumeName !== draftVolume
+			) {
+				handleVolumesDiscarded(
+					stagedVolumesOnlyMountedBy(serviceId, draftVolume),
+				);
+			}
 		} catch (error) {
 			setDeployError(`Discard failed: ${formatError(error)}`);
 			setShowChangeDetails(true);
@@ -293,7 +347,26 @@ export function useEnvironmentRelease({
 		}
 	};
 
+	const handleDiscardVolume = async (volumeId: string) => {
+		if (discardingRef.current || deployingRef.current) return;
+		discardingRef.current = true;
+		setDeployError(undefined);
+		setDiscardingChangeId(`volume:${volumeId}`);
+		try {
+			await doDeleteResource({ data: { kind: "volume", id: volumeId } });
+			handleVolumesDiscarded([volumeId]);
+		} catch (error) {
+			setDeployError(`Discard failed: ${formatError(error)}`);
+			setShowChangeDetails(true);
+		} finally {
+			discardingRef.current = false;
+			setDiscardingChangeId(undefined);
+		}
+	};
+
 	return {
+		stagedVolumes,
+		handleDiscardVolume,
 		pendingCreationCount,
 		discardingChangeCount,
 		visibleServices,

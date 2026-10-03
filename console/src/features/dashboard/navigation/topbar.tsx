@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import {
 	AlertCircle,
+	HardDrive,
 	History,
 	LogOut,
 	RefreshCw,
@@ -17,6 +18,7 @@ import { colors, fonts, sizes, space } from "#/styles/tokens.stylex";
 export function Topbar({
 	state,
 	onNewService,
+	onNewVolume,
 	onPreloadNewService,
 	onRefresh,
 	onNewEnvironment,
@@ -25,6 +27,7 @@ export function Topbar({
 }: {
 	state: DashboardHomeState;
 	onNewService: () => void;
+	onNewVolume?: () => void;
 	onPreloadNewService?: () => void;
 	onRefresh: () => void;
 	onNewEnvironment: () => void;
@@ -101,6 +104,17 @@ export function Topbar({
 			<Button type="button" variant="ghost" onClick={onRefresh}>
 				<RefreshCw size={13} />
 			</Button>
+
+			{onNewVolume && state.controlPlaneReachable && (
+				<Button
+					type="button"
+					variant="secondary"
+					onClick={onNewVolume}
+					title="Create a storage volume"
+				>
+					<HardDrive size={13} /> Volume
+				</Button>
+			)}
 
 			<DeployButton
 				state={state}

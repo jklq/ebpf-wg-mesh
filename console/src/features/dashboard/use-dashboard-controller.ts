@@ -20,12 +20,15 @@ import {
 import type { DashboardTab } from "#/features/dashboard/shared/types";
 import {
 	removeService,
+	removeVolume,
 	upsertServiceRecord,
+	upsertVolume,
 } from "#/features/dashboard/state/dashboard-services";
 import type {
 	CreateServiceFastResult,
 	DashboardHomeState,
 	DashboardServiceRecord,
+	DashboardVolume,
 } from "#/lib/dashboard/core/types.server";
 import { doSaveServicePosition } from "#/lib/dashboard/server-functions";
 import { useEnvironmentRelease } from "./changes/use-environment-release";
@@ -78,6 +81,20 @@ export function useDashboardController({
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
 	const [showNewService, setShowNewService] = useState(false);
 	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
+	const [selectedVolumeId, setSelectedVolumeId] = useState<string | null>(null);
+	const [showNewVolume, setShowNewVolume] = useState(false);
+	const [mountVolumeId, setMountVolumeId] = useState<string | null>(null);
+	const volumes = homeState.volumes;
+	const stagedVolumeList = useMemo(
+		() => volumes.filter((volume) => volume.staged),
+		[volumes],
+	);
+	const selectedVolume = selectedVolumeId
+		? volumes.find((volume) => volume.id === selectedVolumeId)
+		: undefined;
+	const mountVolume = mountVolumeId
+		? volumes.find((volume) => volume.id === mountVolumeId)
+		: undefined;
 
 	const [, startTransition] = useTransition();
 	const servicesRef = useRef(services);
@@ -123,14 +140,20 @@ export function useDashboardController({
 		handleDeployChanges,
 		handleDiscardServiceChanges,
 		handleDiscardChange,
+		stagedVolumes,
+		handleDiscardVolume,
 	} = useEnvironmentRelease({
 		services,
+		stagedVolumes: stagedVolumeList,
 		pendingCreationCount: pendingCreations.length,
 		environmentId,
 		revision: view.servicesRevision,
 		mergeStatusService: (...args) => mergeStatusService(...args),
 		mergeServiceRecord: (...args) => mergeServiceRecord(...args),
 		handleServiceDeleted: (id) => handleServiceDeleted(id),
+		handleVolumesDiscarded: (ids) => {
+			for (const id of ids) handleVolumeDeleted(id);
+		},
 		onRefresh: () => handleRefresh(),
 	});
 	const navigateSelection = useCallback(
@@ -147,6 +170,7 @@ export function useDashboardController({
 
 	const selectService = useCallback(
 		(serviceId: string) => {
+			setSelectedVolumeId(null);
 			if (serviceId.startsWith("pending-")) {
 				setSelectedCreationId(serviceId);
 				setView((current) => ({ ...current, selectedServiceId: null }));
@@ -167,6 +191,7 @@ export function useDashboardController({
 	);
 
 	const clearSelection = useCallback(() => {
+		setSelectedVolumeId(null);
 		setSelectedCreationId(undefined);
 		setView((current) =>
 			current.selectedServiceId === null
@@ -175,6 +200,14 @@ export function useDashboardController({
 		);
 		navigateSelection(null);
 	}, [navigateSelection, setView]);
+
+	const selectVolume = useCallback(
+		(volumeId: string) => {
+			clearSelection();
+			setSelectedVolumeId(volumeId);
+		},
+		[clearSelection],
+	);
 
 	const setSelectedServiceWriteState = useCallback(
 		(key: string, saving: boolean) => {
@@ -186,6 +219,9 @@ export function useDashboardController({
 	useEffect(() => {
 		if (previousEnvironmentIdRef.current === environmentId) return;
 		previousEnvironmentIdRef.current = environmentId;
+		setSelectedVolumeId(null);
+		setMountVolumeId(null);
+		setShowNewVolume(false);
 		setNodePositions(serviceLayoutPositions(servicesRef.current));
 		nodePositionsRef.current = serviceLayoutPositions(servicesRef.current);
 	}, [environmentId, nodePositionsRef, setNodePositions]);
@@ -205,7 +241,7 @@ export function useDashboardController({
 				setShowChangeDetails(false);
 				return;
 			}
-			if (selectedId) {
+			if (selectedId || selectedVolumeId) {
 				clearSelection();
 			}
 		};
@@ -214,6 +250,7 @@ export function useDashboardController({
 	}, [
 		clearSelection,
 		selectedId,
+		selectedVolumeId,
 		showChangeDetails,
 		showNewService,
 		setShowChangeDetails,
@@ -423,6 +460,16 @@ export function useDashboardController({
 		}
 	};
 
+	const handleVolumeUpserted = (volume: DashboardVolume) => {
+		setView((current) => upsertVolume(current, volume));
+	};
+
+	const handleVolumeDeleted = (volumeId: string) => {
+		setView((current) => removeVolume(current, volumeId));
+		setSelectedVolumeId((current) => (current === volumeId ? null : current));
+		startTransition(() => void router.invalidate());
+	};
+
 	const handleServiceDeleted = (serviceId: string) => {
 		createdCache?.forget(serviceId);
 		setView((current) => removeService(current, serviceId));
@@ -439,6 +486,8 @@ export function useDashboardController({
 			services: [...visibleServices, ...pendingRecords],
 			pendingServiceIds,
 			selectedId: canvasSelectedId,
+			volumes,
+			selectedVolumeId: selectedVolume?.id ?? null,
 		},
 		navigation: {
 			environmentDialogOpen: showEnvironmentDialog,
@@ -459,6 +508,22 @@ export function useDashboardController({
 			update: mergeService,
 			delete: handleServiceDeleted,
 			reportSaving: setSelectedServiceWriteState,
+		},
+		volumes: {
+			all: volumes,
+			services,
+			environmentId,
+			selected: selectedVolume,
+			select: selectVolume,
+			createOpen: showNewVolume,
+			openCreate: () => setShowNewVolume(true),
+			closeCreate: () => setShowNewVolume(false),
+			mountTarget: mountVolume,
+			openMount: (volumeId: string) => setMountVolumeId(volumeId),
+			closeMount: () => setMountVolumeId(null),
+			upsert: handleVolumeUpserted,
+			remove: handleVolumeDeleted,
+			serviceUpdated: mergeService,
 		},
 		creation: {
 			isOpen: showNewService,
@@ -489,6 +554,8 @@ export function useDashboardController({
 			discardingChangeId,
 			handleDiscardChange,
 			handleDiscardServiceChanges,
+			stagedVolumes,
+			handleDiscardVolume,
 		},
 	};
 }
