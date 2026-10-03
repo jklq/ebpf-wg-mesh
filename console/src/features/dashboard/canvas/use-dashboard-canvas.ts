@@ -235,6 +235,7 @@ export function useDashboardCanvas({
 		const onWheel = (event: WheelEvent) => {
 			const target = event.target as HTMLElement | null;
 			if (
+				!target?.closest("[data-volume-node]") &&
 				target?.closest(
 					"[data-workspace-prompt], input, select, textarea, [role='button']:not([data-service-node]), button:not([data-service-node]), a",
 				)
@@ -288,7 +289,7 @@ export function useDashboardCanvas({
 			const el = event.target as HTMLElement;
 			if (
 				el.closest(
-					"[data-service-node], [data-workspace-prompt], button, a, input, select, textarea, [role='button']",
+					"[data-service-node], [data-volume-node], [data-workspace-prompt], button, a, input, select, textarea, [role='button']",
 				)
 			) {
 				return;
@@ -396,7 +397,7 @@ export function useDashboardCanvas({
 		const el = event.target as HTMLElement;
 		if (
 			el.closest(
-				"[data-workspace-prompt], button, a, input, select, textarea, [role='button']",
+				"[data-volume-node], [data-workspace-prompt], button, a, input, select, textarea, [role='button']",
 			)
 		) {
 			return;

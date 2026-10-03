@@ -59,3 +59,33 @@ function nodesOverlap(
 		a.y + NODE_H > b.y
 	);
 }
+
+/** Height of the volume strip attached beneath a service card. */
+export const VOLUME_TAB_H = 40;
+/** Height of a standalone, unmounted volume card. */
+export const VOLUME_NODE_H = 48;
+
+/**
+ * Unmounted volumes line up beneath the services. They have no stored
+ * position: once mounted they travel with their service's card.
+ */
+export function unattachedVolumePositions(
+	servicePositions: Array<{ x: number; y: number }>,
+	count: number,
+): Array<{ x: number; y: number }> {
+	const originX =
+		servicePositions.length > 0
+			? snapToGrid(Math.min(...servicePositions.map((position) => position.x)))
+			: ORIGIN_X;
+	const bottom =
+		servicePositions.length > 0
+			? Math.max(...servicePositions.map((position) => position.y)) +
+				NODE_H +
+				VOLUME_TAB_H
+			: ORIGIN_Y - GRID_BOX;
+	const y = Math.ceil((bottom + GRID_BOX / 2) / GRID_BOX) * GRID_BOX;
+	return Array.from({ length: count }, (_, index) => ({
+		x: originX + (index % COLS) * COL_GAP,
+		y: y + Math.floor(index / COLS) * GRID_BOX,
+	}));
+}

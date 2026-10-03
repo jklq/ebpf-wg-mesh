@@ -4,11 +4,20 @@ import type { ReactNode } from "react";
 import { clampCanvasZoom } from "#/features/dashboard/canvas/canvas-math";
 import { DashboardCanvasSkeleton } from "#/features/dashboard/canvas/canvas-skeleton";
 import { EmptyCanvas } from "#/features/dashboard/canvas/empty-canvas";
-import { nodePosition } from "#/features/dashboard/canvas/layout";
+import {
+	nodePosition,
+	unattachedVolumePositions,
+} from "#/features/dashboard/canvas/layout";
 import { ServiceNode } from "#/features/dashboard/canvas/service-node";
+import { VolumeNode, VolumeTab } from "#/features/dashboard/canvas/volume-node";
+import {
+	serviceVolume,
+	unattachedVolumes,
+} from "#/features/dashboard/volumes/volume-model";
 import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
+	DashboardVolume,
 } from "#/lib/dashboard/core/types.server";
 import { colors, fonts, shape, sizes } from "#/styles/tokens.stylex";
 import type { useDashboardCanvas } from "./use-dashboard-canvas";
@@ -31,6 +40,8 @@ type CanvasStageModel = Pick<
 	services: DashboardServiceRecord[];
 	pendingServiceIds: ReadonlySet<string>;
 	selectedId: string | null;
+	volumes: DashboardVolume[];
+	selectedVolumeId: string | null;
 };
 export function DashboardCanvasStage({
 	canvas,
@@ -39,6 +50,8 @@ export function DashboardCanvasStage({
 	onAddService,
 	onPreloadAdd,
 	onSelectService,
+	onSelectVolume,
+	onMountVolume,
 	onEscape,
 	children,
 }: {
@@ -48,6 +61,8 @@ export function DashboardCanvasStage({
 	onAddService: () => void;
 	onPreloadAdd: () => void;
 	onSelectService: (id: string) => void;
+	onSelectVolume: (id: string) => void;
+	onMountVolume: (id: string) => void;
 	onEscape: () => void;
 	children?: ReactNode;
 }) {
@@ -66,7 +81,16 @@ export function DashboardCanvasStage({
 		services,
 		pendingServiceIds,
 		selectedId,
+		volumes,
+		selectedVolumeId,
 	} = canvas;
+	const loose = unattachedVolumes(volumes, services);
+	const loosePositions = unattachedVolumePositions(
+		services.map(
+			(service, index) => servicePositions[service.id] ?? nodePosition(index),
+		),
+		loose.length,
+	);
 	const panCursor = Boolean(canvas.panStart.current);
 	return (
 		<div
@@ -112,9 +136,32 @@ export function DashboardCanvasStage({
 						onSelect={() => onSelectService(service.id)}
 					/>
 				))}
+				{services.map((service, index) => {
+					const volume = serviceVolume(service, volumes);
+					if (!volume) return null;
+					return (
+						<VolumeTab
+							key={`volume-${volume.id}`}
+							volume={volume}
+							servicePos={servicePositions[service.id] ?? nodePosition(index)}
+							selected={volume.id === selectedVolumeId}
+							onSelect={() => onSelectVolume(volume.id)}
+						/>
+					);
+				})}
+				{loose.map((volume, index) => (
+					<VolumeNode
+						key={`volume-${volume.id}`}
+						volume={volume}
+						pos={loosePositions[index] ?? nodePosition(index)}
+						selected={volume.id === selectedVolumeId}
+						onSelect={() => onSelectVolume(volume.id)}
+						onMount={() => onMountVolume(volume.id)}
+					/>
+				))}
 			</div>
 
-			{services.length === 0 && !showNewService && (
+			{services.length === 0 && loose.length === 0 && !showNewService && (
 				<EmptyCanvas
 					state={localState}
 					onAdd={onAddService}

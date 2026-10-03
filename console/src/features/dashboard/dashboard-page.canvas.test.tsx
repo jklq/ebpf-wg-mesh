@@ -3,6 +3,7 @@ import { jsonFixture } from "#/lib/dashboard/testkit/protocol";
 import {
 	EnvironmentSchema,
 	ProjectSchema,
+	VolumeSchema,
 } from "#/lib/platform-gen/platform_pb";
 import { sizes } from "#/styles/tokens.stylex";
 // @vitest-environment jsdom
@@ -96,6 +97,52 @@ afterEach(() => {
 });
 
 describe("DashboardPage canvas", () => {
+	it("hangs mounted volumes under their service and opens the volume panel", async () => {
+		const volume = (name: string) =>
+			jsonFixture(VolumeSchema, {
+				id: `volume-${name}`,
+				environmentId: "environment-1",
+				name,
+				sizeBytes: String(5 * 1024 ** 3),
+				usedBytes: String(1024 ** 3),
+				agentId: "agent-1",
+				agentName: "node-a",
+				state: "VOLUME_STATE_READY",
+				observedAt: "2026-10-03T10:00:00Z",
+			});
+		const service = serviceRecord();
+		render(
+			<DashboardPage
+				state={dashboardState(
+					serviceRecord({
+						spec: {
+							...service.spec,
+							runtime: {
+								...service.spec?.runtime,
+								volume: { volumeName: "pg", mountPath: "/data" },
+							},
+						},
+					}),
+					{ volumes: [volume("pg"), volume("cache")] },
+				)}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: "Volume pg" })).toBeTruthy();
+		expect(screen.getByRole("button", { name: "Volume cache" })).toBeTruthy();
+		expect(screen.getAllByRole("button", { name: "Mount" })).toHaveLength(1);
+
+		fireEvent.mouseEnter(screen.getByRole("button", { name: "Volume pg" }));
+		expect(screen.getByRole("tooltip").textContent).toContain(
+			"1 GiB of 5 GiB used · 20%",
+		);
+		expect(screen.getByRole("tooltip").textContent).not.toContain("Ready");
+
+		fireEvent.click(screen.getByRole("button", { name: "Volume pg" }));
+		await waitFor(() => expect(screen.getByText("node-a")).toBeTruthy());
+		expect(screen.getByText("20%")).toBeTruthy();
+	});
+
 	it("pans the canvas with trackpad wheel gestures over a service", async () => {
 		const { container } = render(
 			<DashboardPage state={dashboardState(serviceRecord())} />,

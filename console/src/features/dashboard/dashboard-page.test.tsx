@@ -9,6 +9,7 @@ import {
 	ProjectSchema,
 	ServiceRuntimeSchema,
 	ServiceSpecSchema,
+	VolumeSchema,
 } from "#/lib/platform-gen/platform_pb";
 // @vitest-environment jsdom
 
@@ -278,6 +279,56 @@ describe("DashboardPage", () => {
 		});
 		expect(doDiscardServiceChangesMock).not.toHaveBeenCalled();
 		expect(screen.queryByRole("button", { name: /hello/i })).toBeNull();
+	});
+
+	it("discards a new service together with the new volume it mounts", async () => {
+		const base = serviceRecord();
+		const staged = serviceRecord({
+			rolloutGeneration: "0",
+			pendingChanges: true,
+			unappliedChangeCount: 1,
+			unappliedChanges: [
+				unappliedChange("service", "Service", "Service", "", "hello"),
+			],
+			spec: {
+				...base.spec,
+				runtime: {
+					...base.spec?.runtime,
+					volume: { volumeName: "scratch", mountPath: "/data" },
+				},
+			},
+		});
+		const volume = jsonFixture(VolumeSchema, {
+			id: "volume-1",
+			environmentId: "environment-1",
+			name: "scratch",
+			sizeBytes: String(5 * 1024 ** 3),
+			staged: true,
+		});
+		doDeleteServiceMock.mockResolvedValue(undefined);
+		render(
+			<DashboardPage state={dashboardState(staged, { volumes: [volume] })} />,
+		);
+		expect(screen.getByRole("button", { name: "Volume scratch" })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: "Details" }));
+		expect(screen.getByText("New volumes")).toBeTruthy();
+		expect(
+			(
+				screen.getByRole("button", {
+					name: "Discard volume scratch",
+				}) as HTMLButtonElement
+			).disabled,
+		).toBe(true);
+		fireEvent.click(
+			screen.getByRole("button", { name: "Discard service changes" }),
+		);
+
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("button", { name: "Volume scratch" }),
+			).toBeNull(),
+		);
 	});
 
 	it("keeps Deploy active during a variable write and waits behind it", {
