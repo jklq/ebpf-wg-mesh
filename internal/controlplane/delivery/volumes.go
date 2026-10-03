@@ -197,10 +197,14 @@ func (d *Delivery) recordVolumeReport(ctx context.Context, agentID string, repor
 }
 
 // RequestVolumeDestructionsTx turns volumes that are about to be hard-deleted
-// into destroy instructions for their pinned agents. Callers pass the WHERE
-// clause over the volumes table that selects the rows they delete.
-func RequestVolumeDestructionsTx(ctx context.Context, tx *sql.Tx, now time.Time, where string, args ...any) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, agent_id FROM volumes WHERE agent_id IS NOT NULL AND (`+where+`)`, args...)
+// into destroy instructions for their pinned agents. Delivery resolves the
+// typed collection target to the volumes it owns.
+func RequestVolumeDestructionsTx(ctx context.Context, tx *sql.Tx, now time.Time, target DeletionTarget) error {
+	where, err := target.volumePredicate()
+	if err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id, agent_id FROM volumes WHERE agent_id IS NOT NULL AND (`+where+`)`, target.ID)
 	if err != nil {
 		return err
 	}
@@ -214,8 +218,12 @@ func RequestVolumeDestructionsTx(ctx context.Context, tx *sql.Tx, now time.Time,
 		}
 		targets = append(targets, target)
 	}
+	scanErr := rows.Err()
 	if err := rows.Close(); err != nil {
 		return err
+	}
+	if scanErr != nil {
+		return scanErr
 	}
 	for _, target := range targets {
 		if _, err := journal.DestructionRow(target.volumeID).Exec(ctx, tx,
@@ -347,4 +355,51 @@ func commitStagedVolumesTx(ctx context.Context, tx *sql.Tx, environmentID string
 		`UPDATE volumes SET staged = false
 		  WHERE environment_id = $1 AND staged AND deleted_at IS NULL
 		  RETURNING id`, environmentID)
+}
+
+func (d *Delivery) ListVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]VolumeRecord, error) {
+	scope, err := d.store.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Read)
+	if err != nil {
+		return nil, err
+	}
+	return d.store.listVolumesQuerier(ctx, d.store.db, scope, includeDeleted)
+}
+
+func (s *persistence) listVolumesQuerier(ctx context.Context, q ServiceQueryer, scope authz.Environment, includeDeleted bool) ([]VolumeRecord, error) {
+	filter := `
+		    AND v.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
+	if includeDeleted {
+		filter = ``
+	}
+	rows, err := q.QueryContext(ctx,
+		`SELECT v.id, v.environment_id, v.name, v.size_bytes, COALESCE(v.agent_id, ''), v.staged, v.created_at,
+		        v.deleted_at, v.deleted_by_user_id, v.delete_expires_at,
+		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		   FROM volumes v
+		   JOIN environments e ON e.id = v.environment_id
+		   JOIN projects p ON p.id = e.project_id
+		  WHERE v.environment_id = $1`+filter+`
+		  ORDER BY v.created_at ASC`,
+		scope.ID(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []VolumeRecord
+	for rows.Next() {
+		var rec VolumeRecord
+		var self, environment, project Tombstone
+		targets := []any{&rec.ID, &rec.EnvironmentID, &rec.Name, &rec.SizeBytes, &rec.AgentID, &rec.Staged, &rec.CreatedAt}
+		targets = ScanTombstone(targets, &self)
+		targets = ScanTombstone(targets, &environment)
+		if err := rows.Scan(ScanTombstone(targets, &project)...); err != nil {
+			return nil, err
+		}
+		rec.Deletion = EffectiveDeletion(self, environment, project)
+		out = append(out, rec)
+	}
+	return out, rows.Err()
 }

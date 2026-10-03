@@ -117,87 +117,6 @@ func clearTombstoneRowTx(ctx context.Context, tx *sql.Tx, table string, effect j
 	return affected > 0, nil
 }
 
-// quiesceEnvironmentServicesTx stops new work for every service in an environment being deleted.
-func (s *catalogPersistence) quiesceEnvironmentServicesTx(ctx context.Context, tx *sql.Tx, environmentID, userID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM services WHERE environment_id = $1 ORDER BY id`, environmentID)
-	if err != nil {
-		return err
-	}
-	var serviceIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		serviceIDs = append(serviceIDs, id)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	quiescer := deliverycore.NewServiceQuiescer(s.source)
-	for _, id := range serviceIDs {
-		if err := quiescer.QuiesceTx(ctx, tx, id, userID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// quiesceProjectServicesTx stops new work for every service in a project being deleted.
-func (s *catalogPersistence) quiesceProjectServicesTx(ctx context.Context, tx *sql.Tx, projectID, userID string) error {
-	rows, err := tx.QueryContext(ctx,
-		`SELECT s.id FROM services s
-		  JOIN environments e ON e.id = s.environment_id
-		 WHERE e.project_id = $1 ORDER BY s.id`,
-		projectID,
-	)
-	if err != nil {
-		return err
-	}
-	var serviceIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		serviceIDs = append(serviceIDs, id)
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	quiescer := deliverycore.NewServiceQuiescer(s.source)
-	for _, id := range serviceIDs {
-		if err := quiescer.QuiesceTx(ctx, tx, id, userID); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// dropEnvironmentAssignmentsTx deletes the placement records of every service in an environment.
-// Assignments drop at delete time and re-assert empty at restore; a release recreates them.
-func dropEnvironmentAssignmentsTx(ctx context.Context, tx *sql.Tx, environmentID string) error {
-	_, err := tx.ExecContext(ctx,
-		`DELETE FROM allocation_assignments a USING services s
-		  WHERE a.service_id = s.id AND s.environment_id = $1`,
-		environmentID,
-	)
-	return err
-}
-
-// dropProjectAssignmentsTx deletes the placement records of every service in a project.
-// Assignments drop at delete time and re-assert empty at restore; a release recreates them.
-func dropProjectAssignmentsTx(ctx context.Context, tx *sql.Tx, projectID string) error {
-	_, err := tx.ExecContext(ctx,
-		`DELETE FROM allocation_assignments a USING services s, environments e
-		  WHERE a.service_id = s.id AND s.environment_id = e.id AND e.project_id = $1`,
-		projectID,
-	)
-	return err
-}
-
 // deleteProject tombstones a user project and quiesces its services. Managed projects are
 // refused; repeats are idempotent and confirmation is checked only on the first delete.
 func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error) {
@@ -229,15 +148,11 @@ func (s *catalogPersistence) deleteProject(ctx context.Context, user authz.User,
 		if !tombstoned {
 			return nil
 		}
-		if err := s.quiesceProjectServicesTx(ctx, tx, rec.ID, user.ID()); err != nil {
-			return err
-		}
 		agentIDs, err = s.projectAgentIDsQuerier(ctx, tx, rec.ID)
 		if err != nil {
 			return err
 		}
-		// Drop after the agent query: the notifier set derives from the removed assignments.
-		return dropProjectAssignmentsTx(ctx, tx, rec.ID)
+		return deliverycore.QuiesceDeletionTx(ctx, tx, s.source, deliverycore.DeletionTarget{Kind: deliverycore.DeleteProject, ID: rec.ID}, user.ID())
 	})
 	return agentIDs, err
 }
@@ -265,7 +180,7 @@ func (s *catalogPersistence) restoreProject(ctx context.Context, user authz.User
 		if !restored {
 			return deliverycore.ErrDeletionExpired
 		}
-		if err := dropProjectAssignmentsTx(ctx, tx, current.ID); err != nil {
+		if err := deliverycore.DropDeletionAssignmentsTx(ctx, tx, deliverycore.DeletionTarget{Kind: deliverycore.DeleteProject, ID: current.ID}); err != nil {
 			return err
 		}
 		rec, err = s.projectByScopeQuerier(ctx, tx, scope)

@@ -377,6 +377,13 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 						BigInt(platform.servicesIndex) > request.waitIndex
 							? BigInt(platform.servicesIndex)
 							: request.waitIndex + 1n,
+					volumes: platform.volumes
+						.filter(
+							(volume) =>
+								volume.environmentId === request.environmentId &&
+								(request.includeDeleted || !volume.deletion),
+						)
+						.map((volume) => fromPlatformJson(P.VolumeSchema, volume)),
 					notModified: false,
 					services: platform.services
 						.filter(
@@ -459,9 +466,15 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				});
 				if (!request.service?.spec) throw new Error("service spec missing");
 				const current = service(request.serviceId);
+				if (
+					request.expectedSpecRevision !== BigInt(current.specRevision ?? "0")
+				) {
+					throw new ConnectError("service draft changed", Code.Aborted);
+				}
 				const spec = toPlatformJson(P.ServiceSpecSchema, request.service.spec);
 				const next = {
 					...current,
+					specRevision: (BigInt(current.specRevision ?? "0") + 1n).toString(),
 					name: request.service.name?.trim() || current.name,
 					spec,
 					sourceSummary: jsonFixture(P.ServiceSourceSummarySchema, {

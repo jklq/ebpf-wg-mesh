@@ -201,16 +201,11 @@ func (s *catalogPersistence) deleteEnvironment(ctx context.Context, user authz.U
 		if !tombstoned {
 			return nil
 		}
-		if err := s.quiesceEnvironmentServicesTx(ctx, tx, rec.ID, user.ID()); err != nil {
-			return err
-		}
 		agentIDs, err = s.environmentAgentIDsQuerier(ctx, tx, rec.ID)
 		if err != nil {
 			return err
 		}
-		// Drop after the agent query: the notifier set is derived from the
-		// assignments being removed.
-		return dropEnvironmentAssignmentsTx(ctx, tx, rec.ID)
+		return deliverycore.QuiesceDeletionTx(ctx, tx, s.source, deliverycore.DeletionTarget{Kind: deliverycore.DeleteEnvironment, ID: rec.ID}, user.ID())
 	})
 	return agentIDs, err
 }
@@ -243,7 +238,7 @@ func (s *catalogPersistence) restoreEnvironment(ctx context.Context, user authz.
 		if !restored {
 			return deliverycore.ErrDeletionExpired
 		}
-		if err := dropEnvironmentAssignmentsTx(ctx, tx, current.ID); err != nil {
+		if err := deliverycore.DropDeletionAssignmentsTx(ctx, tx, deliverycore.DeletionTarget{Kind: deliverycore.DeleteEnvironment, ID: current.ID}); err != nil {
 			return err
 		}
 		rec, err = s.environmentByScopeQuerier(ctx, tx, scope)
@@ -358,49 +353,6 @@ func (s *catalogPersistence) createScheduledVolume(ctx context.Context, user aut
 		return deliverycore.VolumeRecord{}, err
 	}
 	return rec, nil
-}
-
-func (s *catalogPersistence) listVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error) {
-	scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Read)
-	if err != nil {
-		return nil, err
-	}
-	filter := `
-		    AND v.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
-	if includeDeleted {
-		filter = ``
-	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT v.id, v.environment_id, v.name, v.size_bytes, COALESCE(v.agent_id, ''), v.staged, v.created_at,
-		        v.deleted_at, v.deleted_by_user_id, v.delete_expires_at,
-		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
-		   FROM volumes v
-		   JOIN environments e ON e.id = v.environment_id
-		   JOIN projects p ON p.id = e.project_id
-		  WHERE v.environment_id = $1`+filter+`
-		  ORDER BY v.created_at ASC`,
-		scope.ID(),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []deliverycore.VolumeRecord
-	for rows.Next() {
-		var rec deliverycore.VolumeRecord
-		var self, environment, project deliverycore.Tombstone
-		targets := []any{&rec.ID, &rec.EnvironmentID, &rec.Name, &rec.SizeBytes, &rec.AgentID, &rec.Staged, &rec.CreatedAt}
-		targets = deliverycore.ScanTombstone(targets, &self)
-		targets = deliverycore.ScanTombstone(targets, &environment)
-		if err := rows.Scan(deliverycore.ScanTombstone(targets, &project)...); err != nil {
-			return nil, err
-		}
-		rec.Deletion = deliverycore.EffectiveDeletion(self, environment, project)
-		out = append(out, rec)
-	}
-	return out, rows.Err()
 }
 
 // deleteVolume tombstones a volume. Deletion needs typed confirmation, is never

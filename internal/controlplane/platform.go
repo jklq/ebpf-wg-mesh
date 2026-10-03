@@ -44,9 +44,8 @@ type platformStore interface {
 	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
-	ListServices(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
-	listVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
+	ListVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
 	deleteVolume(ctx context.Context, user authz.User, volumeID, confirmation string) error
 	ServiceStatus(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, []deliverycore.AllocationRecord, error)
 	ListServiceDeployments(ctx context.Context, user authz.User, serviceID string, limit int32) ([]deliverycore.DeploymentRecord, error)
@@ -55,12 +54,13 @@ type platformStore interface {
 }
 
 type platformDelivery interface {
+	ReadEnvironmentSnapshot(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) (deliverycore.EnvironmentSnapshot, error)
 	DuplicateEnvironment(ctx context.Context, user authz.User, sourceEnvironmentID, name string, copyVariables bool) (deliverycore.EnvironmentRecord, error)
 
 	ReleaseEnvironment(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ReleasedService, error)
 	ApplyDeploymentAction(ctx context.Context, user authz.User, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.DeploymentActionResult, error)
 	CreateScheduledService(ctx context.Context, user authz.User, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error)
-	UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
+	UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (deliverycore.ServiceRecord, bool, error)
 	DiscardServiceChanges(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	DeleteService(ctx context.Context, user authz.User, serviceID string) error
 	RestoreService(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)

@@ -46,7 +46,7 @@ func desiredVolume(t *testing.T, store *persistence, agentID, volumeID string) *
 
 func listedVolume(t *testing.T, store *persistence, environmentID, volumeID string) *platformv1.Volume {
 	t.Helper()
-	volumes, err := store.catalog.listVolumes(context.Background(), testUser("user-1"), environmentID, true)
+	volumes, err := store.reads.ListVolumes(context.Background(), testUser("user-1"), environmentID, true)
 	if err != nil {
 		t.Fatal(err)
 	}

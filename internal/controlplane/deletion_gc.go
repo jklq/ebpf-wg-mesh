@@ -213,7 +213,7 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDel
 					return err
 				}
 				return deliverycore.RequestVolumeDestructionsTx(ctx, tx, cutoff,
-					`environment_id IN (SELECT id FROM environments WHERE project_id = $1)`, id)
+					deliverycore.DeletionTarget{Kind: deliverycore.DeleteProject, ID: id})
 			},
 			`DELETE FROM projects WHERE id = $1`)
 	case expiredDeletionEnvironment:
@@ -225,7 +225,7 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDel
 					id); err != nil {
 					return err
 				}
-				return deliverycore.RequestVolumeDestructionsTx(ctx, tx, cutoff, `environment_id = $1`, id)
+				return deliverycore.RequestVolumeDestructionsTx(ctx, tx, cutoff, deliverycore.DeletionTarget{Kind: deliverycore.DeleteEnvironment, ID: id})
 			},
 			`DELETE FROM environments WHERE id = $1`)
 	case expiredDeletionService:
@@ -242,7 +242,7 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDel
 		return hardDeleteExpiredRow(ctx, p.database, deletion.ID, cutoff, journal.VolumeRow(deletion.ID),
 			`SELECT id FROM volumes WHERE id = $1 AND deleted_at IS NOT NULL AND delete_expires_at <= $2 FOR UPDATE`,
 			func(ctx context.Context, tx *sql.Tx, id string) error {
-				return deliverycore.RequestVolumeDestructionsTx(ctx, tx, cutoff, `id = $1`, id)
+				return deliverycore.RequestVolumeDestructionsTx(ctx, tx, cutoff, deliverycore.DeletionTarget{Kind: deliverycore.DeleteVolume, ID: id})
 			},
 			`DELETE FROM volumes WHERE id = $1`)
 	case expiredDeletionDomain:

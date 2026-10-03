@@ -258,7 +258,12 @@ func createScheduledService(ctx context.Context, store *persistence, userID, env
 }
 
 func updateService(ctx context.Context, store *persistence, userID, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
-	return testDelivery(store).UpdateService(ctx, testUser(userID), serviceID, name, spec)
+	d := testDelivery(store)
+	current, err := d.ServiceSnapshot(ctx, serviceID)
+	if err != nil {
+		return deliverycore.ServiceRecord{}, false, err
+	}
+	return d.UpdateService(ctx, testUser(userID), serviceID, name, spec, current.SpecRevision)
 }
 
 func deleteService(ctx context.Context, store *persistence, userID, serviceID string) error {

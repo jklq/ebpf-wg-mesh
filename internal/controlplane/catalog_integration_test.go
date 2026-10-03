@@ -333,7 +333,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	volumes, err := store.catalog.listVolumes(ctx, testUser("owner"), duplicate.ID, false)
+	volumes, err := store.reads.ListVolumes(ctx, testUser("owner"), duplicate.ID, false)
 	if err != nil || len(volumes) != 1 || volumes[0].ID == volume.ID {
 		t.Fatalf("duplicated volumes: %#v: %v", volumes, err)
 	}

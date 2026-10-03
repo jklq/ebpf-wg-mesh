@@ -20,7 +20,10 @@ import {
 	serviceFixture,
 	statusFixture,
 } from "#/lib/dashboard/testkit/protocol";
-import { EnvironmentSchema } from "#/lib/platform-gen/platform_pb";
+import {
+	EnvironmentSchema,
+	VolumeSchema,
+} from "#/lib/platform-gen/platform_pb";
 
 describe("dashboard-services revision contract", () => {
 	it("orders adjacent revisions above the JavaScript safe integer range", () => {
@@ -83,6 +86,48 @@ describe("dashboard-services revision contract", () => {
 			loader([record("service-1", { name: "renamed" })], "2"),
 		);
 		expect(next.servicesById["service-1"]?.name).toBe("renamed");
+	});
+
+	it("orders volumes with their environment snapshot across loader and stream responses", () => {
+		const oldVolume = jsonFixture(VolumeSchema, {
+			id: "volume-1",
+			environmentId: "environment-1",
+			name: "data",
+			sizeBytes: "1073741824",
+		});
+		const grownVolume = { ...oldVolume, sizeBytes: "2147483648" };
+		const oldLoader = {
+			...loader([record("service-1")], "1"),
+			volumes: [oldVolume],
+		};
+		const initial = createNormalizedState(oldLoader);
+		const newer = applyServicesSnapshot(initial, {
+			services: [record("service-1")],
+			volumes: [grownVolume],
+			revision: "2",
+		});
+		expect(applyLoaderState(newer, oldLoader).base.volumes).toEqual([
+			grownVolume,
+		]);
+		expect(
+			applyServicesSnapshot(newer, {
+				services: [],
+				volumes: [],
+				revision: "1",
+			}),
+		).toBe(newer);
+		const removed = applyServicesSnapshot(newer, {
+			services: [record("service-1")],
+			volumes: [],
+			revision: "3",
+		});
+		expect(removed.base.volumes).toEqual([]);
+		expect(applyLoaderState(removed, oldLoader).base.volumes).toEqual([]);
+		const switched = applyLoaderState(removed, {
+			...loader([], "1", "environment-2"),
+			volumes: [oldVolume],
+		});
+		expect(switched.base.volumes).toEqual([oldVolume]);
 	});
 
 	it("resets scope on environment switch regardless of revision", () => {

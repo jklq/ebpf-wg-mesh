@@ -147,7 +147,8 @@ func runProductE2EScenario(
 		return productE2ESummary{}, err
 	}
 	updated, err := client.UpdateService(userCtx, &platformv1.UpdateServiceRequest{
-		ServiceId: service.GetId(),
+		ExpectedSpecRevision: service.GetSpecRevision(),
+		ServiceId:            service.GetId(),
 		Service: &platformv1.ServiceUpdate{
 			Name: productE2EServiceName,
 			Spec: productE2EServiceSpec(productE2EMarkerV2),

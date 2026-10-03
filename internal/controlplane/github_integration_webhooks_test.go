@@ -109,7 +109,8 @@ func TestPlatformServiceUpdateAndEnvironmentReleaseQueueSyncWithoutBranchLookup(
 	}
 
 	updateResp, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
-		ServiceId: serviceID,
+		ExpectedSpecRevision: 1,
+		ServiceId:            serviceID,
 		Service: &platformv1.ServiceUpdate{
 			Spec: repositoryServiceSpec(&platformv1.ServiceRuntime{CpuMillis: 250, MemoryMebibytes: 256, Ports: runtimePortsFromInts([]int32{8080})}, &platformv1.ServiceSourceSpec{
 				Provider:           "github",

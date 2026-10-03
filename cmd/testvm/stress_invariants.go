@@ -369,7 +369,7 @@ func watchDeliveryProbe(ctx context.Context, o stressOptions, stage stressStage,
 		return fmt.Errorf("watch probe baseline: %w", err)
 	}
 	callCtx, cancel := context.WithTimeout(ctx, o.RPCTimeout)
-	updated, err := mutationClient.UpdateService(callCtx, &platformv1.UpdateServiceRequest{ServiceId: service.ID, Service: &platformv1.ServiceUpdate{Spec: service.spec(marker)}})
+	updated, err := mutationClient.UpdateService(callCtx, &platformv1.UpdateServiceRequest{ExpectedSpecRevision: service.Revision, ServiceId: service.ID, Service: &platformv1.ServiceUpdate{Spec: service.spec(marker)}})
 	cancel()
 	if err != nil {
 		return fmt.Errorf("watch probe update: %w", err)
