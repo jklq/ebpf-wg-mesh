@@ -18,6 +18,7 @@ import {
 	applyServicePositions,
 	publicGitHubAccount,
 } from "./operations-helpers.server";
+import { listEnvironmentVolumes } from "./operations-volumes.server";
 
 export async function loadDashboardHome(
 	runtime: DashboardRuntime,
@@ -49,6 +50,7 @@ export async function loadDashboardHome(
 		projects: [],
 		environments: [],
 		services: [],
+		volumes: [],
 		servicesRevision: "0",
 		selectedServiceId: null,
 		domainBindings: [],
@@ -91,6 +93,7 @@ export async function loadDashboardHome(
 		let environments: DashboardHomeState["environments"] = [];
 		let environment: DashboardHomeState["environment"];
 		let allServices: Array<DashboardServiceRecord> = [];
+		let volumes: DashboardHomeState["volumes"] = [];
 		let servicesRevision = "0";
 		let selectedServiceId: string | null = null;
 
@@ -108,18 +111,23 @@ export async function loadDashboardHome(
 		}
 
 		if (environment) {
-			const [servicesSnapshot, positions] = await Promise.all([
-				optionalPlatformResult(
-					runtime.platform.call(
-						PlatformService.method.listServices,
-						session.user,
-						{ environmentId: environment.id },
+			const [servicesSnapshot, positions, environmentVolumes] =
+				await Promise.all([
+					optionalPlatformResult(
+						runtime.platform.call(
+							PlatformService.method.listServices,
+							session.user,
+							{ environmentId: environment.id },
+						),
 					),
-				),
-				storeCall(runtime, "listServicePositions", (store) =>
-					store.listServicePositions(session.user.id, environment.id),
-				),
-			]);
+					storeCall(runtime, "listServicePositions", (store) =>
+						store.listServicePositions(session.user.id, environment.id),
+					),
+					optionalPlatformResult(
+						listEnvironmentVolumes(runtime, session.user, environment.id),
+					),
+				]);
+			volumes = environmentVolumes ?? [];
 			allServices = applyServicePositions(
 				servicesSnapshot?.services ?? [],
 				positions,
@@ -182,6 +190,7 @@ export async function loadDashboardHome(
 			environments,
 			environment,
 			services: allServices,
+			volumes,
 			servicesRevision,
 			selectedServiceId,
 		} satisfies DashboardHomeState;

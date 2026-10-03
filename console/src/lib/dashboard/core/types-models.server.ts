@@ -236,6 +236,8 @@ export interface DashboardHomeState {
 	environments: Array<DashboardEnvironment>;
 	environment?: DashboardEnvironment;
 	services: Array<DashboardServiceRecord>;
+	/** Live volumes in the selected environment. */
+	volumes: Array<DashboardVolume>;
 	servicesRevision: string;
 	selectedServiceId: string | null;
 	domainBindings: Array<DashboardDomainBinding>;

@@ -294,6 +294,7 @@ function homeState(
 		ingressTargetHost: "platform.example.test",
 		localDomainSuffix: undefined,
 		domainBindings: [],
+		volumes: [],
 		controlPlaneReachable: true,
 		...overrides,
 	};

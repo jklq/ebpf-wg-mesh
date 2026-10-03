@@ -112,6 +112,7 @@ export function dashboardState(
 		ingressTargetHost: "platform.example.test",
 		localDomainSuffix: undefined,
 		domainBindings: [],
+		volumes: [],
 		controlPlaneReachable: true,
 		...overrides,
 	};

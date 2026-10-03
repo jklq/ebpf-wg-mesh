@@ -3,11 +3,14 @@ import type {
 	DashboardHomeState,
 	DashboardServiceRecord,
 	DashboardServiceStatus,
+	DashboardVolume,
 } from "#/lib/dashboard/core/types.server";
 import { compareIntegers } from "#/lib/platform-json";
 
 export interface ServicesSnapshot {
 	services: Array<DashboardServiceRecord>;
+	/** Volumes ride the environment snapshot; absent means unchanged. */
+	volumes?: Array<DashboardVolume>;
 	revision: string;
 }
 
@@ -128,10 +131,39 @@ export function applyServicesSnapshot(
 			: null;
 	return {
 		...state,
+		base: snapshot.volumes
+			? { ...state.base, volumes: snapshot.volumes }
+			: state.base,
 		servicesById: byId,
 		serviceOrder: order,
 		servicesRevision: snapshot.revision,
 		selectedServiceId: selectedKept,
+	};
+}
+
+/** Applies a volume returned by a mutation ahead of the next snapshot. */
+export function upsertVolume(
+	state: NormalizedDashboardState,
+	volume: DashboardVolume,
+): NormalizedDashboardState {
+	const volumes = state.base.volumes.some((entry) => entry.id === volume.id)
+		? state.base.volumes.map((entry) =>
+				entry.id === volume.id ? volume : entry,
+			)
+		: [...state.base.volumes, volume];
+	return { ...state, base: { ...state.base, volumes } };
+}
+
+export function removeVolume(
+	state: NormalizedDashboardState,
+	volumeId: string,
+): NormalizedDashboardState {
+	return {
+		...state,
+		base: {
+			...state.base,
+			volumes: state.base.volumes.filter((entry) => entry.id !== volumeId),
+		},
 	};
 }
 
@@ -155,7 +187,11 @@ export function applyLoaderState(
 		};
 		return applyServicesSnapshot(
 			reset,
-			{ services: loader.services, revision: loader.servicesRevision },
+			{
+				services: loader.services,
+				volumes: loader.volumes,
+				revision: loader.servicesRevision,
+			},
 			retained,
 			true,
 		);
@@ -182,7 +218,11 @@ export function applyLoaderState(
 	}
 	return applyServicesSnapshot(
 		{ ...next, selectedServiceId: state.selectedServiceId },
-		{ services: loader.services, revision: loader.servicesRevision },
+		{
+			services: loader.services,
+			volumes: loader.volumes,
+			revision: loader.servicesRevision,
+		},
 		retained,
 	);
 }

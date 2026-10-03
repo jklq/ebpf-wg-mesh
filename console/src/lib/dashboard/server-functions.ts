@@ -88,7 +88,13 @@ const updateServiceInput = z.object({
 	desiredReplicaCount: z.number().int().optional(),
 	placementRegion: z.string().optional(),
 	rollingStrategy: rollingStrategy.optional(),
+	/** null detaches the volume; omitted leaves the mount unchanged. */
+	volumeMount: z
+		.object({ volumeName: identifier, mountPath: z.string() })
+		.nullable()
+		.optional(),
 });
+const volumeSizeBytes = z.number().int().positive();
 const confirmRepositoryInput = z.object({
 	repositorySelector: identifier,
 	serviceName: z.string().optional(),
@@ -383,6 +389,38 @@ export const doUpdateService = createServerFn({ method: "POST" })
 			data,
 		);
 	});
+
+export const doCreateVolume = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				environmentId: identifier,
+				name: identifier,
+				sizeBytes: volumeSizeBytes,
+			})
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-volumes.server")
+		).createVolumeFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doGrowVolume = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ volumeId: identifier, sizeBytes: volumeSizeBytes }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-volumes.server")
+		).growVolumeFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
 
 export const doApplyDeploymentAction = createServerFn({ method: "POST" })
 	.inputValidator((input: unknown) =>
