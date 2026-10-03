@@ -316,17 +316,6 @@ func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, 
 	if err != nil && err != sql.ErrNoRows {
 		return DeploymentRecord{}, false, err
 	}
-	if !usePendingRollout && ServiceVolumeName(service.Spec) != "" {
-		updated, err := transition(deploymentTransitionInput{
-			ToState:       DeploymentStateFailed,
-			Actor:         deploymentActor{Kind: DeploymentCauseSystem},
-			ReasonCode:    reasonDeploymentFailed,
-			Detail:        ErrVolumeRollingUnsupported.Error(),
-			ArtifactID:    artifact.ID,
-			HasArtifactID: true,
-		})
-		return updated, false, err
-	}
 	if !usePendingRollout && (currentRolloutState == rolloutStateInProgress || currentRolloutState == rolloutStatePendingBuild) {
 		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
 		if err != nil {

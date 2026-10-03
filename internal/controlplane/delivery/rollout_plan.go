@@ -154,9 +154,13 @@ func decideRollout(snapshot rolloutSnapshot, now time.Time) rolloutPlan {
 	missing := int(desiredTargetCount) - len(target)
 	limit := int(rollout.DesiredReplicaCount)
 	if len(predecessors) > 0 {
-		limit += defaultRolloutMaxSurge
+		limit += rolloutMaxSurge(rollout)
 	}
 	plan.PlacementSlots = max(0, min(missing, limit-len(filterAllocations(allocs, allocationOccupiesRolloutSlot))))
+	if rollout.Recreate && len(predecessors) > 0 {
+		// The replacement needs the volume the predecessor still holds.
+		plan.PlacementSlots = 0
+	}
 	plan.Allocations = allocs
 	plan.Continue = true
 	return plan
@@ -185,13 +189,13 @@ func decideRolloutPlacement(snapshot rolloutSnapshot, created int, ingressPendin
 				available++
 			}
 		}
-		minimumAvailable := int(rollout.DesiredReplicaCount) - defaultRolloutMaxUnavailable
+		minimumAvailable := int(rollout.DesiredReplicaCount) - rolloutMaxUnavailable(rollout)
 		if minimumAvailable < 0 {
 			minimumAvailable = 0
 		}
 		limit := int(rollout.DesiredReplicaCount)
 		if len(predecessors) > 0 {
-			limit += defaultRolloutMaxSurge
+			limit += rolloutMaxSurge(rollout)
 		}
 		over := len(filterAllocations(allocs, allocationOccupiesRolloutSlot)) + created - limit
 		room := missing - created
@@ -219,6 +223,13 @@ func decideRolloutPlacement(snapshot rolloutSnapshot, created int, ingressPendin
 			plan.Result.IngressChanged = true
 			plan.Result.NeedsIngressConvergence = true
 		}
+	}
+
+	if rollout.Recreate && len(predecessors) > 0 {
+		if !plan.Result.NeedsIngressConvergence {
+			plan.PlacementMessage = "waiting for the previous allocation to stop and release its volume"
+		}
+		return plan
 	}
 
 	placement := ""
@@ -256,6 +267,22 @@ func rolloutAllocationFailure(alloc AllocationRecord, now time.Time, strategy *p
 			firstNonEmpty(alloc.Message, "readiness check did not pass"))
 	}
 	return ""
+}
+
+// Recreate rollouts may not surge: the predecessor stops first, so the
+// replacement can take over its node-local volume.
+func rolloutMaxSurge(rollout rolloutRecord) int {
+	if rollout.Recreate {
+		return 0
+	}
+	return defaultRolloutMaxSurge
+}
+
+func rolloutMaxUnavailable(rollout rolloutRecord) int {
+	if rollout.Recreate {
+		return int(rolloutTargetReplicaCount(rollout))
+	}
+	return defaultRolloutMaxUnavailable
 }
 
 func rolloutTargetReplicaCount(rollout rolloutRecord) int32 {

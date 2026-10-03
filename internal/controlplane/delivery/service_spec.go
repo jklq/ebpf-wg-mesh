@@ -388,8 +388,6 @@ const (
 	maxRolloutDeadline           = 24 * time.Hour
 )
 
-var ErrVolumeRollingUnsupported = errors.New("volume-backed services cannot overlap rollout generations until volume handoff is supported")
-
 var ErrRolloutInProgress = errors.New("a rollout is already in progress")
 
 func canonicalRollingStrategy(strategy *platformv1.RollingStrategy) *platformv1.RollingStrategy {

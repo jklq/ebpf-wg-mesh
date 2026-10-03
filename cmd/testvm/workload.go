@@ -59,11 +59,17 @@ func runWorkloadIsolationChecks(ctx, userCtx context.Context, client platformv1.
 	return nil
 }
 
+// volumeHostDataPath is where the loop volume backend exposes a volume's
+// workload-visible data on the agent host.
+func volumeHostDataPath(volumeID string) string {
+	return "/var/lib/ebpf-wg-mesh/agent/volumes/" + volumeID + "/mnt/data"
+}
+
 func volumeBackedHTTPServiceSpec(marker, volumeName string) *platformv1.ServiceSpec {
 	return &platformv1.ServiceSpec{
 		Runtime: &platformv1.ServiceRuntime{
 			Command:         []string{"sh", "-c"},
-			Args:            []string{"printf '%s\\n' \"$MARKER\" > /data/index.html && exec httpd -f -p [::]:8080 -h /data"},
+			Args:            []string{"printf '%s\\n' \"$MARKER\" >> /data/boots.log && printf '%s\\n' \"$MARKER\" > /data/index.html && exec httpd -f -p [::]:8080 -h /data"},
 			Env:             map[string]string{"MARKER": marker},
 			CpuMillis:       250,
 			MemoryMebibytes: 256,

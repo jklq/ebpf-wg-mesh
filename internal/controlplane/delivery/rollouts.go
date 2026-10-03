@@ -164,8 +164,11 @@ type rolloutRecord struct {
 	ImageDigest         string
 	FailureReason       string
 	TargetAllocationID  string
-	CreatedAt           time.Time
-	ProgressAt          time.Time
+	// Recreate rollouts stop the predecessor before placing its replacement,
+	// because both would need the same node-local volume.
+	Recreate   bool
+	CreatedAt  time.Time
+	ProgressAt time.Time
 }
 
 type rolloutAdvanceResult struct {
@@ -444,12 +447,12 @@ func loadCurrentRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord
 		`SELECT service_id, rollout_generation, spec_revision, state, strategy_json,
 		        desired_replica_count, COALESCE(artifact_id, ''),
 		        COALESCE((SELECT image_ref FROM build_artifacts WHERE id = service_rollouts.artifact_id), ''),
-		        failure_reason, COALESCE(target_allocation_id, ''), created_at, progress_at
+		        failure_reason, COALESCE(target_allocation_id, ''), recreate, created_at, progress_at
 		   FROM service_rollouts
 		  WHERE service_id = $1 AND rollout_generation = $2
 		  FOR UPDATE`, service.ID, service.RolloutGeneration,
 	).Scan(&rec.ServiceID, &rec.Generation, &rec.SpecRevision, &rec.State, &strategyRaw,
-		&rec.DesiredReplicaCount, &rec.ArtifactID, &rec.ImageDigest, &rec.FailureReason, &rec.TargetAllocationID, &rec.CreatedAt, &rec.ProgressAt)
+		&rec.DesiredReplicaCount, &rec.ArtifactID, &rec.ImageDigest, &rec.FailureReason, &rec.TargetAllocationID, &rec.Recreate, &rec.CreatedAt, &rec.ProgressAt)
 	if err == sql.ErrNoRows {
 		return rolloutRecord{}, false, nil
 	}
@@ -597,9 +600,6 @@ func (d *Delivery) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, 
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 		return false, err
 	}
-	if ServiceVolumeName(service.Spec) != "" && len(existing) > 0 {
-		return false, ErrVolumeRollingUnsupported
-	}
 	rollout, ok, err := loadCurrentRolloutTx(ctx, tx, service)
 	if err != nil {
 		return false, err
@@ -690,10 +690,10 @@ func (s *persistence) insertServiceRolloutTx(
 	if _, err = journal.RolloutRow(serviceID, rolloutGeneration).Exec(ctx, tx,
 		`INSERT INTO service_rollouts(
 			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_user_id,
-			state, strategy_json, desired_replica_count, artifact_id, failure_reason, created_at, progress_at
-		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), '', $11, $11)`,
+			state, strategy_json, desired_replica_count, artifact_id, failure_reason, recreate, created_at, progress_at
+		) VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''), '', $11, $12, $12)`,
 		serviceID, rolloutGeneration, specRevision, reason, buildID, requestedByUserID,
-		state, strategyJSON, desired, artifactID, now,
+		state, strategyJSON, desired, artifactID, ServiceVolumeName(spec) != "", now,
 	); err != nil {
 		return err
 	}
