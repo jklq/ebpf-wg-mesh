@@ -157,4 +157,5 @@ export interface UpdateServiceInput {
 	desiredReplicaCount?: number;
 	placementRegion?: string;
 	rollingStrategy?: DashboardRollingStrategy;
+	volumeMount?: { volumeName: string; mountPath: string } | null;
 }

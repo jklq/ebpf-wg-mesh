@@ -360,6 +360,7 @@ function loader(
 		servicesRevision,
 		selectedServiceId: null,
 		domainBindings: [],
+		volumes: [],
 		controlPlaneReachable: true,
 	};
 }

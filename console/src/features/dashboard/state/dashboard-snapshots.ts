@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
 	ServiceSchema,
 	ServiceStatusSchema,
+	VolumeSchema,
 } from "#/lib/platform-gen/platform_pb";
 import { toPlatformJson } from "#/lib/platform-json";
 
@@ -23,9 +24,24 @@ const service = z
 		layoutPosition,
 	}));
 
+const volume = z
+	.looseObject({})
+	.transform((resource) =>
+		toPlatformJson(
+			VolumeSchema,
+			fromJsonString(VolumeSchema, JSON.stringify(resource)),
+		),
+	);
+
 /** SSE uses one envelope and the same protocol JSON as server functions. */
 export function parseServicesSnapshot(raw: unknown) {
-	return z.object({ services: z.array(service), revision }).parse(raw);
+	return z
+		.object({
+			services: z.array(service),
+			volumes: z.array(volume).optional(),
+			revision,
+		})
+		.parse(raw);
 }
 
 export function parseStatusSnapshot(raw: unknown) {

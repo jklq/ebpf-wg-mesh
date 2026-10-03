@@ -32,6 +32,7 @@ export const Route = createFileRoute("/events/environment-services")({
 								...snapshot,
 								value: {
 									services: snapshot.services,
+									volumes: "volumes" in snapshot ? snapshot.volumes : undefined,
 									revision: snapshot.index,
 								},
 							};

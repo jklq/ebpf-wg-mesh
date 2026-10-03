@@ -61,6 +61,7 @@ function homeState(overrides: Partial<DashboardHomeState>): DashboardHomeState {
 		servicesRevision: "0",
 		selectedServiceId: null,
 		domainBindings: [],
+		volumes: [],
 		controlPlaneReachable: true,
 		...overrides,
 	};
