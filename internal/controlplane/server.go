@@ -95,7 +95,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	})
 	if err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("open sealed secrets: %w", err)
+		return nil, fmt.Errorf("open envelope keys: %w", err)
 	}
 	store.attachSecrets(secrets)
 	signKeys, err := signkeys.Open(ctx, store.db, secrets, signkeys.Options{

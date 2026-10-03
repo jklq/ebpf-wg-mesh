@@ -373,19 +373,3 @@ func TestKeyringConcurrentProvision(t *testing.T) {
 		}
 	}
 }
-
-func TestSealValueOversizeSentinel(t *testing.T) {
-	t.Parallel()
-
-	dek, err := GenerateDEK()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := SealValue(dek, []byte("aad"), make([]byte, MaxSealedValueSize+1)); !errors.Is(err, ErrSealedValueTooLarge) {
-		t.Fatalf("oversize seal = %v", err)
-	}
-	// At exactly the cap the value seals.
-	if _, _, err := SealValue(dek, []byte("aad"), make([]byte, MaxSealedValueSize)); err != nil {
-		t.Fatalf("capped seal: %v", err)
-	}
-}

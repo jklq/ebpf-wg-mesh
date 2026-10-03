@@ -179,7 +179,7 @@ type SourceArchiveConfig struct {
 	S3            SourceArchiveS3Config
 }
 
-// SecretKeysConfig points at the provisioned master-key ring for sealed service secrets. The
+// SecretKeysConfig points at the provisioned master-key ring that encrypts service env at rest. The
 // same file contents must reach every control-plane replica; the database holds ciphertext and key-version metadata only.
 type SecretKeysConfig struct {
 	// KeyringPath is the access-restricted keyring file. Development defaults it under the state

@@ -3,19 +3,16 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 	"time"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 const (
@@ -394,8 +391,7 @@ func decideAgentDeploymentTransition(rec DeploymentRecord, observation deploymen
 
 const deploymentSelectColumns = `id, service_id, spec_revision, rollout_generation, build_id, COALESCE(artifact_id, ''),
 	        COALESCE((SELECT image_ref FROM build_artifacts WHERE id = deployments.artifact_id), ''),
-	        state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
-	        sealed_versions_json, is_current, requested_by_user_id, created_at, updated_at`
+	        state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at`
 
 func (s *persistence) lockServiceTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	var id string
@@ -407,13 +403,13 @@ func (s *persistence) lockServiceTx(ctx context.Context, tx *sql.Tx, serviceID s
 }
 
 func (s *persistence) currentDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) (DeploymentRecord, bool, error) {
-	rec, err := scanDeploymentRow(tx.QueryRowContext(ctx,
+	rec, err := s.queryDeploymentRow(ctx, tx,
 		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE service_id = $1 AND is_current = TRUE
 		  FOR UPDATE`,
 		serviceID,
-	))
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeploymentRecord{}, false, nil
 	}
@@ -424,20 +420,20 @@ func (s *persistence) currentDeploymentTx(ctx context.Context, tx *sql.Tx, servi
 }
 
 func (s *persistence) deploymentByIDTx(ctx context.Context, tx *sql.Tx, deploymentID string) (DeploymentRecord, error) {
-	return scanDeploymentRow(tx.QueryRowContext(ctx,
+	return s.queryDeploymentRow(ctx, tx,
 		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE id = $1
 		  FOR UPDATE`,
 		deploymentID,
-	))
+	)
 }
 
 func (s *persistence) deploymentByBuildIDTx(ctx context.Context, tx *sql.Tx, serviceID, buildID string) (DeploymentRecord, bool, error) {
 	if buildID == "" {
 		return DeploymentRecord{}, false, nil
 	}
-	rec, err := scanDeploymentRow(tx.QueryRowContext(ctx,
+	rec, err := s.queryDeploymentRow(ctx, tx,
 		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE service_id = $1 AND build_id = $2
@@ -445,7 +441,7 @@ func (s *persistence) deploymentByBuildIDTx(ctx context.Context, tx *sql.Tx, ser
 		  LIMIT 1
 		  FOR UPDATE`,
 		serviceID, buildID,
-	))
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeploymentRecord{}, false, nil
 	}
@@ -459,7 +455,7 @@ func (s *persistence) deploymentByRolloutTx(ctx context.Context, tx *sql.Tx, ser
 	if rolloutGeneration <= 0 {
 		return DeploymentRecord{}, false, nil
 	}
-	rec, err := scanDeploymentRow(tx.QueryRowContext(ctx,
+	rec, err := s.queryDeploymentRow(ctx, tx,
 		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE service_id = $1 AND rollout_generation = $2
@@ -467,7 +463,7 @@ func (s *persistence) deploymentByRolloutTx(ctx context.Context, tx *sql.Tx, ser
 		  LIMIT 1
 		  FOR UPDATE`,
 		serviceID, rolloutGeneration,
-	))
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeploymentRecord{}, false, nil
 	}
@@ -478,12 +474,12 @@ func (s *persistence) deploymentByRolloutTx(ctx context.Context, tx *sql.Tx, ser
 }
 
 func (s *persistence) attachLatestDeploymentQuerier(ctx context.Context, q ServiceQueryer, rec *ServiceRecord) error {
-	dep, err := scanDeploymentRow(q.QueryRowContext(ctx,
+	dep, err := s.queryDeploymentRow(ctx, q,
 		`SELECT `+deploymentSelectColumns+`
 		   FROM deployments
 		  WHERE service_id = $1 AND is_current = TRUE`,
 		rec.ID,
-	))
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -561,37 +557,14 @@ func (s *persistence) insertDeploymentTx(
 	if err != nil {
 		return DeploymentRecord{}, err
 	}
-	resolvedSpecJSON, err := protojson.Marshal(resolvedSpec)
-	if err != nil {
-		return DeploymentRecord{}, err
-	}
 	rec.ResolvedSpec = resolvedSpec
-	rec.VariableVersions = deploymentVariableVersions(resolvedSpec, specRevision)
-	rec.SealedVersions = map[string]int64{}
-	if s.secrets != nil {
-		live, err := s.secrets.Sealed().CurrentVersions(ctx, tx, serviceID)
-		if err != nil {
-			return DeploymentRecord{}, err
-		}
-		rec.SealedVersions = live
-	}
-	variableVersionsJSON, err := json.Marshal(rec.VariableVersions)
-	if err != nil {
-		return DeploymentRecord{}, err
-	}
-	sealedVersionsJSON, err := json.Marshal(rec.SealedVersions)
-	if err != nil {
-		return DeploymentRecord{}, err
-	}
 	if _, err := journal.DeploymentRow(rec.ID).Exec(ctx, tx,
 		`INSERT INTO deployments(
 			id, service_id, spec_revision, rollout_generation, build_id, artifact_id,
-			state, cause_kind, cause_id, reason_code, detail, resolved_spec_json, variable_versions_json,
-			sealed_versions_json, is_current, requested_by_user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, $12, $13, $14, TRUE, $15, $16, $16)`,
+			state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, TRUE, $12, $13, $13)`,
 		rec.ID, rec.ServiceID, rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ArtifactID,
-		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, resolvedSpecJSON, variableVersionsJSON,
-		sealedVersionsJSON, rec.RequestedByUserID, rec.CreatedAt,
+		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.RequestedByUserID, rec.CreatedAt,
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
@@ -826,9 +799,10 @@ func (s *persistence) markCurrentDeploymentRemovedTx(ctx context.Context, tx *sq
 	return err
 }
 
+// scanDeploymentRow scans deploymentSelectColumns. ResolvedSpec stays unset:
+// it lives on the spec revision, loaded by queryDeploymentRow or the caller.
 func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecord, error) {
 	var rec DeploymentRecord
-	var resolvedSpecJSON, variableVersionsJSON, sealedVersionsJSON []byte
 	if err := scanner.Scan(
 		&rec.ID,
 		&rec.ServiceID,
@@ -842,9 +816,6 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 		&rec.CauseID,
 		&rec.ReasonCode,
 		&rec.Detail,
-		&resolvedSpecJSON,
-		&variableVersionsJSON,
-		&sealedVersionsJSON,
 		&rec.IsCurrent,
 		&rec.RequestedByUserID,
 		&rec.CreatedAt,
@@ -852,34 +823,19 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 	); err != nil {
 		return DeploymentRecord{}, err
 	}
-	rec.ResolvedSpec = &platformv1.ServiceSpec{}
-	if err := protojson.Unmarshal(resolvedSpecJSON, rec.ResolvedSpec); err != nil {
-		return DeploymentRecord{}, fmt.Errorf("decode deployment resolved spec: %w", err)
-	}
-	if err := json.Unmarshal(variableVersionsJSON, &rec.VariableVersions); err != nil {
-		return DeploymentRecord{}, fmt.Errorf("decode deployment variable versions: %w", err)
-	}
-	if rec.VariableVersions == nil {
-		rec.VariableVersions = map[string]int64{}
-	}
-	if err := json.Unmarshal(sealedVersionsJSON, &rec.SealedVersions); err != nil {
-		return DeploymentRecord{}, fmt.Errorf("decode deployment sealed versions: %w", err)
-	}
-	if rec.SealedVersions == nil {
-		rec.SealedVersions = map[string]int64{}
-	}
 	return rec, nil
 }
 
-func deploymentVariableVersions(spec *platformv1.ServiceSpec, specRevision int64) map[string]int64 {
-	versions := make(map[string]int64)
-	if spec == nil || spec.GetRuntime() == nil {
-		return versions
+// queryDeploymentRow loads one deployment with its resolved spec revision.
+func (s *persistence) queryDeploymentRow(ctx context.Context, q ServiceQueryer, query string, args ...any) (DeploymentRecord, error) {
+	rec, err := scanDeploymentRow(q.QueryRowContext(ctx, query, args...))
+	if err != nil {
+		return DeploymentRecord{}, err
 	}
-	for key := range spec.GetRuntime().GetEnv() {
-		versions[key] = specRevision
+	if rec.ResolvedSpec, err = s.loadServiceDetailsQuerier(ctx, q, rec.ServiceID, rec.SpecRevision); err != nil {
+		return DeploymentRecord{}, fmt.Errorf("load deployment %s spec: %w", rec.ID, err)
 	}
-	return versions
+	return rec, nil
 }
 
 func (s *persistence) loadDeploymentTransitions(ctx context.Context, q ServiceQueryer, deploymentID string) ([]DeploymentTransitionRecord, error) {

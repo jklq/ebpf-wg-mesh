@@ -8,17 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 )
-
-func TestOpenCurrentMissingSecretReturnsSentinel(t *testing.T) {
-	store := openTestStore(t)
-	_, _, err := store.secrets.Sealed().OpenCurrent(context.Background(), store.db, "missing-service", "TOKEN")
-	if !errors.Is(err, secretkeys.ErrNoSuchSecret) {
-		t.Fatalf("missing secret error = %v, want ErrNoSuchSecret", err)
-	}
-}
 
 func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 	t.Parallel()
@@ -34,14 +26,8 @@ func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := createService(ctx, store, "owner", environmentID, "web",
-		directImageServiceSpec(pinnedImage("a"), &platformv1.ServiceRuntime{
-			Env: map[string]string{"PUBLIC": "one"},
-		}), "node-1")
+		envServiceSpec("a", map[string]string{"TOKEN": "first-secret"}), "node-1")
 	if err != nil {
-		t.Fatal(err)
-	}
-	delivery := testDelivery(store)
-	if _, err := delivery.SealServiceSecret(ctx, testUser("owner"), service.ID, "TOKEN", []byte("first-secret")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -72,12 +58,12 @@ func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 		t.Fatalf("second rewrap = %d, %v; want 0, nil", rewrapped, err)
 	}
 	for name, svc := range map[string]*secretkeys.Service{"replica1": store.secrets, "replica2": replica2} {
-		plaintext, version, err := svc.Sealed().OpenCurrent(ctx, store.db, service.ID, "TOKEN")
+		env, err := serviceEnvThrough(ctx, store, svc, service.ID)
 		if err != nil {
 			t.Fatalf("%s open: %v", name, err)
 		}
-		if string(plaintext) != "first-secret" || version != 1 {
-			t.Fatalf("%s open = %q v%d", name, plaintext, version)
+		if env["TOKEN"] != "first-secret" {
+			t.Fatalf("%s open did not round-trip", name)
 		}
 	}
 	counts, err := store.secrets.Registry().WrappedCounts(ctx)
@@ -106,11 +92,8 @@ func TestSecretEnvelopeRestartWithRetiredKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := createService(ctx, store, "owner", environmentID, "web",
-		directImageServiceSpec(pinnedImage("a"), nil), "node-1")
+		envServiceSpec("a", map[string]string{"TOKEN": "restart-secret"}), "node-1")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := testDelivery(store).SealServiceSecret(ctx, testUser("owner"), service.ID, "TOKEN", []byte("restart-secret")); err != nil {
 		t.Fatal(err)
 	}
 	// Activate without rewrapping: the DEK stays wrapped by the retired key.
@@ -120,12 +103,12 @@ func TestSecretEnvelopeRestartWithRetiredKey(t *testing.T) {
 	}
 	// A restarted replica (cold caches) still unwraps through the retired key with no manual unlock.
 	restarted := secretkeys.New(store.db, store.secrets.Provider())
-	plaintext, _, err := restarted.Sealed().OpenCurrent(ctx, store.db, service.ID, "TOKEN")
+	env, err := serviceEnvThrough(ctx, store, restarted, service.ID)
 	if err != nil {
 		t.Fatalf("restarted open: %v", err)
 	}
-	if string(plaintext) != "restart-secret" {
-		t.Fatalf("restarted open = %q", plaintext)
+	if env["TOKEN"] != "restart-secret" {
+		t.Fatal("restarted open did not round-trip")
 	}
 }
 
@@ -251,11 +234,8 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, err := createService(ctx, store, "owner", environmentID, "web",
-		directImageServiceSpec(pinnedImage("a"), nil), "node-1")
+		envServiceSpec("a", map[string]string{"TOKEN": "consistent-secret"}), "node-1")
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := testDelivery(store).SealServiceSecret(ctx, testUser("owner"), service.ID, "TOKEN", []byte("consistent-secret")); err != nil {
 		t.Fatal(err)
 	}
 	active, err := store.secrets.Registry().ActiveKey(ctx)
@@ -276,7 +256,7 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 	if err := replicaB.Registry().VerifyLocalCoverage(ctx); err != nil {
 		t.Fatalf("coverage with wrong material: %v", err)
 	}
-	if _, _, err := replicaB.Sealed().OpenCurrent(ctx, store.db, service.ID, "TOKEN"); !isUnwrapReason(t, err, secretkeys.UnwrapReasonCorruptCiphertext) {
+	if _, err := serviceEnvThrough(ctx, store, replicaB, service.ID); !isUnwrapReason(t, err, secretkeys.UnwrapReasonCorruptCiphertext) {
 		t.Fatalf("inconsistent open = %v", err)
 	}
 	if _, err := replicaB.DEKs().VerifyAll(ctx); !isUnwrapReason(t, err, secretkeys.UnwrapReasonCorruptCiphertext) {
@@ -378,6 +358,17 @@ func TestSecretEnvelopeDeleteRefusal(t *testing.T) {
 	if _, err := store.secrets.Registry().ActiveKey(ctx); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// serviceEnvThrough reads a service's env through another replica's key handle.
+func serviceEnvThrough(ctx context.Context, store *persistence, secrets *secretkeys.Service, serviceID string) (map[string]string, error) {
+	deps := deliveryDependencies(store, nil, nil, nil, nil)
+	deps.Secrets = secrets
+	rec, err := deliverycore.New(deps).ServiceByID(ctx, testUser("owner"), serviceID)
+	if err != nil {
+		return nil, err
+	}
+	return rec.Spec.GetRuntime().GetEnv(), nil
 }
 
 func isUnwrapReason(t *testing.T, err error, reason secretkeys.UnwrapFailureReason) bool {

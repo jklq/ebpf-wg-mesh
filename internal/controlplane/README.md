@@ -32,7 +32,7 @@ persistence operations.
 | --- | --- |
 | `delivery.go`, `reads.go` | Construction, dependencies, and authorized or system reads |
 | `services.go`, `service_changes.go`, `service_spec.go` | Service drafts, unapplied changes, and spec invariants |
-| `environments.go`, `managed_service.go`, `secrets.go` | Environment releases and duplication, managed workloads, and sealed secrets |
+| `environments.go`, `managed_service.go`, `env.go` | Environment releases and duplication, managed workloads, and env encryption at rest |
 | `deployments.go`, `deployment_actions.go` | Deployment history, transitions, and user actions |
 | `rollouts.go`, `rollout_plan.go` | Rollout reconciliation and replacement decisions |
 | `allocations.go`, `placement.go` | Assignment mutations, replica reconciliation, and placement |

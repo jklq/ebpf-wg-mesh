@@ -19,7 +19,7 @@ src/
       service-panel/
         deployments/      History, progress, logs and recovery
         settings/         Draft persistence, source/build and runtime forms
-        variables/        Public variables and sealed secrets
+        variables/        Environment variables
         domains/          Domain workflow, forms and validation
       shared/             Dashboard domain types and pure helpers
     auth/                 Login presentation

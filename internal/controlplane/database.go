@@ -288,8 +288,8 @@ type persistence struct {
 	secrets            *secretkeys.Service
 }
 
-// attachSecrets wires the sealed-secret backend. Production always attaches
-// before serving; delivery skips sealed handling while it is nil.
+// attachSecrets wires the envelope-encryption backend that keeps service env
+// encrypted at rest. Production always attaches before serving.
 func (p *persistence) attachSecrets(svc *secretkeys.Service) {
 	p.secrets = svc
 }

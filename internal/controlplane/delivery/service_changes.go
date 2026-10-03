@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sort"
 	"strconv"
@@ -421,21 +422,19 @@ func (s *persistence) serviceHasUnappliedChangesQuerier(ctx context.Context, q S
 	if service.RolloutGeneration == 0 {
 		return true, nil
 	}
-	var rawSpec []byte
-	if err := q.QueryRowContext(ctx, `SELECT rev.spec_json
+	var deployedRevision sql.NullInt64
+	if err := q.QueryRowContext(ctx, `SELECT ro.spec_revision
 		FROM services svc
 		JOIN service_delivery_status ds ON ds.service_id = svc.id
 		LEFT JOIN service_rollouts ro
 		  ON ro.service_id = svc.id AND ro.rollout_generation = ds.current_rollout_generation
-		LEFT JOIN service_revisions rev
-		  ON rev.service_id = ro.service_id AND rev.spec_revision = ro.spec_revision
-		WHERE svc.id = $1`, service.ID).Scan(&rawSpec); err != nil {
+		WHERE svc.id = $1`, service.ID).Scan(&deployedRevision); err != nil {
 		return false, err
 	}
-	if len(rawSpec) == 0 {
+	if !deployedRevision.Valid {
 		return true, nil
 	}
-	deployed, err := LoadServiceSpec(rawSpec)
+	deployed, err := s.loadServiceDetailsQuerier(ctx, q, service.ID, deployedRevision.Int64)
 	if err != nil {
 		return false, err
 	}
@@ -446,21 +445,16 @@ func (s *persistence) loadDeployedServiceSpecQuerier(ctx context.Context, q Serv
 	if rolloutGeneration == 0 {
 		return CanonicalServiceSpec(nil), nil
 	}
-	var rawSpec []byte
+	var specRevision int64
 	if err := q.QueryRowContext(
 		ctx,
-		`SELECT r.spec_json
-		   FROM service_rollouts ro
-		   JOIN service_revisions r
-		     ON r.service_id = ro.service_id
-		    AND r.spec_revision = ro.spec_revision
-		  WHERE ro.service_id = $1 AND ro.rollout_generation = $2`,
+		`SELECT spec_revision FROM service_rollouts WHERE service_id = $1 AND rollout_generation = $2`,
 		serviceID,
 		rolloutGeneration,
-	).Scan(&rawSpec); err != nil {
+	).Scan(&specRevision); err != nil {
 		return nil, err
 	}
-	spec, err := LoadServiceSpec(rawSpec)
+	spec, err := s.loadServiceDetailsQuerier(ctx, q, serviceID, specRevision)
 	if err != nil {
 		return nil, err
 	}

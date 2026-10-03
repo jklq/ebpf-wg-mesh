@@ -11,8 +11,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
-
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 func (d *Delivery) EnsureManagedService(ctx context.Context, projectID, name string, spec *platformv1.ServiceSpec, trustedAgentID string) (ServiceRecord, []string, error) {
@@ -145,10 +143,6 @@ func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name s
 				return err
 			}
 		}
-		specJSON, err := protojson.Marshal(spec)
-		if err != nil {
-			return err
-		}
 		if _, err := tx.ExecContext(
 			ctx,
 			`UPDATE services
@@ -168,13 +162,7 @@ func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name s
 			WHERE service_id = $4`, nextRolloutGeneration, artifactID, now, current.ID); err != nil {
 			return err
 		}
-		if _, err := journal.RevisionRow(current.ID, nextSpecRevision).Exec(ctx, tx,
-			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-			current.ID,
-			nextSpecRevision,
-			specJSON,
-			now,
-		); err != nil {
+		if err := s.insertServiceRevisionTx(ctx, tx, current.EnvironmentID, current.ID, nextSpecRevision, spec, now); err != nil {
 			return err
 		}
 		if err := s.insertServiceRolloutTx(ctx, tx, current.ID, nextRolloutGeneration, nextSpecRevision, "managed-sync", "", "", now); err != nil {

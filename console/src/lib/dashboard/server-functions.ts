@@ -7,10 +7,6 @@ import type {
 	DashboardGitHubAccount,
 	GitHubUserRepository,
 } from "#/lib/dashboard/core/types.server";
-import {
-	sealedSecretName,
-	sealedSecretValue,
-} from "#/lib/dashboard/sealed-secrets";
 
 const identifier = z.string().min(1);
 const optionalIdentifier = identifier.optional();
@@ -346,50 +342,6 @@ export const fetchBuildAttempts = createServerFn({ method: "POST" })
 		(
 			await import("#/lib/dashboard/core/operations-services.server")
 		).listBuildAttemptsFromSession(
-			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
-			data,
-		),
-	);
-
-export const fetchServiceSecrets = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => serviceIdInput.parse(input))
-	.handler(async ({ data }) =>
-		(
-			await import("#/lib/dashboard/core/operations-services.server")
-		).listServiceSecretsFromSession(
-			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
-			data,
-		),
-	);
-
-// The value is write-only: validated here, passed to the RPC, never returned, logged, or echoed.
-export const doSealServiceSecret = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
-		z
-			.object({
-				serviceId: identifier,
-				name: sealedSecretName,
-				value: sealedSecretValue,
-			})
-			.parse(input),
-	)
-	.handler(async ({ data }) =>
-		(
-			await import("#/lib/dashboard/core/operations-services.server")
-		).sealServiceSecretFromSession(
-			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
-			data,
-		),
-	);
-
-export const doDeleteServiceSecret = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
-		z.object({ serviceId: identifier, name: identifier }).parse(input),
-	)
-	.handler(async ({ data }) =>
-		(
-			await import("#/lib/dashboard/core/operations-services.server")
-		).deleteServiceSecretFromSession(
 			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 			data,
 		),

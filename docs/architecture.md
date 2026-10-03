@@ -12,7 +12,7 @@
 - Immutable source snapshots and deploy-by-digest are the source/runtime trust model. GitHub App grants are the current way to produce snapshots, not an eternal vendor lock-in of identity and source.
 - Control-plane replicas have no node-local authority: no shared filesystem of keys or source archives as the production contract.
 - In-process PKI signs agent mTLS and registry tokens. That is not a certificate-authority product. Sign and unwrap through a key provider; do not invent customer-facing CA ceremony.
-- Production integrations (object storage, billing, durable block storage, email) use narrow provider interfaces, as does the in-process sealed-secret key manager. Do not implement a new distributed database, workflow engine, storage engine, or global edge network here.
+- Production integrations (object storage, billing, durable block storage, email) use narrow provider interfaces, as does the in-process envelope key manager that encrypts service env at rest. Do not implement a new distributed database, workflow engine, storage engine, or global edge network here.
 - Overlay dual-stack (1.1) is independent of the WireGuard underlay. Agent `advertise_addr` remains the IPv6 host identity, while the separately advertised WireGuard endpoint may use IPv4 or IPv6. Hosts still require IPv6 for the current host-identity model.
 
 Implementation prompts, dependencies, product gates, and work priorities live in the [GitHub project](https://github.com/users/jklq/projects/6).

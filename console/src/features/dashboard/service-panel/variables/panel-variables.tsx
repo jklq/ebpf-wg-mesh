@@ -6,9 +6,9 @@ import { Dialog, dialogStyles } from "#/components/ui/dialog";
 import { fieldStyles, TextInput } from "#/components/ui/field";
 import { noticeStyles } from "#/components/ui/notice";
 import { PanelSection } from "#/components/ui/section";
-import { PanelSecrets } from "#/features/dashboard/service-panel/variables/panel-secrets";
 import { enqueueServicePersist } from "#/hooks/use-auto-queued-persist";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
+import { envNameError, envValueError } from "#/lib/dashboard/env-variables";
 import { doUpdateService } from "#/lib/dashboard/server-functions";
 import { formatError } from "#/lib/errors";
 import { colors, fonts, space } from "#/styles/tokens.stylex";
@@ -18,8 +18,6 @@ type VariableRow = {
 	key: string;
 	value: string;
 };
-
-const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 export function PanelVariables({
 	service,
@@ -188,7 +186,7 @@ export function PanelVariables({
 		<div {...stylex.props(styles.panel)}>
 			<PanelSection
 				title="Environment"
-				lede="These values ship with the next deploy. Highlighted rows are not live yet."
+				lede="Values are encrypted at rest and ship with the next deploy. Highlighted rows are not live yet."
 			>
 				<div {...stylex.props(styles.editorToolbar)}>
 					<fieldset {...stylex.props(styles.editorModes)}>
@@ -297,7 +295,6 @@ export function PanelVariables({
 				</div>
 			</PanelSection>
 
-			<PanelSecrets key={service.id} serviceId={service.id} />
 			{error && <p {...stylex.props(noticeStyles.error)}>{error}</p>}
 
 			{rawDialogOpen && (
@@ -390,7 +387,7 @@ function envFromRows(
 		if (key === "" && row.value === "") {
 			continue;
 		}
-		const validation = validateKey(key);
+		const validation = envNameError(key) ?? envValueError(key, row.value);
 		if (validation) {
 			return { ok: false, message: validation };
 		}
@@ -424,7 +421,8 @@ function parseRawEnv(
 			};
 		}
 		const key = body.slice(0, equalsIndex).trim();
-		const validation = validateKey(key);
+		const value = unquoteValue(body.slice(equalsIndex + 1).trim());
+		const validation = envNameError(key) ?? envValueError(key, value);
 		if (validation) {
 			return { ok: false, message: `Line ${index + 1}: ${validation}` };
 		}
@@ -434,19 +432,9 @@ function parseRawEnv(
 				message: `Line ${index + 1}: duplicate environment variable ${key}`,
 			};
 		}
-		env[key] = unquoteValue(body.slice(equalsIndex + 1).trim());
+		env[key] = value;
 	}
 	return { ok: true, env };
-}
-
-function validateKey(key: string): string | undefined {
-	if (key === "") {
-		return "Environment variable name is required.";
-	}
-	if (!ENV_KEY_PATTERN.test(key)) {
-		return `Invalid environment variable name: ${key}`;
-	}
-	return undefined;
 }
 
 function unquoteValue(value: string): string {

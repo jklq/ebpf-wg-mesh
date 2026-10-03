@@ -157,6 +157,7 @@ func (s DurableState) Clone() DurableState {
 	}
 	for id, v := range next.Revisions {
 		v.SpecJSON = bytes.Clone(v.SpecJSON)
+		v.EnvCiphertext = bytes.Clone(v.EnvCiphertext)
 		next.Revisions[id] = v
 	}
 	for id, v := range next.Assignments {
@@ -168,12 +169,6 @@ func (s DurableState) Clone() DurableState {
 		v.StrategyJSON = bytes.Clone(v.StrategyJSON)
 		v.CompletedAt = clonePointer(v.CompletedAt)
 		next.Rollouts[id] = v
-	}
-	for id, v := range next.Deployments {
-		v.ResolvedSpecJSON = bytes.Clone(v.ResolvedSpecJSON)
-		v.VariableVersionsJSON = bytes.Clone(v.VariableVersionsJSON)
-		v.SealedVersionsJSON = bytes.Clone(v.SealedVersionsJSON)
-		next.Deployments[id] = v
 	}
 	for id, v := range next.Agents {
 		v.RuntimeCapabilities = bytes.Clone(v.RuntimeCapabilities)

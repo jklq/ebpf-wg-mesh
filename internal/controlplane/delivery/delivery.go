@@ -80,8 +80,8 @@ type Dependencies struct {
 	Events                 Events
 	LogEmitter             *logs.LogEmitter
 	ReservedAgentIDs       []string
-	// Secrets is the sealed-secret backend, always wired in production. When nil, explicit
-	// sealed operations fail closed while implicit paths skip sealed handling.
+	// Secrets encrypts service env at rest and is always wired in production.
+	// When nil, revisions with env fail closed.
 	Secrets *secretkeys.Service
 	// DeletionGracePeriod is how long tombstones stay restorable. Zero selects the default.
 	DeletionGracePeriod time.Duration

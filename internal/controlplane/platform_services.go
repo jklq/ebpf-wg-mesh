@@ -43,6 +43,9 @@ func (s *platformService) CreateService(ctx context.Context, req *platformv1.Cre
 	if err := deliverycore.ValidateServicePlacement(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service placement: %v", err)
 	}
+	if err := deliverycore.ValidateServiceEnv(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service env: %v", err)
+	}
 	if err := deliverycore.ValidateBuildRecipe(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service build recipe: %v", err)
 	}
@@ -123,6 +126,9 @@ func (s *platformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := deliverycore.ValidateServicePlacement(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service placement: %v", err)
 	}
+	if err := deliverycore.ValidateServiceEnv(spec); err != nil {
+		return nil, status.Errorf(codes.InvalidArgument, "service env: %v", err)
+	}
 	if err := deliverycore.ValidateBuildRecipe(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service build recipe: %v", err)
 	}
@@ -192,7 +198,6 @@ func (s *platformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 		case errors.Is(err, deliverycore.ErrDeploymentActionInvalid), errors.Is(err, deliverycore.ErrDeploymentStale),
 			errors.Is(err, deliverycore.ErrInvalidReplicaCount), errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported),
 			errors.Is(err, deliverycore.ErrRolloutInProgress), errors.Is(err, deliverycore.ErrVolumeRollingUnsupported),
-			errors.Is(err, deliverycore.ErrSealedNameConflict),
 			errors.Is(err, deliverycore.ErrServiceDeleted):
 			return nil, status.Errorf(codes.FailedPrecondition, "deployment action: %v", err)
 		default:

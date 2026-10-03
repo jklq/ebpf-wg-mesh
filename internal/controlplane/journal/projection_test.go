@@ -16,10 +16,10 @@ func projectionFixture() DurableState {
 		Projects:       map[string]Project{"p": {ID: "p", SystemKey: &name}, "q": {ID: "q"}},
 		Environments:   map[string]Environment{"e": {ID: "e", ProjectID: "p", CopiedFromEnvironmentID: &name}, "f": {ID: "f", ProjectID: "q"}},
 		Services:       map[string]ServiceIntent{"s": {ID: "s", EnvironmentID: "e"}, "t": {ID: "t", EnvironmentID: "f"}},
-		Revisions:      map[string]ServiceRevision{"s/1": {ServiceID: "s", SpecRevision: 1, SpecJSON: []byte(`{"runtime":{}}`)}},
+		Revisions:      map[string]ServiceRevision{"s/1": {ServiceID: "s", SpecRevision: 1, SpecJSON: []byte(`{"runtime":{}}`), EnvDEKID: "dek", EnvCiphertext: []byte("ciphertext")}},
 		Agents:         map[string]AgentRegistration{"one": {ID: "one", RuntimeCapabilities: []byte(`["linux"]`)}, "two": {ID: "two"}},
 		Administration: map[string]AgentAdministration{"one": {AgentID: "one", CredentialRevokedAt: &now}},
-		Deployments:    map[string]Deployment{"d": {ID: "d", ResolvedSpecJSON: []byte(`{"runtime":{}}`), VariableVersionsJSON: []byte(`{"A":1}`), SealedVersionsJSON: []byte(`{"B":1}`)}},
+		Deployments:    map[string]Deployment{"d": {ID: "d", ServiceID: "s", SpecRevision: 1}},
 		Rollouts:       map[string]Rollout{"s/1": {ServiceID: "s", RolloutGeneration: 1, StrategyJSON: []byte(`{"maxSurge":1}`), CompletedAt: &now}},
 		Assignments: map[string]Assignment{
 			"a": {ID: "a", AgentID: "one", ServiceID: "s", DeploymentID: "d", DrainStartedAt: &now, DrainDeadline: &now},
@@ -85,9 +85,8 @@ func TestProjectionOwnsImportedSnapshotAndPreservesEarlierPrefixes(t *testing.T)
 	*state.Assignments["a"].DrainStartedAt = time.Unix(10, 0)
 	*state.Administration["one"].CredentialRevokedAt = time.Unix(11, 0)
 	*state.Rollouts["s/1"].CompletedAt = time.Unix(12, 0)
-	for _, raw := range [][]byte{state.Revisions["s/1"].SpecJSON, state.Agents["one"].RuntimeCapabilities,
-		state.Deployments["d"].ResolvedSpecJSON, state.Deployments["d"].VariableVersionsJSON,
-		state.Deployments["d"].SealedVersionsJSON, state.Rollouts["s/1"].StrategyJSON} {
+	for _, raw := range [][]byte{state.Revisions["s/1"].SpecJSON, state.Revisions["s/1"].EnvCiphertext,
+		state.Agents["one"].RuntimeCapabilities, state.Rollouts["s/1"].StrategyJSON} {
 		clear(raw)
 	}
 	if got := projectionJSON(t, before.DurableState); got != initialJSON {

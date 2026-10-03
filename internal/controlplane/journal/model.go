@@ -30,11 +30,14 @@ type ServiceIntent struct {
 	UpdatedAt                time.Time `json:"updated_at"`
 }
 
+// ServiceRevision carries runtime env only as ciphertext; SpecJSON never holds it.
 type ServiceRevision struct {
-	ServiceID    string          `json:"service_id"`
-	SpecRevision int64           `json:"spec_revision"`
-	SpecJSON     json.RawMessage `json:"spec_json"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ServiceID     string          `json:"service_id"`
+	SpecRevision  int64           `json:"spec_revision"`
+	SpecJSON      json.RawMessage `json:"spec_json"`
+	EnvDEKID      string          `json:"env_dek_id"`
+	EnvCiphertext []byte          `json:"env_ciphertext"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 type Assignment struct {
@@ -76,25 +79,22 @@ type Rollout struct {
 }
 
 type Deployment struct {
-	ID                   string          `json:"id"`
-	ServiceID            string          `json:"service_id"`
-	SpecRevision         int64           `json:"spec_revision"`
-	RolloutGeneration    int64           `json:"rollout_generation"`
-	BuildID              string          `json:"build_id"`
-	ArtifactID           string          `json:"artifact_id"`
-	ImageDigest          string          `json:"image_digest"`
-	State                string          `json:"state"`
-	CauseKind            string          `json:"cause_kind"`
-	CauseID              string          `json:"cause_id"`
-	ReasonCode           string          `json:"reason_code"`
-	Detail               string          `json:"detail"`
-	ResolvedSpecJSON     json.RawMessage `json:"resolved_spec_json"`
-	VariableVersionsJSON json.RawMessage `json:"variable_versions_json"`
-	SealedVersionsJSON   json.RawMessage `json:"sealed_versions_json"`
-	IsCurrent            bool            `json:"is_current"`
-	RequestedByUserID    string          `json:"requested_by_user_id"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
+	ID                string    `json:"id"`
+	ServiceID         string    `json:"service_id"`
+	SpecRevision      int64     `json:"spec_revision"`
+	RolloutGeneration int64     `json:"rollout_generation"`
+	BuildID           string    `json:"build_id"`
+	ArtifactID        string    `json:"artifact_id"`
+	ImageDigest       string    `json:"image_digest"`
+	State             string    `json:"state"`
+	CauseKind         string    `json:"cause_kind"`
+	CauseID           string    `json:"cause_id"`
+	ReasonCode        string    `json:"reason_code"`
+	Detail            string    `json:"detail"`
+	IsCurrent         bool      `json:"is_current"`
+	RequestedByUserID string    `json:"requested_by_user_id"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 type AgentRegistration struct {

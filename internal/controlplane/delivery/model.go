@@ -332,18 +332,17 @@ type DeploymentRecord struct {
 	RequestedByUserID string
 	BuildID           string
 	// ArtifactID is the runtime identity; ImageDigest mirrors the artifact's pinned image ref.
-	ArtifactID       string
-	ImageDigest      string
-	State            string
-	CauseKind        string
-	CauseID          string
-	ReasonCode       string
-	Detail           string
-	ResolvedSpec     *platformv1.ServiceSpec
-	VariableVersions map[string]int64
-	SealedVersions   map[string]int64
-	Transitions      []DeploymentTransitionRecord
-	Actions          []DeploymentActionRecord
+	ArtifactID  string
+	ImageDigest string
+	State       string
+	CauseKind   string
+	CauseID     string
+	ReasonCode  string
+	Detail      string
+	// ResolvedSpec is the deployment's spec revision, env included. Listings leave it unset.
+	ResolvedSpec *platformv1.ServiceSpec
+	Transitions  []DeploymentTransitionRecord
+	Actions      []DeploymentActionRecord
 }
 
 // BuildReused reports whether the deployment reused an earlier deployment's image. Creating
@@ -400,9 +399,7 @@ var (
 	ErrVolumeNotFound           = errors.New("volume not found")
 	ErrVolumeAlreadyExists      = errors.New("volume already exists")
 	ErrInvalidVolume            = errors.New("volume name and positive size are required")
-	ErrSealedSecretsUnavailable = errors.New("sealed secrets are not configured")
-	ErrInvalidSealedName        = errors.New("sealed secret name is invalid")
-	ErrSealedNameConflict       = errors.New("name is already used by the other variable kind")
+	ErrInvalidServiceEnv        = errors.New("invalid environment variable")
 	ErrLeaseLost                = errors.New("control-plane lease lost")
 	ErrVolumeAgentMismatch      = errors.New("volume bound to different agent")
 	ErrConcurrentUpdate         = errors.New("concurrent service update")

@@ -1,7 +1,12 @@
 # Secret keyring runbook
 
-Sealed service secrets ([2.3a](completed-work.md#23a-secret-envelope-key-provider)) are
-envelope-encrypted by a small in-process key manager. There is no external KMS:
+Service environment variables are encrypted at rest by a small in-process
+envelope key manager ([2.3a](completed-work.md#23a-secret-envelope-key-provider)).
+Each immutable spec revision stores its env map as one AES-256-GCM ciphertext
+under its environment's data-encryption key (DEK), bound to the service and
+revision; `spec_json`, deployments, and the product journal never hold
+plaintext values. Users with read access to a service read its variables
+in plaintext through the API, and agents receive them in desired state. There is no external KMS:
 versioned AES-256 master keys live in a provisioned keyring file that the
 operator replicates to every control-plane replica, separately from the
 database. CockroachDB holds ciphertext, wrapped per-environment DEKs, and

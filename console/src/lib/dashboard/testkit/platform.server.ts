@@ -54,10 +54,6 @@ export interface FakePlatformGateway extends PlatformGateway {
 	serviceLogs: PlatformJson<typeof P.ServiceLogLineSchema>[];
 	serviceLogGaps: PlatformJson<typeof P.ServiceLogGapSchema>[];
 	volumes: PlatformJson<typeof P.VolumeSchema>[];
-	serviceSecrets: Map<
-		string,
-		PlatformJson<typeof P.ServiceSecretMetadataSchema>[]
-	>;
 	buildAttempts: PlatformJson<typeof P.BuildAttemptSchema>[];
 	deletionPreview: PlatformJson<typeof P.DeletionPreviewSchema>;
 	serviceDeployments: PlatformJson<typeof P.DeploymentRecordSchema>[];
@@ -105,7 +101,6 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		serviceLogs: [],
 		serviceLogGaps: [],
 		volumes: [],
-		serviceSecrets: new Map(),
 		buildAttempts: [],
 		serviceDeployments: [],
 		domainBindings: [],
@@ -575,38 +570,6 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				const result = service(request.serviceId);
 				result.deletion = undefined;
 				return nativeService(result);
-			},
-			listServiceSecrets(request) {
-				return fromPlatformJson(P.ListServiceSecretsResponseSchema, {
-					secrets: platform.serviceSecrets.get(request.serviceId) ?? [],
-				});
-			},
-			sealServiceSecret(request) {
-				const entries = platform.serviceSecrets.get(request.serviceId) ?? [];
-				const previous = entries.find((entry) => entry.name === request.name);
-				const secret = jsonFixture(P.ServiceSecretMetadataSchema, {
-					name: request.name,
-					version: String(BigInt(previous?.version ?? "0") + 1n),
-					updatedAt: new Date().toISOString(),
-				});
-				platform.serviceSecrets.set(request.serviceId, [
-					...entries.filter((entry) => entry.name !== request.name),
-					secret,
-				]);
-				return fromPlatformJson(P.SealServiceSecretResponseSchema, {
-					serviceId: request.serviceId,
-					name: secret.name,
-					version: secret.version,
-				});
-			},
-			deleteServiceSecret(request) {
-				platform.serviceSecrets.set(
-					request.serviceId,
-					(platform.serviceSecrets.get(request.serviceId) ?? []).filter(
-						(entry) => entry.name !== request.name,
-					),
-				);
-				return {};
 			},
 			listVolumes(request) {
 				return fromPlatformJson(P.ListVolumesResponseSchema, {

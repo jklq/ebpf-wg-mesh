@@ -9,8 +9,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/source"
-
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // ReadModel restricts persistence consumers to delivery reads. Delivery itself
@@ -285,12 +283,30 @@ func (s *persistence) loadServiceDetails(ctx context.Context, serviceID string, 
 	return s.loadServiceDetailsQuerier(ctx, s.db, serviceID, specRevision)
 }
 
+// loadServiceDetailsQuerier loads a full spec revision, decrypting its env.
 func (s *persistence) loadServiceDetailsQuerier(ctx context.Context, q ServiceQueryer, serviceID string, specRevision int64) (*platformv1.ServiceSpec, error) {
-	var rawSpec []byte
-	if err := q.QueryRowContext(ctx, `SELECT spec_json FROM service_revisions WHERE service_id = $1 AND spec_revision = $2`, serviceID, specRevision).Scan(&rawSpec); err != nil {
+	var rawSpec, envCiphertext []byte
+	var envDEKID string
+	if err := q.QueryRowContext(ctx,
+		`SELECT spec_json, COALESCE(env_dek_id, ''), env_ciphertext FROM service_revisions WHERE service_id = $1 AND spec_revision = $2`,
+		serviceID, specRevision).Scan(&rawSpec, &envDEKID, &envCiphertext); err != nil {
 		return nil, err
 	}
-	return LoadServiceSpec(rawSpec)
+	spec, err := LoadServiceSpec(rawSpec)
+	if err != nil {
+		return nil, err
+	}
+	env, err := s.decryptRevisionEnv(ctx, q, serviceID, specRevision, envDEKID, envCiphertext)
+	if err != nil {
+		return nil, err
+	}
+	if len(env) > 0 {
+		if spec.Runtime == nil {
+			spec.Runtime = &platformv1.ServiceRuntime{}
+		}
+		spec.Runtime.Env = env
+	}
+	return spec, nil
 }
 
 const environmentSelect = `SELECT e.id, e.project_id, e.name, e.kind, e.is_production, e.auto_deploy,
@@ -377,20 +393,18 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, scope authz.Envi
 		}
 
 		type serviceCopy struct {
-			name string
-			raw  []byte
+			id, name     string
+			specRevision int64
 		}
 		var services []serviceCopy
-		serviceRows, err := tx.QueryContext(ctx, `SELECT s.name, r.spec_json
-			FROM services s JOIN service_revisions r
-			  ON r.service_id = s.id AND r.spec_revision = s.current_spec_revision
-			WHERE s.environment_id = $1 AND s.deleted_at IS NULL ORDER BY s.created_at, s.id`, source.ID)
+		serviceRows, err := tx.QueryContext(ctx, `SELECT id, name, current_spec_revision
+			FROM services WHERE environment_id = $1 AND deleted_at IS NULL ORDER BY created_at, id`, source.ID)
 		if err != nil {
 			return err
 		}
 		for serviceRows.Next() {
 			var service serviceCopy
-			if err := serviceRows.Scan(&service.name, &service.raw); err != nil {
+			if err := serviceRows.Scan(&service.id, &service.name, &service.specRevision); err != nil {
 				serviceRows.Close()
 				return err
 			}
@@ -403,9 +417,10 @@ func (s *persistence) duplicateEnvironment(ctx context.Context, scope authz.Envi
 		if err := serviceRows.Close(); err != nil {
 			return err
 		}
+		// Copied env is re-encrypted under the duplicate environment's own key.
 		for _, service := range services {
-			spec := &platformv1.ServiceSpec{}
-			if err := protojson.Unmarshal(service.raw, spec); err != nil {
+			spec, err := s.loadServiceDetailsQuerier(ctx, tx, service.id, service.specRevision)
+			if err != nil {
 				return err
 			}
 			if !copyVariables && spec.GetRuntime() != nil {

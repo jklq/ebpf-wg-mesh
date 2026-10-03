@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 32
+const currentSchemaVersion = 33
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -193,6 +193,27 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_volumes_delete_expires ON volumes(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
 	`CREATE INDEX idx_volumes_environment_created ON volumes(environment_id, created_at, id)`,
+	`CREATE TABLE envelope_keys (
+			id STRING PRIMARY KEY,
+			provider STRING NOT NULL,
+			provider_ref STRING NOT NULL,
+			state STRING NOT NULL CHECK (state IN ('active', 'retired')),
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE UNIQUE INDEX idx_envelope_keys_single_active
+			ON envelope_keys(state) WHERE state = 'active'`,
+	`CREATE TABLE envelope_data_keys (
+			id STRING PRIMARY KEY,
+			scope_kind STRING NOT NULL,
+			scope_id STRING NOT NULL,
+			wrapping_key_id STRING NOT NULL REFERENCES envelope_keys(id),
+			wrapped_dek BYTES NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (scope_kind, scope_id)
+		)`,
+	`CREATE INDEX idx_envelope_data_keys_wrapping ON envelope_data_keys(wrapping_key_id)`,
 	`CREATE TABLE services (
 			id STRING PRIMARY KEY,
 			environment_id STRING NOT NULL REFERENCES environments(id) ON DELETE CASCADE,
@@ -213,12 +234,17 @@ var currentSchema = []string{
 		 JOIN environments e ON e.id = s.environment_id
 		 JOIN projects p ON p.id = e.project_id
 		 WHERE s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`,
+	// spec_json never holds runtime env: the env map is encrypted under the
+	// environment's DEK into env_ciphertext, bound to (service_id, spec_revision).
 	`CREATE TABLE service_revisions (
 			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
 			spec_revision INT8 NOT NULL,
 			spec_json JSONB NOT NULL,
+			env_dek_id STRING NULL REFERENCES envelope_data_keys(id),
+			env_ciphertext BYTES NULL,
 			created_at TIMESTAMPTZ NOT NULL,
-			PRIMARY KEY (service_id, spec_revision)
+			PRIMARY KEY (service_id, spec_revision),
+			CHECK ((env_dek_id IS NULL) = (env_ciphertext IS NULL))
 	)`,
 	`CREATE TABLE service_delivery_status (
 			service_id STRING PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
@@ -318,9 +344,6 @@ var currentSchema = []string{
 			cause_id STRING NOT NULL DEFAULT '',
 			reason_code STRING NOT NULL,
 			detail STRING NOT NULL DEFAULT '',
-			resolved_spec_json JSONB NOT NULL,
-			variable_versions_json JSONB NOT NULL,
-			sealed_versions_json JSONB NOT NULL,
 			is_current BOOL NOT NULL DEFAULT FALSE,
 			requested_by_user_id STRING NOT NULL DEFAULT '',
 			created_at TIMESTAMPTZ NOT NULL,
@@ -645,46 +668,6 @@ var currentSchema = []string{
 			FOREIGN KEY (current_artifact_id) REFERENCES build_artifacts(id) ON DELETE RESTRICT`,
 	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_artifact
 			FOREIGN KEY (artifact_id) REFERENCES build_artifacts(id) ON DELETE SET NULL`,
-	`CREATE TABLE envelope_keys (
-			id STRING PRIMARY KEY,
-			provider STRING NOT NULL,
-			provider_ref STRING NOT NULL,
-			state STRING NOT NULL CHECK (state IN ('active', 'retired')),
-			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL
-		)`,
-	`CREATE UNIQUE INDEX idx_envelope_keys_single_active
-			ON envelope_keys(state) WHERE state = 'active'`,
-	`CREATE TABLE envelope_data_keys (
-			id STRING PRIMARY KEY,
-			scope_kind STRING NOT NULL,
-			scope_id STRING NOT NULL,
-			wrapping_key_id STRING NOT NULL REFERENCES envelope_keys(id),
-			wrapped_dek BYTES NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL,
-			UNIQUE (scope_kind, scope_id)
-		)`,
-	`CREATE INDEX idx_envelope_data_keys_wrapping ON envelope_data_keys(wrapping_key_id)`,
-	`CREATE TABLE service_secret_versions (
-			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-			name STRING NOT NULL CHECK (btrim(name) <> ''),
-			version INT8 NOT NULL CHECK (version > 0),
-			environment_id STRING NOT NULL,
-			dek_id STRING NOT NULL REFERENCES envelope_data_keys(id),
-			nonce BYTES NOT NULL,
-			ciphertext BYTES NOT NULL,
-			created_at TIMESTAMPTZ NOT NULL,
-			PRIMARY KEY (service_id, name, version)
-		)`,
-	`CREATE INDEX idx_service_secret_versions_service
-			ON service_secret_versions(service_id, name, version DESC)`,
-	`CREATE TABLE service_secret_tombstones (
-			service_id STRING NOT NULL REFERENCES services(id) ON DELETE CASCADE,
-			name STRING NOT NULL CHECK (btrim(name) <> ''),
-			deleted_at TIMESTAMPTZ NOT NULL,
-			PRIMARY KEY (service_id, name)
-		)`,
 	`CREATE TABLE platform_signing_keys (
 			id STRING PRIMARY KEY,
 			scope STRING NOT NULL CHECK (scope IN ('internal-ca', 'registry', 'user-assertion', 'dashboard-session')),

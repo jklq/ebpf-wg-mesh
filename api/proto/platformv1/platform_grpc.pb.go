@@ -48,9 +48,6 @@ const (
 	PlatformService_RestoreService_FullMethodName              = "/platform.v1.PlatformService/RestoreService"
 	PlatformService_GetService_FullMethodName                  = "/platform.v1.PlatformService/GetService"
 	PlatformService_ListServices_FullMethodName                = "/platform.v1.PlatformService/ListServices"
-	PlatformService_SealServiceSecret_FullMethodName           = "/platform.v1.PlatformService/SealServiceSecret"
-	PlatformService_DeleteServiceSecret_FullMethodName         = "/platform.v1.PlatformService/DeleteServiceSecret"
-	PlatformService_ListServiceSecrets_FullMethodName          = "/platform.v1.PlatformService/ListServiceSecrets"
 	PlatformService_CreateVolume_FullMethodName                = "/platform.v1.PlatformService/CreateVolume"
 	PlatformService_DeleteVolume_FullMethodName                = "/platform.v1.PlatformService/DeleteVolume"
 	PlatformService_PreviewVolumeDeletion_FullMethodName       = "/platform.v1.PlatformService/PreviewVolumeDeletion"
@@ -102,9 +99,6 @@ type PlatformServiceClient interface {
 	RestoreService(ctx context.Context, in *RestoreServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	GetService(ctx context.Context, in *GetServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
-	SealServiceSecret(ctx context.Context, in *SealServiceSecretRequest, opts ...grpc.CallOption) (*SealServiceSecretResponse, error)
-	DeleteServiceSecret(ctx context.Context, in *DeleteServiceSecretRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
-	ListServiceSecrets(ctx context.Context, in *ListServiceSecretsRequest, opts ...grpc.CallOption) (*ListServiceSecretsResponse, error)
 	CreateVolume(ctx context.Context, in *CreateVolumeRequest, opts ...grpc.CallOption) (*Volume, error)
 	DeleteVolume(ctx context.Context, in *DeleteVolumeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	PreviewVolumeDeletion(ctx context.Context, in *PreviewVolumeDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error)
@@ -412,36 +406,6 @@ func (c *platformServiceClient) ListServices(ctx context.Context, in *ListServic
 	return out, nil
 }
 
-func (c *platformServiceClient) SealServiceSecret(ctx context.Context, in *SealServiceSecretRequest, opts ...grpc.CallOption) (*SealServiceSecretResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SealServiceSecretResponse)
-	err := c.cc.Invoke(ctx, PlatformService_SealServiceSecret_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *platformServiceClient) DeleteServiceSecret(ctx context.Context, in *DeleteServiceSecretRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, PlatformService_DeleteServiceSecret_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *platformServiceClient) ListServiceSecrets(ctx context.Context, in *ListServiceSecretsRequest, opts ...grpc.CallOption) (*ListServiceSecretsResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ListServiceSecretsResponse)
-	err := c.cc.Invoke(ctx, PlatformService_ListServiceSecrets_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *platformServiceClient) CreateVolume(ctx context.Context, in *CreateVolumeRequest, opts ...grpc.CallOption) (*Volume, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Volume)
@@ -644,9 +608,6 @@ type PlatformServiceServer interface {
 	RestoreService(context.Context, *RestoreServiceRequest) (*Service, error)
 	GetService(context.Context, *GetServiceRequest) (*Service, error)
 	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
-	SealServiceSecret(context.Context, *SealServiceSecretRequest) (*SealServiceSecretResponse, error)
-	DeleteServiceSecret(context.Context, *DeleteServiceSecretRequest) (*emptypb.Empty, error)
-	ListServiceSecrets(context.Context, *ListServiceSecretsRequest) (*ListServiceSecretsResponse, error)
 	CreateVolume(context.Context, *CreateVolumeRequest) (*Volume, error)
 	DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error)
 	PreviewVolumeDeletion(context.Context, *PreviewVolumeDeletionRequest) (*DeletionPreview, error)
@@ -757,15 +718,6 @@ func (UnimplementedPlatformServiceServer) GetService(context.Context, *GetServic
 }
 func (UnimplementedPlatformServiceServer) ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListServices not implemented")
-}
-func (UnimplementedPlatformServiceServer) SealServiceSecret(context.Context, *SealServiceSecretRequest) (*SealServiceSecretResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method SealServiceSecret not implemented")
-}
-func (UnimplementedPlatformServiceServer) DeleteServiceSecret(context.Context, *DeleteServiceSecretRequest) (*emptypb.Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method DeleteServiceSecret not implemented")
-}
-func (UnimplementedPlatformServiceServer) ListServiceSecrets(context.Context, *ListServiceSecretsRequest) (*ListServiceSecretsResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method ListServiceSecrets not implemented")
 }
 func (UnimplementedPlatformServiceServer) CreateVolume(context.Context, *CreateVolumeRequest) (*Volume, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateVolume not implemented")
@@ -1343,60 +1295,6 @@ func _PlatformService_ListServices_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
-func _PlatformService_SealServiceSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SealServiceSecretRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PlatformServiceServer).SealServiceSecret(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PlatformService_SealServiceSecret_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).SealServiceSecret(ctx, req.(*SealServiceSecretRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _PlatformService_DeleteServiceSecret_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteServiceSecretRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PlatformServiceServer).DeleteServiceSecret(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PlatformService_DeleteServiceSecret_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).DeleteServiceSecret(ctx, req.(*DeleteServiceSecretRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _PlatformService_ListServiceSecrets_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ListServiceSecretsRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PlatformServiceServer).ListServiceSecrets(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: PlatformService_ListServiceSecrets_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PlatformServiceServer).ListServiceSecrets(ctx, req.(*ListServiceSecretsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _PlatformService_CreateVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CreateVolumeRequest)
 	if err := dec(in); err != nil {
@@ -1821,18 +1719,6 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListServices",
 			Handler:    _PlatformService_ListServices_Handler,
-		},
-		{
-			MethodName: "SealServiceSecret",
-			Handler:    _PlatformService_SealServiceSecret_Handler,
-		},
-		{
-			MethodName: "DeleteServiceSecret",
-			Handler:    _PlatformService_DeleteServiceSecret_Handler,
-		},
-		{
-			MethodName: "ListServiceSecrets",
-			Handler:    _PlatformService_ListServiceSecrets_Handler,
 		},
 		{
 			MethodName: "CreateVolume",

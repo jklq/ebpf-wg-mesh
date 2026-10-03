@@ -12,14 +12,8 @@ import (
 // DEKSize is the AES-256 data-encryption key size.
 const DEKSize = 32
 
-// NonceSize is the AES-GCM nonce size used for sealed values and file wraps.
+// NonceSize is the AES-GCM nonce size used for encrypted values and file wraps.
 const NonceSize = 12
-
-// MaxSealedValueSize caps a single sealed secret value at 64 KiB.
-const MaxSealedValueSize = 64 * 1024
-
-// ErrSealedValueTooLarge carries the limit, never the value.
-var ErrSealedValueTooLarge = errors.New("sealed value exceeds size limit")
 
 // GenerateDEK returns fresh random data-encryption key material.
 func GenerateDEK() ([DEKSize]byte, error) {
@@ -47,33 +41,26 @@ func generatePrefixedID(prefix string) (string, error) {
 	return prefix + hex.EncodeToString(raw[:]), nil
 }
 
-// SealValue encrypts plaintext with dek under AAD binding the ciphertext to its
-// location (service, name, version), so a copied row does not decrypt. It returns
-// the random nonce alongside the ciphertext; callers persist both.
-func SealValue(dek [DEKSize]byte, aad, plaintext []byte) (nonce, ciphertext []byte, err error) {
-	if len(plaintext) > MaxSealedValueSize {
-		return nil, nil, fmt.Errorf("%w: values are capped at %d bytes", ErrSealedValueTooLarge, MaxSealedValueSize)
-	}
-	sealed, err := sealWithNonce(dek[:], aad, plaintext)
-	if err != nil {
-		return nil, nil, err
-	}
-	return sealed[:NonceSize], sealed[NonceSize:], nil
+// EncryptValue encrypts plaintext with dek under AAD binding the ciphertext to
+// its location, so a copied row does not decrypt. The random nonce prefixes the
+// returned bytes; callers persist them as one opaque value.
+func EncryptValue(dek [DEKSize]byte, aad, plaintext []byte) ([]byte, error) {
+	return sealWithNonce(dek[:], aad, plaintext)
 }
 
-// OpenValue decrypts ciphertext sealed by SealValue. Tampering reports an
+// DecryptValue opens bytes produced by EncryptValue. Tampering reports an
 // authentication failure without detail that could aid forgery.
-func OpenValue(dek [DEKSize]byte, aad, nonce, ciphertext []byte) ([]byte, error) {
-	if len(nonce) != NonceSize {
-		return nil, errors.New("sealed value has invalid nonce")
+func DecryptValue(dek [DEKSize]byte, aad, data []byte) ([]byte, error) {
+	if len(data) < NonceSize {
+		return nil, errors.New("encrypted value is truncated")
 	}
 	aead, err := newCipher(dek[:])
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := aead.Open(nil, nonce, ciphertext, aad)
+	plaintext, err := aead.Open(nil, data[:NonceSize], data[NonceSize:], aad)
 	if err != nil {
-		return nil, errors.New("sealed value authentication failed")
+		return nil, errors.New("encrypted value authentication failed")
 	}
 	return plaintext, nil
 }

@@ -339,6 +339,8 @@ func equalRuntimeAfterCanonicalization(a, b *platformv1.ServiceRuntime) bool {
 	return true
 }
 
+// LoadServiceSpec decodes stored spec_json, which never carries runtime env.
+// Readers that need env load the revision through loadServiceDetailsQuerier.
 func LoadServiceSpec(raw []byte) (*platformv1.ServiceSpec, error) {
 	spec := &platformv1.ServiceSpec{}
 	if err := protojson.Unmarshal(raw, spec); err != nil {
