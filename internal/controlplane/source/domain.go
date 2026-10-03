@@ -39,7 +39,7 @@ type SourceRevisionRecord struct {
 	TrackedRef                   string
 	CommitSHA                    string
 	CommitMessage                string
-	CommitAuthor                 string
+	CommitContributors           CommitContributors
 	ObservedAt                   time.Time
 	CreatedAt                    time.Time
 }

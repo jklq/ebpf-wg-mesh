@@ -361,7 +361,7 @@ func seedDockerfileSourceState(t *testing.T, store *persistence, service deliver
 			TrackedRef:                   binding.TrackedRef,
 			CommitSHA:                    commitSHA,
 			CommitMessage:                "fixture " + commitSHA,
-			CommitAuthor:                 "system-test",
+			CommitContributors:           source.CommitContributors{{Name: "system-test"}},
 			ObservedAt:                   time.Now().UTC(),
 		}, source.BuildTransition{TrackedHead: true, FetchedFromHead: head})
 		if err != nil {

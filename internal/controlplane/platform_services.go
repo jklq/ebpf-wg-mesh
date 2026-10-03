@@ -628,7 +628,6 @@ func buildRunRecordFromProto(status *platformv1.BuildStatus) deliverycore.BuildR
 		ID:            status.GetBuildId(),
 		CommitSHA:     status.GetCommitSha(),
 		CommitMessage: status.GetCommitMessage(),
-		CommitAuthor:  status.GetCommitAuthor(),
 		ImageDigest:   status.GetImageDigest(),
 		FailureReason: status.GetFailureReason(),
 	}

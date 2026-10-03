@@ -42,8 +42,8 @@ type githubInstallationView struct {
 }
 
 type gitHubCommitMetadata struct {
-	Message string
-	Author  string
+	Message      string
+	Contributors CommitContributors
 }
 
 var errGitHubNotModified = errors.New("github not modified")
@@ -175,27 +175,38 @@ func (c *GitHubClient) GetCommitMetadata(ctx context.Context, owner, repo, commi
 		}
 		req.Header.Set("Authorization", "Bearer "+token.Token)
 	}
+	type gitPerson struct {
+		Name  string `json:"name"`
+		Email string `json:"email"`
+	}
+	type gitHubUser struct {
+		Login     string `json:"login"`
+		AvatarURL string `json:"avatar_url"`
+	}
 	var payload struct {
 		Commit struct {
-			Message string `json:"message"`
-			Author  struct {
-				Name string `json:"name"`
-			} `json:"author"`
-			Committer struct {
-				Name string `json:"name"`
-			} `json:"committer"`
+			Message   string    `json:"message"`
+			Author    gitPerson `json:"author"`
+			Committer gitPerson `json:"committer"`
 		} `json:"commit"`
+		Author    *gitHubUser `json:"author"`
+		Committer *gitHubUser `json:"committer"`
 	}
 	if err := c.doJSON(req, &payload); err != nil {
 		return gitHubCommitMetadata{}, err
 	}
-	author := strings.TrimSpace(payload.Commit.Author.Name)
-	if author == "" {
-		author = strings.TrimSpace(payload.Commit.Committer.Name)
+	gitAuthor, user := payload.Commit.Author, payload.Author
+	if strings.TrimSpace(gitAuthor.Name) == "" {
+		gitAuthor, user = payload.Commit.Committer, payload.Committer
 	}
+	author := CommitPerson{Name: gitAuthor.Name, Email: gitAuthor.Email}
+	if user != nil {
+		author.Login, author.AvatarURL = user.Login, user.AvatarURL
+	}
+	message := strings.TrimSpace(payload.Commit.Message)
 	return gitHubCommitMetadata{
-		Message: strings.TrimSpace(payload.Commit.Message),
-		Author:  author,
+		Message:      message,
+		Contributors: ResolveCommitContributors(author, message),
 	}, nil
 }
 

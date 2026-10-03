@@ -513,8 +513,8 @@ func TestEnqueueBuildPersistsCommitMetadataAndTargetRolloutGeneration(t *testing
 	if build.CommitMessage != "Fix deploy history" {
 		t.Fatalf("expected build commit message to persist, got %q", build.CommitMessage)
 	}
-	if build.CommitAuthor != "Alice" {
-		t.Fatalf("expected build commit author to persist, got %q", build.CommitAuthor)
+	if len(build.CommitContributors) != 1 || build.CommitContributors[0].Name != "Alice" {
+		t.Fatalf("expected build commit contributors to persist, got %+v", build.CommitContributors)
 	}
 	if build.TargetRolloutGeneration != 1 {
 		t.Fatalf("expected target rollout generation 1, got %d", build.TargetRolloutGeneration)
@@ -865,7 +865,7 @@ func seedReadySourceStateWithMetadata(t *testing.T, store *persistence, service 
 			TrackedRef:                   binding.TrackedRef,
 			CommitSHA:                    commitSHA,
 			CommitMessage:                commitMessage,
-			CommitAuthor:                 commitAuthor,
+			CommitContributors:           source.ResolveCommitContributors(source.CommitPerson{Name: commitAuthor}, commitMessage),
 			ObservedAt:                   time.Now().UTC(),
 		}, transition)
 		if err != nil {

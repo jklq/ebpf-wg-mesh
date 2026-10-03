@@ -1,6 +1,7 @@
 package source
 
 import (
+	"reflect"
 	"testing"
 
 	"ebof-wg-mesh/internal/controlplane/durablework"
@@ -17,7 +18,7 @@ func TestWorkPayloadRoundTrip(t *testing.T) {
 		TrackedRef:                   "main",
 		CommitSHA:                    "abc123",
 		CommitMessage:                "hello",
-		CommitAuthor:                 "octocat",
+		CommitContributors:           CommitContributors{{Name: "The Octocat", Login: "octocat", AvatarURL: "https://github.com/octocat.png"}},
 	}
 	raw, err := EncodeWorkPayload(want)
 	if err != nil {
@@ -27,7 +28,7 @@ func TestWorkPayloadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DecodeWorkPayload: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("round trip = %+v, want %+v", got, want)
 	}
 }
@@ -37,7 +38,7 @@ func TestDecodeWorkPayloadRejectsCorruptJSON(t *testing.T) {
 	if _, err := DecodeWorkPayload([]byte("{nope")); err == nil {
 		t.Fatal("expected decode error")
 	}
-	if got, err := DecodeWorkPayload(nil); err != nil || got != (WorkPayload{}) {
+	if got, err := DecodeWorkPayload(nil); err != nil || !reflect.DeepEqual(got, WorkPayload{}) {
 		t.Fatalf("empty payload = (%+v, %v), want zero value", got, err)
 	}
 }
@@ -63,18 +64,18 @@ func TestSourceWorkParamBuilders(t *testing.T) {
 	if access.DedupKey != "provider_access_changed:github:9" || access.ResourceType != "github_installation" || access.ResourceID != "9" {
 		t.Fatalf("access params = %+v", access)
 	}
-	revision := RevisionObservedParams("42", "main", "abc123", "before1", "msg", "author")
+	revision := RevisionObservedParams("42", "main", "abc123", "before1", "msg", nil)
 	if revision.DedupKey != "revision_observed:github:42:main:abc123:before1" || revision.ResourceType != "github_repository" || revision.ResourceID != "42" {
 		t.Fatalf("revision params = %+v", revision)
 	}
 	// A force-push back to the same commit carries a different "before";
 	// it is a distinct transition and must not dedup into the older
 	// item's stale proof.
-	forcePush := RevisionObservedParams("42", "main", "abc123", "before2", "msg", "author")
+	forcePush := RevisionObservedParams("42", "main", "abc123", "before2", "msg", nil)
 	if forcePush.DedupKey == revision.DedupKey {
 		t.Fatalf("force-push transition deduplicated by after SHA alone: %q", forcePush.DedupKey)
 	}
-	redelivery := RevisionObservedParams("42", "main", "abc123", "before1", "msg", "author")
+	redelivery := RevisionObservedParams("42", "main", "abc123", "before1", "msg", nil)
 	if redelivery.DedupKey != revision.DedupKey {
 		t.Fatalf("redelivered transition = %q, want dedup with %q", redelivery.DedupKey, revision.DedupKey)
 	}
@@ -88,7 +89,7 @@ func TestSourceWorkParamBuilders(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s payload undecodable: %v", name, err)
 		}
-		if payload == (WorkPayload{}) {
+		if reflect.DeepEqual(payload, WorkPayload{}) {
 			t.Fatalf("%s payload is empty", name)
 		}
 	}

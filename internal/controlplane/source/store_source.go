@@ -256,11 +256,11 @@ func (s *SQLStore) UpsertSourceRevisionTx(ctx context.Context, tx *sql.Tx, rec S
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO source_revisions(
 			id, source_binding_id, service_id, provider, provider_repository_external_id,
-			tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
+			tracked_ref, commit_sha, commit_message, commit_contributors, observed_at, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT(source_binding_id, commit_sha) DO NOTHING`,
 		rec.ID, rec.SourceBindingID, rec.ServiceID, rec.Provider, rec.ProviderRepositoryExternalID,
-		rec.TrackedRef, rec.CommitSHA, rec.CommitMessage, rec.CommitAuthor, rec.ObservedAt, rec.CreatedAt,
+		rec.TrackedRef, rec.CommitSHA, rec.CommitMessage, rec.CommitContributors, rec.ObservedAt, rec.CreatedAt,
 	)
 	if err != nil {
 		return SourceRevisionRecord{}, err
@@ -384,7 +384,7 @@ func (s *SQLStore) SourceRevisionByBindingAndCommitTx(ctx context.Context, q Que
 	var rec SourceRevisionRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_binding_id, service_id, provider, provider_repository_external_id,
-		        tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
+		        tracked_ref, commit_sha, commit_message, commit_contributors, observed_at, created_at
 		   FROM source_revisions
 		  WHERE source_binding_id = $1
 		    AND commit_sha = $2`,
@@ -398,7 +398,7 @@ func (s *SQLStore) SourceRevisionByBindingAndCommitTx(ctx context.Context, q Que
 		&rec.TrackedRef,
 		&rec.CommitSHA,
 		&rec.CommitMessage,
-		&rec.CommitAuthor,
+		&rec.CommitContributors,
 		&rec.ObservedAt,
 		&rec.CreatedAt,
 	)
@@ -450,7 +450,7 @@ func (s *SQLStore) SourceRevisionByIDTx(ctx context.Context, q Querier, sourceRe
 	var rec SourceRevisionRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_binding_id, service_id, provider, provider_repository_external_id,
-		        tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
+		        tracked_ref, commit_sha, commit_message, commit_contributors, observed_at, created_at
 		   FROM source_revisions
 		  WHERE id = $1`,
 		sourceRevisionID,
@@ -463,7 +463,7 @@ func (s *SQLStore) SourceRevisionByIDTx(ctx context.Context, q Querier, sourceRe
 		&rec.TrackedRef,
 		&rec.CommitSHA,
 		&rec.CommitMessage,
-		&rec.CommitAuthor,
+		&rec.CommitContributors,
 		&rec.ObservedAt,
 		&rec.CreatedAt,
 	)
@@ -532,7 +532,7 @@ func (s *SQLStore) LatestSourceRevisionByBindingIDTx(ctx context.Context, q Quer
 	var rec SourceRevisionRecord
 	err := q.QueryRowContext(ctx,
 		`SELECT id, source_binding_id, service_id, provider, provider_repository_external_id,
-		        tracked_ref, commit_sha, commit_message, commit_author, observed_at, created_at
+		        tracked_ref, commit_sha, commit_message, commit_contributors, observed_at, created_at
 		   FROM source_revisions
 		  WHERE source_binding_id = $1
 		  ORDER BY observed_at DESC, created_at DESC, id DESC
@@ -547,7 +547,7 @@ func (s *SQLStore) LatestSourceRevisionByBindingIDTx(ctx context.Context, q Quer
 		&rec.TrackedRef,
 		&rec.CommitSHA,
 		&rec.CommitMessage,
-		&rec.CommitAuthor,
+		&rec.CommitContributors,
 		&rec.ObservedAt,
 		&rec.CreatedAt,
 	)

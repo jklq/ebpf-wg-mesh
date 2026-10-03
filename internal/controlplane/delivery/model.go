@@ -9,6 +9,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/source"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -264,7 +265,7 @@ type BuildRunRecord struct {
 	EnvironmentID           string
 	CommitSHA               string
 	CommitMessage           string
-	CommitAuthor            string
+	CommitContributors      source.CommitContributors
 	State                   string
 	BuilderID               string
 	OwnerEpoch              int64

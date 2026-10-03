@@ -2,6 +2,7 @@ import * as stylex from "@stylexjs/stylex";
 import type { ReactNode } from "react";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { CommitContributors } from "#/features/dashboard/service-panel/deployments/commit-contributors";
 import { deploymentBadgeLabel } from "#/features/dashboard/service-panel/deployments/deployment-inline";
 import { DeploymentProgress } from "#/features/dashboard/service-panel/deployments/deployment-progress";
 import {
@@ -30,11 +31,15 @@ export function DeploymentCardHeader({
 	actions: ReactNode;
 }) {
 	const health = tone ? toneToHealth(tone) : "healthy";
+	const directImage = record.artifact?.kind === "direct_image";
 	return (
 		<div {...stylex.props(styles.header)}>
 			<Badge tone={health} styles={tone === "draining" && styles.drainingBadge}>
 				{deploymentBadgeLabel(record.status?.state, record.build)}
 			</Badge>
+			{!directImage && (
+				<CommitContributors contributors={record.build?.commitContributors} />
+			)}
 			<button
 				type="button"
 				onClick={onOpenLogs}
@@ -42,7 +47,7 @@ export function DeploymentCardHeader({
 				{...stylex.props(styles.summary)}
 			>
 				<p {...stylex.props(styles.headline)}>
-					{record.artifact?.kind === "direct_image"
+					{directImage
 						? "Image deployment"
 						: deploymentCardHeadline(record.build)}
 				</p>
