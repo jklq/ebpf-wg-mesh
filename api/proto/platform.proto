@@ -783,6 +783,8 @@ message CreateServiceRequest {
 message UpdateServiceRequest {
   string service_id = 1;
   ServiceUpdate service = 2;
+  // Required revision of the draft being replaced. Stale drafts are rejected.
+  int64 expected_spec_revision = 3;
 }
 
 message ScaleServiceRequest {
@@ -822,10 +824,12 @@ message ListServicesRequest {
   bool include_deleted = 4;
 }
 
+// Services, volumes, and index are read from one committed environment snapshot.
 message ListServicesResponse {
   repeated Service services = 1;
   int64 index = 2;
   bool not_modified = 3;
+  repeated Volume volumes = 4;
 }
 
 message CreateVolumeRequest {

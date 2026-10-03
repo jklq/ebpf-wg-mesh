@@ -760,7 +760,7 @@ func mutateStress(ctx context.Context, o stressOptions, stage stressStage, clien
 		s := &services[index]
 		next := fmt.Sprintf("seed-%d-service-%d-v%d", o.Seed, index, stage.Number)
 		callCtx, cancel := context.WithTimeout(mutationCtx, o.RPCTimeout)
-		updated, err := clients[n%2].UpdateService(callCtx, &platformv1.UpdateServiceRequest{ServiceId: s.ID, Service: &platformv1.ServiceUpdate{Spec: s.spec(next)}})
+		updated, err := clients[n%2].UpdateService(callCtx, &platformv1.UpdateServiceRequest{ExpectedSpecRevision: s.Revision, ServiceId: s.ID, Service: &platformv1.ServiceUpdate{Spec: s.spec(next)}})
 		cancel()
 		trace.record(stage.Number, "update", map[string]any{"id": s.ID, "marker": next, "code": status.Code(err).String(), "revision": updated.GetSpecRevision()})
 		if err == nil {
@@ -799,7 +799,7 @@ func contendStressService(ctx context.Context, o stressOptions, stage stressStag
 			defer wg.Done()
 			callCtx, cancel := context.WithTimeout(ctx, o.RPCTimeout)
 			defer cancel()
-			_, results[i] = clients[i%len(clients)].UpdateService(callCtx, &platformv1.UpdateServiceRequest{ServiceId: service.ID, Service: &platformv1.ServiceUpdate{Spec: service.spec(markers[i])}})
+			_, results[i] = clients[i%len(clients)].UpdateService(callCtx, &platformv1.UpdateServiceRequest{ExpectedSpecRevision: service.Revision, ServiceId: service.ID, Service: &platformv1.ServiceUpdate{Spec: service.spec(markers[i])}})
 		}(i)
 	}
 	wg.Wait()

@@ -113,7 +113,7 @@ func (s *platformService) ListVolumes(ctx context.Context, req *platformv1.ListV
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listVolumes(ctx, user, req.GetEnvironmentId(), req.GetIncludeDeleted())
+	items, err := s.store.ListVolumes(ctx, user, req.GetEnvironmentId(), req.GetIncludeDeleted())
 	if err != nil {
 		return nil, writeAccessError("list volumes", err)
 	}

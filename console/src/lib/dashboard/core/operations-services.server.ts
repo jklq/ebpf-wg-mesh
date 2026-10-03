@@ -1,5 +1,4 @@
 import { requireSession } from "#/lib/dashboard/core/auth.server";
-import { listEnvironmentVolumes } from "#/lib/dashboard/core/operations-volumes.server";
 import {
 	type DashboardRuntime,
 	storeCall,
@@ -86,16 +85,13 @@ export async function waitForEnvironmentServicesFromSession(
 	if (result.notModified || !result.services) {
 		return result;
 	}
-	const [positions, volumes] = await Promise.all([
-		storeCall(runtime, "listServicePositions", (store) =>
-			store.listServicePositions(session.user.id, input.environmentId),
-		),
-		listEnvironmentVolumes(runtime, session.user, input.environmentId),
-	]);
+	const positions = await storeCall(runtime, "listServicePositions", (store) =>
+		store.listServicePositions(session.user.id, input.environmentId),
+	);
 	return {
 		...result,
 		services: applyServicePositions(result.services, positions),
-		volumes,
+		volumes: result.volumes ?? [],
 	};
 }
 
@@ -226,6 +222,7 @@ export async function updateServiceFromSession(
 		session.user,
 		{
 			serviceId: input.serviceId,
+			expectedSpecRevision: current.specRevision,
 			service: {
 				...(input.serviceName?.trim()
 					? { name: input.serviceName.trim() }

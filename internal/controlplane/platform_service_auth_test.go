@@ -164,20 +164,31 @@ func TestPlatformServiceUpdateServiceMapsConcurrentUpdate(t *testing.T) {
 	t.Parallel()
 
 	delivery := &fakePlatformDelivery{
-		updateServiceFn: func(ctx context.Context, _ authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
+		updateServiceFn: func(ctx context.Context, _ authz.User, serviceID, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (deliverycore.ServiceRecord, bool, error) {
+			if expectedSpecRevision != 1 {
+				t.Fatalf("expected draft revision = %d, want 1", expectedSpecRevision)
+			}
 			return deliverycore.ServiceRecord{}, false, deliverycore.ErrConcurrentUpdate
 		},
 	}
 	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, delivery)
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
-		ServiceId: "service-1",
+		ExpectedSpecRevision: 1,
+		ServiceId:            "service-1",
 		Service: &platformv1.ServiceUpdate{
 			Spec: directImageServiceSpec("nginx:1.27", nil),
 		},
 	})
 	if status.Code(err) != codes.Aborted {
 		t.Fatalf("expected Aborted, got %v", err)
+	}
+	_, err = service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
+		ServiceId: "service-1",
+		Service:   &platformv1.ServiceUpdate{Spec: directImageServiceSpec("nginx:1.27", nil)},
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("missing expected revision = %v, want InvalidArgument", err)
 	}
 }
 
@@ -392,15 +403,16 @@ func TestPlatformServiceAccessErrorCodes(t *testing.T) {
 			name: "update service write denied", fail: denied, want: codes.PermissionDenied,
 			service: func(fail error) *platformService {
 				return newPlatformService(&fakePlatformStore{}, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{
-					updateServiceFn: func(context.Context, authz.User, string, string, *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
+					updateServiceFn: func(context.Context, authz.User, string, string, *platformv1.ServiceSpec, int64) (deliverycore.ServiceRecord, bool, error) {
 						return deliverycore.ServiceRecord{}, false, fail
 					},
 				})
 			},
 			call: func(s *platformService) error {
 				_, err := s.UpdateService(ctx, &platformv1.UpdateServiceRequest{
-					ServiceId: "service-1",
-					Service:   &platformv1.ServiceUpdate{Spec: spec()},
+					ExpectedSpecRevision: 1,
+					ServiceId:            "service-1",
+					Service:              &platformv1.ServiceUpdate{Spec: spec()},
 				})
 				return err
 			},

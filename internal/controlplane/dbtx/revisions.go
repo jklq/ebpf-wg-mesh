@@ -3,6 +3,7 @@ package dbtx
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -49,4 +50,21 @@ func BumpDesiredRevisions(ctx context.Context, tx *sql.Tx, agentIDs []string) er
 		strings.Join(placeholders, ", "),
 	)
 	return journal.UpdateRows(ctx, tx, journal.TableAgents, query, args...)
+}
+
+const InitialEnvironmentRevision int64 = 1
+const GlobalEnvironmentEventID = "__control_plane_global__"
+
+type revisionQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// EnvironmentRevision reads the snapshot index through the caller's transaction.
+func EnvironmentRevision(ctx context.Context, q revisionQueryer) (int64, error) {
+	var revision int64
+	err := q.QueryRowContext(ctx, `SELECT revision FROM environment_events WHERE environment_id = $1`, GlobalEnvironmentEventID).Scan(&revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return InitialEnvironmentRevision, nil
+	}
+	return revision, err
 }

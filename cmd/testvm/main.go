@@ -687,7 +687,8 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	updateCtx, cancelUpdate := context.WithTimeout(userCtx, 30*time.Second)
 	defer cancelUpdate()
 	updatedService, err := client.UpdateService(updateCtx, &platformv1.UpdateServiceRequest{
-		ServiceId: service.GetId(),
+		ExpectedSpecRevision: service.GetSpecRevision(),
+		ServiceId:            service.GetId(),
 		Service: &platformv1.ServiceUpdate{
 			Spec: volumeBackedHTTPServiceSpec(markerV2, volumeName),
 		},

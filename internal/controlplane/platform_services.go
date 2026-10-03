@@ -116,6 +116,9 @@ func (s *platformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if req.GetService() == nil {
 		return nil, status.Error(codes.InvalidArgument, "service is required")
 	}
+	if req.GetExpectedSpecRevision() <= 0 {
+		return nil, status.Error(codes.InvalidArgument, "expected_spec_revision must be positive")
+	}
 	spec := deliverycore.CanonicalServiceSpec(req.GetService().GetSpec())
 	if err := validateServiceSpecResources(spec); err != nil {
 		return nil, status.Errorf(codes.InvalidArgument, "service resources: %v", err)
@@ -145,7 +148,7 @@ func (s *platformService) UpdateService(ctx context.Context, req *platformv1.Upd
 	if err := s.authorizeServiceSource(ctx, current.ProjectID, spec); err != nil {
 		return nil, err
 	}
-	service, _, err := s.delivery.UpdateService(ctx, user, req.GetServiceId(), req.GetService().GetName(), spec)
+	service, _, err := s.delivery.UpdateService(ctx, user, req.GetServiceId(), req.GetService().GetName(), spec, req.GetExpectedSpecRevision())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
@@ -392,7 +395,7 @@ func (s *platformService) ListServices(ctx context.Context, req *platformv1.List
 	if !changed {
 		return &platformv1.ListServicesResponse{Index: index, NotModified: true}, nil
 	}
-	items, err := s.store.ListServices(ctx, user, req.GetEnvironmentId(), req.GetIncludeDeleted())
+	snapshot, err := s.delivery.ReadEnvironmentSnapshot(ctx, user, req.GetEnvironmentId(), req.GetIncludeDeleted())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
@@ -406,8 +409,8 @@ func (s *platformService) ListServices(ctx context.Context, req *platformv1.List
 		}
 		return nil, status.Errorf(codes.Internal, "list live service allocations: %v", err)
 	}
-	resp := &platformv1.ListServicesResponse{Services: make([]*platformv1.Service, 0, len(items)), Index: index}
-	for _, item := range items {
+	resp := &platformv1.ListServicesResponse{Services: make([]*platformv1.Service, 0, len(snapshot.Services)), Index: snapshot.Index}
+	for _, item := range snapshot.Services {
 		serviceAllocations, ok := allocations[item.ID]
 		if !ok {
 			serviceAllocations = []deliverycore.AllocationRecord{}
@@ -420,6 +423,10 @@ func (s *platformService) ListServices(ctx context.Context, req *platformv1.List
 			return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
 		}
 		resp.Services = append(resp.Services, toProtoService(item))
+	}
+	resp.Volumes = make([]*platformv1.Volume, 0, len(snapshot.Volumes))
+	for _, volume := range snapshot.Volumes {
+		resp.Volumes = append(resp.Volumes, toProtoVolume(s.delivery.RenderVolumeStatus(volume)))
 	}
 	return resp, nil
 }

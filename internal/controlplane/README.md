@@ -18,8 +18,10 @@ constructors, transport handlers, and persistence plumbing stay private.
 | `reconciliation.go`, `managed_dashboard.go` | Periodic delivery work and managed-dashboard setup |
 
 Catalog, fleet, and routing persistence handles own their respective operations.
-Delivery supplies the shared read model directly. Journal transactions apply
-durable changes to the same live view used by transport and routing readers.
+Delivery supplies the shared read model directly. Its environment snapshot reads
+service drafts, volumes, and the event index in one transaction. Runtime observations
+are added separately. Draft replacement requires the caller's expected spec revision.
+Journal transactions apply durable changes to the same live view used by transport and routing readers.
 
 ## Delivery
 
@@ -30,17 +32,23 @@ persistence operations.
 
 | Files in `delivery/` | Responsibility |
 | --- | --- |
-| `delivery.go`, `reads.go` | Construction, dependencies, and authorized or system reads |
+| `delivery.go`, `reads.go`, `environment_snapshot.go` | Construction, dependencies, and authorized or system reads |
 | `services.go`, `service_changes.go`, `service_spec.go` | Service drafts, unapplied changes, and spec invariants |
 | `environments.go`, `managed_service.go`, `env.go` | Environment releases and duplication, managed workloads, and env encryption at rest |
 | `deployments.go`, `deployment_actions.go` | Deployment history, transitions, and user actions |
 | `rollouts.go`, `rollout_plan.go` | Rollout reconciliation and replacement decisions |
 | `allocations.go`, `placement.go` | Assignment mutations, replica reconciliation, and placement |
 | `fleet.go`, `fleet_reconciliation.go` | Operator intent, maintenance drains, and failover |
-| `agent_sessions.go`, `agent_state.go`, `allocation_sync.go` | Registration, status reports, desired state, and retained diffs |
+| `agent_sessions.go`, `agent_state.go`, `agent_invalidation.go`, `allocation_sync.go` | Registration, status reports, desired state, and retained diffs |
 | `build_requests.go`, `build_scheduler.go`, `build_results.go`, `artifacts.go` | Build submission, execution leases, completion, and immutable images |
 | `live.go`, `live_sessions.go`, `live_view.go` | Live ownership, session fencing, observations, and indexed reads |
+| `deletion.go`, `volumes.go` | Transactional deletion effects, volume reads, and retained-volume status |
 | `model.go`, `convert.go` | Delivery records and build/source protocol rendering |
+
+Delivery owns deletion quiesce, assignment withdrawal, and volume-destruction targets
+inside catalog transactions. Desired-state invalidation lives beside agent-state
+rendering and uses the same rendered peer fields. Database plumbing commits the
+resulting desired-revision bumps.
 
 Pure rollout decisions remain separate from their transactional execution. Live
 ownership, agent sessions, and live indexes are also separate because they have

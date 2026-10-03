@@ -172,9 +172,15 @@ export function applyLoaderState(
 	loader: DashboardHomeState,
 	retained?: Array<DashboardServiceRecord>,
 ): NormalizedDashboardState {
+	const sameEnvironment = loader.environment?.id === state.base.environment?.id;
+	const stale =
+		compareIntegers(loader.servicesRevision, state.servicesRevision) <= 0;
 	const next: NormalizedDashboardState = {
 		...state,
-		base: stripLoaderFields(loader),
+		base: {
+			...stripLoaderFields(loader),
+			volumes: sameEnvironment && stale ? state.base.volumes : loader.volumes,
+		},
 	};
 	if (loader.environment?.id !== state.base.environment?.id) {
 		const reset: NormalizedDashboardState = {

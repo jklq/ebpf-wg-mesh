@@ -20,13 +20,14 @@ func TestPlatformServiceUpdateServiceSkipsIngressRequest(t *testing.T) {
 
 	ingress := &countingIngress{}
 	service := newPlatformService(&fakePlatformStore{}, noopNotifier{}, ingress, &fakePlatformDelivery{
-		updateServiceFn: func(ctx context.Context, _ authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
+		updateServiceFn: func(ctx context.Context, _ authz.User, serviceID, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (deliverycore.ServiceRecord, bool, error) {
 			return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, true, nil
 		},
 	})
 
 	_, err := service.UpdateService(contextWithDelegatedUser("user-1", "user@example.com"), &platformv1.UpdateServiceRequest{
-		ServiceId: "service-1",
+		ExpectedSpecRevision: 1,
+		ServiceId:            "service-1",
 		Service: &platformv1.ServiceUpdate{
 			Spec: directImageServiceSpec("nginx:1.27", nil),
 		},

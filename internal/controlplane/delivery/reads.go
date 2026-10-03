@@ -21,6 +21,7 @@ type ReadModel interface {
 	ServiceStatus(context.Context, authz.User, string) (ServiceRecord, []AllocationRecord, error)
 	EnvironmentByID(context.Context, authz.User, string) (EnvironmentRecord, error)
 	ListServices(context.Context, authz.User, string, bool) ([]ServiceRecord, error)
+	ListVolumes(context.Context, authz.User, string, bool) ([]VolumeRecord, error)
 	ServiceByID(context.Context, authz.User, string) (ServiceRecord, error)
 	// AgentByID, AgentIDs, BuildByID, ServiceSnapshot, and ListAllocationsByServiceID are
 	// system reads without user authorization, for reconciliation and builder paths.
@@ -105,12 +106,16 @@ func (d *Delivery) ServiceSnapshot(ctx context.Context, serviceID string) (Servi
 }
 
 func (s *persistence) listServices(ctx context.Context, scope authz.Environment, includeDeleted bool) ([]ServiceRecord, error) {
+	return s.listServicesQuerier(ctx, s.db, scope, includeDeleted)
+}
+
+func (s *persistence) listServicesQuerier(ctx context.Context, q ServiceQueryer, scope authz.Environment, includeDeleted bool) ([]ServiceRecord, error) {
 	filter := `
 		    AND s.deleted_at IS NULL AND e.deleted_at IS NULL AND p.deleted_at IS NULL`
 	if includeDeleted {
 		filter = ``
 	}
-	rows, err := s.db.QueryContext(ctx,
+	rows, err := q.QueryContext(ctx,
 		serviceSelectSQL+`
 		  WHERE s.environment_id = $1`+filter+`
 		  ORDER BY s.created_at ASC`,
@@ -132,24 +137,27 @@ func (s *persistence) listServices(ctx context.Context, scope authz.Environment,
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
 	for i := range out {
-		spec, err := s.loadServiceDetails(ctx, out[i].ID, out[i].SpecRevision)
+		spec, err := s.loadServiceDetailsQuerier(ctx, q, out[i].ID, out[i].SpecRevision)
 		if err != nil {
 			return nil, err
 		}
 		out[i].Spec = spec
-		out[i].SourceSummary, err = s.loadServiceSourceSummaryQuerier(ctx, s.db, spec, out[i].ID)
+		out[i].SourceSummary, err = s.loadServiceSourceSummaryQuerier(ctx, q, spec, out[i].ID)
 		if err != nil {
 			return nil, err
 		}
-		out[i].LatestBuild, err = s.latestBuildForServiceQuerier(ctx, s.db, out[i].LatestBuildID)
+		out[i].LatestBuild, err = s.latestBuildForServiceQuerier(ctx, q, out[i].LatestBuildID)
 		if err != nil {
 			return nil, err
 		}
-		if err := s.attachLatestDeploymentQuerier(ctx, s.db, &out[i]); err != nil {
+		if err := s.attachLatestDeploymentQuerier(ctx, q, &out[i]); err != nil {
 			return nil, err
 		}
-		out[i].UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, s.db, out[i].ID, out[i].Spec, out[i].RolloutGeneration)
+		out[i].UnappliedChanges, _, err = s.loadServiceUnappliedChangesQuerier(ctx, q, out[i].ID, out[i].Spec, out[i].RolloutGeneration)
 		if err != nil {
 			return nil, err
 		}

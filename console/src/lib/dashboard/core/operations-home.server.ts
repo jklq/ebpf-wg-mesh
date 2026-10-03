@@ -18,7 +18,6 @@ import {
 	applyServicePositions,
 	publicGitHubAccount,
 } from "./operations-helpers.server";
-import { listEnvironmentVolumes } from "./operations-volumes.server";
 
 export async function loadDashboardHome(
 	runtime: DashboardRuntime,
@@ -111,23 +110,19 @@ export async function loadDashboardHome(
 		}
 
 		if (environment) {
-			const [servicesSnapshot, positions, environmentVolumes] =
-				await Promise.all([
-					optionalPlatformResult(
-						runtime.platform.call(
-							PlatformService.method.listServices,
-							session.user,
-							{ environmentId: environment.id },
-						),
+			const [servicesSnapshot, positions] = await Promise.all([
+				optionalPlatformResult(
+					runtime.platform.call(
+						PlatformService.method.listServices,
+						session.user,
+						{ environmentId: environment.id },
 					),
-					storeCall(runtime, "listServicePositions", (store) =>
-						store.listServicePositions(session.user.id, environment.id),
-					),
-					optionalPlatformResult(
-						listEnvironmentVolumes(runtime, session.user, environment.id),
-					),
-				]);
-			volumes = environmentVolumes ?? [];
+				),
+				storeCall(runtime, "listServicePositions", (store) =>
+					store.listServicePositions(session.user.id, environment.id),
+				),
+			]);
+			volumes = servicesSnapshot?.volumes ?? [];
 			allServices = applyServicePositions(
 				servicesSnapshot?.services ?? [],
 				positions,

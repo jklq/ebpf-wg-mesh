@@ -164,21 +164,21 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 	return rec, nil
 }
 
-func (d *Delivery) UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, error) {
+func (d *Delivery) UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (ServiceRecord, bool, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return ServiceRecord{}, false, err
 	}
-	return d.updateService(ctx, scope, name, spec)
+	return d.updateService(ctx, scope, name, spec, expectedSpecRevision)
 }
 
-func (d *Delivery) updateService(ctx context.Context, scope authz.Service, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, error) {
+func (d *Delivery) updateService(ctx context.Context, scope authz.Service, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (ServiceRecord, bool, error) {
 	s := d.store
 	var current ServiceRecord
 	var changed bool
 	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
-		current, changed, _, err = d.updateServiceTx(ctx, tx, scope, name, spec)
+		current, changed, _, err = d.updateServiceTx(ctx, tx, scope, name, spec, expectedSpecRevision)
 		return err
 	})
 	if err != nil {
@@ -191,7 +191,7 @@ func (d *Delivery) updateService(ctx context.Context, scope authz.Service, name 
 	return current, changed, nil
 }
 
-func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Service, name string, spec *platformv1.ServiceSpec) (ServiceRecord, bool, bool, error) {
+func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.Service, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (ServiceRecord, bool, bool, error) {
 	s := d.store
 	current, err := s.serviceByIDQuerier(ctx, tx, scope)
 	if err != nil {
@@ -204,6 +204,9 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	}
 	if err := requireLiveService(deletion); err != nil {
 		return ServiceRecord{}, false, false, err
+	}
+	if expectedSpecRevision <= 0 || current.SpecRevision != expectedSpecRevision {
+		return ServiceRecord{}, false, false, ErrConcurrentUpdate
 	}
 	nextName := strings.TrimSpace(name)
 	if nextName == "" {
@@ -618,7 +621,7 @@ func (d *Delivery) scaleServiceTx(ctx context.Context, tx *sql.Tx, scope authz.S
 		nextSpec = proto.Clone(nextSpec).(*platformv1.ServiceSpec)
 	}
 	nextSpec.DesiredReplicaCount = replicaCountPtr(desired)
-	updated, _, _, err := d.updateServiceTx(ctx, tx, scope, current.Name, nextSpec)
+	updated, _, _, err := d.updateServiceTx(ctx, tx, scope, current.Name, nextSpec, current.SpecRevision)
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
@@ -737,23 +740,6 @@ func CheckDeletionConfirmation(current, confirmation string) error {
 		return ErrConfirmationMismatch
 	}
 	return nil
-}
-
-// ServiceQuiescer performs service-level deletion quiesce inside a caller's product
-// transaction, letting catalog operations reuse delivery's transitions.
-type ServiceQuiescer struct {
-	store *persistence
-}
-
-// NewServiceQuiescer builds a quiescer bound to the caller's transaction.
-func NewServiceQuiescer(sourceStore SourceStore) *ServiceQuiescer {
-	return &ServiceQuiescer{store: &persistence{sourceStore: sourceStore, deletionGrace: DefaultDeletionGracePeriod}}
-}
-
-// QuiesceTx stops new work for one service: its deployment moves to Removed, queued builds
-// cancel, and pending source work drops. Running builds finish into the terminal deployment.
-func (q *ServiceQuiescer) QuiesceTx(ctx context.Context, tx *sql.Tx, serviceID, actorUserID string) error {
-	return quiesceServiceTx(ctx, q.store, tx, serviceID, actorUserID)
 }
 
 func quiesceServiceTx(ctx context.Context, s *persistence, tx *sql.Tx, serviceID, actorUserID string) error {

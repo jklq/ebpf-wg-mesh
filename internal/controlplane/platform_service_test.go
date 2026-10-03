@@ -84,10 +84,11 @@ func (c *countingIngress) RequestSync() {
 }
 
 type fakePlatformDelivery struct {
+	environmentSnapshotFn    func(context.Context, authz.User, string, bool) (deliverycore.EnvironmentSnapshot, error)
 	applyDeploymentActionFn  func(ctx context.Context, user authz.User, serviceID, deploymentID string, action platformv1.DeploymentAction, idempotencyKey, allocationID string) (deliverycore.DeploymentActionResult, error)
 	releaseEnvironmentFn     func(ctx context.Context, user authz.User, environmentID string) ([]deliverycore.ReleasedService, error)
 	createScheduledServiceFn func(ctx context.Context, user authz.User, environmentID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, error)
-	updateServiceFn          func(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error)
+	updateServiceFn          func(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (deliverycore.ServiceRecord, bool, error)
 	discardServiceChangesFn  func(ctx context.Context, user authz.User, serviceID string, changeIDs []string, discardAll bool) (deliverycore.ServiceRecord, error)
 	deleteServiceFn          func(ctx context.Context, user authz.User, serviceID string) error
 	restoreServiceFn         func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
@@ -124,9 +125,9 @@ func (f *fakePlatformDelivery) CreateScheduledService(ctx context.Context, user 
 	return deliverycore.ServiceRecord{ID: "service-1", EnvironmentID: environmentID, Name: name, Spec: spec, AllocatedAgentID: "node-1"}, nil
 }
 
-func (f *fakePlatformDelivery) UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec) (deliverycore.ServiceRecord, bool, error) {
+func (f *fakePlatformDelivery) UpdateService(ctx context.Context, user authz.User, serviceID, name string, spec *platformv1.ServiceSpec, expectedSpecRevision int64) (deliverycore.ServiceRecord, bool, error) {
 	if f.updateServiceFn != nil {
-		return f.updateServiceFn(ctx, user, serviceID, name, spec)
+		return f.updateServiceFn(ctx, user, serviceID, name, spec, expectedSpecRevision)
 	}
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", Name: name, Spec: spec, AllocatedAgentID: "node-1"}, true, nil
 }
@@ -185,7 +186,6 @@ type fakePlatformStore struct {
 	projectByIDFn                     func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetentionFn       func(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	serviceByIDFn                     func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
-	listServicesFn                    func(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error)
 	createScheduledVolumeFn           func(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
 	listVolumesFn                     func(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
 	deleteVolumeFn                    func(ctx context.Context, user authz.User, volumeID, confirmation string) error
@@ -342,13 +342,6 @@ func (f *fakePlatformStore) ServiceByID(ctx context.Context, user authz.User, se
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, nil
 }
 
-func (f *fakePlatformStore) ListServices(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.ServiceRecord, error) {
-	if f.listServicesFn != nil {
-		return f.listServicesFn(ctx, user, environmentID, includeDeleted)
-	}
-	return nil, nil
-}
-
 func (f *fakePlatformStore) createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
 	if f.createScheduledVolumeFn != nil {
 		return f.createScheduledVolumeFn(ctx, user, environmentID, name, sizeBytes)
@@ -356,7 +349,7 @@ func (f *fakePlatformStore) createScheduledVolume(ctx context.Context, user auth
 	return deliverycore.VolumeRecord{ID: "volume-1", EnvironmentID: environmentID, Name: name, SizeBytes: sizeBytes}, nil
 }
 
-func (f *fakePlatformStore) listVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error) {
+func (f *fakePlatformStore) ListVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error) {
 	if f.listVolumesFn != nil {
 		return f.listVolumesFn(ctx, user, environmentID, includeDeleted)
 	}
@@ -528,18 +521,21 @@ func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
 
 	var allocationReads atomic.Int32
 	store := &fakePlatformStore{
-		listServicesFn: func(context.Context, authz.User, string, bool) ([]deliverycore.ServiceRecord, error) {
-			return []deliverycore.ServiceRecord{
-				{ID: "service-a", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
-				{ID: "service-b", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
-			}, nil
-		},
 		listAllocationsByServiceIDFn: func(context.Context, string) ([]deliverycore.AllocationRecord, error) {
 			allocationReads.Add(1)
 			return nil, nil
 		},
 	}
-	delivery := &fakePlatformDelivery{liveAllocationsFn: func(environmentID string) (map[string][]deliverycore.AllocationRecord, error) {
+	delivery := &fakePlatformDelivery{environmentSnapshotFn: func(context.Context, authz.User, string, bool) (deliverycore.EnvironmentSnapshot, error) {
+		return deliverycore.EnvironmentSnapshot{
+			Index: 9,
+			Services: []deliverycore.ServiceRecord{
+				{ID: "service-a", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
+				{ID: "service-b", EnvironmentID: "environment-1", Spec: directImageServiceSpec("nginx:1.27", nil)},
+			},
+			Volumes: []deliverycore.VolumeRecord{{ID: "volume-a", EnvironmentID: "environment-1", Name: "data", SizeBytes: 1 << 30}},
+		}, nil
+	}, liveAllocationsFn: func(environmentID string) (map[string][]deliverycore.AllocationRecord, error) {
 		if environmentID != "environment-1" {
 			t.Fatalf("environment = %q", environmentID)
 		}
@@ -562,6 +558,9 @@ func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
 	}
 	if len(resp.GetServices()) != 2 || resp.GetServices()[0].GetReadyReplicaCount() != 1 || resp.GetServices()[1].GetReadyReplicaCount() != 0 {
 		t.Fatalf("decorated services = %#v", resp.GetServices())
+	}
+	if resp.GetIndex() != 9 || len(resp.GetVolumes()) != 1 || resp.GetVolumes()[0].GetId() != "volume-a" {
+		t.Fatalf("environment snapshot = %+v", resp)
 	}
 }
 
@@ -623,7 +622,7 @@ func TestNonOwnerPlatformRPCsRedirectToLiveOwner(t *testing.T) {
 			return err
 		}},
 		{"UpdateService", func(ctx context.Context) error {
-			_, err := service.UpdateService(ctx, &platformv1.UpdateServiceRequest{ServiceId: "service-1"})
+			_, err := service.UpdateService(ctx, &platformv1.UpdateServiceRequest{ExpectedSpecRevision: 1, ServiceId: "service-1"})
 			return err
 		}},
 		{"ApplyDeploymentAction", func(ctx context.Context) error {
@@ -770,4 +769,11 @@ func TestLiveOwnerPlatformRPCsAreNotRedirected(t *testing.T) {
 	if _, err := service.ListAgents(ctx, &emptypb.Empty{}); err != nil {
 		t.Fatalf("owner ListAgents error = %v, want nil", err)
 	}
+}
+
+func (f *fakePlatformDelivery) ReadEnvironmentSnapshot(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) (deliverycore.EnvironmentSnapshot, error) {
+	if f.environmentSnapshotFn != nil {
+		return f.environmentSnapshotFn(ctx, user, environmentID, includeDeleted)
+	}
+	return deliverycore.EnvironmentSnapshot{Index: 1}, nil
 }

@@ -129,8 +129,9 @@ func TestServiceEnvValidation(t *testing.T) {
 	rpc := newPlatformService(store.platform(), noopNotifier{}, noopIngress{}, testDelivery(store))
 	userCtx := contextWithDelegatedUser("owner", "owner@example.com")
 	_, err = rpc.UpdateService(userCtx, &platformv1.UpdateServiceRequest{
-		ServiceId: service.ID,
-		Service:   &platformv1.ServiceUpdate{Name: service.Name, Spec: envServiceSpec("a", map[string]string{"BIG": oversize})},
+		ExpectedSpecRevision: service.SpecRevision,
+		ServiceId:            service.ID,
+		Service:              &platformv1.ServiceUpdate{Name: service.Name, Spec: envServiceSpec("a", map[string]string{"BIG": oversize})},
 	})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("rpc oversize env code = %v, want InvalidArgument", err)

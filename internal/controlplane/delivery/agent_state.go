@@ -330,18 +330,21 @@ func assignedNodeConfigForAgent(product *journal.Projection, mesh config.Control
 		return nil, err
 	}
 	for _, peer := range agents {
-		administration := durable.Administration[peer.ID]
-		if peer.ID == agentID || administration.LifecycleState == string(AgentStateRetired) || administration.CredentialRevokedAt != nil || peer.WireguardPublicKey == "" || peer.WireguardEndpoint == "" || peer.WorkloadIPv4Subnet == "" || peer.WorkloadIPv6Subnet == "" {
+		if peer.ID == agentID {
 			continue
 		}
-		assigned.Peers = append(assigned.Peers, &agentv1.WireGuardPeer{
-			AgentId:                    peer.ID,
-			Name:                       peer.Name,
-			PublicKey:                  peer.WireguardPublicKey,
-			Endpoint:                   peer.WireguardEndpoint,
-			AllowedIps:                 []string{peer.WorkloadIPv4Subnet, peer.WorkloadIPv6Subnet},
-			PersistentKeepaliveSeconds: int32(mesh.PersistentKeepaliveSeconds),
-		})
+		if rendered := renderWireGuardPeer(peer, durable.Administration[peer.ID], int32(mesh.PersistentKeepaliveSeconds)); rendered != nil {
+			assigned.Peers = append(assigned.Peers, rendered)
+		}
 	}
 	return assigned, nil
+}
+
+// renderWireGuardPeer defines both peer visibility and the fields whose changes
+// invalidate agents sharing an environment with this peer.
+func renderWireGuardPeer(peer journal.AgentRegistration, admin journal.AgentAdministration, keepalive int32) *agentv1.WireGuardPeer {
+	if admin.LifecycleState == string(AgentStateRetired) || admin.CredentialRevokedAt != nil || peer.WireguardPublicKey == "" || peer.WireguardEndpoint == "" || peer.WorkloadIPv4Subnet == "" || peer.WorkloadIPv6Subnet == "" {
+		return nil
+	}
+	return &agentv1.WireGuardPeer{AgentId: peer.ID, Name: peer.Name, PublicKey: peer.WireguardPublicKey, Endpoint: peer.WireguardEndpoint, AllowedIps: []string{peer.WorkloadIPv4Subnet, peer.WorkloadIPv6Subnet}, PersistentKeepaliveSeconds: keepalive}
 }

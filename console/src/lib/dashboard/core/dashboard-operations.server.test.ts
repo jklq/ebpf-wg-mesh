@@ -729,6 +729,7 @@ describe("dashboard operations", () => {
 		harness.platform.services = [
 			serviceFixture({
 				id: "service-1",
+				specRevision: "17",
 				environmentId: "environment-project-1",
 				projectId: "project-1",
 				name: "old-name",
@@ -779,6 +780,7 @@ describe("dashboard operations", () => {
 
 		expect(updated.name).toBe("talented-harmony");
 		expect(harness.platform.calls.updateService[0]).toMatchObject({
+			expectedSpecRevision: "17",
 			serviceId: "service-1",
 			service: {
 				name: "talented-harmony",
