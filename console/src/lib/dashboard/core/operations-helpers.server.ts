@@ -18,6 +18,7 @@ import {
 	type GitHubUserRepository,
 	type StoredDashboardGitHubAccount,
 } from "#/lib/dashboard/core/types.server";
+import { envNameError, envValueError } from "#/lib/dashboard/env-variables";
 import type * as Protocol from "#/lib/platform-gen/platform_pb";
 import { integerString, safeInteger } from "#/lib/platform-json";
 
@@ -189,12 +190,12 @@ export function normalizeRuntimeEnv(
 		if (key === "") {
 			continue;
 		}
-		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
-			throw new DashboardValidationError({
-				message: `Invalid environment variable name: ${key}`,
-			});
+		const value = String(rawValue);
+		const error = envNameError(key) ?? envValueError(key, value);
+		if (error) {
+			throw new DashboardValidationError({ message: error });
 		}
-		normalized[key] = String(rawValue);
+		normalized[key] = value;
 	}
 	return normalized;
 }

@@ -6,22 +6,19 @@ import (
 	"testing"
 )
 
-func TestSealOpenValueRoundTrip(t *testing.T) {
+func TestEncryptDecryptValueRoundTrip(t *testing.T) {
 	t.Parallel()
 
 	dek, err := GenerateDEK()
 	if err != nil {
 		t.Fatal(err)
 	}
-	aad := []byte("sealed/v1\x00service\x00NAME\x001")
-	nonce, ciphertext, err := SealValue(dek, aad, []byte("super-secret"))
+	aad := []byte("service-env/v1\x00service\x001")
+	data, err := EncryptValue(dek, aad, []byte("super-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(nonce) != NonceSize {
-		t.Fatalf("nonce length %d", len(nonce))
-	}
-	plaintext, err := OpenValue(dek, aad, nonce, ciphertext)
+	plaintext, err := DecryptValue(dek, aad, data)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,36 +27,39 @@ func TestSealOpenValueRoundTrip(t *testing.T) {
 	}
 }
 
-func TestOpenValueRejectsTampering(t *testing.T) {
+func TestDecryptValueRejectsTampering(t *testing.T) {
 	t.Parallel()
 
 	dek, err := GenerateDEK()
 	if err != nil {
 		t.Fatal(err)
 	}
-	aad := []byte("sealed/v1\x00service\x00NAME\x001")
-	nonce, ciphertext, err := SealValue(dek, aad, []byte("super-secret"))
+	aad := []byte("service-env/v1\x00service\x001")
+	data, err := EncryptValue(dek, aad, []byte("super-secret"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	tampered := bytes.Clone(ciphertext)
+	tampered := bytes.Clone(data)
 	tampered[len(tampered)-1] ^= 0xff
-	if _, err := OpenValue(dek, aad, nonce, tampered); err == nil {
+	if _, err := DecryptValue(dek, aad, tampered); err == nil {
 		t.Fatal("tampered ciphertext was accepted")
 	}
-	badNonce := bytes.Clone(nonce)
+	badNonce := bytes.Clone(data)
 	badNonce[0] ^= 0xff
-	if _, err := OpenValue(dek, aad, badNonce, ciphertext); err == nil {
+	if _, err := DecryptValue(dek, aad, badNonce); err == nil {
 		t.Fatal("tampered nonce was accepted")
 	}
-	if _, err := OpenValue(dek, []byte("sealed/v1\x00other\x00NAME\x001"), nonce, ciphertext); err == nil {
+	if _, err := DecryptValue(dek, aad, data[:NonceSize-1]); err == nil {
+		t.Fatal("truncated value was accepted")
+	}
+	if _, err := DecryptValue(dek, []byte("service-env/v1\x00other\x001"), data); err == nil {
 		t.Fatal("transplanted AAD was accepted")
 	}
 	other, err := GenerateDEK()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := OpenValue(other, aad, nonce, ciphertext); err == nil {
+	if _, err := DecryptValue(other, aad, data); err == nil {
 		t.Fatal("wrong DEK was accepted")
 	}
 }

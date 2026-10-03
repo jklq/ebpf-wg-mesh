@@ -21,7 +21,6 @@ const record: DashboardDeploymentRecord = jsonFixture(DeploymentRecordSchema, {
 	id: "d",
 	isCurrent: true,
 	rolloutGeneration: "1",
-	sealedVersions: { TOKEN: "3" },
 	build: {
 		buildId: "b",
 		state: "BUILD_STATE_RUNNING",
@@ -57,7 +56,6 @@ it("shows cancellation, retry history, and pinned versions without secret values
 	expect(fetch).toHaveBeenCalledWith({
 		data: { serviceId: "s", buildId: "b" },
 	});
-	expect(screen.getByText("TOKEN: v3")).toBeTruthy();
 });
 it("keeps reuse visible after the rollout's reason changes", () => {
 	render(

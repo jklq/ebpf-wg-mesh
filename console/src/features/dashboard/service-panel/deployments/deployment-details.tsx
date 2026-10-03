@@ -61,22 +61,6 @@ export function DeploymentDetails({
 					{artifact?.commitSha ?? record.build?.commitSha ?? "unknown"}.
 				</p>
 			)}
-			{Object.keys(record.sealedVersions ?? {}).length > 0 && (
-				<details>
-					<summary {...stylex.props(styles.secretsSummary)}>
-						Pinned secret versions · restored on rollback
-					</summary>
-					<ul>
-						{Object.entries(record.sealedVersions ?? {}).map(
-							([name, version]) => (
-								<li key={name} {...stylex.props(styles.imageReference)}>
-									{name}: v{version}
-								</li>
-							),
-						)}
-					</ul>
-				</details>
-			)}
 			{serviceId && buildId && !reused && retried && (
 				<details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
 					<summary {...stylex.props(styles.secretsSummary)}>

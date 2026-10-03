@@ -55,7 +55,6 @@ var (
 	ErrKeyVersionExists = errors.New("key version is already recorded")
 	// ErrConcurrentActivation: one activation wins the race; the loser re-reads the winner.
 	ErrConcurrentActivation = errors.New("concurrent key activation")
-	ErrNoSuchSecret         = errors.New("no such sealed secret")
 
 	// ErrProviderKeyNotFound: the referenced root material is absent on this replica.
 	ErrProviderKeyNotFound = errors.New("provider key material not found")

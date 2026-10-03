@@ -301,8 +301,6 @@ func toProtoDeploymentRecord(rec deliverycore.DeploymentRecord) *platformv1.Depl
 		Status:            status,
 		ImageDigest:       rec.ImageDigest,
 		Artifact:          deliverycore.ToProtoBuildArtifact(rec.Artifact),
-		VariableVersions:  rec.VariableVersions,
-		SealedVersions:    rec.SealedVersions,
 	}
 	for _, action := range rec.Actions {
 		protoRec.Actions = append(protoRec.Actions, &platformv1.DeploymentActionRecord{

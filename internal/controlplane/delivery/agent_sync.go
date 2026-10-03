@@ -23,7 +23,7 @@ type AgentSyncRequest struct {
 }
 
 // AgentSyncPlan renders independent channels from one immutable product prefix
-// and one scoped live observation capture. Full workloads and sealed values are
+// and one scoped live observation capture. Full workloads and decrypted env are
 // rendered only for a checkpoint or assignments invalidated by journal changes.
 type AgentSyncPlan struct {
 	Cursor            int64
@@ -62,7 +62,7 @@ func (d *Delivery) PlanAgentSync(ctx context.Context, request AgentSyncRequest) 
 		if err != nil {
 			return nil, err
 		}
-		if err := d.resolveSealedEnv(ctx, view.product, state); err != nil {
+		if err := d.applyServiceEnv(ctx, view.product, state); err != nil {
 			return nil, err
 		}
 		state.NodeConfigVersion = plan.NodeConfigVersion
@@ -105,7 +105,7 @@ func (d *Delivery) PlanAgentSync(ctx context.Context, request AgentSyncRequest) 
 				return nil, err
 			}
 			partial := &agentv1.DesiredNodeState{Services: currentServices}
-			if err := d.resolveSealedEnv(ctx, view.product, partial); err != nil {
+			if err := d.applyServiceEnv(ctx, view.product, partial); err != nil {
 				return nil, err
 			}
 			services = maps.Clone(baseline.services)

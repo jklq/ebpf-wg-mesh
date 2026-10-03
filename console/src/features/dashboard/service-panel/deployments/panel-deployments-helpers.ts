@@ -458,7 +458,6 @@ export function deploymentMeta(
 ): string[] {
 	const parts: string[] = [];
 	if (build?.commitSha) parts.push(shortSha(build.commitSha));
-	if (build?.commitAuthor) parts.push(build.commitAuthor);
 	parts.push(
 		timestamp ? formatRelativeTime(timestamp, nowMs) : NOT_DEPLOYED_LABEL,
 	);

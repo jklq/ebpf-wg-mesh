@@ -9,13 +9,12 @@ import (
 	"ebof-wg-mesh/internal/config"
 )
 
-// Service is the sealed-secret backend: the key manager, key registry,
-// per-environment DEKs, and sealed versions behind one handle.
+// Service is the envelope-encryption backend: the key manager, key registry,
+// and per-environment DEKs behind one handle.
 type Service struct {
 	provider *Keyring
 	registry *Registry
 	deks     *DEKStore
-	sealed   *SealedStore
 }
 
 // Options configures Service.Open.
@@ -26,7 +25,7 @@ type Options struct {
 	AllowGenerate bool
 }
 
-// Open builds the sealed-secret backend from control-plane configuration. With
+// Open builds the envelope-encryption backend from control-plane configuration. With
 // AllowGenerate (development) it ensures the active key exists so replicas converge
 // at startup. Without it (production) it requires an explicitly activated key and
 // verifies this replica's keyring covers every recorded version.
@@ -61,7 +60,7 @@ func Open(ctx context.Context, db *sql.DB, cfg config.SecretKeysConfig, opts Opt
 func New(db *sql.DB, provider *Keyring) *Service {
 	registry := NewRegistry(db, provider)
 	deks := NewDEKStore(db, registry)
-	return &Service{provider: provider, registry: registry, deks: deks, sealed: NewSealedStore(db, deks)}
+	return &Service{provider: provider, registry: registry, deks: deks}
 }
 
 // Close clears cached DEKs and releases provider resources.
@@ -100,8 +99,38 @@ func (s *Service) Registry() *Registry { return s.registry }
 // DEKs exposes the data-encryption key inventory for rewrap and inspection.
 func (s *Service) DEKs() *DEKStore { return s.deks }
 
-// Sealed exposes sealed-secret reads and writes.
-func (s *Service) Sealed() *SealedStore { return s.sealed }
+// Ciphertext is a value encrypted under one environment's data-encryption key.
+type Ciphertext struct {
+	DEKID string
+	// Data is the nonce followed by the AES-256-GCM ciphertext.
+	Data []byte
+}
+
+// Encrypt encrypts plaintext under the environment's DEK, minting the DEK inside
+// q's transaction on first use. aad binds the ciphertext to its storage location.
+func (s *Service) Encrypt(ctx context.Context, q Querier, environmentID string, aad, plaintext []byte) (Ciphertext, error) {
+	dek, dekID, err := s.deks.DEKForScope(ctx, q, DEKScopeKindEnvironment, environmentID)
+	if err != nil {
+		return Ciphertext{}, err
+	}
+	defer clear(dek[:])
+	data, err := EncryptValue(dek, aad, plaintext)
+	if err != nil {
+		return Ciphertext{}, err
+	}
+	return Ciphertext{DEKID: dekID, Data: data}, nil
+}
+
+// Decrypt opens a Ciphertext under the aad it was encrypted with. The plaintext
+// is runtime-only; callers must not log or persist it.
+func (s *Service) Decrypt(ctx context.Context, q Querier, c Ciphertext, aad []byte) ([]byte, error) {
+	dek, err := s.deks.DEKByID(ctx, q, c.DEKID)
+	if err != nil {
+		return nil, err
+	}
+	defer clear(dek[:])
+	return DecryptValue(dek, aad, c.Data)
+}
 
 // Ready reports whether shared key state is readable and this replica holds every
 // recorded version's material. Replicas use it for readiness: key state must be complete before serving.

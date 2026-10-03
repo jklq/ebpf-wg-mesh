@@ -213,8 +213,6 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"service_rollouts",
 		"service_delivery_status",
 		"domain_bindings",
-		"service_secret_tombstones",
-		"service_secret_versions",
 		"service_revisions",
 		"services",
 		"platform_signing_keys",

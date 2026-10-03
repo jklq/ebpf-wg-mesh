@@ -28,8 +28,8 @@ func (d *Delivery) DesiredStateForAgent(ctx context.Context, agentID string) (*a
 	if err != nil {
 		return nil, err
 	}
-	// Sealed values decrypt here for this agent's assignments only; agents never get keys.
-	if err := d.resolveSealedEnv(ctx, view.product, state); err != nil {
+	// Env decrypts here for this agent's assignments only; agents never get keys.
+	if err := d.applyServiceEnv(ctx, view.product, state); err != nil {
 		return nil, err
 	}
 	// Credentials travel in PullCredentialSet only; checkpoints and diffs must never carry them.

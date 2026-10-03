@@ -6,7 +6,7 @@ import (
 )
 
 // Querier abstracts *sql.DB and *sql.Tx so stores compose inside caller
-// transactions (seal alongside deployment capture, rotate alongside audit).
+// transactions (encrypt alongside a spec revision, rotate alongside audit).
 type Querier interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)

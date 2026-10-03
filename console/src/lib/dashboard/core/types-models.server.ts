@@ -91,9 +91,6 @@ export type DashboardServiceLogGap = PlatformJson<
 export type DashboardServiceLogPage = PlatformJson<
 	typeof Protocol.ListServiceLogsResponseSchema
 >;
-export type DashboardServiceSecret = PlatformJson<
-	typeof Protocol.ServiceSecretMetadataSchema
->;
 export type DashboardDeploymentRecord = PlatformJson<
 	typeof Protocol.DeploymentRecordSchema
 >;

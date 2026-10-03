@@ -45,7 +45,7 @@ func NewDEKStore(db *sql.DB, registry *Registry) *DEKStore {
 // DEKForScope returns the plaintext DEK for a scope, minting and wrapping it under
 // the active key on first use. Racing replicas converge on one row; losers discard
 // their candidate and load the winner. q scopes the row to the caller's transaction
-// so a seal in the same transaction sees the mint.
+// so an encryption in the same transaction sees the mint.
 func (s *DEKStore) DEKForScope(ctx context.Context, q Querier, scopeKind, scopeID string) ([DEKSize]byte, string, error) {
 	var zero [DEKSize]byte
 	if scopeKind == "" || scopeID == "" {
@@ -60,9 +60,14 @@ func (s *DEKStore) DEKForScope(ctx context.Context, q Querier, scopeKind, scopeI
 	}
 	s.mu.Unlock()
 
-	dek, id, err := s.loadOrMintDEK(ctx, q, scopeKind, scopeID)
+	dek, id, minted, err := s.loadOrMintDEK(ctx, q, scopeKind, scopeID)
 	if err != nil {
 		return zero, "", err
+	}
+	// A fresh mint is uncommitted until the caller's transaction commits; caching it
+	// would outlive a rollback and hand later writes a DEK row that never existed.
+	if minted {
+		return dek, id, nil
 	}
 	s.mu.Lock()
 	s.byScope[scopeCacheKey(scopeKind, scopeID)] = id
@@ -116,7 +121,7 @@ func (s *DEKStore) DEKByID(ctx context.Context, q Querier, dekID string) ([DEKSi
 }
 
 // RewrapAll unwraps every DEK with its current wrapping key and re-wraps it under
-// the active key. DEK bytes are unchanged, so sealed values keep decrypting and the
+// the active key. DEK bytes are unchanged, so encrypted values keep decrypting and the
 // cache stays valid; only the wrapping migrates. It is idempotent: each row commits
 // independently, so an interrupted run resumes where it stopped.
 //
@@ -240,42 +245,41 @@ func (s *DEKStore) casWrapping(ctx context.Context, dekID, fromKeyID, toKeyID st
 	return changed, nil
 }
 
-func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scopeID string) ([DEKSize]byte, string, error) {
+func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scopeID string) (dek [DEKSize]byte, id string, minted bool, err error) {
 	var zero [DEKSize]byte
-	var id, wrappingKeyID string
+	var wrappingKeyID string
 	var wrapped []byte
 	if err := q.QueryRowContext(ctx,
 		`SELECT id, wrapping_key_id, wrapped_dek FROM envelope_data_keys WHERE scope_kind = $1 AND scope_id = $2`,
 		scopeKind, scopeID).Scan(&id, &wrappingKeyID, &wrapped); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return zero, "", fmt.Errorf("load data-encryption key: %w", err)
+		return zero, "", false, fmt.Errorf("load data-encryption key: %w", err)
 	} else if err == nil {
 		raw, err := s.registry.Unwrap(ctx, wrappingKeyID, DEKWrapPurpose(id), wrapped)
 		if err != nil {
-			return zero, "", err
+			return zero, "", false, err
 		}
 		defer clear(raw)
 		if len(raw) != DEKSize {
-			return zero, "", &UnwrapError{KeyID: wrappingKeyID, Reason: UnwrapReasonCorruptCiphertext,
+			return zero, "", false, &UnwrapError{KeyID: wrappingKeyID, Reason: UnwrapReasonCorruptCiphertext,
 				Err: fmt.Errorf("data-encryption key %s has invalid length", id)}
 		}
-		var dek [DEKSize]byte
 		copy(dek[:], raw)
-		return dek, id, nil
+		return dek, id, false, nil
 	}
 	// No row: mint a candidate. The unique scope constraint elects one winner; the ID
 	// is generated before the wrap so the wrap binds to this row's purpose.
 	candidate, err := GenerateDEK()
 	if err != nil {
-		return zero, "", err
+		return zero, "", false, err
 	}
 	defer clear(candidate[:])
 	candidateID, err := GenerateDEKID()
 	if err != nil {
-		return zero, "", err
+		return zero, "", false, err
 	}
 	keyID, wrappedCandidate, err := s.registry.WrapWithActive(ctx, DEKWrapPurpose(candidateID), candidate[:])
 	if err != nil {
-		return zero, "", err
+		return zero, "", false, err
 	}
 	now := time.Now().UTC()
 	res, err := q.ExecContext(ctx,
@@ -283,15 +287,15 @@ func (s *DEKStore) loadOrMintDEK(ctx context.Context, q Querier, scopeKind, scop
 		  VALUES ($1, $2, $3, $4, $5, $6, $6) ON CONFLICT(scope_kind, scope_id) DO NOTHING`,
 		candidateID, scopeKind, scopeID, keyID, wrappedCandidate, now)
 	if err != nil {
-		return zero, "", fmt.Errorf("mint data-encryption key: %w", err)
+		return zero, "", false, fmt.Errorf("mint data-encryption key: %w", err)
 	}
 	if n, err := res.RowsAffected(); err != nil {
-		return zero, "", fmt.Errorf("mint data-encryption key: %w", err)
+		return zero, "", false, fmt.Errorf("mint data-encryption key: %w", err)
 	} else if n == 1 {
-		return candidate, candidateID, nil
+		return candidate, candidateID, true, nil
 	}
 	// The winner may be invisible to this snapshot; let the transaction retry.
-	return zero, "", &pgconn.PgError{Code: "40001", Message: "retry data-encryption key mint after concurrent insert"}
+	return zero, "", false, &pgconn.PgError{Code: "40001", Message: "retry data-encryption key mint after concurrent insert"}
 }
 
 func scopeCacheKey(kind, id string) string { return kind + "\x00" + id }

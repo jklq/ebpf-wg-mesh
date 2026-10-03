@@ -35,7 +35,6 @@ vi.mock("#/lib/dashboard/server-functions", () => ({
 	doUpdateService: doUpdateServiceMock,
 	doScaleService: doScaleServiceMock,
 	fetchServiceDeployments: vi.fn().mockResolvedValue([]),
-	fetchServiceSecrets: vi.fn().mockResolvedValue([]),
 	fetchServiceLogs: vi.fn().mockResolvedValue({ lines: [], gaps: [] }),
 	doApplyDeploymentAction: vi.fn(),
 }));

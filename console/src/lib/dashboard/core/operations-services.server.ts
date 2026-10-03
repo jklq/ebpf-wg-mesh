@@ -11,7 +11,6 @@ import {
 	type DashboardServiceLogType,
 	type DashboardServicePosition,
 	type DashboardServiceRecord,
-	type DashboardServiceSecret,
 	type DashboardServiceStatus,
 	type DashboardSourceSpec,
 	DashboardValidationError,
@@ -20,7 +19,6 @@ import {
 	type UpdateServiceInput,
 } from "#/lib/dashboard/core/types.server";
 import { normalizeRepositorySelector } from "#/lib/dashboard/onboarding/flow";
-import { sealedSecretName } from "#/lib/dashboard/sealed-secrets";
 import { PlatformService } from "#/lib/platform-gen/platform_pb";
 import { integerString } from "#/lib/platform-json";
 import {
@@ -144,53 +142,6 @@ export async function listBuildAttemptsFromSession(
 	return runtime.platform
 		.call(PlatformService.method.listBuildAttempts, session.user, input)
 		.then((response) => response.attempts ?? []);
-}
-
-export async function listServiceSecretsFromSession(
-	runtime: DashboardRuntime,
-	input: { serviceId: string },
-): Promise<Array<DashboardServiceSecret>> {
-	const session = await requireSession(runtime);
-	return runtime.platform
-		.call(PlatformService.method.listServiceSecrets, session.user, {
-			serviceId: input.serviceId,
-		})
-		.then((response) => response.secrets ?? []);
-}
-
-/** Seals a write-only value. The value goes to the RPC and nowhere else. */
-export async function sealServiceSecretFromSession(
-	runtime: DashboardRuntime,
-	input: { serviceId: string; name: string; value: string },
-): Promise<DashboardServiceSecret> {
-	const session = await requireSession(runtime);
-	const name = sealedSecretName.safeParse(input.name);
-	if (!name.success) {
-		throw new DashboardValidationError({
-			message: name.error.issues[0]?.message ?? "Invalid secret name.",
-		});
-	}
-	return runtime.platform.call(
-		PlatformService.method.sealServiceSecret,
-		session.user,
-		{
-			serviceId: input.serviceId,
-			name: name.data,
-			value: input.value,
-		},
-	);
-}
-
-export async function deleteServiceSecretFromSession(
-	runtime: DashboardRuntime,
-	input: { serviceId: string; name: string },
-): Promise<void> {
-	const session = await requireSession(runtime);
-	await runtime.platform.call(
-		PlatformService.method.deleteServiceSecret,
-		session.user,
-		input,
-	);
 }
 
 export async function updateServiceFromSession(

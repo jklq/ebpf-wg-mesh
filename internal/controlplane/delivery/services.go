@@ -16,7 +16,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -215,6 +214,10 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if nextName == "" {
 		nextName = current.Name
 	}
+	spec = CanonicalServiceSpec(spec)
+	if err := ValidateServiceEnv(spec); err != nil {
+		return ServiceRecord{}, false, false, err
+	}
 	if volumeName := ServiceVolumeName(spec); volumeName != "" {
 		if err := s.requireVolumeQuerier(ctx, tx, current.EnvironmentID, volumeName); err != nil {
 			return ServiceRecord{}, false, false, err
@@ -227,7 +230,6 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	if err := validateVolumeReplicaCompatibility(spec, pendingReplicas); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
-	spec = CanonicalServiceSpec(spec)
 	if err := ValidateServicePlacement(spec); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
@@ -235,9 +237,6 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 		return ServiceRecord{}, false, false, err
 	}
 	if err := ValidateRollingStrategy(spec); err != nil {
-		return ServiceRecord{}, false, false, err
-	}
-	if err := d.rejectSealedNameConflicts(ctx, tx, scope.ID(), spec.GetRuntime().GetEnv()); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
 	nameChanged := nextName != current.Name
@@ -274,10 +273,6 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	now := time.Now().UTC()
 	nextSpecRevision := current.SpecRevision + 1
 	sourceChanged := source.DesiredSourceSpec(spec) != nil && !sameDesiredSourceSpec(current.Spec, spec)
-	specJSON, err := protojson.Marshal(spec)
-	if err != nil {
-		return ServiceRecord{}, false, false, err
-	}
 	result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
 		`UPDATE services
 		    SET name = $1,
@@ -299,10 +294,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 		return ServiceRecord{}, false, false, ErrConcurrentUpdate
 	}
 
-	if _, err := journal.RevisionRow(current.ID, nextSpecRevision).Exec(ctx, tx,
-		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-		current.ID, nextSpecRevision, specJSON, now,
-	); err != nil {
+	if err := s.insertServiceRevisionTx(ctx, tx, current.EnvironmentID, current.ID, nextSpecRevision, spec, now); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
 	nextRecord := current
@@ -500,10 +492,6 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 		}
 		now := time.Now().UTC()
 		nextRevision := current.SpecRevision + 1
-		specJSON, err := protojson.Marshal(nextSpec)
-		if err != nil {
-			return err
-		}
 		result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
 			`UPDATE services
 			    SET current_spec_revision = $1,
@@ -524,10 +512,7 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 			return ErrConcurrentUpdate
 		}
 
-		if _, err := journal.RevisionRow(current.ID, nextRevision).Exec(ctx, tx,
-			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-			current.ID, nextRevision, specJSON, now,
-		); err != nil {
+		if err := s.insertServiceRevisionTx(ctx, tx, current.EnvironmentID, current.ID, nextRevision, nextSpec, now); err != nil {
 			return err
 		}
 		rec = current
@@ -656,6 +641,9 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	if err := ValidateServicePlacement(spec); err != nil {
 		return ServiceRecord{}, err
 	}
+	if err := ValidateServiceEnv(spec); err != nil {
+		return ServiceRecord{}, err
+	}
 	if err := ValidateBuildRecipe(spec); err != nil {
 		return ServiceRecord{}, err
 	}
@@ -683,10 +671,6 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	} else {
 		rec.SourceSummary = BuildSourceSummary(spec)
 	}
-	specJSON, err := protojson.Marshal(spec)
-	if err != nil {
-		return ServiceRecord{}, err
-	}
 	if _, err := journal.ServiceRow(rec.ID).Exec(ctx, tx,
 		`INSERT INTO services(
 			id, environment_id, name, current_spec_revision,
@@ -700,10 +684,7 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		}
 		return ServiceRecord{}, err
 	}
-	if _, err := journal.RevisionRow(rec.ID, rec.SpecRevision).Exec(ctx, tx,
-		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-		rec.ID, rec.SpecRevision, specJSON, now,
-	); err != nil {
+	if err := s.insertServiceRevisionTx(ctx, tx, rec.EnvironmentID, rec.ID, rec.SpecRevision, spec, now); err != nil {
 		return ServiceRecord{}, err
 	}
 	if _, err := tx.ExecContext(ctx,

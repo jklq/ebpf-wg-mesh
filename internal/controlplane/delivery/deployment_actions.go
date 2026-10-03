@@ -3,7 +3,6 @@ package delivery
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,7 +14,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/google/uuid"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type DeploymentActionResult struct {
@@ -277,12 +275,7 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 			return "", sql.ErrNoRows
 		}
 	}
-	// A restored spec must be disjoint from live sealed names: rolling back to a pre-sealed
-	// deployment must not resurrect a name as public while the sealed value silently wins.
-	if err := d.rejectSealedNameConflicts(ctx, tx, service.ID, target.ResolvedSpec.GetRuntime().GetEnv()); err != nil {
-		return "", err
-	}
-	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
+	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service, target.ResolvedSpec)
 	if err != nil {
 		return "", err
 	}
@@ -319,17 +312,6 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	if err != nil {
 		return "", err
 	}
-	variableVersionsJSON, err := json.Marshal(target.VariableVersions)
-	if err != nil {
-		return "", err
-	}
-	sealedVersionsJSON, err := json.Marshal(target.SealedVersions)
-	if err != nil {
-		return "", err
-	}
-	if _, err := journal.DeploymentRow(dep.ID).Exec(ctx, tx, `UPDATE deployments SET variable_versions_json = $1, sealed_versions_json = $2 WHERE id = $3`, variableVersionsJSON, sealedVersionsJSON, dep.ID); err != nil {
-		return "", err
-	}
 	service.Spec = target.ResolvedSpec
 	service.SpecRevision = nextSpecRevision
 	service.RolloutGeneration = nextRollout
@@ -342,19 +324,12 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 	return dep.ID, nil
 }
 
-func (s *persistence) insertCopiedServiceRevisionTx(ctx context.Context, tx *sql.Tx, serviceID string, spec *platformv1.ServiceSpec) (int64, error) {
+func (s *persistence) insertCopiedServiceRevisionTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, spec *platformv1.ServiceSpec) (int64, error) {
 	var revision int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(spec_revision), 0) + 1 FROM service_revisions WHERE service_id = $1`, serviceID).Scan(&revision); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(spec_revision), 0) + 1 FROM service_revisions WHERE service_id = $1`, service.ID).Scan(&revision); err != nil {
 		return 0, err
 	}
-	raw, err := protojson.Marshal(CanonicalServiceSpec(spec))
-	if err != nil {
-		return 0, err
-	}
-	if _, err = journal.RevisionRow(serviceID, revision).Exec(ctx, tx,
-		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, $2, $3, $4)`,
-		serviceID, revision, raw, time.Now().UTC(),
-	); err != nil {
+	if err := s.insertServiceRevisionTx(ctx, tx, service.EnvironmentID, service.ID, revision, CanonicalServiceSpec(spec), time.Now().UTC()); err != nil {
 		return 0, err
 	}
 	return revision, nil
@@ -536,12 +511,7 @@ func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service Se
 	if err != nil {
 		return "", err
 	}
-	// Retried specs must be disjoint from live sealed names: a failed deployment may predate
-	// a sealed secret now owning one of its public names.
-	if err := d.rejectSealedNameConflicts(ctx, tx, service.ID, target.ResolvedSpec.GetRuntime().GetEnv()); err != nil {
-		return "", err
-	}
-	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
+	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service, target.ResolvedSpec)
 	if err != nil {
 		return "", err
 	}
@@ -585,12 +555,7 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	if err := validateVolumeReplicaCompatibility(target.ResolvedSpec, desiredReplicas); err != nil {
 		return "", err
 	}
-	// Retried specs must be disjoint from live sealed names: a failed deployment may predate
-	// a sealed secret now owning one of its public names.
-	if err := d.rejectSealedNameConflicts(ctx, tx, service.ID, target.ResolvedSpec.GetRuntime().GetEnv()); err != nil {
-		return "", err
-	}
-	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service.ID, target.ResolvedSpec)
+	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service, target.ResolvedSpec)
 	if err != nil {
 		return "", err
 	}
@@ -616,12 +581,12 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 }
 
 func (s *persistence) latestSuccessfulDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID, excludeID string) (DeploymentRecord, bool, error) {
-	rec, err := scanDeploymentRow(tx.QueryRowContext(ctx,
+	rec, err := s.queryDeploymentRow(ctx, tx,
 		`SELECT `+deploymentSelectColumns+` FROM deployments
 		  WHERE service_id = $1 AND id != $2 AND state IN ($3, $4, $5) AND artifact_id IS NOT NULL
 		  ORDER BY rollout_generation DESC, created_at DESC LIMIT 1 FOR UPDATE`,
 		serviceID, excludeID, DeploymentStateActive, DeploymentStateCompleted, DeploymentStateDraining,
-	))
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return DeploymentRecord{}, false, nil
 	}
