@@ -45,13 +45,14 @@ export function DeploymentDetails({
 	}, [open, serviceId, buildId, attemptCount, buildState]);
 	const reused =
 		record.status?.buildReused || record.status?.reasonCode === "BUILD_REUSED";
+	// A build that succeeded on its first claim has no retry story to tell.
+	const retried = Number(attemptCount ?? 0) > 1;
 	return (
 		<div {...stylex.props(styles.details)}>
-			{artifact?.imageRef && (
+			{artifact?.kind === "direct_image" && artifact.sourceImageRef && (
 				<div {...stylex.props(styles.imageReference)}>
 					<span {...stylex.props(styles.detailLabel)}>Image: </span>
-					{artifact.sourceImageRef && <>{artifact.sourceImageRef} → </>}
-					{artifact.imageRef}
+					{artifact.sourceImageRef}
 				</div>
 			)}
 			{reused && (
@@ -76,7 +77,7 @@ export function DeploymentDetails({
 					</ul>
 				</details>
 			)}
-			{serviceId && buildId && !reused && (
+			{serviceId && buildId && !reused && retried && (
 				<details open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
 					<summary {...stylex.props(styles.secretsSummary)}>
 						Build attempts {attemptCount ?? 0}/
