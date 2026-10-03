@@ -16,6 +16,7 @@ import {
 } from "#/features/dashboard/service-panel/settings/settings-model";
 import { SourceBuildSettings } from "#/features/dashboard/service-panel/settings/source-build-settings";
 import { SourceRepositoryDialog } from "#/features/dashboard/service-panel/settings/source-repository-dialog";
+import { VolumeSettings } from "#/features/dashboard/service-panel/settings/volume-settings";
 import { useAutoQueuedPersist } from "#/hooks/use-auto-queued-persist";
 import type {
 	DashboardHomeState,
@@ -115,6 +116,13 @@ export function PanelSettings({
 				service={service}
 				onQueued={onSaved}
 				onSavingChange={reportReplicaSaving}
+			/>
+
+			<VolumeSettings
+				service={service}
+				services={state.services}
+				volumes={state.volumes}
+				onSaved={onSaved}
 			/>
 
 			<RuntimeSettings service={service} editor={editor} />

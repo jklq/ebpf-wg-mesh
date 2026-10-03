@@ -1,8 +1,8 @@
 import * as stylex from "@stylexjs/stylex";
 import { Database, Trash2 } from "lucide-react";
 import { Button } from "#/components/ui/button";
+import { formatBytes } from "#/lib/bytes";
 import type { DashboardVolume } from "#/lib/dashboard/core/types.server";
-import { safeInteger } from "#/lib/platform-json";
 import { cleanDate, formatRelativeTime } from "#/lib/time";
 import { colors, fonts, space } from "#/styles/tokens.stylex";
 
@@ -73,15 +73,4 @@ export function VolumeRow({
 			</Button>
 		</li>
 	);
-}
-export function formatBytes(raw: string): string {
-	const bytes = safeInteger(raw);
-	const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-	let value = bytes;
-	let unit = 0;
-	while (value >= 1024 && unit < units.length - 1) {
-		value /= 1024;
-		unit += 1;
-	}
-	return `${Number.isInteger(value) ? value : value.toFixed(1)} ${units[unit]}`;
 }
