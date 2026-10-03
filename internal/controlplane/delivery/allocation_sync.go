@@ -43,9 +43,8 @@ type storedDiff struct {
 // shared product projection owns the rows; a journal batch invalidates exactly
 // the assignments whose rendered desired state can change.
 type allocationFingerprint struct {
-	Content  [32]byte
-	VolumeID string
-	Overlay  string
+	Content [32]byte
+	Overlay string
 }
 
 type agentSyncHistory struct {
@@ -304,7 +303,7 @@ func fingerprintState(state *agentv1.DesiredNodeState) (map[string]allocationFin
 }
 
 func serviceFingerprint(svc *agentv1.DesiredService) allocationFingerprint {
-	return allocationFingerprint{Content: fingerprint(svc), VolumeID: svc.GetVolumeId(),
+	return allocationFingerprint{Content: fingerprint(svc),
 		Overlay: reconciliation.HashObservationOverlay([]*agentv1.DesiredService{svc})}
 }
 

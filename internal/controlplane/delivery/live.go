@@ -74,9 +74,12 @@ type Live struct {
 
 	sessions     map[string]*AgentSession
 	observations map[liveObsKey]AllocationObservation
-	admitted     map[string]struct{}
-	timers       map[string]*time.Timer
-	deadlines    map[string]time.Time
+	// volumeObservations is each agent's latest report of the volumes on its
+	// disk, including orphans it retains.
+	volumeObservations map[volumeObsKey]VolumeObservation
+	admitted           map[string]struct{}
+	timers             map[string]*time.Timer
+	deadlines          map[string]time.Time
 
 	product        *journal.Projection
 	durableIndexes map[string]int64
@@ -90,17 +93,18 @@ type Live struct {
 
 func NewLive() *Live {
 	return &Live{
-		now:            func() time.Time { return time.Now().UTC() },
-		ttl:            AgentHealthyTTL,
-		sessions:       make(map[string]*AgentSession),
-		observations:   make(map[liveObsKey]AllocationObservation),
-		admitted:       make(map[string]struct{}),
-		timers:         make(map[string]*time.Timer),
-		deadlines:      make(map[string]time.Time),
-		durableIndexes: make(map[string]int64),
-		product:        journal.NewProjection(journal.DurableState{}),
-		allocSync:      newAllocSync(),
-		evals:          make(chan liveEval, 128),
+		now:                func() time.Time { return time.Now().UTC() },
+		ttl:                AgentHealthyTTL,
+		sessions:           make(map[string]*AgentSession),
+		observations:       make(map[liveObsKey]AllocationObservation),
+		volumeObservations: make(map[volumeObsKey]VolumeObservation),
+		admitted:           make(map[string]struct{}),
+		timers:             make(map[string]*time.Timer),
+		deadlines:          make(map[string]time.Time),
+		durableIndexes:     make(map[string]int64),
+		product:            journal.NewProjection(journal.DurableState{}),
+		allocSync:          newAllocSync(),
+		evals:              make(chan liveEval, 128),
 	}
 }
 
@@ -259,6 +263,7 @@ func (l *Live) resetLocked() {
 	l.accepting = false
 	l.sessions = make(map[string]*AgentSession)
 	l.observations = make(map[liveObsKey]AllocationObservation)
+	l.volumeObservations = make(map[volumeObsKey]VolumeObservation)
 	l.admitted = make(map[string]struct{})
 	l.timers = make(map[string]*time.Timer)
 	l.deadlines = make(map[string]time.Time)

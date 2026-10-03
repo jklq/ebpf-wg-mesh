@@ -44,7 +44,7 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 				continue
 			}
 			if volumeName := ServiceVolumeName(service.Spec); volumeName != "" {
-				blocked[fmt.Sprintf("stateful allocation %s is fenced to volume %q until Stage 7 handoff is available", allocation.ID, volumeName)] = struct{}{}
+				blocked[fmt.Sprintf("allocation %s stays: volume %q is stored on this node and is not replicated", allocation.ID, volumeName)] = struct{}{}
 				continue
 			}
 			if allocation.RolloutState == AllocationRolloutWithdrawing || allocation.RolloutState == AllocationRolloutDraining {
@@ -92,8 +92,6 @@ func (d *Delivery) reconcileDrainingAgent(ctx context.Context, agentID string) (
 				switch {
 				case errors.Is(err, ErrRolloutInProgress):
 					blocked["waiting for an in-progress rollout to finish"] = struct{}{}
-				case errors.Is(err, ErrVolumeRollingUnsupported):
-					blocked[fmt.Sprintf("stateful allocation %s cannot overlap generations until Stage 7 handoff is available", allocation.ID)] = struct{}{}
 				case errors.Is(err, ErrDeploymentActionInvalid), errors.Is(err, sql.ErrNoRows):
 					blocked[err.Error()] = struct{}{}
 				default:
@@ -566,7 +564,7 @@ func failoverPinnedMessage(kind ProjectKind, volumeName string) string {
 		return "agent unhealthy; managed/trusted workload remains pinned to its trusted agent"
 	}
 	if volumeName != "" {
-		return fmt.Sprintf("agent unhealthy; service remains pinned because node-bound volume %q requires replicated storage before failover", volumeName)
+		return fmt.Sprintf("agent unhealthy; volume %q is stored on that node and is not replicated, so the service waits for the node instead of starting elsewhere with an empty volume", volumeName)
 	}
 	return ""
 }

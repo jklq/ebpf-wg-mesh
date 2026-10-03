@@ -471,17 +471,64 @@ func ScanProjectRow(scanner interface{ Scan(...any) error }) (ProjectRecord, err
 	return scanProjectRow(scanner)
 }
 
-func (s *persistence) requireVolumeQuerier(ctx context.Context, q ServiceQueryer, environmentID, volumeName string) error {
+// requireVolumeAttachableQuerier checks that volumeName names a live volume
+// in the environment that no other live service mounts, either in its draft
+// or in its deployed revision. A volume belongs to at most one service: two
+// services on different nodes would otherwise each see their own copy.
+func (s *persistence) requireVolumeAttachableQuerier(ctx context.Context, q ServiceQueryer, environmentID, serviceID, volumeName string) error {
 	var one int
 	err := q.QueryRowContext(ctx, `SELECT 1 FROM volumes WHERE environment_id = $1 AND name = $2 AND deleted_at IS NULL`, environmentID, volumeName).Scan(&one)
 	switch {
-	case err == nil:
-		return nil
 	case errors.Is(err, sql.ErrNoRows):
 		return fmt.Errorf("%w: %q", ErrVolumeNotFound, volumeName)
-	default:
+	case err != nil:
 		return err
 	}
+	owner, err := VolumeAttachmentOwner(ctx, q, environmentID, volumeName, serviceID)
+	if err != nil {
+		return err
+	}
+	if owner != "" {
+		return fmt.Errorf("%w: volume %q is mounted by service %s", ErrVolumeAttached, volumeName, owner)
+	}
+	return nil
+}
+
+// VolumeAttachmentOwner returns the name of a live service other than
+// exceptServiceID whose draft or deployed revision mounts volumeName.
+func VolumeAttachmentOwner(ctx context.Context, q ServiceQueryer, environmentID, volumeName, exceptServiceID string) (string, error) {
+	rows, err := q.QueryContext(ctx, `SELECT svc.id, svc.name, draft.spec_json, deployed.spec_json
+		  FROM live_services svc
+		  JOIN service_revisions draft ON draft.service_id = svc.id AND draft.spec_revision = svc.current_spec_revision
+		  LEFT JOIN service_delivery_status ds ON ds.service_id = svc.id
+		  LEFT JOIN service_rollouts ro ON ro.service_id = svc.id AND ro.rollout_generation = ds.current_rollout_generation
+		  LEFT JOIN service_revisions deployed ON deployed.service_id = ro.service_id AND deployed.spec_revision = ro.spec_revision
+		 WHERE svc.environment_id = $1 AND svc.id <> $2
+		 ORDER BY svc.created_at, svc.id`, environmentID, exceptServiceID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, name string
+		var draftJSON, deployedJSON []byte
+		if err := rows.Scan(&id, &name, &draftJSON, &deployedJSON); err != nil {
+			return "", err
+		}
+		for _, raw := range [][]byte{draftJSON, deployedJSON} {
+			if len(raw) == 0 {
+				continue
+			}
+			spec, err := LoadServiceSpec(raw)
+			if err != nil {
+				return "", err
+			}
+			if ServiceVolumeName(spec) == volumeName {
+				return name, nil
+			}
+		}
+	}
+	return "", rows.Err()
 }
 
 func (s *persistence) listDomainBindings(ctx context.Context, scope authz.Service, includeDeleted bool) ([]DomainBindingRecord, error) {

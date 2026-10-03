@@ -506,13 +506,41 @@ message DomainBinding {
   DeletionState deletion = 9;
 }
 
+enum VolumeState {
+  VOLUME_STATE_UNSPECIFIED = 0;
+  // Not yet on a node: the volume is created where its service first deploys,
+  // or its node has not reported it yet.
+  VOLUME_STATE_PENDING = 1;
+  VOLUME_STATE_READY = 2;
+  // The workload sees ENOSPC; grow the volume to recover.
+  VOLUME_STATE_FULL = 3;
+  // The pinned node is lost, retired, or unreachable. The volume's service
+  // does not start elsewhere with an empty volume.
+  VOLUME_STATE_UNAVAILABLE = 4;
+  VOLUME_STATE_ERROR = 5;
+}
+
+// Volume is a directory on one node that survives redeploys, restarts, and
+// agent upgrades. It is not replicated and not backed up.
 message Volume {
   string id = 1;
   string environment_id = 2;
   string name = 3;
+  // Provisioned size. Grows, never shrinks.
   int64 size_bytes = 4;
   google.protobuf.Timestamp created_at = 5;
   DeletionState deletion = 6;
+  // Node the volume is pinned to; empty until its service first deploys.
+  string agent_id = 7;
+  string agent_name = 8;
+  VolumeState state = 9;
+  string state_message = 10;
+  // Bytes in use as last reported by the pinned node.
+  int64 used_bytes = 11;
+  google.protobuf.Timestamp observed_at = 12;
+  // Created since the last environment release. Releasing commits it;
+  // discarding the drafts that mount it removes it.
+  bool staged = 13;
 }
 
 enum AgentLifecycleState {
@@ -552,6 +580,9 @@ message Agent {
   string maintenance_message = 24;
   google.protobuf.Timestamp credential_revoked_at = 25;
   string wireguard_endpoint = 26;
+  // Volume data the agent retains on disk with no desired entry. Agents never
+  // delete these on their own; an operator decides.
+  repeated string orphaned_volume_ids = 27;
 }
 
 message AllocationStatus {
@@ -801,6 +832,12 @@ message CreateVolumeRequest {
   string environment_id = 1;
   string name = 2;
   int64 size_bytes = 3;
+}
+
+// UpdateVolumeRequest grows a volume. Shrinking is rejected.
+message UpdateVolumeRequest {
+  string volume_id = 1;
+  int64 size_bytes = 2;
 }
 
 message DeleteVolumeRequest {
@@ -1180,6 +1217,7 @@ service PlatformService {
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
 
   rpc CreateVolume(CreateVolumeRequest) returns (Volume);
+  rpc UpdateVolume(UpdateVolumeRequest) returns (Volume);
   rpc DeleteVolume(DeleteVolumeRequest) returns (google.protobuf.Empty);
   rpc PreviewVolumeDeletion(PreviewVolumeDeletionRequest) returns (DeletionPreview);
   rpc ListVolumes(ListVolumesRequest) returns (ListVolumesResponse);

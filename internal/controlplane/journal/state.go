@@ -149,6 +149,7 @@ func (s DurableState) Clone() DurableState {
 		Administration: maps.Clone(s.Administration),
 		Environments:   maps.Clone(s.Environments),
 		Volumes:        maps.Clone(s.Volumes),
+		Destructions:   maps.Clone(s.Destructions),
 		Domains:        maps.Clone(s.Domains),
 	}
 	for id, v := range next.Projects {
@@ -252,6 +253,11 @@ func (s DurableState) applyBatch(batch Batch) (DurableState, error) {
 			return s, err
 		}
 	}
+	if len(batch.Destructions) > 0 {
+		if next.Destructions, err = applyChanges(s.Destructions, batch.Destructions); err != nil {
+			return s, err
+		}
+	}
 	if len(batch.Domains) > 0 {
 		if next.Domains, err = applyChanges(s.Domains, batch.Domains); err != nil {
 			return s, err
@@ -288,6 +294,7 @@ func (b Batch) Empty() bool {
 		len(b.Administration) == 0 &&
 		len(b.Environments) == 0 &&
 		len(b.Volumes) == 0 &&
+		len(b.Destructions) == 0 &&
 		len(b.Domains) == 0
 }
 
@@ -303,6 +310,7 @@ func Diff(before, after DurableState) Batch {
 		Administration: changes(before.Administration, after.Administration),
 		Environments:   changes(before.Environments, after.Environments),
 		Volumes:        changes(before.Volumes, after.Volumes),
+		Destructions:   changes(before.Destructions, after.Destructions),
 		Domains:        changes(before.Domains, after.Domains),
 	}
 }

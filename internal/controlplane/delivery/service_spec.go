@@ -125,6 +125,19 @@ func ServiceVolumeName(spec *platformv1.ServiceSpec) string {
 	return strings.TrimSpace(serviceRuntime(spec).GetVolume().GetVolumeName())
 }
 
+// ValidateServiceVolume checks the mount of a canonical spec. Whether the
+// named volume exists and is free is checked against the environment.
+func ValidateServiceVolume(spec *platformv1.ServiceSpec) error {
+	volume := serviceRuntime(spec).GetVolume()
+	if volume == nil {
+		return nil
+	}
+	if err := runtimeutil.ValidateVolumeMountPath(volume.GetMountPath()); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidVolumeMount, err)
+	}
+	return nil
+}
+
 func validateVolumeReplicaCompatibility(spec *platformv1.ServiceSpec, desiredReplicaCount int32) error {
 	volumeName := strings.TrimSpace(ServiceVolumeName(spec))
 	if volumeName == "" || desiredReplicaCount <= 1 {
@@ -454,13 +467,4 @@ func compactServiceID(serviceID string) string {
 		return "unknown"
 	}
 	return compact.String()
-}
-
-func volumeKey(environmentID, name string) string {
-	var b strings.Builder
-	b.Grow(len(environmentID) + 1 + len(name))
-	b.WriteString(environmentID)
-	b.WriteByte(0)
-	b.WriteString(name)
-	return b.String()
 }

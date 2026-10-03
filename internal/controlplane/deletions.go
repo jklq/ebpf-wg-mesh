@@ -53,15 +53,14 @@ func (s *catalogPersistence) clearEnvironmentTombstoneTx(ctx context.Context, tx
 }
 
 // lockVolumeTx locks a volume row, its deletion state, and the environment's production flag.
-func (s *catalogPersistence) lockVolumeTx(ctx context.Context, tx *sql.Tx, scope authz.Volume) (deliverycore.VolumeRecord, bool, error) {
+func (s *catalogPersistence) lockVolumeTx(ctx context.Context, tx *sql.Tx, scope authz.Volume) (deliverycore.VolumeRecord, error) {
 	var rec deliverycore.VolumeRecord
 	var self, environment, project deliverycore.Tombstone
-	var production bool
-	targets := []any{&rec.ID, &rec.EnvironmentID, &rec.Name, &rec.SizeBytes, &rec.CreatedAt, &production}
+	targets := []any{&rec.ID, &rec.EnvironmentID, &rec.Name, &rec.SizeBytes, &rec.Staged, &rec.CreatedAt}
 	targets = deliverycore.ScanTombstone(targets, &self)
 	targets = deliverycore.ScanTombstone(targets, &environment)
 	err := tx.QueryRowContext(ctx,
-		`SELECT v.id, v.environment_id, v.name, v.size_bytes, v.created_at, e.is_production,
+		`SELECT v.id, v.environment_id, v.name, v.size_bytes, v.staged, v.created_at,
 		        v.deleted_at, v.deleted_by_user_id, v.delete_expires_at,
 		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
 		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
@@ -72,10 +71,10 @@ func (s *catalogPersistence) lockVolumeTx(ctx context.Context, tx *sql.Tx, scope
 		scope.ID(), scope.EnvironmentID(),
 	).Scan(deliverycore.ScanTombstone(targets, &project)...)
 	if err != nil {
-		return deliverycore.VolumeRecord{}, false, err
+		return deliverycore.VolumeRecord{}, err
 	}
 	rec.Deletion = deliverycore.EffectiveDeletion(self, environment, project)
-	return rec, production, nil
+	return rec, nil
 }
 
 func (s *catalogPersistence) tombstoneVolumeTx(ctx context.Context, tx *sql.Tx, volumeID, userID string, now time.Time) (bool, error) {

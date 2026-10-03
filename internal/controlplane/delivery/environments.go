@@ -69,6 +69,9 @@ func (d *Delivery) releaseEnvironmentTx(ctx context.Context, scope authz.Environ
 		if environment.Deletion != nil {
 			return ErrEnvironmentDeleted
 		}
+		if err := commitStagedVolumesTx(ctx, tx, environment.ID); err != nil {
+			return err
+		}
 		rows, err := tx.QueryContext(ctx, `SELECT s.id
 			FROM services s
 			JOIN service_delivery_status ds ON ds.service_id = s.id
@@ -114,7 +117,7 @@ func (d *Delivery) releaseEnvironmentTx(ctx context.Context, scope authz.Environ
 				return err
 			}
 			if volumeName := ServiceVolumeName(service.Spec); volumeName != "" {
-				if err := d.store.requireVolumeQuerier(ctx, tx, environment.ID, volumeName); err != nil {
+				if err := d.store.requireVolumeAttachableQuerier(ctx, tx, environment.ID, service.ID, volumeName); err != nil {
 					return err
 				}
 			}

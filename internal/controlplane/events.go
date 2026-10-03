@@ -122,9 +122,17 @@ func affectedAgentIDs(before, after *journal.Projection, batch journal.Batch) []
 	for _, c := range batch.Environments {
 		add(environments, c.Key)
 	}
+	// Volume rows render on their pinned agent; the environment's services
+	// resolve mounts by volume name, so its hosts re-render too.
 	for _, c := range batch.Volumes {
 		add(environments, before.Volumes[c.Key].EnvironmentID)
 		add(environments, after.Volumes[c.Key].EnvironmentID)
+		add(agents, before.Volumes[c.Key].AgentID)
+		add(agents, after.Volumes[c.Key].AgentID)
+	}
+	for _, c := range batch.Destructions {
+		add(agents, before.Destructions[c.Key].AgentID)
+		add(agents, after.Destructions[c.Key].AgentID)
 	}
 	for _, c := range batch.Services {
 		serviceEnvironment(c.Key)

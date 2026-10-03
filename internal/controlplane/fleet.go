@@ -26,6 +26,7 @@ import (
 type fleetLiveReader interface {
 	AgentUsage() map[string]deliverycore.AgentUsage
 	Position() deliverycore.LivePosition
+	OrphanedVolumes(agentID string) []string
 }
 
 func (s *fleetPersistence) AuthorizeAgentCredential(ctx context.Context, agentID string) error {
@@ -129,6 +130,7 @@ func (s *fleetPersistence) fleetView(ctx context.Context, user authz.User) (*pla
 		item.AllocatedMemoryMebibytes = used.MemoryMebibytes
 		item.HeadroomCpuMillis = max(item.SchedulableCpuMillis-used.CPUMillis, 0)
 		item.HeadroomMemoryMebibytes = max(item.SchedulableMemoryMebibytes-used.MemoryMebibytes, 0)
+		item.OrphanedVolumeIds = s.live.OrphanedVolumes(rec.ID)
 		if recommendedVersion != "" && item.SoftwareVersion != "" && item.SoftwareVersion != recommendedVersion && rec.LifecycleState != deliverycore.AgentStateRetired {
 			item.VersionSkewWarning = fmt.Sprintf("reports %s while the fleet majority reports %s", item.SoftwareVersion, recommendedVersion)
 		}

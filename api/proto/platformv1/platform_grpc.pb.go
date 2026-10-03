@@ -49,6 +49,7 @@ const (
 	PlatformService_GetService_FullMethodName                  = "/platform.v1.PlatformService/GetService"
 	PlatformService_ListServices_FullMethodName                = "/platform.v1.PlatformService/ListServices"
 	PlatformService_CreateVolume_FullMethodName                = "/platform.v1.PlatformService/CreateVolume"
+	PlatformService_UpdateVolume_FullMethodName                = "/platform.v1.PlatformService/UpdateVolume"
 	PlatformService_DeleteVolume_FullMethodName                = "/platform.v1.PlatformService/DeleteVolume"
 	PlatformService_PreviewVolumeDeletion_FullMethodName       = "/platform.v1.PlatformService/PreviewVolumeDeletion"
 	PlatformService_ListVolumes_FullMethodName                 = "/platform.v1.PlatformService/ListVolumes"
@@ -100,6 +101,7 @@ type PlatformServiceClient interface {
 	GetService(ctx context.Context, in *GetServiceRequest, opts ...grpc.CallOption) (*Service, error)
 	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
 	CreateVolume(ctx context.Context, in *CreateVolumeRequest, opts ...grpc.CallOption) (*Volume, error)
+	UpdateVolume(ctx context.Context, in *UpdateVolumeRequest, opts ...grpc.CallOption) (*Volume, error)
 	DeleteVolume(ctx context.Context, in *DeleteVolumeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	PreviewVolumeDeletion(ctx context.Context, in *PreviewVolumeDeletionRequest, opts ...grpc.CallOption) (*DeletionPreview, error)
 	ListVolumes(ctx context.Context, in *ListVolumesRequest, opts ...grpc.CallOption) (*ListVolumesResponse, error)
@@ -416,6 +418,16 @@ func (c *platformServiceClient) CreateVolume(ctx context.Context, in *CreateVolu
 	return out, nil
 }
 
+func (c *platformServiceClient) UpdateVolume(ctx context.Context, in *UpdateVolumeRequest, opts ...grpc.CallOption) (*Volume, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Volume)
+	err := c.cc.Invoke(ctx, PlatformService_UpdateVolume_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) DeleteVolume(ctx context.Context, in *DeleteVolumeRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -609,6 +621,7 @@ type PlatformServiceServer interface {
 	GetService(context.Context, *GetServiceRequest) (*Service, error)
 	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
 	CreateVolume(context.Context, *CreateVolumeRequest) (*Volume, error)
+	UpdateVolume(context.Context, *UpdateVolumeRequest) (*Volume, error)
 	DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error)
 	PreviewVolumeDeletion(context.Context, *PreviewVolumeDeletionRequest) (*DeletionPreview, error)
 	ListVolumes(context.Context, *ListVolumesRequest) (*ListVolumesResponse, error)
@@ -721,6 +734,9 @@ func (UnimplementedPlatformServiceServer) ListServices(context.Context, *ListSer
 }
 func (UnimplementedPlatformServiceServer) CreateVolume(context.Context, *CreateVolumeRequest) (*Volume, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateVolume not implemented")
+}
+func (UnimplementedPlatformServiceServer) UpdateVolume(context.Context, *UpdateVolumeRequest) (*Volume, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateVolume not implemented")
 }
 func (UnimplementedPlatformServiceServer) DeleteVolume(context.Context, *DeleteVolumeRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeleteVolume not implemented")
@@ -1313,6 +1329,24 @@ func _PlatformService_CreateVolume_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_UpdateVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateVolumeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).UpdateVolume(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_UpdateVolume_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).UpdateVolume(ctx, req.(*UpdateVolumeRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_DeleteVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteVolumeRequest)
 	if err := dec(in); err != nil {
@@ -1723,6 +1757,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreateVolume",
 			Handler:    _PlatformService_CreateVolume_Handler,
+		},
+		{
+			MethodName: "UpdateVolume",
+			Handler:    _PlatformService_UpdateVolume_Handler,
 		},
 		{
 			MethodName: "DeleteVolume",

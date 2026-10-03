@@ -150,7 +150,16 @@ type Volume struct {
 	EnvironmentID string    `json:"environment_id"`
 	Name          string    `json:"name"`
 	SizeBytes     int64     `json:"size_bytes"`
+	AgentID       string    `json:"agent_id"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// VolumeDestruction is an explicit instruction for an agent to delete a
+// volume's data. It outlives the volume row.
+type VolumeDestruction struct {
+	VolumeID    string    `json:"volume_id"`
+	AgentID     string    `json:"agent_id"`
+	RequestedAt time.Time `json:"requested_at"`
 }
 
 type Domain struct {
@@ -175,6 +184,7 @@ type DurableState struct {
 	Administration map[string]AgentAdministration
 	Environments   map[string]Environment
 	Volumes        map[string]Volume
+	Destructions   map[string]VolumeDestruction
 	Domains        map[string]Domain
 }
 
@@ -195,5 +205,6 @@ type Batch struct {
 	Administration []Change[AgentAdministration] `json:"administration,omitempty"`
 	Environments   []Change[Environment]         `json:"environments,omitempty"`
 	Volumes        []Change[Volume]              `json:"volumes,omitempty"`
+	Destructions   []Change[VolumeDestruction]   `json:"volume_destructions,omitempty"`
 	Domains        []Change[Domain]              `json:"domains,omitempty"`
 }

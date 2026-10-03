@@ -125,6 +125,9 @@ const (
 	// PlatformServiceCreateVolumeProcedure is the fully-qualified name of the PlatformService's
 	// CreateVolume RPC.
 	PlatformServiceCreateVolumeProcedure = "/platform.v1.PlatformService/CreateVolume"
+	// PlatformServiceUpdateVolumeProcedure is the fully-qualified name of the PlatformService's
+	// UpdateVolume RPC.
+	PlatformServiceUpdateVolumeProcedure = "/platform.v1.PlatformService/UpdateVolume"
 	// PlatformServiceDeleteVolumeProcedure is the fully-qualified name of the PlatformService's
 	// DeleteVolume RPC.
 	PlatformServiceDeleteVolumeProcedure = "/platform.v1.PlatformService/DeleteVolume"
@@ -244,6 +247,7 @@ type PlatformServiceClient interface {
 	GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error)
 	ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error)
 	CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
+	UpdateVolume(context.Context, *connect.Request[platformv1.UpdateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
 	DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error)
 	PreviewVolumeDeletion(context.Context, *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error)
@@ -447,6 +451,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("CreateVolume")),
 			connect.WithClientOptions(opts...),
 		),
+		updateVolume: connect.NewClient[platformv1.UpdateVolumeRequest, platformv1.Volume](
+			httpClient,
+			baseURL+PlatformServiceUpdateVolumeProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("UpdateVolume")),
+			connect.WithClientOptions(opts...),
+		),
 		deleteVolume: connect.NewClient[platformv1.DeleteVolumeRequest, emptypb.Empty](
 			httpClient,
 			baseURL+PlatformServiceDeleteVolumeProcedure,
@@ -577,6 +587,7 @@ type platformServiceClient struct {
 	getService                  *connect.Client[platformv1.GetServiceRequest, platformv1.Service]
 	listServices                *connect.Client[platformv1.ListServicesRequest, platformv1.ListServicesResponse]
 	createVolume                *connect.Client[platformv1.CreateVolumeRequest, platformv1.Volume]
+	updateVolume                *connect.Client[platformv1.UpdateVolumeRequest, platformv1.Volume]
 	deleteVolume                *connect.Client[platformv1.DeleteVolumeRequest, emptypb.Empty]
 	previewVolumeDeletion       *connect.Client[platformv1.PreviewVolumeDeletionRequest, platformv1.DeletionPreview]
 	listVolumes                 *connect.Client[platformv1.ListVolumesRequest, platformv1.ListVolumesResponse]
@@ -740,6 +751,11 @@ func (c *platformServiceClient) CreateVolume(ctx context.Context, req *connect.R
 	return c.createVolume.CallUnary(ctx, req)
 }
 
+// UpdateVolume calls platform.v1.PlatformService.UpdateVolume.
+func (c *platformServiceClient) UpdateVolume(ctx context.Context, req *connect.Request[platformv1.UpdateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
+	return c.updateVolume.CallUnary(ctx, req)
+}
+
 // DeleteVolume calls platform.v1.PlatformService.DeleteVolume.
 func (c *platformServiceClient) DeleteVolume(ctx context.Context, req *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.deleteVolume.CallUnary(ctx, req)
@@ -851,6 +867,7 @@ type PlatformServiceHandler interface {
 	GetService(context.Context, *connect.Request[platformv1.GetServiceRequest]) (*connect.Response[platformv1.Service], error)
 	ListServices(context.Context, *connect.Request[platformv1.ListServicesRequest]) (*connect.Response[platformv1.ListServicesResponse], error)
 	CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
+	UpdateVolume(context.Context, *connect.Request[platformv1.UpdateVolumeRequest]) (*connect.Response[platformv1.Volume], error)
 	DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error)
 	PreviewVolumeDeletion(context.Context, *connect.Request[platformv1.PreviewVolumeDeletionRequest]) (*connect.Response[platformv1.DeletionPreview], error)
 	ListVolumes(context.Context, *connect.Request[platformv1.ListVolumesRequest]) (*connect.Response[platformv1.ListVolumesResponse], error)
@@ -1050,6 +1067,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("CreateVolume")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceUpdateVolumeHandler := connect.NewUnaryHandler(
+		PlatformServiceUpdateVolumeProcedure,
+		svc.UpdateVolume,
+		connect.WithSchema(platformServiceMethods.ByName("UpdateVolume")),
+		connect.WithHandlerOptions(opts...),
+	)
 	platformServiceDeleteVolumeHandler := connect.NewUnaryHandler(
 		PlatformServiceDeleteVolumeProcedure,
 		svc.DeleteVolume,
@@ -1206,6 +1229,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceListServicesHandler.ServeHTTP(w, r)
 		case PlatformServiceCreateVolumeProcedure:
 			platformServiceCreateVolumeHandler.ServeHTTP(w, r)
+		case PlatformServiceUpdateVolumeProcedure:
+			platformServiceUpdateVolumeHandler.ServeHTTP(w, r)
 		case PlatformServiceDeleteVolumeProcedure:
 			platformServiceDeleteVolumeHandler.ServeHTTP(w, r)
 		case PlatformServicePreviewVolumeDeletionProcedure:
@@ -1361,6 +1386,10 @@ func (UnimplementedPlatformServiceHandler) ListServices(context.Context, *connec
 
 func (UnimplementedPlatformServiceHandler) CreateVolume(context.Context, *connect.Request[platformv1.CreateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CreateVolume is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) UpdateVolume(context.Context, *connect.Request[platformv1.UpdateVolumeRequest]) (*connect.Response[platformv1.Volume], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.UpdateVolume is not implemented"))
 }
 
 func (UnimplementedPlatformServiceHandler) DeleteVolume(context.Context, *connect.Request[platformv1.DeleteVolumeRequest]) (*connect.Response[emptypb.Empty], error) {

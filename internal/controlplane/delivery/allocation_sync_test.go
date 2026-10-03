@@ -205,52 +205,73 @@ func TestAgentSyncPlanOversizedPatchRequiresCheckpoint(t *testing.T) {
 	}
 }
 
-func TestAgentSyncCheckpointAndDiffAgreeOnMountedVolumes(t *testing.T) {
-	for _, reason := range []string{"lost assignment", "unresolved image"} {
-		t.Run(reason, func(t *testing.T) {
-			d, state, _ := syncFixture(t)
-			delete(state.Assignments, "remove")
-			delete(state.Assignments, "update")
-			revision := state.Revisions["s/1"]
-			revision.SpecJSON = []byte(`{"runtime":{"volume":{"volumeName":"data","mountPath":"/data"}}}`)
-			state.Revisions["s/1"] = revision
-			state.Volumes = map[string]journal.Volume{"v": {ID: "v", EnvironmentID: "e", Name: "data", SizeBytes: 64 << 20}}
-			applySyncFixture(t, d, state)
-			baseline, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", RequireCheckpoint: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(baseline.Checkpoint.GetServices()) != 1 || baseline.Checkpoint.GetServices()[0].GetVolumeId() != "v" || len(baseline.Checkpoint.GetVolumes()) != 1 {
-				t.Fatalf("mounted baseline is incomplete: %+v", baseline.Checkpoint)
-			}
-			d.AgentCheckpointSent(baseline.Checkpoint)
-			if reason == "lost assignment" {
-				a := state.Assignments["keep"]
-				a.RolloutState = AllocationRolloutLost
-				state.Assignments["keep"] = a
-			} else {
-				rollout := state.Rollouts["s/1"]
-				rollout.ImageDigest = ""
-				state.Rollouts["s/1"] = rollout
-			}
-			applySyncFixture(t, d, state)
-			incremental := nextSync(t, d, baseline)
-			if incremental.Checkpoint != nil || len(incremental.Diffs) != 1 {
-				t.Fatalf("expected a retained diff: %+v", incremental)
-			}
-			diff := incremental.Diffs[0]
-			if len(diff.GetStops()) != 1 || diff.GetStops()[0] != "keep" || len(diff.GetVolumeStops()) != 1 || diff.GetVolumeStops()[0] != "v" ||
-				len(diff.GetStarts())+len(diff.GetUpdates())+len(diff.GetVolumeStarts()) != 0 {
-				t.Fatalf("diff must remove exactly the unrendered workload and its mount: %+v", diff)
-			}
-			checkpoint, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", BaseRevision: incremental.Cursor, RequireCheckpoint: true})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(checkpoint.Checkpoint.GetServices()) != 0 || len(checkpoint.Checkpoint.GetVolumes()) != 0 {
-				t.Fatalf("checkpoint retains resources removed by the equivalent diff: %+v", checkpoint.Checkpoint)
-			}
-		})
+// A pinned volume stays in desired state after its workload stops: absence
+// from desired state must never be how data gets deleted. Only an explicit
+// destruction removes it, and checkpoint and diff agree at every step.
+func TestAgentSyncPinnedVolumeOutlivesWorkloadUntilDestroyed(t *testing.T) {
+	d, state, _ := syncFixture(t)
+	delete(state.Assignments, "remove")
+	delete(state.Assignments, "update")
+	revision := state.Revisions["s/1"]
+	revision.SpecJSON = []byte(`{"runtime":{"volume":{"volumeName":"data","mountPath":"/var/lib/data"}}}`)
+	state.Revisions["s/1"] = revision
+	state.Volumes = map[string]journal.Volume{"v": {ID: "v", EnvironmentID: "e", Name: "data", SizeBytes: 64 << 20, AgentID: "agent"}}
+	applySyncFixture(t, d, state)
+	baseline, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", RequireCheckpoint: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(baseline.Checkpoint.GetServices()) != 1 || baseline.Checkpoint.GetServices()[0].GetVolumeId() != "v" || len(baseline.Checkpoint.GetVolumes()) != 1 {
+		t.Fatalf("mounted baseline is incomplete: %+v", baseline.Checkpoint)
+	}
+	d.AgentCheckpointSent(baseline.Checkpoint)
+
+	checkpointVolumes := func(cursor int64) []*agentv1.DesiredVolume {
+		t.Helper()
+		plan, err := d.PlanAgentSync(context.Background(), AgentSyncRequest{AgentID: "agent", BaseRevision: cursor, RequireCheckpoint: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return plan.Checkpoint.GetVolumes()
+	}
+
+	a := state.Assignments["keep"]
+	a.RolloutState = AllocationRolloutLost
+	state.Assignments["keep"] = a
+	applySyncFixture(t, d, state)
+	stopped := nextSync(t, d, baseline)
+	if stopped.Checkpoint != nil || len(stopped.Diffs) != 1 {
+		t.Fatalf("expected a retained diff: %+v", stopped)
+	}
+	if diff := stopped.Diffs[0]; len(diff.GetStops()) != 1 || len(diff.GetVolumeStops())+len(diff.GetVolumeStarts()) != 0 {
+		t.Fatalf("stopping the workload must leave its pinned volume alone: %+v", diff)
+	}
+	if volumes := checkpointVolumes(stopped.Cursor); len(volumes) != 1 || volumes[0].GetDestroy() {
+		t.Fatalf("checkpoint after stop = %+v, want the retained volume", volumes)
+	}
+
+	delete(state.Volumes, "v")
+	state.Destructions = map[string]journal.VolumeDestruction{"v": {VolumeID: "v", AgentID: "agent"}}
+	applySyncFixture(t, d, state)
+	destroy := nextSync(t, d, stopped)
+	if destroy.Checkpoint != nil || len(destroy.Diffs) != 1 {
+		t.Fatalf("expected a retained diff: %+v", destroy)
+	}
+	if starts := destroy.Diffs[0].GetVolumeStarts(); len(starts) != 1 || starts[0].GetVolumeId() != "v" || !starts[0].GetDestroy() {
+		t.Fatalf("destruction must arrive as an explicit destroy: %+v", destroy.Diffs[0])
+	}
+	if volumes := checkpointVolumes(destroy.Cursor); len(volumes) != 1 || !volumes[0].GetDestroy() {
+		t.Fatalf("checkpoint during destruction = %+v, want a destroy instruction", volumes)
+	}
+
+	state.Destructions = map[string]journal.VolumeDestruction{}
+	applySyncFixture(t, d, state)
+	done := nextSync(t, d, destroy)
+	if done.Checkpoint != nil || len(done.Diffs) != 1 || len(done.Diffs[0].GetVolumeStops()) != 1 {
+		t.Fatalf("completed destruction must stop tracking the volume: %+v", done)
+	}
+	if volumes := checkpointVolumes(done.Cursor); len(volumes) != 0 {
+		t.Fatalf("checkpoint after destruction = %+v, want none", volumes)
 	}
 }
 

@@ -228,7 +228,7 @@ func TestValidateVolumeReplicaCompatibility(t *testing.T) {
 	t.Parallel()
 
 	volumeSpec := &platformv1.ServiceSpec{
-		Runtime: &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "data"}},
+		Runtime: &platformv1.ServiceRuntime{Volume: &platformv1.ServiceVolumeMount{VolumeName: "data", MountPath: "/data"}},
 	}
 	if err := validateVolumeReplicaCompatibility(volumeSpec, 1); err != nil {
 		t.Fatalf("volume with 1 replica should be allowed: %v", err)

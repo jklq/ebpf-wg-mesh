@@ -27,7 +27,10 @@ func AgentRow(id string) Mutation          { return row(TableAgents, id) }
 func AdministrationRow(id string) Mutation { return row(TableAdministration, id) }
 func EnvironmentRow(id string) Mutation    { return row(TableEnvironments, id) }
 func VolumeRow(id string) Mutation         { return row(TableVolumes, id) }
-func DomainRow(hostname string) Mutation   { return row(TableDomains, hostname) }
+func DestructionRow(volumeID string) Mutation {
+	return row(TableDestructions, volumeID)
+}
+func DomainRow(hostname string) Mutation { return row(TableDomains, hostname) }
 func RevisionRow(serviceID string, revision int64) Mutation {
 	return row(TableRevisions, compositeKey(serviceID, revision))
 }
