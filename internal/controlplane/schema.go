@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 35
+const currentSchemaVersion = 36
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -336,6 +336,7 @@ var currentSchema = []string{
 			artifact_id STRING NULL,
 			failure_reason STRING NOT NULL DEFAULT '',
 			target_allocation_id STRING NULL,
+			recreate BOOL NOT NULL DEFAULT false,
 			completed_at TIMESTAMPTZ NULL,
 			progress_at TIMESTAMPTZ NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL,

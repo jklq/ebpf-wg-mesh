@@ -164,3 +164,35 @@ func TestRolloutFailurePreservesServingReplacements(t *testing.T) {
 		t.Fatalf("failure cleanup: %+v", plan)
 	}
 }
+
+func TestRecreateRolloutStopsPredecessorBeforePlacing(t *testing.T) {
+	now := time.Date(2026, 10, 3, 0, 0, 0, 0, time.UTC)
+	rollout := rolloutRecord{State: rolloutStateInProgress, Generation: 2, DesiredReplicaCount: 1, Recreate: true, Strategy: canonicalRollingStrategy(nil), ProgressAt: now}
+	serving := policyAllocation("old", AllocationRolloutServing, 1, now)
+
+	plan := decideRollout(rolloutSnapshot{Rollout: rollout, Allocations: []AllocationRecord{serving}}, now)
+	if !plan.Continue || plan.PlacementSlots != 0 {
+		t.Fatalf("recreate placed beside a serving predecessor: %+v", plan)
+	}
+	finish := decideRolloutPlacement(rolloutSnapshot{Rollout: rollout, Allocations: plan.Allocations}, 0, false, now)
+	if len(finish.Withdraw) != 1 || finish.Withdraw[0].AllocationID != "old" || !finish.Result.NeedsIngressConvergence {
+		t.Fatalf("recreate did not withdraw the predecessor: %+v", finish)
+	}
+
+	draining := serving
+	draining.RolloutState = AllocationRolloutDraining
+	draining.DrainDeadline = sql.NullTime{Valid: true, Time: now.Add(time.Minute)}
+	plan = decideRollout(rolloutSnapshot{Rollout: rollout, Allocations: []AllocationRecord{draining}}, now.Add(10*time.Minute))
+	if len(plan.Remove) != 1 || plan.PlacementSlots != 1 {
+		t.Fatalf("recreate did not place after the predecessor drained: %+v", plan)
+	}
+
+	plan = decideRollout(rolloutSnapshot{Rollout: rollout, Allocations: []AllocationRecord{draining}}, now)
+	if plan.PlacementSlots != 0 {
+		t.Fatalf("recreate placed while the predecessor still drains: %+v", plan)
+	}
+	finish = decideRolloutPlacement(rolloutSnapshot{Rollout: rollout, Allocations: plan.Allocations}, 0, false, now.Add(time.Hour))
+	if finish.Failure != "" || finish.PlacementMessage == "" {
+		t.Fatalf("draining predecessor should wait, not fail: %+v", finish)
+	}
+}

@@ -276,7 +276,7 @@ func TestNewerRolloutKeepsServingReplacementAsPredecessor(t *testing.T) {
 	}
 }
 
-func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
+func TestVolumeBackedServiceRecreatesInsteadOfOverlapping(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
@@ -288,8 +288,10 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
-	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-1")); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"node-1", "node-2"} {
+		if _, err := upsertTestAgent(t, store, ctx, agentHello(name)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	envID := productionEnvironmentID(t, store, projects[0].ID)
 	if _, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data", 64<<20); err != nil {
@@ -301,18 +303,60 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
+	old := allocationForGeneration(t, store, service.ID, 1)[0]
+	markRolloutAllocationReady(t, store, old)
+	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
+		t.Fatalf("complete initial rollout: %v", err)
+	}
+	assertRolloutState(t, store, service.ID, 1, "succeeded", "")
+
 	next := rollingTestSpec("example.test/disk:b", 1, 1)
 	next.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data"}
 	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", next); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}
-	_, err = releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID)
-	if !errors.Is(err, deliverycore.ErrVolumeRollingUnsupported) {
-		t.Fatalf("release volume-backed service: got %v, want %v", err, deliverycore.ErrVolumeRollingUnsupported)
+	if _, err := releaseEnvironmentServiceForTest(ctx, store, "user-1", service.EnvironmentID, service.ID); err != nil {
+		t.Fatalf("release volume-backed service: %v", err)
 	}
-	if got := len(mustRolloutAllocations(t, store, service.ID)); got != 1 {
-		t.Fatalf("volume-backed release overlapped allocations: %d", got)
+	if got := allocationForGeneration(t, store, service.ID, 2); len(got) != 0 {
+		t.Fatalf("replacement started beside the volume holder: %+v", got)
 	}
+
+	fixedNow := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	delivery := newTestDelivery(store, nil, &rolloutIngressProbe{store: store}, nil)
+	reconciler := newRolloutReconciler(delivery, time.Second)
+	delivery.rolloutNow = func() time.Time { return fixedNow }
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile to drain: %v", err)
+	}
+	old = allocationByID(t, store, service.ID, old.ID)
+	if old.RolloutState != deliverycore.AllocationRolloutDraining {
+		t.Fatalf("predecessor should drain before its replacement starts: %+v", old)
+	}
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile while draining: %v", err)
+	}
+	if got := allocationForGeneration(t, store, service.ID, 2); len(got) != 0 {
+		t.Fatalf("replacement started while the predecessor still holds the volume: %+v", got)
+	}
+
+	markAllDrainingComplete(t, store, service.ID)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile after drain: %v", err)
+	}
+	allocations := mustRolloutAllocations(t, store, service.ID)
+	if len(allocations) != 1 || allocations[0].ID == old.ID {
+		t.Fatalf("allocations after drain = %+v, want only the replacement", allocations)
+	}
+	replacement := allocations[0]
+	if replacement.AgentID != "node-1" || replacement.DesiredRolloutGeneration != 2 {
+		t.Fatalf("replacement = %+v, want generation 2 on the volume's node-1", replacement)
+	}
+	markRolloutAllocationReady(t, store, replacement)
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatalf("reconcile to complete: %v", err)
+	}
+	assertRolloutState(t, store, service.ID, 2, "succeeded", "")
 }
 
 func TestRollingReplacementRecoversWhenTargetNodeIsLost(t *testing.T) {

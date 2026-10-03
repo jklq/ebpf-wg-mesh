@@ -73,6 +73,7 @@ type Rollout struct {
 	ImageDigest         string          `json:"image_digest"`
 	FailureReason       string          `json:"failure_reason"`
 	TargetAllocationID  string          `json:"target_allocation_id"`
+	Recreate            bool            `json:"recreate"`
 	CompletedAt         *time.Time      `json:"completed_at"`
 	ProgressAt          time.Time       `json:"progress_at"`
 	CreatedAt           time.Time       `json:"created_at"`

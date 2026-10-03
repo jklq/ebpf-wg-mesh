@@ -584,6 +584,7 @@ func (l *Live) rolloutSnapshot(serviceID string) (rolloutSnapshot, string, bool)
 			ImageDigest:         rollout.ImageDigest,
 			FailureReason:       rollout.FailureReason,
 			TargetAllocationID:  rollout.TargetAllocationID,
+			Recreate:            rollout.Recreate,
 			CreatedAt:           rollout.CreatedAt,
 			ProgressAt:          rollout.ProgressAt,
 			Strategy:            &platformv1.RollingStrategy{},

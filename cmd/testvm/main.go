@@ -21,8 +21,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/hetznercloud/hcloud-go/v2/hcloud"
-	"google.golang.org/grpc/codes"
-	grpcstatus "google.golang.org/grpc/status"
 )
 
 const (
@@ -680,7 +678,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV1); err != nil {
 		return fmt.Errorf("verify service response in allocation netns: %w", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("test -f /var/lib/ebpf-wg-mesh/agent/desired/%s.json && test -f /var/lib/ebpf-wg-mesh/agent/volumes/%s/index.html && grep -Fqx %q /var/lib/ebpf-wg-mesh/agent/volumes/%s/index.html && ctr --namespace default containers list | awk '{print $1}' | grep -Fx %q >/dev/null", allocationID, volume.GetId(), markerV1, volume.GetId(), managedContainerName(allocationID))); err != nil {
+	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("test -f /var/lib/ebpf-wg-mesh/agent/desired/%s.json && grep -Fqx %q %s/index.html && ctr --namespace default containers list | awk '{print $1}' | grep -Fx %q >/dev/null", allocationID, markerV1, volumeHostDataPath(volume.GetId()), managedContainerName(allocationID))); err != nil {
 		return fmt.Errorf("verify allocated host state on %s: %w", allocatedHost.Name, err)
 	}
 
@@ -702,37 +700,26 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	}
 	releaseCtx, cancelRelease := context.WithTimeout(userCtx, 30*time.Second)
 	defer cancelRelease()
-	_, err = client.ReleaseEnvironment(releaseCtx, &platformv1.ReleaseEnvironmentRequest{
+	if _, err := client.ReleaseEnvironment(releaseCtx, &platformv1.ReleaseEnvironmentRequest{
 		EnvironmentId: environmentID,
-	})
-	if err == nil {
-		return errors.New("expected FailedPrecondition deploying a volume-backed service revision with existing allocations")
-	}
-	if grpcstatus.Code(err) != codes.FailedPrecondition {
-		return fmt.Errorf("deploy volume-backed service revision: got %v, want FailedPrecondition", err)
-	}
-	if !strings.Contains(err.Error(), "volume-backed services cannot overlap rollout generations until volume handoff is supported") {
-		return fmt.Errorf("deploy volume-backed service revision: got %v, want volume-handoff rejection", err)
-	}
-	infof("scenario: overlapping volume-backed rollout rejected as FailedPrecondition")
-	if _, err := client.DiscardServiceChanges(userCtx, &platformv1.DiscardServiceChangesRequest{
-		ServiceId:  service.GetId(),
-		DiscardAll: true,
 	}); err != nil {
-		return fmt.Errorf("discard rejected volume-backed service changes: %w", err)
+		return fmt.Errorf("deploy volume-backed service revision: %w", err)
 	}
-
-	status, err = waitForServiceHealthy(ctx, userCtx, client, service.GetId(), 1, 1)
+	infof("scenario: volume-backed rollout recreates the allocation on the volume's node")
+	status, err = waitForServiceHealthyOnAgent(ctx, userCtx, client, service.GetId(), allocatedAgentID, updatedService.GetSpecRevision(), 2)
 	if err != nil {
 		return err
 	}
+	if status.GetAllocation().GetAllocationId() == allocationID {
+		return fmt.Errorf("volume-backed rollout kept allocation %s", allocationID)
+	}
 	allocationID = status.GetAllocation().GetAllocationId()
 	endpoint = allocationEndpoint(status.GetAllocation())
-	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV1); err != nil {
-		return fmt.Errorf("verify original service response after rejected environment release: %w", err)
+	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, allocatedHost.PublicIPv4, allocationID, endpoint, "/index.html", markerV2); err != nil {
+		return fmt.Errorf("verify recreated service response: %w", err)
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("grep -Fqx %q /var/lib/ebpf-wg-mesh/agent/volumes/%s/index.html", markerV1, volume.GetId())); err != nil {
-		return fmt.Errorf("verify original volume contents on %s: %w", allocatedHost.Name, err)
+	if err := waitForRemoteCommand(ctx, sshKeyPath, allocatedHost.PublicIPv4, fmt.Sprintf("grep -Fqx %q %s/boots.log && grep -Fqx %q %s/boots.log", markerV1, volumeHostDataPath(volume.GetId()), markerV2, volumeHostDataPath(volume.GetId()))); err != nil {
+		return fmt.Errorf("verify volume data survived the recreate on %s: %w", allocatedHost.Name, err)
 	}
 
 	infof("scenario: creating a second-project workload for the mesh isolation check")
@@ -773,7 +760,7 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if err := assertHTTPResponseInAllocationNetNS(ctx, sshKeyPath, isolationHost.PublicIPv4, isolationStatus.GetAllocation().GetAllocationId(), allocationEndpoint(isolationStatus.GetAllocation()), "/", isolationMarker); err != nil {
 		return fmt.Errorf("verify isolated service is healthy in allocation netns: %w", err)
 	}
-	if err := assertHTTPResponseFromContainer(ctx, sshKeyPath, allocatedHost.PublicIPv4, managedContainerName(status.GetAllocation().GetAllocationId()), allocationEndpoint(status.GetAllocation()), "/index.html", markerV1); err != nil {
+	if err := assertHTTPResponseFromContainer(ctx, sshKeyPath, allocatedHost.PublicIPv4, managedContainerName(status.GetAllocation().GetAllocationId()), allocationEndpoint(status.GetAllocation()), "/index.html", markerV2); err != nil {
 		return fmt.Errorf("same-project mesh success control failed: %w", err)
 	}
 	if err := assertHTTPDeniedFromContainer(ctx, sshKeyPath, allocatedHost.PublicIPv4, managedContainerName(status.GetAllocation().GetAllocationId()), allocationEndpoint(isolationStatus.GetAllocation()), "/"); err != nil {
@@ -815,8 +802,10 @@ func runServiceRolloutScenario(ctx context.Context, address string, identity cli
 	if err := waitForVolumeDeletion(ctx, userCtx, client, environmentID, volume.GetId()); err != nil {
 		return err
 	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, boundHost.PublicIPv4, fmt.Sprintf("! test -e /var/lib/ebpf-wg-mesh/agent/volumes/%s", volume.GetId())); err != nil {
-		return fmt.Errorf("verify volume teardown on %s: %w", boundHost.Name, err)
+	// Data outlives the tombstone: only an explicit destroy after the deletion
+	// grace period may remove it.
+	if err := waitForRemoteCommand(ctx, sshKeyPath, boundHost.PublicIPv4, fmt.Sprintf("grep -Fqx %q %s/boots.log", markerV1, volumeHostDataPath(volume.GetId()))); err != nil {
+		return fmt.Errorf("verify volume data is retained during the deletion grace on %s: %w", boundHost.Name, err)
 	}
 
 	infof("scenario: completed in %s", time.Since(scenarioStarted).Round(time.Second))
