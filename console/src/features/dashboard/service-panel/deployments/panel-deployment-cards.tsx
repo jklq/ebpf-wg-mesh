@@ -172,7 +172,20 @@ export function DeploymentCard({
 		tone === "running" || tone === "failed" || tone === "draining";
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: The card extends the existing keyboard-accessible log buttons' pointer target.
+		// biome-ignore lint/a11y/useKeyWithClickEvents: Keyboard users open logs through the header buttons.
 		<section
+			onClick={(event) => {
+				if (
+					logsEnabled &&
+					event.target instanceof Element &&
+					!event.target.closest(
+						"button, a, input, select, textarea, label, summary, [role='button'], [role='menu'], [contenteditable='true']",
+					)
+				) {
+					onOpenLogs();
+				}
+			}}
 			{...stylex.props([
 				styles.card,
 				logsEnabled && [styles.interactiveCard, stylex.defaultMarker()],

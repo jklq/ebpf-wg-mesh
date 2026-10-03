@@ -24,6 +24,7 @@ import {
 	waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DeploymentCard } from "#/features/dashboard/service-panel/deployments/panel-deployment-cards";
 import { PanelDeployments } from "#/features/dashboard/service-panel/deployments/panel-deployments";
 import type {
 	DashboardAllocationStatus,
@@ -234,6 +235,42 @@ describe("deployments panel live rollouts", () => {
 			.mockReset()
 			.mockResolvedValue({ lines: [], gaps: [] });
 		serverFns.doApplyDeploymentAction.mockReset();
+	});
+
+	it("opens logs from the whole card while keeping deployment actions independent", () => {
+		const onOpenLogs = vi.fn();
+		const onAction = vi.fn().mockResolvedValue(undefined);
+		const card = (logsEnabled: boolean) => (
+			<DeploymentCard
+				service={rollingService()}
+				record={activeDeployment()}
+				logsEnabled={logsEnabled}
+				allocations={[]}
+				nowMs={Date.now()}
+				deploymentInProgress={false}
+				onOpenLogs={onOpenLogs}
+				onAction={onAction}
+			/>
+		);
+		const { container, rerender } = render(card(true));
+		const shell = container.querySelector("section");
+		if (!shell) throw new Error("Deployment card missing");
+		fireEvent.click(shell);
+		fireEvent.click(screen.getByText("Healthy"));
+		expect(onOpenLogs).toHaveBeenCalledTimes(2);
+
+		fireEvent.click(screen.getByRole("button", { name: "View logs" }));
+		expect(onOpenLogs).toHaveBeenCalledTimes(3);
+		fireEvent.click(screen.getByRole("button", { name: "Deployment actions" }));
+		fireEvent.click(screen.getByRole("menuitem", { name: "Redeploy" }));
+		expect(onAction).toHaveBeenCalled();
+		expect(onOpenLogs).toHaveBeenCalledTimes(3);
+
+		rerender(card(false));
+		fireEvent.click(shell);
+		fireEvent.click(screen.getByText("Healthy"));
+		fireEvent.click(screen.getByRole("button", { name: "View logs" }));
+		expect(onOpenLogs).toHaveBeenCalledTimes(3);
 	});
 
 	it("keeps the old active deployment live during a rolling release", async () => {
