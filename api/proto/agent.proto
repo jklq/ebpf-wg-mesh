@@ -102,11 +102,17 @@ message AgentHeartbeat {
   bool recovery_mode = 3;
 }
 
+// DesiredVolume is a volume pinned to this agent. Absence from desired state
+// never deletes data: agents retain unknown volumes and report them as
+// orphaned. Only destroy, delivered after the control plane's deletion grace
+// under the current authority epoch, removes a volume's data.
 message DesiredVolume {
   string volume_id = 1;
   string environment_id = 2;
   string name = 3;
+  // Enforced size; grows in place, never shrinks.
   int64 size_bytes = 4;
+  bool destroy = 5;
 }
 
 message DesiredService {
@@ -244,10 +250,14 @@ message DesiredStateAcknowledgement {
   string replicas_version = 7;
 }
 
+// VolumeCondition phases: Ready, Full, Error, Destroyed (a destroy
+// instruction completed), and Orphaned (data on disk with no desired entry).
 message VolumeCondition {
   string volume_id = 1;
   string phase = 2;
   string message = 3;
+  int64 used_bytes = 4;
+  int64 capacity_bytes = 5;
 }
 
 message ServiceCondition {

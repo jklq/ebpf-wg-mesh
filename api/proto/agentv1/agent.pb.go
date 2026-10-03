@@ -930,12 +930,18 @@ func (x *AgentHeartbeat) GetRecoveryMode() bool {
 	return false
 }
 
+// DesiredVolume is a volume pinned to this agent. Absence from desired state
+// never deletes data: agents retain unknown volumes and report them as
+// orphaned. Only destroy, delivered after the control plane's deletion grace
+// under the current authority epoch, removes a volume's data.
 type DesiredVolume struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      string                 `protobuf:"bytes,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	EnvironmentId string                 `protobuf:"bytes,2,opt,name=environment_id,json=environmentId,proto3" json:"environment_id,omitempty"`
 	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	SizeBytes     int64                  `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	// Enforced size; grows in place, never shrinks.
+	SizeBytes     int64 `protobuf:"varint,4,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	Destroy       bool  `protobuf:"varint,5,opt,name=destroy,proto3" json:"destroy,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -996,6 +1002,13 @@ func (x *DesiredVolume) GetSizeBytes() int64 {
 		return x.SizeBytes
 	}
 	return 0
+}
+
+func (x *DesiredVolume) GetDestroy() bool {
+	if x != nil {
+		return x.Destroy
+	}
+	return false
 }
 
 type DesiredService struct {
@@ -1979,11 +1992,15 @@ func (x *DesiredStateAcknowledgement) GetReplicasVersion() string {
 	return ""
 }
 
+// VolumeCondition phases: Ready, Full, Error, Destroyed (a destroy
+// instruction completed), and Orphaned (data on disk with no desired entry).
 type VolumeCondition struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	VolumeId      string                 `protobuf:"bytes,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
 	Phase         string                 `protobuf:"bytes,2,opt,name=phase,proto3" json:"phase,omitempty"`
 	Message       string                 `protobuf:"bytes,3,opt,name=message,proto3" json:"message,omitempty"`
+	UsedBytes     int64                  `protobuf:"varint,4,opt,name=used_bytes,json=usedBytes,proto3" json:"used_bytes,omitempty"`
+	CapacityBytes int64                  `protobuf:"varint,5,opt,name=capacity_bytes,json=capacityBytes,proto3" json:"capacity_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2037,6 +2054,20 @@ func (x *VolumeCondition) GetMessage() string {
 		return x.Message
 	}
 	return ""
+}
+
+func (x *VolumeCondition) GetUsedBytes() int64 {
+	if x != nil {
+		return x.UsedBytes
+	}
+	return 0
+}
+
+func (x *VolumeCondition) GetCapacityBytes() int64 {
+	if x != nil {
+		return x.CapacityBytes
+	}
+	return 0
 }
 
 type ServiceCondition struct {
@@ -2999,13 +3030,14 @@ const file_agent_proto_rawDesc = "" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x02 \x01(\tR\tsessionId\x12#\n" +
-	"\rrecovery_mode\x18\x03 \x01(\bR\frecoveryMode\"\x86\x01\n" +
+	"\rrecovery_mode\x18\x03 \x01(\bR\frecoveryMode\"\xa0\x01\n" +
 	"\rDesiredVolume\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\"\xaf\a\n" +
+	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\x12\x18\n" +
+	"\adestroy\x18\x05 \x01(\bR\adestroy\"\xaf\a\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -3111,11 +3143,14 @@ const file_agent_proto_rawDesc = "" +
 	"\x15reconciliation_cursor\x18\x04 \x01(\x03R\x14reconciliationCursor\x12.\n" +
 	"\x13node_config_version\x18\x05 \x01(\tR\x11nodeConfigVersion\x12/\n" +
 	"\x13credentials_version\x18\x06 \x01(\tR\x12credentialsVersion\x12)\n" +
-	"\x10replicas_version\x18\a \x01(\tR\x0freplicasVersion\"^\n" +
+	"\x10replicas_version\x18\a \x01(\tR\x0freplicasVersion\"\xa4\x01\n" +
 	"\x0fVolumeCondition\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xed\x04\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1d\n" +
+	"\n" +
+	"used_bytes\x18\x04 \x01(\x03R\tusedBytes\x12%\n" +
+	"\x0ecapacity_bytes\x18\x05 \x01(\x03R\rcapacityBytes\"\xed\x04\n" +
 	"\x10ServiceCondition\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
