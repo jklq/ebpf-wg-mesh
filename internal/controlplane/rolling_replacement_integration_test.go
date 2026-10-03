@@ -296,13 +296,13 @@ func TestVolumeBackedServiceRejectsOverlappingRollout(t *testing.T) {
 		t.Fatalf("createVolume: %v", err)
 	}
 	spec := rollingTestSpec("example.test/disk:a", 1, 1)
-	spec.Runtime.VolumeName = "data"
+	spec.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data"}
 	service, err := createService(ctx, store, "user-1", envID, "disk", spec, "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
 	}
 	next := rollingTestSpec("example.test/disk:b", 1, 1)
-	next.Runtime.VolumeName = "data"
+	next.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data"}
 	if _, _, err := updateService(ctx, store, "user-1", service.ID, "", next); err != nil {
 		t.Fatalf("updateService: %v", err)
 	}

@@ -44,6 +44,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &cfg.Runtime.ManagedDashboardSecretsDir, "managed-dashboard-secrets-dir", "AGENT_MANAGED_DASHBOARD_SECRETS_DIR", "", "")
 	stringFlag(fs, &cfg.Runtime.Snapshotter, "snapshotter", "AGENT_SNAPSHOTTER", "native", "")
 	boolFlag(fs, &cfg.Runtime.DisableCgroups, "disable-cgroups", "AGENT_DISABLE_CGROUPS", false, "")
+	stringFlag(fs, &cfg.Runtime.VolumeBackend, "volume-backend", "AGENT_VOLUME_BACKEND", "loop", "loop (enforced ext4 image per volume) or directory (unenforced, development only)")
 	int64Flag(fs, &cfg.Logs.SpoolMaxBytes, "logs-spool-max-bytes", "AGENT_LOGS_SPOOL_MAX_BYTES", 256<<20, "disk spool cap under the data dir before oldest lines shed with gap rows")
 	intFlag(fs, &cfg.Logs.RatePerSec, "logs-rate-per-sec", "AGENT_LOGS_RATE_PER_SEC", 200, "accepted log lines per allocation per second")
 	intFlag(fs, &cfg.Logs.Burst, "logs-burst", "AGENT_LOGS_BURST", 1000, "")

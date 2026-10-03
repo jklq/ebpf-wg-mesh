@@ -17,6 +17,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/meshlabels"
+	"ebof-wg-mesh/internal/runtimeutil"
 
 	containerd "github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
@@ -61,20 +62,20 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		}
 		opts = append(opts, oci.WithEnv(envs))
 	}
-	if svc.GetVolumeId() != "" {
-		volumePath, err := runtimeChildPath(e.cfg.Runtime.VolumesDir, "volume ID", svc.GetVolumeId())
-		if err != nil {
-			return nil, err
-		}
+	volumePath, mountPath, err := e.volumeMount(svc)
+	if err != nil {
+		return nil, err
+	}
+	if volumePath != "" {
 		opts = append(opts, oci.WithMounts([]specs.Mount{{
 			Source:      volumePath,
-			Destination: defaultVolumeMount,
+			Destination: mountPath,
 			Type:        "bind",
-			Options:     []string{"rbind", "rw"},
+			Options:     []string{"rbind", "rw", "nosuid", "nodev"},
 		}}))
-		allowedBindMounts[defaultVolumeMount] = sandboxBindMount{source: volumePath, writable: true}
+		allowedBindMounts[mountPath] = sandboxBindMount{source: volumePath, writable: true}
 		writableVolumePath = volumePath
-		opts = append(opts, oci.WithEnv([]string{"PLATFORM_VOLUME_DIR=" + defaultVolumeMount}))
+		opts = append(opts, oci.WithEnv(runtimeutil.VolumeEnv(runtime.GetVolume().GetVolumeName(), mountPath)))
 	}
 	if isManagedDashboardService(svc) {
 		secretsDir := filepath.Clean(e.cfg.Runtime.ManagedDashboardSecretsDir)
@@ -117,6 +118,27 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 		opts = append(opts, withoutCgroups)
 	}
 	return opts, nil
+}
+
+// volumeMount resolves the host directory and container path for svc's
+// volume. An empty host path means the service has no volume.
+func (e *containerdEngine) volumeMount(svc *agentv1.DesiredService) (string, string, error) {
+	volumeID := svc.GetVolumeId()
+	if volumeID == "" {
+		return "", "", nil
+	}
+	mountPath, err := runtimeutil.VolumeMountPath(svc.GetSpec().GetRuntime())
+	if err != nil {
+		return "", "", err
+	}
+	if e.volumes == nil {
+		return "", "", errors.New("volume storage is not configured on this agent")
+	}
+	hostPath, err := e.volumes.DataPath(volumeID)
+	if err != nil {
+		return "", "", fmt.Errorf("volume %s is not available: %w", volumeID, err)
+	}
+	return hostPath, mountPath, nil
 }
 
 func withWritableVolumeOwnership(path string) oci.SpecOpts {

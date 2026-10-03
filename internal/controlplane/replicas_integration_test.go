@@ -133,7 +133,7 @@ func TestVolumeAndReplicasAreMutuallyExclusive(t *testing.T) {
 	}
 
 	volumeSpec := replicaSpec(100, 64)
-	volumeSpec.Runtime.VolumeName = "data"
+	volumeSpec.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data"}
 	volumeService, err := createService(ctx, store, "user-1", envID, "disk", volumeSpec, "node-a")
 	if err != nil {
 		t.Fatalf("createService(volume): %v", err)
@@ -465,7 +465,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 		CpuMillis:       100,
 		MemoryMebibytes: 64,
 		Ports:           runtimePortsFromInts([]int32{8080}),
-		VolumeName:      "data",
+		Volume:          &platformv1.ServiceVolumeMount{VolumeName: "data"},
 	}), "node-1")
 	if err != nil {
 		t.Fatalf("createService: %v", err)
@@ -529,7 +529,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 		t.Fatalf("createScheduledVolume: %v", err)
 	}
 	if _, err := createService(ctx, store, "user-1", productionEnvironmentID(t, store, projects[0].ID), "web", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
-		VolumeName: "data",
+		Volume: &platformv1.ServiceVolumeMount{VolumeName: "data"},
 	}), "node-1"); err != nil {
 		t.Fatalf("createService: %v", err)
 	}
@@ -577,7 +577,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 				CpuMillis:       100,
 				MemoryMebibytes: 64,
 				Ports:           runtimePortsFromInts([]int32{8080}),
-				VolumeName:      volumeName,
+				Volume:          &platformv1.ServiceVolumeMount{VolumeName: volumeName},
 			}))
 			createErrCh <- err
 		}()

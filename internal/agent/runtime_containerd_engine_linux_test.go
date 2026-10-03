@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/testutil"
+	"ebof-wg-mesh/internal/volumestore"
 
 	containerd "github.com/containerd/containerd"
 	"github.com/containerd/containerd/errdefs"
@@ -242,7 +244,11 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 	if err := config.FinalizeAgent(&cfg); err != nil {
 		t.Fatalf("FinalizeAgent: %v", err)
 	}
-	engine, err := newContainerdEngine(cfg)
+	volumes, err := volumestore.New(cfg.Runtime.VolumesDir, volumestore.BackendDirectory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine, err := newContainerdEngine(cfg, volumes)
 	if err != nil {
 		t.Skipf("containerd engine unavailable: %v", err)
 	}
@@ -418,4 +424,87 @@ func skippableRuntimeErr(err error) bool {
 
 func uniqueRuntimeID(prefix string) string {
 	return fmt.Sprintf("%s%x", prefix, time.Now().UnixNano())
+}
+
+// The workload sees its volume at the chosen path, keeps writing to the same
+// data across reconciles, and gets ENOSPC at the volume's size.
+func TestContainerdVolumeMountsAtChosenPathAndEnforcesSize(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("loop volumes require root")
+	}
+	for _, tool := range []string{"mkfs.ext4", "resize2fs", "losetup"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	engine, cfg := newTestContainerdEngine(t)
+	volumes, err := volumestore.New(cfg.Runtime.VolumesDir, volumestore.BackendLoop)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine.(*containerdEngine).volumes = volumes
+	runtime := &ContainerdRuntime{cfg: cfg, engine: engine, volumes: volumes}
+	if err := os.MkdirAll(filepath.Join(cfg.Runtime.DataDir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	allocID := uniqueRuntimeID("vol")
+	volumeID := "vol-" + allocID
+	t.Cleanup(func() {
+		volumes.Reconcile([]*agentv1.DesiredVolume{{VolumeId: volumeID, Destroy: true}}, true)
+	})
+	svc := busyboxHTTPService(allocID, 13, 1, "10.200.9.19", "fd00:200:0:9::13", "volume")
+	svc.VolumeId = volumeID
+	svc.Spec.Runtime.Volume = &platformv1.ServiceVolumeMount{VolumeName: "data", MountPath: "/srv/data"}
+	svc.Spec.Runtime.Args = []string{strings.Join([]string{
+		"printf keep > /srv/data/keep",
+		`printf "$PLATFORM_VOLUME_MOUNT_PATH" > /srv/data/env`,
+		"dd if=/dev/zero of=/srv/data/fill bs=1M count=64 2>/dev/null; echo $? > /srv/data/dd.exit",
+		"mkdir -p /tmp/www && printf ok > /tmp/www/index.html",
+		"exec httpd -f -p [::]:8080 -h /tmp/www",
+	}, "\n")}
+	cleanupContainerdService(t, engine, cfg, allocID)
+
+	state := &agentv1.DesiredNodeState{
+		Volumes:  []*agentv1.DesiredVolume{{VolumeId: volumeID, Name: "data", SizeBytes: 32 << 20}},
+		Services: []*agentv1.DesiredService{svc},
+	}
+	report, err := runtime.Reconcile(ctx, state)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if phase := report.GetServices()[0].GetPhase(); phase == "Error" {
+		if skippableRuntimeErr(errors.New(report.GetServices()[0].GetMessage())) {
+			t.Skipf("containerd/CNI cannot start a workload: %s", report.GetServices()[0].GetMessage())
+		}
+		t.Fatalf("service condition: %+v", report.GetServices()[0])
+	}
+	dataDir, err := volumes.DataPath(volumeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exit []byte
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); time.Sleep(200 * time.Millisecond) {
+		if exit, err = os.ReadFile(filepath.Join(dataDir, "dd.exit")); err == nil && len(exit) > 0 {
+			break
+		}
+	}
+	if strings.TrimSpace(string(exit)) == "0" || len(exit) == 0 {
+		t.Fatalf("writing past the volume size inside the workload exited %q, want ENOSPC failure", exit)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dataDir, "keep")); string(got) != "keep" {
+		t.Fatalf("workload data on the host = %q", got)
+	}
+	if got, _ := os.ReadFile(filepath.Join(dataDir, "env")); string(got) != "/srv/data" {
+		t.Fatalf("PLATFORM_VOLUME_MOUNT_PATH = %q, want /srv/data", got)
+	}
+	report, err = runtime.Reconcile(ctx, state)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(report.GetVolumes()) != 1 || report.GetVolumes()[0].GetPhase() != volumestore.PhaseFull {
+		t.Fatalf("volume conditions = %+v, want Full", report.GetVolumes())
+	}
 }

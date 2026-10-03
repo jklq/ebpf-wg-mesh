@@ -384,7 +384,7 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	volumeService, err := createService(ctx, store, "user-1", projectID, "stateful", directImageServiceSpec("example.test/stateful:1", &platformv1.ServiceRuntime{
-		CpuMillis: 10, MemoryMebibytes: 16, VolumeName: "data",
+		CpuMillis: 10, MemoryMebibytes: 16, Volume: &platformv1.ServiceVolumeMount{VolumeName: "data"},
 	}), "old-node")
 	if err != nil {
 		t.Fatal(err)

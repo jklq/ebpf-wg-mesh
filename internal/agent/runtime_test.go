@@ -162,7 +162,7 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 	state := &agentv1.DesiredNodeState{
 		AgentId:              "node-1",
 		ReconciliationCursor: 2,
-		Volumes:              []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data"}},
+		Volumes:              []*agentv1.DesiredVolume{{VolumeId: "vol-1", Name: "data", SizeBytes: 64 << 20}},
 		Services: []*agentv1.DesiredService{{
 			AllocationId:             "alloc-1",
 			ServiceId:                "svc-1",
@@ -577,9 +577,6 @@ func TestContainerdRuntimeReconcileRemovesStaleService(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "desired", "old.json"), []byte("{}"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "volumes", "old-vol"), 0o755); err != nil {
-		t.Fatal(err)
-	}
 	_, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"})
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
@@ -587,8 +584,104 @@ func TestContainerdRuntimeReconcileRemovesStaleService(t *testing.T) {
 	if len(engine.removed) != 1 || engine.removed[0] != "old" {
 		t.Fatalf("unexpected removed services: %#v", engine.removed)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "volumes", "old-vol")); !os.IsNotExist(err) {
-		t.Fatalf("expected stale volume dir removal, stat err=%v", err)
+}
+
+// A volume missing from desired state is reported, never deleted: a bad
+// checkpoint or placement bug must not destroy customer data.
+func TestContainerdRuntimeRetainsUndesiredVolume(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: &fakeEngine{status: map[string]serviceStatus{}, created: map[string]bool{}},
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pinned := &agentv1.DesiredNodeState{AgentId: "node-1", Volumes: []*agentv1.DesiredVolume{{VolumeId: "vol-1", SizeBytes: 64 << 20}}}
+	if _, err := runtime.Reconcile(context.Background(), pinned); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	data := filepath.Join(dir, "volumes", "vol-1", "data", "db")
+	if err := os.WriteFile(data, []byte("rows"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1"})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(report.GetVolumes()) != 1 || report.GetVolumes()[0].GetPhase() != "Orphaned" {
+		t.Fatalf("volume conditions = %+v, want one Orphaned", report.GetVolumes())
+	}
+	if _, err := os.Stat(data); err != nil {
+		t.Fatalf("undesired volume data was removed: %v", err)
+	}
+
+	destroy := &agentv1.DesiredNodeState{AgentId: "node-1", Volumes: []*agentv1.DesiredVolume{{VolumeId: "vol-1", Destroy: true}}}
+	if _, err := runtime.ReconcileWithCleanup(context.Background(), destroy, false); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if _, err := os.Stat(data); err != nil {
+		t.Fatalf("recovery-mode reconcile executed a destroy: %v", err)
+	}
+	report, err = runtime.Reconcile(context.Background(), destroy)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if len(report.GetVolumes()) != 1 || report.GetVolumes()[0].GetPhase() != "Destroyed" {
+		t.Fatalf("volume conditions = %+v, want one Destroyed", report.GetVolumes())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "volumes", "vol-1")); !os.IsNotExist(err) {
+		t.Fatalf("destroyed volume still present: %v", err)
+	}
+}
+
+// A workload whose volume is not pinned here must not start with an empty
+// directory in place of its data.
+func TestContainerdRuntimeRefusesServiceWithoutPinnedVolume(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	engine := &fakeEngine{status: map[string]serviceStatus{}, created: map[string]bool{}}
+	runtime := &ContainerdRuntime{
+		cfg:    config.AgentConfig{Runtime: config.RuntimeConfig{DataDir: dir, VolumesDir: filepath.Join(dir, "volumes")}},
+		engine: engine,
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "desired"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	service := &agentv1.DesiredService{
+		AllocationId: "alloc-1", ServiceId: "svc-1", VolumeId: "vol-1",
+		DesiredSpecRevision: 1, DesiredRolloutGeneration: 1,
+		Spec: &platformv1.ResolvedServiceSpec{Image: "example.com/test@sha256:abc", Runtime: &platformv1.ServiceRuntime{
+			Volume: &platformv1.ServiceVolumeMount{VolumeName: "data", MountPath: "/var/lib/postgresql/data"},
+		}},
+	}
+	report, err := runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1", Services: []*agentv1.DesiredService{service}})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if report.GetServices()[0].GetPhase() != "Error" || !strings.Contains(report.GetServices()[0].GetMessage(), "not pinned") {
+		t.Fatalf("service condition = %+v, want unpinned volume error", report.GetServices()[0])
+	}
+	if len(engine.ensured) != 0 {
+		t.Fatalf("service without its volume reached the engine: %v", engine.ensured)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "volumes", "vol-1")); !os.IsNotExist(err) {
+		t.Fatalf("runtime created an empty volume for an unpinned service: %v", err)
+	}
+
+	service.Spec.Runtime.Volume.MountPath = "/etc"
+	report, err = runtime.Reconcile(context.Background(), &agentv1.DesiredNodeState{AgentId: "node-1",
+		Volumes:  []*agentv1.DesiredVolume{{VolumeId: "vol-1", SizeBytes: 64 << 20}},
+		Services: []*agentv1.DesiredService{service}})
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if report.GetServices()[0].GetPhase() != "Error" || len(engine.ensured) != 0 {
+		t.Fatalf("system mount path accepted: %+v", report.GetServices()[0])
 	}
 }
 

@@ -364,7 +364,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	}
 	runtimeResources := make([]*agentv1.RuntimeResource, 0, len(summary.RuntimeResources))
 	for _, resource := range summary.RuntimeResources {
-		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, VolumeId: resource.VolumeID, RuntimeId: resource.RuntimeID})
+		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, RuntimeId: resource.RuntimeID})
 	}
 	// An unchanged reconnect sends no server messages; confirm authority optimistically.
 	handshakeTimer := time.NewTimer(replicaRPCTimeout)

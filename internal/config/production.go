@@ -63,6 +63,9 @@ func validateProductionAgent(cfg AgentConfig) error {
 	if cfg.Runtime.DisableCgroups {
 		return errors.New("agent.runtime.disableCgroups is not allowed in production")
 	}
+	if cfg.Runtime.VolumeBackend != "loop" {
+		return errors.New("agent.runtime.volumeBackend must be loop in production: other backends do not enforce volume size")
+	}
 	if strings.TrimSpace(cfg.Health.Listen) == "" {
 		return errors.New("agent.health.listen is required in production")
 	}

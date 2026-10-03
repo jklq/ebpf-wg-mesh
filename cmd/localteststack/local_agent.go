@@ -62,6 +62,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 			VolumesDir:     filepath.Join(agentDir, "volumes"),
 			Snapshotter:    "native",
 			DisableCgroups: true,
+			VolumeBackend:  "directory",
 		},
 		Mesh: config.MeshConfig{
 			Host: config.HostConfig{IPv6: "fd00:77::1"},

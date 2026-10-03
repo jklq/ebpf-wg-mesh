@@ -45,7 +45,10 @@ message AgentHello {
 message RuntimeResource {
   string allocation_id = 1;
   string runtime_id = 2;
-  string volume_id = 3;
+  // Volumes are durable data, not prunable runtime resources; they are
+  // reported through VolumeCondition.
+  reserved 3;
+  reserved "volume_id";
 }
 
 message EnrollRequest {

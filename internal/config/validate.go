@@ -245,6 +245,11 @@ func validateAgent(cfg AgentConfig) error {
 	if cfg.Node.Resources.AdvertisedMemoryMebibytes() <= 0 {
 		return errors.New("agent.node.resources.reservedMemoryMebibytes must be less than memoryMebibytes")
 	}
+	switch cfg.Runtime.VolumeBackend {
+	case "loop", "directory":
+	default:
+		return fmt.Errorf("agent.runtime.volumeBackend must be loop or directory: %q", cfg.Runtime.VolumeBackend)
+	}
 	if cfg.Logs.SpoolMaxBytes < 0 {
 		return errors.New("agent.logs.spoolMaxBytes must be non-negative")
 	}

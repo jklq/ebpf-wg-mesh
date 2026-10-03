@@ -283,6 +283,9 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	if cfg.Runtime.Snapshotter == "" {
 		cfg.Runtime.Snapshotter = "native"
 	}
+	if cfg.Runtime.VolumeBackend == "" {
+		cfg.Runtime.VolumeBackend = "loop"
+	}
 	if cfg.Containerd.Socket == "" {
 		cfg.Containerd.Socket = "/run/containerd/containerd.sock"
 	}

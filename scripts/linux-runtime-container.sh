@@ -30,7 +30,7 @@ echo "==> installing containerd and CNI plugins"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null
 apt-get install -y -qq --no-install-recommends \
-  containerd containernetworking-plugins iproute2 iptables ca-certificates >/dev/null
+  containerd containernetworking-plugins iproute2 iptables ca-certificates e2fsprogs >/dev/null
 
 echo "==> writing mesh CNI config"
 install -d -m 0755 /etc/cni/net.d

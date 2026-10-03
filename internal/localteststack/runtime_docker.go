@@ -17,13 +17,13 @@ import (
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/restartpolicy"
 	"ebof-wg-mesh/internal/runtimeutil"
+	"ebof-wg-mesh/internal/volumestore"
 )
 
 const (
-	localRuntimeVolumeMount = "/data"
-	localRuntimeManagedBy   = "localteststack"
-	internalDomainSuffix    = ".mesh.internal"
-	internalHostnameLabel   = "platform.internal_hostname"
+	localRuntimeManagedBy = "localteststack"
+	internalDomainSuffix  = ".mesh.internal"
+	internalHostnameLabel = "platform.internal_hostname"
 	// localRuntimeLabel marks containers this runtime owns; the real agent
 	// never writes it.
 	localRuntimeLabel = "platform.runtime"
@@ -38,9 +38,10 @@ type DockerRuntimeConfig struct {
 }
 
 type DockerRuntime struct {
-	cfg    DockerRuntimeConfig
-	runner DockerRunner
-	ready  map[string]dockerRolloutReadiness
+	cfg     DockerRuntimeConfig
+	runner  DockerRunner
+	volumes *volumestore.Store
+	ready   map[string]dockerRolloutReadiness
 }
 
 type dockerRolloutReadiness struct {
@@ -96,15 +97,19 @@ func NewDockerRuntime(cfg DockerRuntimeConfig) (*DockerRuntime, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.DataDir, "desired"), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir desired dir: %w", err)
 	}
-	if err := os.MkdirAll(cfg.VolumesDir, 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir volumes dir: %w", err)
+	// Docker Desktop cannot loop-mount on the host, so local volume sizes are
+	// reported but not enforced.
+	volumes, err := volumestore.New(cfg.VolumesDir, volumestore.BackendDirectory)
+	if err != nil {
+		return nil, err
 	}
 	if err := EnsureWorkloadDockerNetwork(context.Background(), runner, cfg.DockerNetwork); err != nil {
 		return nil, err
 	}
 	return &DockerRuntime{
-		cfg:    cfg,
-		runner: runner,
+		cfg:     cfg,
+		runner:  runner,
+		volumes: volumes,
 	}, nil
 }
 
@@ -148,62 +153,27 @@ func (r *DockerRuntime) DiscoverRuntimeResources(ctx context.Context) ([]agent.R
 		seenAllocations[allocationID] = struct{}{}
 		resources = append(resources, agent.RuntimeResource{AllocationID: allocationID, RuntimeID: expectedName})
 	}
-
-	entries, err := os.ReadDir(r.cfg.VolumesDir)
-	if err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("discover docker volumes: %w", err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		path, err := safeRuntimeChildPath(r.cfg.VolumesDir, "volume ID", entry.Name())
-		if err != nil {
-			return nil, err
-		}
-		resources = append(resources, agent.RuntimeResource{VolumeID: entry.Name(), RuntimeID: path})
-	}
 	return resources, nil
 }
 
 func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1.DesiredNodeState, allowCleanup bool) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
-	desiredVolumes := runtimeutil.IndexDesiredVolumes(state.GetVolumes())
 	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
 	if allowCleanup {
 		if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
 			return nil, err
 		}
-		if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
-			return nil, err
-		}
 		if err := r.pruneStaleEnvironmentNetworks(ctx, desiredServices); err != nil {
 			return nil, err
 		}
 	}
-
-	for _, vol := range state.GetVolumes() {
-		path, pathErr := safeRuntimeChildPath(r.cfg.VolumesDir, "volume ID", vol.GetVolumeId())
-		if pathErr != nil {
-			report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
-				VolumeId: vol.GetVolumeId(), Phase: "Error", Message: pathErr.Error(),
-			})
-			continue
+	report.Volumes = r.volumes.Reconcile(state.GetVolumes(), allowCleanup)
+	pinned := make(map[string]bool, len(state.GetVolumes()))
+	for _, volume := range state.GetVolumes() {
+		if !volume.GetDestroy() {
+			pinned[volume.GetVolumeId()] = true
 		}
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
-				VolumeId: vol.GetVolumeId(),
-				Phase:    "Error",
-				Message:  err.Error(),
-			})
-			continue
-		}
-		report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
-			VolumeId: vol.GetVolumeId(),
-			Phase:    "Ready",
-			Message:  path,
-		})
 	}
 
 	for _, svc := range state.GetServices() {
@@ -221,12 +191,10 @@ func (r *DockerRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1
 			report.Services = append(report.Services, cond)
 			continue
 		}
-		if volumeID := svc.GetVolumeId(); volumeID != "" {
-			if _, err := safeRuntimeChildPath(r.cfg.VolumesDir, "volume ID", volumeID); err != nil {
-				cond.Phase, cond.Message = "Error", err.Error()
-				report.Services = append(report.Services, cond)
-				continue
-			}
+		if volumeID := svc.GetVolumeId(); volumeID != "" && !pinned[volumeID] {
+			cond.Phase, cond.Message = "Error", fmt.Sprintf("volume %s is not pinned to this node", volumeID)
+			report.Services = append(report.Services, cond)
+			continue
 		}
 		if err := r.persistDesiredService(svc); err != nil {
 			cond.Phase = "Error"
@@ -506,12 +474,18 @@ func (r *DockerRuntime) dockerRunArgs(svc *agentv1.DesiredService) ([]string, er
 		args = append(args, "--publish", fmt.Sprintf("127.0.0.1::%d", port))
 	}
 	if svc.GetVolumeId() != "" {
-		hostPath, err := safeRuntimeChildPath(r.cfg.VolumesDir, "volume ID", svc.GetVolumeId())
+		mountPath, err := runtimeutil.VolumeMountPath(runtime)
 		if err != nil {
 			return nil, err
 		}
-		args = append(args, "--mount", "type=bind,src="+hostPath+",dst="+localRuntimeVolumeMount+",bind-propagation=rprivate")
-		args = append(args, "--env", "PLATFORM_VOLUME_DIR="+localRuntimeVolumeMount)
+		hostPath, err := r.volumes.DataPath(svc.GetVolumeId())
+		if err != nil {
+			return nil, fmt.Errorf("volume %s is not available: %w", svc.GetVolumeId(), err)
+		}
+		args = append(args, "--mount", "type=bind,src="+hostPath+",dst="+mountPath+",bind-propagation=rprivate")
+		for _, env := range runtimeutil.VolumeEnv(runtime.GetVolume().GetVolumeName(), mountPath) {
+			args = append(args, "--env", env)
+		}
 	}
 	if runtime.GetCpuMillis() > 0 {
 		args = append(args, "--cpus", fmt.Sprintf("%.3f", float64(runtime.GetCpuMillis())/1000.0))

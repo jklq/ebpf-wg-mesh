@@ -176,7 +176,6 @@ func TestLocalStateRecoveryRequiresOwnershipOfEveryDiscoveredResource(t *testing
 	if err := store.prepareStartup("", []RuntimeResource{
 		{AllocationID: "alloc-1", RuntimeID: "platform-alloc-1"},
 		{AllocationID: "orphan", RuntimeID: "platform-orphan"},
-		{VolumeID: "orphan-volume", RuntimeID: filepath.Join(t.TempDir(), "orphan-volume")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +187,6 @@ func TestLocalStateRecoveryRequiresOwnershipOfEveryDiscoveredResource(t *testing
 	assertInitializationState(t, store, initializationRecovery)
 
 	owned := testDesiredState(1, 2, "alloc-1", "orphan")
-	owned.Volumes = append(owned.Volumes, &agentv1.DesiredVolume{VolumeId: "orphan-volume", EnvironmentId: "env-1", Name: "orphan", SizeBytes: 1024})
 	if _, err := store.acceptDesired("cluster-a", "test-session", owned); err != nil {
 		t.Fatal(err)
 	}

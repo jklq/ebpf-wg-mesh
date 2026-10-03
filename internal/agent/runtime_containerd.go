@@ -18,9 +18,8 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/restartpolicy"
 	"ebof-wg-mesh/internal/runtimeutil"
+	"ebof-wg-mesh/internal/volumestore"
 )
-
-const defaultVolumeMount = "/data"
 
 const defaultCPUCFSPeriod uint64 = 100_000
 
@@ -53,6 +52,7 @@ type serviceStatus struct {
 type ContainerdRuntime struct {
 	cfg         config.AgentConfig
 	engine      serviceEngine
+	volumes     *volumestore.Store
 	probeHealth func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe
 	ready       map[string]rolloutReadiness
 	clock       restartpolicy.Clock
@@ -71,8 +71,9 @@ func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
 	if err := os.MkdirAll(filepath.Join(cfg.Runtime.DataDir, "desired"), 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir desired dir: %w", err)
 	}
-	if err := os.MkdirAll(cfg.Runtime.VolumesDir, 0o755); err != nil {
-		return nil, fmt.Errorf("mkdir volumes dir: %w", err)
+	volumes, err := volumestore.New(cfg.Runtime.VolumesDir, volumestore.Backend(cfg.Runtime.VolumeBackend))
+	if err != nil {
+		return nil, err
 	}
 	if secretsDir := cfg.Runtime.ManagedDashboardSecretsDir; secretsDir != "" {
 		info, err := os.Stat(secretsDir)
@@ -83,15 +84,16 @@ func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
 			return nil, errors.New("managed dashboard secrets path is not a directory")
 		}
 	}
-	engine, err := newContainerdEngine(cfg)
+	engine, err := newContainerdEngine(cfg, volumes)
 	if err != nil {
 		return nil, err
 	}
 	return &ContainerdRuntime{
-		cfg:    cfg,
-		engine: engine,
-		clock:  restartpolicy.SystemClock{},
-		rng:    rand.New(rand.NewSource(time.Now().UnixNano())),
+		cfg:     cfg,
+		engine:  engine,
+		volumes: volumes,
+		clock:   restartpolicy.SystemClock{},
+		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -157,74 +159,58 @@ func (r *ContainerdRuntime) DiscoverRuntimeResources(ctx context.Context) ([]Run
 	if r == nil || r.engine == nil {
 		return nil, nil
 	}
-	resources, err := r.engine.DiscoverServices(ctx)
+	return r.engine.DiscoverServices(ctx)
+}
+
+// volumeStore is built from configuration on first use when the runtime was
+// assembled without NewContainerdRuntime.
+func (r *ContainerdRuntime) volumeStore() (*volumestore.Store, error) {
+	if r.volumes != nil {
+		return r.volumes, nil
+	}
+	backend := volumestore.Backend(r.cfg.Runtime.VolumeBackend)
+	if backend == "" {
+		backend = volumestore.BackendDirectory
+	}
+	volumes, err := volumestore.New(r.cfg.Runtime.VolumesDir, backend)
 	if err != nil {
 		return nil, err
 	}
-	entries, err := os.ReadDir(r.cfg.Runtime.VolumesDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("discover runtime volumes: %w", err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		path, err := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", entry.Name())
-		if err != nil {
-			return nil, err
-		}
-		resources = append(resources, RuntimeResource{VolumeID: entry.Name(), RuntimeID: path})
-	}
-	return resources, nil
+	r.volumes = volumes
+	return volumes, nil
 }
 
 func (r *ContainerdRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1.DesiredNodeState, allowCleanup bool) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
-	desiredVolumes := runtimeutil.IndexDesiredVolumes(state.GetVolumes())
 	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
+	// Stale allocations stop before volumes reconcile so a destroyed volume's
+	// last workload has released its mount.
 	if allowCleanup {
 		if err := r.pruneStaleServices(ctx, desiredServices); err != nil {
 			return nil, err
 		}
-		if err := r.pruneStaleVolumes(desiredVolumes); err != nil {
-			return nil, err
+	}
+	volumes, err := r.volumeStore()
+	if err != nil {
+		return nil, err
+	}
+	report.Volumes = volumes.Reconcile(state.GetVolumes(), allowCleanup)
+
+	pinned := make(map[string]bool, len(state.GetVolumes()))
+	for _, volume := range state.GetVolumes() {
+		if !volume.GetDestroy() {
+			pinned[volume.GetVolumeId()] = true
 		}
 	}
-
-	for _, vol := range state.GetVolumes() {
-		path, pathErr := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", vol.GetVolumeId())
-		if pathErr != nil {
-			report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
-				VolumeId: vol.GetVolumeId(),
-				Phase:    "Error",
-				Message:  pathErr.Error(),
-			})
-			continue
-		}
-		if err := os.MkdirAll(path, 0o755); err != nil {
-			report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
-				VolumeId: vol.GetVolumeId(),
-				Phase:    "Error",
-				Message:  err.Error(),
-			})
-			continue
-		}
-		report.Volumes = append(report.Volumes, &agentv1.VolumeCondition{
-			VolumeId: vol.GetVolumeId(),
-			Phase:    "Ready",
-			Message:  path,
-		})
-	}
-
 	for _, svc := range state.GetServices() {
-		cond := r.reconcileService(ctx, svc)
+		cond := r.reconcileService(ctx, svc, pinned)
 		report.Services = append(report.Services, cond)
 	}
 	return report, nil
 }
 
-func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.DesiredService) *agentv1.ServiceCondition {
+func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.DesiredService, pinnedVolumes map[string]bool) *agentv1.ServiceCondition {
 	cond := &agentv1.ServiceCondition{
 		AllocationId:             svc.GetAllocationId(),
 		ServiceId:                svc.GetServiceId(),
@@ -238,13 +224,6 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		cond.Phase = "Error"
 		cond.Message = err.Error()
 		return cond
-	}
-	if volumeID := svc.GetVolumeId(); volumeID != "" {
-		if _, err := runtimeChildPath(r.cfg.Runtime.VolumesDir, "volume ID", volumeID); err != nil {
-			cond.Phase = "Error"
-			cond.Message = err.Error()
-			return cond
-		}
 	}
 	if err := r.persistDesiredService(svc); err != nil {
 		cond.Phase = "Error"
@@ -283,6 +262,11 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 			cond.Phase = "Draining"
 			cond.Message = "SIGTERM sent; waiting for graceful shutdown"
 		}
+		return cond
+	}
+	if err := r.checkVolumeAvailable(svc, pinnedVolumes); err != nil {
+		cond.Phase = "Error"
+		cond.Message = err.Error()
 		return cond
 	}
 	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
@@ -614,21 +598,26 @@ func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[
 	return nil
 }
 
-func (r *ContainerdRuntime) pruneStaleVolumes(desired map[string]*agentv1.DesiredVolume) error {
-	entries, err := os.ReadDir(r.cfg.Runtime.VolumesDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read volumes dir: %w", err)
+// checkVolumeAvailable refuses to start a workload whose volume is not pinned
+// to this node or not provisioned: starting it would hand the workload an
+// empty directory in place of its data.
+func (r *ContainerdRuntime) checkVolumeAvailable(svc *agentv1.DesiredService, pinned map[string]bool) error {
+	volumeID := svc.GetVolumeId()
+	if volumeID == "" {
+		return nil
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		if _, ok := desired[entry.Name()]; ok {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(r.cfg.Runtime.VolumesDir, entry.Name())); err != nil {
-			return fmt.Errorf("remove stale volume %s: %w", entry.Name(), err)
-		}
+	if !pinned[volumeID] {
+		return fmt.Errorf("volume %s is not pinned to this node", volumeID)
+	}
+	if _, err := runtimeutil.VolumeMountPath(svc.GetSpec().GetRuntime()); err != nil {
+		return err
+	}
+	volumes, err := r.volumeStore()
+	if err != nil {
+		return err
+	}
+	if _, err := volumes.DataPath(volumeID); err != nil {
+		return fmt.Errorf("volume %s is not available: %w", volumeID, err)
 	}
 	return nil
 }
