@@ -73,3 +73,34 @@ The xDS server forces a fresh connection at least once per hour (with gRPC's age
 jitter and a one-minute grace). The Envoy xDS cluster uses one ADS request per
 connection, so a closed stream reconnects with the newly loaded credentials
 instead of reusing a revoked HTTP/2 connection.
+
+## Membership and retirement
+
+Provisioning records the node as active before releasing credentials. Every
+active node participates in certificate challenge and allocation withdrawal
+barriers, even before its first connection. Reissuing credentials for the same
+active ID preserves its observations. A process restart or temporary network
+failure never retires a node: a disconnected Envoy may still route traffic with
+its previous configuration, so it must continue to block a newer snapshot until
+it ACKs it.
+
+For permanent removal, remove the instance from the load balancer or DNS traffic
+pool, wait for that removal to propagate and existing downstream requests to
+finish, and stop Envoy. Only then retire it:
+
+```sh
+controlplane ingress-nodes list --db-url "$CONTROLPLANE_DATABASE_URL"
+controlplane ingress-nodes retire --db-url "$CONTROLPLANE_DATABASE_URL" \
+  --node-id ingress-eu-1 --traffic-stopped
+```
+
+`--traffic-stopped` is the operator's assertion that removal and shutdown have
+completed; the control plane cannot inspect an external load balancer. Retirement
+immediately removes the node from both barriers and denies its existing and
+future xDS requests and pushes. The tombstone remains permanently. Delayed
+observations and credential provisioning cannot reactivate it. A replacement
+instance needs a new ID. Do not retire an instance just to clear a temporary
+failure or NACK.
+
+Ingress membership uses schema version 38. As with other schema cutovers in this
+repository, older schemas are rejected; there is no incremental migration.

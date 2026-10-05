@@ -39,6 +39,7 @@ type NodeObservation struct {
 }
 
 type NodeStore interface {
+	NodeActive(ctx context.Context, nodeID string) (bool, error)
 	UpsertNodeObservations(ctx context.Context, observations []NodeObservation) error
 	ListNodeObservations(ctx context.Context) ([]NodeObservation, error)
 }
@@ -174,13 +175,13 @@ func (p *Publisher) loop(ctx context.Context, requestCh <-chan struct{}, tick fu
 	}
 }
 
-// Converged gates destroying withdrawn allocations: every known Envoy must fully apply first.
+// Converged gates destroying withdrawn allocations: every active Envoy must fully apply first.
 func (p *Publisher) Converged(ctx context.Context) (bool, error) {
 	_, converged, err := p.Applied(ctx)
 	return converged, err
 }
 
-// Applied reports how many Envoy nodes are known and whether each fully applied
+// Applied reports how many Envoy nodes are active and whether each fully applied
 // the served version. With no nodes the snapshot counts as applied.
 func (p *Publisher) Applied(ctx context.Context) (nodes int, converged bool, err error) {
 	if p == nil || p.nodes == nil {
