@@ -22,7 +22,12 @@ type fakeSource struct {
 	blockFirst   chan struct{}
 }
 
-func (f *fakeSource) HealthyIngressBackends(context.Context) ([]Backend, error) {
+func (f *fakeSource) IngressInputs(ctx context.Context) (Inputs, error) {
+	backends, err := f.healthyBackends(ctx)
+	return Inputs{Backends: backends}, err
+}
+
+func (f *fakeSource) healthyBackends(context.Context) ([]Backend, error) {
 	if f.calls.Add(1) == 1 && f.blockFirst != nil {
 		close(f.firstStarted)
 		<-f.blockFirst
@@ -103,12 +108,12 @@ func testPublisherWithNodes(source *fakeSource, pubs *fakePublications, nodes *f
 	_ = cancel
 	server := NewServer(ctx)
 	publisher := NewPublisher(PublisherConfig{
-		Source:       source,
-		Publications: pubs,
-		Nodes:        nodes,
-		Server:       server,
-		ListenAddrs:  []string{":8080"},
-		PublisherID:  "replica-a",
+		Source:          source,
+		Publications:    pubs,
+		Nodes:           nodes,
+		Server:          server,
+		HTTPListenAddrs: []string{":8080"},
+		PublisherID:     "replica-a",
 	})
 	return publisher, server
 }
@@ -160,7 +165,7 @@ func TestPublisherAdoptsRacingWinner(t *testing.T) {
 	t.Parallel()
 
 	backends := []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}}
-	snap, err := Build(BuildInput{Backends: backends, ListenAddrs: []string{":8080"}})
+	snap, err := Build(context.Background(), BuildInput{Backends: backends, HTTPListenAddrs: []string{":8080"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,12 +213,12 @@ func TestPublisherRequestSyncCoalescesBurst(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	server := NewServer(ctx)
 	publisher := NewPublisher(PublisherConfig{
-		Source:       source,
-		Publications: pubs,
-		Server:       server,
-		ListenAddrs:  []string{":8080"},
-		PublisherID:  "replica-a",
-		MinSync:      time.Hour,
+		Source:          source,
+		Publications:    pubs,
+		Server:          server,
+		HTTPListenAddrs: []string{":8080"},
+		PublisherID:     "replica-a",
+		MinSync:         time.Hour,
 	})
 
 	runCtx, cancelRun := context.WithCancel(ctx)
@@ -250,7 +255,7 @@ func TestPublisherFollowAdoptsDurablePublication(t *testing.T) {
 
 	// The live owner computed and published this snapshot; this replica holds no live state at all.
 	backends := []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}}
-	ownerSnap := mustBuild(t, BuildInput{Backends: backends, ListenAddrs: []string{":8080"}})
+	ownerSnap := mustBuild(t, BuildInput{Backends: backends, HTTPListenAddrs: []string{":8080"}})
 	pubs := &fakePublications{pub: Publication{
 		Version: ownerSnap.Version, Inputs: ownerSnap.Inputs, Publisher: "replica-b",
 	}}
@@ -475,12 +480,12 @@ func TestPublisherRefreshNeverServesMovedPastPublication(t *testing.T) {
 	t.Parallel()
 
 	stale := mustBuild(t, BuildInput{
-		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
-		ListenAddrs: []string{":8080"},
+		Backends:        []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		HTTPListenAddrs: []string{":8080"},
 	})
 	current := mustBuild(t, BuildInput{
-		Backends:    []Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}},
-		ListenAddrs: []string{":8080"},
+		Backends:        []Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}},
+		HTTPListenAddrs: []string{":8080"},
 	})
 	pubs := &movingPublications{
 		first: Publication{Version: stale.Version, Inputs: stale.Inputs},
@@ -514,8 +519,8 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 
 	// A lagging follower holds no snapshot yet while the durable row already carries the current publication.
 	published := mustBuild(t, BuildInput{
-		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
-		ListenAddrs: []string{":8080"},
+		Backends:        []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		HTTPListenAddrs: []string{":8080"},
 	})
 	pubs := &fakePublications{pub: Publication{
 		Version: published.Version, Inputs: published.Inputs,
@@ -560,8 +565,8 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	t.Parallel()
 
 	published := mustBuild(t, BuildInput{
-		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
-		ListenAddrs: []string{":8080"},
+		Backends:        []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		HTTPListenAddrs: []string{":8080"},
 	})
 	pubs := &fakePublications{pub: Publication{
 		Version: published.Version, Inputs: published.Inputs,

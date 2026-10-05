@@ -284,6 +284,7 @@ type persistence struct {
 	fleet              *fleetPersistence
 	reads              deliverycore.ReadModel
 	routing            *routingPersistence
+	certificates       *certificatePersistence
 	source             *source.SQLStore
 	secrets            *secretkeys.Service
 }
@@ -312,6 +313,8 @@ type routingPersistence struct {
 	*database
 	authz *authz.Authorizer
 	live  ingressLiveReader
+	// staticHosts are the operator-configured ingress hostnames.
+	staticHosts []string
 }
 
 func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error) error {
@@ -327,6 +330,7 @@ func newPersistence(db *database) *persistence {
 	p.catalog = &catalogPersistence{database: db, authz: authorizer}
 	p.fleet = &fleetPersistence{database: db, authz: authorizer, sessions: live, live: live}
 	p.routing = &routingPersistence{database: db, authz: authorizer, live: live}
+	p.certificates = &certificatePersistence{database: db, secrets: func() *secretkeys.Service { return p.secrets }}
 	p.source = source.NewSQLStore(db.db, db.withCoordinationTx, func(ctx context.Context, serviceID string) (source.Service, error) {
 		rec, err := p.reads.ServiceSnapshot(ctx, serviceID)
 		if err != nil {

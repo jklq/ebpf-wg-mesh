@@ -20,7 +20,7 @@ func serveXDSEndpoint(ctx context.Context, t *testing.T, backends []xds.Backend)
 	server := xds.NewServer(ctx)
 	publish = func(backends []xds.Backend) {
 		t.Helper()
-		snap, err := xds.Build(xds.BuildInput{Backends: backends, ListenAddrs: []string{":8080"}})
+		snap, err := xds.Build(context.Background(), xds.BuildInput{Backends: backends, HTTPListenAddrs: []string{":8080"}})
 		if err != nil {
 			t.Fatal(err)
 		}

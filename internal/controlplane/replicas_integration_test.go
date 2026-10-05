@@ -246,7 +246,7 @@ func TestReplicaIngressAndInternalDNSPublishOnlyReadyAllocations(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		snap, err := xds.Build(xds.BuildInput{Backends: current, ListenAddrs: []string{":8080"}})
+		snap, err := xds.Build(context.Background(), xds.BuildInput{Backends: current, HTTPListenAddrs: []string{":8080"}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -1,9 +1,11 @@
 package config
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"net/netip"
 	"net/url"
 	"path/filepath"
@@ -79,10 +81,11 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateXDSListen(cfg.Ingress); err != nil {
 		return err
 	}
-	for _, addr := range cfg.Ingress.ListenAddrs {
-		if strings.TrimSpace(addr) == "" {
-			return errors.New("controlplane.ingress.listenAddrs must not contain blanks")
-		}
+	if err := validateIngressListeners(cfg.Ingress); err != nil {
+		return err
+	}
+	if err := validateIngressTLS(cfg.Ingress); err != nil {
+		return err
 	}
 	for _, route := range cfg.Ingress.StaticRoutes {
 		if strings.TrimSpace(route.Upstream) == "" {
@@ -628,6 +631,67 @@ func validateAbsoluteHTTPSURL(field string, raw string) error {
 	}
 	if !strings.EqualFold(parsed.Scheme, "https") {
 		return fmt.Errorf("%s must use https", field)
+	}
+	return nil
+}
+
+func validateIngressListeners(cfg IngressConfig) error {
+	if len(cfg.HTTPListenAddrs) == 0 {
+		return errors.New("controlplane.ingress.httpListenAddrs is required")
+	}
+	ports := map[string]string{}
+	for _, group := range []struct {
+		field string
+		addrs []string
+	}{
+		{"controlplane.ingress.httpListenAddrs", cfg.HTTPListenAddrs},
+		{"controlplane.ingress.httpsListenAddrs", cfg.HTTPSListenAddrs},
+	} {
+		field := group.field
+		for _, addr := range group.addrs {
+			if strings.TrimSpace(addr) == "" {
+				return fmt.Errorf("%s must not contain blanks", field)
+			}
+			if _, _, err := net.SplitHostPort(addr); err != nil {
+				return fmt.Errorf("%s entry %q must be host:port: %w", field, addr, err)
+			}
+			if other, ok := ports[addr]; ok && other != field {
+				return fmt.Errorf("controlplane.ingress listen address %q is both HTTP and HTTPS", addr)
+			}
+			ports[addr] = field
+		}
+	}
+	return nil
+}
+
+func validateIngressTLS(cfg IngressConfig) error {
+	acme := cfg.TLS.ACME
+	if acme.DirectoryURL != "" {
+		if err := validateAbsoluteHTTPSURL("controlplane.ingress.tls.acme.directoryUrl", acme.DirectoryURL); err != nil {
+			return err
+		}
+		if len(cfg.HTTPSListenAddrs) == 0 {
+			return errors.New("controlplane.ingress.httpsListenAddrs is required when ACME certificates are enabled")
+		}
+	}
+	if (acme.EABKeyID == "") != (acme.EABHMACKey == "") {
+		return errors.New("controlplane.ingress.tls.acme.eabKeyId and eabHmacKey must be set together")
+	}
+	if acme.EABHMACKey != "" {
+		if _, err := base64.RawURLEncoding.DecodeString(acme.EABHMACKey); err != nil {
+			return fmt.Errorf("controlplane.ingress.tls.acme.eabHmacKey must be base64url without padding: %w", err)
+		}
+	}
+	if strings.TrimSpace(acme.Email) != "" {
+		if _, err := mail.ParseAddress(acme.Email); err != nil {
+			return fmt.Errorf("controlplane.ingress.tls.acme.email: %w", err)
+		}
+	}
+	if (cfg.TLS.PlatformCertFile == "") != (cfg.TLS.PlatformKeyFile == "") {
+		return errors.New("controlplane.ingress.tls.platformCertFile and platformKeyFile must be set together")
+	}
+	if cfg.TLS.PlatformCertFile != "" && len(cfg.HTTPSListenAddrs) == 0 {
+		return errors.New("controlplane.ingress.httpsListenAddrs is required with a platform certificate")
 	}
 	return nil
 }

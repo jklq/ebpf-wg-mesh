@@ -494,6 +494,25 @@ enum DomainOwnershipState {
   DOMAIN_OWNERSHIP_STATE_UNVERIFIED = 2;
 }
 
+// DomainCertificateState is the HTTPS state of one public hostname.
+enum DomainCertificateState {
+  // The platform does not manage HTTPS for the hostname; it serves plain HTTP.
+  DOMAIN_CERTIFICATE_STATE_UNSPECIFIED = 0;
+  // The certificate is not issued yet, for example while DNS is not ready.
+  DOMAIN_CERTIFICATE_STATE_PENDING = 1;
+  // The ingress serves HTTPS and redirects HTTP to HTTPS.
+  DOMAIN_CERTIFICATE_STATE_ACTIVE = 2;
+  // Issuance failed; the platform retries at retry_at.
+  DOMAIN_CERTIFICATE_STATE_FAILED = 3;
+}
+
+message DomainCertificate {
+  DomainCertificateState state = 1;
+  string message = 2;
+  google.protobuf.Timestamp expires_at = 3;
+  google.protobuf.Timestamp retry_at = 4;
+}
+
 message DomainBinding {
   string hostname = 1;
   string service_id = 2;
@@ -504,6 +523,7 @@ message DomainBinding {
   DomainOwnershipState ownership_state = 7;
   string ownership_message = 8;
   DeletionState deletion = 9;
+  DomainCertificate certificate = 10;
 }
 
 enum VolumeState {

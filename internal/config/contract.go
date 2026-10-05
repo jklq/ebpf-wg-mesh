@@ -52,6 +52,12 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 		features = append(features, "dashboard")
 	}
 	features = append(features, "ingress")
+	if cfg.Ingress.TLS.ACME.DirectoryURL != "" {
+		features = append(features, "ingress_acme")
+	}
+	if cfg.Ingress.TLS.PlatformCertFile != "" {
+		features = append(features, "ingress_platform_certificate")
+	}
 	if cfg.Registry.Host != "" {
 		features = append(features, "registry_auth")
 	}

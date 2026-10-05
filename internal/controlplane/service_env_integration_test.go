@@ -13,6 +13,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -466,7 +467,7 @@ func TestServiceEnvSurvivesRolledBackKeyMint(t *testing.T) {
 	// The environment's first encryption mints its DEK inside a transaction that rolls back.
 	rollback := errors.New("rollback")
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := store.secrets.Encrypt(ctx, tx, environmentID, []byte("aad"), []byte("value")); err != nil {
+		if _, err := store.secrets.Encrypt(ctx, tx, secretkeys.EnvironmentScope(environmentID), []byte("aad"), []byte("value")); err != nil {
 			return err
 		}
 		return rollback

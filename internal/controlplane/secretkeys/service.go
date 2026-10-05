@@ -99,17 +99,17 @@ func (s *Service) Registry() *Registry { return s.registry }
 // DEKs exposes the data-encryption key inventory for rewrap and inspection.
 func (s *Service) DEKs() *DEKStore { return s.deks }
 
-// Ciphertext is a value encrypted under one environment's data-encryption key.
+// Ciphertext is a value encrypted under one scope's data-encryption key.
 type Ciphertext struct {
 	DEKID string
 	// Data is the nonce followed by the AES-256-GCM ciphertext.
 	Data []byte
 }
 
-// Encrypt encrypts plaintext under the environment's DEK, minting the DEK inside
+// Encrypt encrypts plaintext under the scope's DEK, minting the DEK inside
 // q's transaction on first use. aad binds the ciphertext to its storage location.
-func (s *Service) Encrypt(ctx context.Context, q Querier, environmentID string, aad, plaintext []byte) (Ciphertext, error) {
-	dek, dekID, err := s.deks.DEKForScope(ctx, q, DEKScopeKindEnvironment, environmentID)
+func (s *Service) Encrypt(ctx context.Context, q Querier, scope Scope, aad, plaintext []byte) (Ciphertext, error) {
+	dek, dekID, err := s.deks.DEKForScope(ctx, q, scope.Kind, scope.ID)
 	if err != nil {
 		return Ciphertext{}, err
 	}

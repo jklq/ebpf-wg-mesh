@@ -71,8 +71,14 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Ingress.XDSListen == "" {
 		cfg.Ingress.XDSListen = "127.0.0.1:18000"
 	}
-	if len(cfg.Ingress.ListenAddrs) == 0 {
-		cfg.Ingress.ListenAddrs = []string{":80", ":443"}
+	if len(cfg.Ingress.HTTPListenAddrs) == 0 {
+		cfg.Ingress.HTTPListenAddrs = []string{":80"}
+	}
+	if len(cfg.Ingress.HTTPSListenAddrs) == 0 {
+		cfg.Ingress.HTTPSListenAddrs = []string{":443"}
+	}
+	if cfg.Ingress.TLS.ACME.DirectoryURL == "" && cfg.Profile.IsProduction() {
+		cfg.Ingress.TLS.ACME.DirectoryURL = LetsEncryptDirectoryURL
 	}
 	if cfg.Ingress.PublicAddr == "" {
 		cfg.Ingress.PublicAddr = "platform.local"

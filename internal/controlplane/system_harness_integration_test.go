@@ -80,6 +80,9 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		Registry:  opts.registry,
 		Mesh:      testMeshConfig(),
 	}
+	if opts.ingress != nil {
+		cfg.Ingress = *opts.ingress
+	}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		cancel()
 		t.Fatalf("FinalizeControlPlane: %v", err)
@@ -161,6 +164,7 @@ type systemControlPlaneOptions struct {
 	bootstrap       config.BootstrapConfig
 	bootstrapTokens []config.AgentBootstrapToken
 	registry        config.RegistryConfig
+	ingress         *config.IngressConfig
 	withDashboard   bool
 	standby         bool
 }

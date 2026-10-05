@@ -213,9 +213,9 @@ func run() error {
 		Ingress: config.IngressConfig{
 			// The Envoy container dials xDS over the docker bridge, so the
 			// loopback-only default cannot apply here.
-			XDSListen:   fmt.Sprintf("0.0.0.0:%d", xdsPort),
-			ListenAddrs: []string{fmt.Sprintf(":%d", stackCfg.IngressPort)},
-			PublicAddr:  stackCfg.IngressHost,
+			XDSListen:       fmt.Sprintf("0.0.0.0:%d", xdsPort),
+			HTTPListenAddrs: []string{fmt.Sprintf(":%d", stackCfg.IngressPort)},
+			PublicAddr:      stackCfg.IngressHost,
 			StaticRoutes: []config.StaticIngressRouteConfig{{
 				Hosts:    []string{stackCfg.IngressHost},
 				Upstream: net.JoinHostPort(hostGateway, strconv.Itoa(consolePort)),

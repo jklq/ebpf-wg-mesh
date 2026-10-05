@@ -31,6 +31,7 @@ type platformService struct {
 	ingress              deliverycore.PlatformIngress
 	inspector            *source.Inspector
 	dnsResolver          routing.Resolver
+	certificates         routing.Certificates
 	platformDomainSuffix string
 	events               *platformEvents
 	liveOwner            liveOwner
@@ -141,6 +142,12 @@ func withDomainCNAMEResolver(resolver routing.Resolver) platformServiceOption {
 	}
 }
 
+func withCertificates(certs routing.Certificates) platformServiceOption {
+	return func(service *platformService) {
+		service.certificates = certs
+	}
+}
+
 func withPlatformDomainSuffix(suffix string) platformServiceOption {
 	return func(service *platformService) {
 		service.platformDomainSuffix = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(suffix), "."))
@@ -204,7 +211,7 @@ func newPlatformService(store platformStore, notifier deliverycore.PlatformNotif
 			opt(service)
 		}
 	}
-	service.domains = routing.NewDomains(store, notifier, ingress, service.platformDomainSuffix, service.dnsResolver)
+	service.domains = routing.NewDomains(store, notifier, ingress, service.certificates, service.platformDomainSuffix, service.dnsResolver)
 	service.catalog = newCatalogOperations(store, notifier, ingress)
 	return service
 }
