@@ -5,10 +5,16 @@ package controlplane
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -95,6 +101,14 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 	}
 	const staticHost = "app.tls.test"
 	const suffix = "apps.tls.test"
+	wildcard, wildcardRoot := testExternalWildcard(t, suffix)
+	platformCertFile, platformKeyFile := filepath.Join(stateDir, "platform.crt"), filepath.Join(stateDir, "platform.key")
+	if err := os.WriteFile(platformCertFile, wildcard.ChainPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(platformKeyFile, wildcard.KeyPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	xdsPort := availableLocalPort(t)
 	cp := startSystemControlPlane(t, systemControlPlaneOptions{ingress: &config.IngressConfig{
 		PublicAddr:       suffix,
@@ -105,7 +119,7 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 			Hosts:    []string{staticHost},
 			Upstream: net.JoinHostPort(hostGateway, strconv.Itoa(backendLn.Addr().(*net.TCPAddr).Port)),
 		}},
-		TLS: config.IngressTLSConfig{ACME: config.ACMEConfig{DirectoryURL: directory, CAFile: caFile}},
+		TLS: config.IngressTLSConfig{ACME: config.ACMEConfig{DirectoryURL: directory, CAFile: caFile}, PlatformCertFile: platformCertFile, PlatformKeyFile: platformKeyFile},
 	}})
 
 	material, err := cp.server.ProvisionIngressIdentity(ctx, "envoy-tls-"+id)
@@ -166,7 +180,7 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A generated hostname without healthy backends still answers its challenge.
+	// Generated hostnames share the operator-provisioned wildcard without ACME.
 	service := domainOperationFixture(t, cp.server.store, "owner")
 	domains := NewDomains(cp.server.store.platform(), noopNotifier{}, cp.server.ingress, cp.server.certificates, suffix, staticCNAMEResolver{})
 	generated, err := domains.GenerateDomainBinding(ctx, testUser("owner"), &platformv1.GenerateDomainBindingRequest{ServiceId: service.ID, TargetPort: 8080})
@@ -194,9 +208,25 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 	if got := binding.GetCertificate(); got.GetState() != platformv1.DomainCertificateState_DOMAIN_CERTIFICATE_STATE_ACTIVE || got.GetExpiresAt() == nil {
 		t.Fatalf("API certificate = %v, want active with expiry", got)
 	}
+	for i := range 5 {
+		owner := fmt.Sprintf("owner-%d", i)
+		added := domainOperationFixture(t, cp.server.store, owner)
+		if _, err := domains.GenerateDomainBinding(ctx, testUser(owner), &platformv1.GenerateDomainBindingRequest{ServiceId: added.ID, TargetPort: 8080}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Creating services adds routes but never per-host certificates or challenges.
+	if err := cp.server.ingress.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	certificatesInDB, err := cp.server.store.certificates.ListCertificates(ctx)
+	if err != nil || len(certificatesInDB) != 1 || certificatesInDB[0].Hostname != staticHost {
+		t.Fatalf("certificate orders after adding services = %+v, %v", certificatesInDB, err)
+	}
 
 	roots := x509.NewCertPool()
 	rootPEM := fetchBody(t, pebbleClient, "https://"+dockerHostPort(t, docker, pebbleName, "15000/tcp")+"/roots/0")
+	roots.AppendCertsFromPEM(wildcardRoot)
 	if !roots.AppendCertsFromPEM(rootPEM) {
 		t.Fatalf("Pebble root is not PEM: %s", rootPEM)
 	}
@@ -228,8 +258,55 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 	}
 	leaf := conn.ConnectionState().PeerCertificates[0]
 	_ = conn.Close()
-	if !slices.Contains(leaf.DNSNames, generated.GetHostname()) {
-		t.Fatalf("served certificate names = %v, want %s", leaf.DNSNames, generated.GetHostname())
+	if !slices.Contains(leaf.DNSNames, "*."+suffix) {
+		t.Fatalf("served certificate names = %v, want shared wildcard %s", leaf.DNSNames, "*."+suffix)
+	}
+
+	// Filesystem SDS reloads the dedicated ingress credential. Revoking the old
+	// leaf closes its ADS stream; the next stream must use the new TLS connection.
+	renewedIdentity, err := cp.server.ProvisionIngressIdentity(ctx, "envoy-tls-"+id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := xds.WriteIdentity(identityDir, "/etc/envoy/identity", renewedIdentity); err != nil {
+		t.Fatal(err)
+	}
+	oldBlock, _ := pem.Decode(material.CertPEM)
+	oldIdentity, err := x509.ParseCertificate(oldBlock.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cp.server.authority.Revocations().Add(oldIdentity.SerialNumber.Text(16)); err != nil {
+		t.Fatal(err)
+	}
+
+	// External DNS-01 renewal changes the shared wildcard without restarting the
+	// control plane or Envoy, and creates no individual orders.
+	renewedWildcard, renewedRoot := testExternalWildcard(t, suffix)
+	roots.AppendCertsFromPEM(renewedRoot)
+	for path, data := range map[string][]byte{platformCertFile: renewedWildcard.ChainPEM, platformKeyFile: renewedWildcard.KeyPEM} {
+		if err := os.WriteFile(path+".new", data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(path+".new", path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := cp.server.ingress.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 30 * time.Second, Interval: 250 * time.Millisecond}, func(context.Context) (bool, error) {
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", httpsAddr, &tls.Config{ServerName: generated.GetHostname(), RootCAs: roots, MinVersion: tls.VersionTLS12})
+		if err != nil {
+			return false, nil
+		}
+		defer conn.Close()
+		return conn.ConnectionState().PeerCertificates[0].SerialNumber.Cmp(leaf.SerialNumber) != 0, nil
+	}); err != nil {
+		t.Fatalf("wildcard and ingress identity rotation did not reach Envoy: %v", err)
+	}
+	if count, err := cp.server.store.certificates.ListCertificates(ctx); err != nil || len(count) != 1 {
+		t.Fatalf("renewal created certificate orders: %v, %v", count, err)
 	}
 
 	// Plain HTTP redirects to HTTPS, keeping the path.
@@ -248,6 +325,42 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 	if redirect.StatusCode != http.StatusPermanentRedirect || redirect.Header.Get("Location") != want {
 		t.Fatalf("HTTP response = %d %q, want 308 to %s", redirect.StatusCode, redirect.Header.Get("Location"), want)
 	}
+}
+
+// The external DNS-01 provisioner is represented by an independent test CA;
+// this material never passes through the platform's ACME issuer or certificate DB.
+func testExternalWildcard(t *testing.T, suffix string) (certificates.Issued, []byte) {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "external DNS-01 test CA"}, IsCA: true, BasicConstraintsValid: true, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(72 * time.Hour), KeyUsage: x509.KeyUsageCertSign}
+	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf := &x509.Certificate{SerialNumber: serial, DNSNames: []string{"*." + suffix}, NotBefore: now.Add(-time.Hour), NotAfter: now.Add(48 * time.Hour), ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, KeyUsage: x509.KeyUsageDigitalSignature}
+	der, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	chain := append(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), root...)
+	return certificates.Issued{ChainPEM: chain, KeyPEM: pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})}, root
 }
 
 func dockerRun(t *testing.T, docker localteststack.DockerRunner, args ...string) []byte {

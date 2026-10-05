@@ -76,7 +76,7 @@ func (s *Service) reconcile(ctx context.Context, slots chan struct{}, workers *s
 		byHost[record.Hostname] = record
 	}
 	for _, host := range hosts {
-		if s.platform.covers(host.Name) {
+		if !s.individualCertificate(host) {
 			continue
 		}
 		record, exists := byHost[host.Name]
@@ -116,6 +116,9 @@ func due(record Record, exists bool, now time.Time) bool {
 }
 
 func (s *Service) issue(ctx context.Context, host Hostname, record Record) {
+	if !s.individualCertificate(host) {
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, issueTimeout)
 	defer cancel()
 	if host.PlatformHostname != "" && s.verify != nil {

@@ -19,10 +19,11 @@ type Config struct {
 	Issuer Issuer
 	Verify OwnershipVerifier
 	// PlatformSuffix, PlatformCertFile, and PlatformKeyFile configure the wildcard
-	// certificate of generated hostnames. Empty files turn it off.
-	PlatformSuffix   string
-	PlatformCertFile string
-	PlatformKeyFile  string
+	// certificate of generated hostnames. Generated names never fall back to ACME.
+	PlatformSuffix             string
+	PlatformCertFile           string
+	PlatformKeyFile            string
+	RequirePlatformCertificate bool
 	// Workers bounds the concurrent issuances. Zero selects a default.
 	Workers int
 	Now     func() time.Time
@@ -31,14 +32,15 @@ type Config struct {
 // Service owns the certificate of every public hostname. Every replica serves
 // key pairs and status; only the live owner runs the renewal loop.
 type Service struct {
-	store    Store
-	hosts    HostSource
-	ingress  Ingress
-	issuer   Issuer
-	verify   OwnershipVerifier
-	platform *platformCertificate
-	workers  int
-	now      func() time.Time
+	store          Store
+	hosts          HostSource
+	ingress        Ingress
+	issuer         Issuer
+	verify         OwnershipVerifier
+	platform       *platformCertificate
+	platformSuffix string
+	workers        int
+	now            func() time.Time
 
 	keysMu sync.Mutex
 	keys   map[string]xds.KeyPair
@@ -48,6 +50,9 @@ type Service struct {
 }
 
 func New(cfg Config) (*Service, error) {
+	if cfg.RequirePlatformCertificate && (strings.TrimSpace(cfg.PlatformCertFile) == "" || strings.TrimSpace(cfg.PlatformKeyFile) == "") {
+		return nil, fmt.Errorf("production requires externally provisioned platform wildcard certificate files")
+	}
 	platform, err := newPlatformCertificate(cfg.PlatformCertFile, cfg.PlatformKeyFile, cfg.PlatformSuffix)
 	if err != nil {
 		return nil, err
@@ -61,16 +66,17 @@ func New(cfg Config) (*Service, error) {
 		now = time.Now
 	}
 	return &Service{
-		store:    cfg.Store,
-		hosts:    cfg.Hosts,
-		ingress:  cfg.Ingress,
-		issuer:   cfg.Issuer,
-		verify:   cfg.Verify,
-		platform: platform,
-		workers:  workers,
-		now:      now,
-		keys:     map[string]xds.KeyPair{},
-		nudge:    make(chan struct{}, 1),
+		store:          cfg.Store,
+		hosts:          cfg.Hosts,
+		ingress:        cfg.Ingress,
+		issuer:         cfg.Issuer,
+		verify:         cfg.Verify,
+		platform:       platform,
+		platformSuffix: strings.ToLower(strings.Trim(strings.TrimSpace(cfg.PlatformSuffix), ".")),
+		workers:        workers,
+		now:            now,
+		keys:           map[string]xds.KeyPair{},
+		nudge:          make(chan struct{}, 1),
 	}, nil
 }
 
@@ -95,11 +101,17 @@ func (s *Service) IngressCertificates(ctx context.Context) ([]xds.Certificate, [
 	now := s.now()
 	var certs []xds.Certificate
 	if s.platform != nil {
-		if version, err := s.platform.load(); err == nil && now.Before(version.NotAfter) {
-			certs = append(certs, xds.Certificate{
-				Name: version.Hostname, ServerNames: []string{version.Hostname}, Fingerprint: version.Fingerprint,
-			})
+		version, err := s.platform.load()
+		if err != nil {
+			return nil, nil, err
 		}
+		if now.Before(version.NotBefore) || !now.Before(version.NotAfter) {
+			return nil, nil, fmt.Errorf("platform wildcard certificate is expired or not yet valid")
+		}
+		s.rememberPlatform(version)
+		certs = append(certs, xds.Certificate{
+			Name: version.Hostname, ServerNames: []string{version.Hostname}, Fingerprint: version.Fingerprint,
+		})
 	}
 	if s.issuer == nil {
 		return certs, nil, nil
@@ -112,15 +124,12 @@ func (s *Service) IngressCertificates(ctx context.Context) ([]xds.Certificate, [
 	if err != nil {
 		return nil, nil, err
 	}
-	routed := make(map[string]struct{}, len(hosts))
+	routed := make(map[string]bool, len(hosts))
 	for _, host := range hosts {
-		routed[host.Name] = struct{}{}
+		routed[host.Name] = s.individualCertificate(host)
 	}
 	for _, record := range records {
-		if _, ok := routed[record.Hostname]; !ok || record.Fingerprint == "" || !now.Before(record.NotAfter) {
-			continue
-		}
-		if s.platform.covers(record.Hostname) {
+		if !routed[record.Hostname] || record.Fingerprint == "" || !now.Before(record.NotAfter) {
 			continue
 		}
 		certs = append(certs, xds.Certificate{
@@ -131,7 +140,29 @@ func (s *Service) IngressCertificates(ctx context.Context) ([]xds.Certificate, [
 	if err != nil {
 		return nil, nil, err
 	}
-	return certs, challenges, nil
+	filtered := challenges[:0]
+	for _, challenge := range challenges {
+		individual, known := routed[challenge.Hostname]
+		if !s.platformHostname(challenge.Hostname) && (!known || individual) {
+			filtered = append(filtered, challenge)
+		}
+	}
+	return certs, filtered, nil
+}
+
+func (s *Service) platformHostname(hostname string) bool {
+	_, rest, ok := strings.Cut(strings.ToLower(strings.TrimSpace(hostname)), ".")
+	return s.platformSuffix != "" && ok && rest == s.platformSuffix
+}
+
+func (s *Service) individualCertificate(host Hostname) bool {
+	return !host.PlatformGenerated && !s.platformHostname(host.Name)
+}
+
+func (s *Service) rememberPlatform(version Version) {
+	s.keysMu.Lock()
+	s.keys[version.Fingerprint] = xds.KeyPair{CertificatePEM: version.ChainPEM, PrivateKeyPEM: version.KeyPEM}
+	s.keysMu.Unlock()
 }
 
 // KeyPair implements xds.KeyPairSource. Decrypted key pairs stay in memory for
@@ -168,10 +199,19 @@ func (s *Service) Status(ctx context.Context, hostname string) Status {
 	if s == nil {
 		return Status{}
 	}
-	if s.platform.covers(hostname) {
+	if s.platformHostname(hostname) {
+		if s.platform == nil {
+			if s.issuer == nil {
+				return Status{}
+			}
+			return Status{State: StateFailed, Message: "generated hostnames require an externally provisioned wildcard certificate"}
+		}
 		version, err := s.platform.load()
 		if err != nil {
 			return Status{State: StateFailed, Message: err.Error()}
+		}
+		if s.now().Before(version.NotBefore) || !s.now().Before(version.NotAfter) {
+			return Status{State: StateFailed, ExpiresAt: version.NotAfter, Message: "platform wildcard certificate is expired or not yet valid"}
 		}
 		return Status{State: StateActive, ExpiresAt: version.NotAfter}
 	}

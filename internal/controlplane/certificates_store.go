@@ -249,7 +249,7 @@ func (s *routingPersistence) RoutedHostnames(context.Context) ([]certificates.Ho
 		out = append(out, host)
 	}
 	for _, domain := range domains {
-		host := certificates.Hostname{Name: domain.Hostname}
+		host := certificates.Hostname{Name: domain.Hostname, PlatformGenerated: domain.PlatformGenerated}
 		if !domain.PlatformGenerated {
 			host.PlatformHostname = generated[domain.ServiceID]
 		}

@@ -1,8 +1,8 @@
 // Package certificates gives every public hostname an HTTPS certificate. The
-// live owner issues and renews one certificate per hostname over ACME HTTP-01.
+// live owner issues and renews custom-domain certificates over ACME HTTP-01.
 // Envoy answers the challenges from the xDS snapshot, and serves the
-// certificates over SDS. An operator wildcard certificate can cover the
-// generated platform hostnames instead.
+// certificates over SDS. Generated hostnames exclusively use an externally
+// provisioned wildcard certificate, required in production.
 package certificates
 
 import (
@@ -14,7 +14,8 @@ import (
 
 // Hostname is one public hostname that the ingress routes.
 type Hostname struct {
-	Name string
+	Name              string
+	PlatformGenerated bool
 	// PlatformHostname is the CNAME target that proves ownership of a custom
 	// hostname. It is empty for generated and operator-configured hostnames.
 	PlatformHostname string

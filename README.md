@@ -10,7 +10,7 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 
 ## Docs
 
-- [INGRESS.md](INGRESS.md): authenticated xDS provisioning, Envoy bootstrap, and certificate rotation.
+- [INGRESS.md](INGRESS.md): authenticated xDS, node retirement, and shared wildcard deployment and renewal.
 - [docs/map](docs/map/README.md): architecture map, one block per file. Render it with `go run ./cmd/archmap`.
 - [CONTEXT.md](CONTEXT.md): domain vocabulary.
 - [GitHub project](https://github.com/users/jklq/projects/6): backlog and priorities.

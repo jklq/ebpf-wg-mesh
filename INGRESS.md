@@ -69,8 +69,8 @@ Monitor identity expiry, Envoy's SDS reload failures, and xDS ACK/NACK state.
 The VM probe and local stack use the same authenticated transport and stable
 node IDs.
 
-The xDS server forces a fresh connection at least once per hour (with gRPC's age
-jitter and a one-minute grace). The Envoy xDS cluster uses one ADS request per
+The xDS server bounds connection age to one hour (with gRPC's age jitter
+and a one-minute grace). The Envoy xDS cluster uses one ADS request per
 connection, so a closed stream reconnects with the newly loaded credentials
 instead of reusing a revoked HTTP/2 connection.
 
@@ -104,3 +104,71 @@ failure or NACK.
 
 Ingress membership uses schema version 38. As with other schema cutovers in this
 repository, older schemas are rejected; there is no incremental migration.
+
+## Shared wildcard for generated hostnames
+
+For `--ingress-public-addr apps.example.net`, production requires a currently
+valid certificate with the exact SAN `*.apps.example.net` and its matching key.
+Configure both `--ingress-platform-tls-cert-file` and
+`--ingress-platform-tls-key-file` on every control plane replica. A certificate
+for an individual generated name or `probe.apps.example.net` is insufficient.
+Generated hostnames exclusively use this wildcard; creating services or domain
+bindings never creates individual ACME orders for those names. The wildcard
+covers one DNS label beneath the suffix; the suffix apex needs its own
+certificate if routed as an operator-configured host.
+
+Provision and renew the wildcard externally using DNS-01. HTTP-01 cannot issue
+wildcards; DNS-01 can also delegate `_acme-challenge.apps.example.net` to a
+separate validation zone. See [Let's Encrypt's challenge documentation](https://letsencrypt.org/docs/challenge-types/).
+Keep the DNS credential on the renewal host, separate from workloads and the
+control plane. Scope its permissions to the necessary DNS zone.
+
+For example, install Certbot and its DNS provider plugin on the renewal host.
+For Cloudflare, put a zone-scoped `Zone:DNS:Edit` API token in
+`/etc/letsencrypt/dns.ini`, owned by the renewal user and mode `0600`:
+
+```ini
+dns_cloudflare_api_token = YOUR_ZONE_SCOPED_TOKEN
+```
+
+```sh
+certbot certonly --non-interactive --agree-tos --email ops@example.net \
+  --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/dns.ini \
+  --cert-name platform-apps -d '*.apps.example.net'
+```
+
+The plugin's [credential and installation instructions](https://certbot-dns-cloudflare.readthedocs.io/en/stable/)
+apply; use the equivalent plugin for another DNS provider. Install only one
+renewal job for this shared certificate, rather than one job per replica or
+service. Enable your installation's Certbot renewal timer and verify it with
+`certbot renew --dry-run`. Use a
+[deploy hook](https://eff-certbot.readthedocs.io/en/stable/using.html#renewing-certificates)
+to publish `fullchain.pem` and `privkey.pem` after a successful renewal.
+
+Deploy the complete chain and key to a new generation on the shared,
+operator-controlled certificate volume. Give the control plane user read access
+to that generation and keep the private key mode `0600`. Atomically switch the
+`current` symlink after both files arrive. Every replica must mount the same
+parent directory read-only and resolve the same generation, for example:
+
+```sh
+controlplane --profile production --ingress-public-addr apps.example.net \
+  --ingress-platform-tls-cert-file /etc/ebpf-wg-mesh/ingress/current/fullchain.pem \
+  --ingress-platform-tls-key-file /etc/ebpf-wg-mesh/ingress/current/privkey.pem \
+  ...
+```
+
+Supply the rest of the production flags for database, signing keys, storage, and
+listeners as usual. Renewal changes are picked up by the existing certificate
+file reload and xDS publication loop; Envoy receives the new wildcard through
+authenticated SDS without a restart. An incomplete or invalid replacement keeps
+the previous valid certificate. Missing, expired, mismatched, or incorrect
+wildcard material is rejected at startup. Expiry during operation fails
+publication and certificate status rather than removing HTTPS from the last
+good snapshot or ordering individual certificates. Monitor wildcard expiry and
+renewal/deployment failures before the old certificate expires.
+
+Custom domains retain individual ACME HTTP-01 issuance and renewal. Their CNAME
+ownership checks still point at the service's generated hostname. Keep port 80
+reachable for those custom-domain challenges; ordinary certified traffic
+redirects to HTTPS. The control plane needs no DNS-01 credentials.

@@ -72,7 +72,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.Ingress.TLS.ACME.CAFile, "ingress-acme-ca-file", "CONTROLPLANE_INGRESS_ACME_CA_FILE", "", "extra PEM roots for the ACME directory's own TLS, e.g. a private CA")
 	stringFlag(fs, &cfg.Ingress.TLS.ACME.EABKeyID, "ingress-acme-eab-key-id", "CONTROLPLANE_INGRESS_ACME_EAB_KEY_ID", "", "external account binding key ID for CAs that require it")
 	stringFlag(fs, &cfg.Ingress.TLS.ACME.EABHMACKey, "ingress-acme-eab-hmac-key", "CONTROLPLANE_INGRESS_ACME_EAB_HMAC_KEY", "", "external account binding HMAC key, base64url")
-	stringFlag(fs, &cfg.Ingress.TLS.PlatformCertFile, "ingress-platform-tls-cert-file", "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE", "", "PEM wildcard certificate chain for *.<ingress-public-addr>; generated hostnames use it instead of ACME")
+	stringFlag(fs, &cfg.Ingress.TLS.PlatformCertFile, "ingress-platform-tls-cert-file", "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE", "", "externally renewed PEM wildcard chain for *.<ingress-public-addr>, required in production; generated hostnames never use individual ACME")
 	stringFlag(fs, &cfg.Ingress.TLS.PlatformKeyFile, "ingress-platform-tls-key-file", "CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE", "", "PEM private key of the platform wildcard certificate")
 	stringFlag(fs, &cfg.Ingress.ControlPlaneHTTPUpstream, "ingress-controlplane-upstream", "CONTROLPLANE_INGRESS_CONTROLPLANE_UPSTREAM", "127.0.0.1:8080", "")
 	boolFlag(fs, &cfg.Dashboard.Enabled, "dashboard-enabled", "CONTROLPLANE_DASHBOARD_ENABLED", false, "")
