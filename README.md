@@ -1,352 +1,42 @@
 # ebpf-wg-mesh
 
-Minimal PaaS control plane and agent prototype with a WireGuard/eBPF private fabric.
+A small PaaS. It runs a project's services as isolated workloads on an operator-managed fleet, connected by a WireGuard overlay with eBPF identity policy.
 
-## Current shape
+- `cmd/controlplane`: authoritative control plane (CockroachDB, mTLS gRPC, xDS for Envoy ingress, registry auth)
+- `cmd/agent`: fleet agent that supervises allocations on one node
+- `cmd/builder`: build worker that turns source snapshots into images
+- `console`: TanStack Start web app; owns browser auth and calls the control plane
+- `api/proto`: protobuf and generated gRPC bindings
 
-- `cmd/controlplane`: authoritative control plane
-- `cmd/agent`: node agent that opens an mTLS gRPC stream to the control plane
-- `cmd/builder`: build worker that claims jobs, materializes source snapshots, runs `buildctl`, and reports status
-- `console`: TanStack Start app that owns browser auth/session state and calls the control plane over internal mTLS gRPC
-- `internal/controlplane`: CockroachDB store, internal gRPC authz/authn, managed dashboard reconciliation, agent stream handling, xDS snapshot authority (`internal/controlplane/xds`)
-- `internal/agent`: desired-state loop, local reconcile runtime, containerd runtime, status reporting
-- `internal/mesh`: mesh bootstrap that wraps the WireGuard and eBPF implementation
-- `api/proto`: protobuf definitions and generated gRPC bindings
+## Docs
 
-## Architecture
-
-Implementation prompts, frontend handoffs, dependencies, and priorities live in the [GitHub project](https://github.com/users/jklq/projects/6). Completed work is recorded in [docs/completed-work.md](docs/completed-work.md).
-
-What the code does today. Target invariants live in [docs/architecture.md](docs/architecture.md); do not extend the current shapes called out as going away.
-
-Every agent receives environment-scoped workload identities and WireGuard peers for nodes that share a hosted environment. Allocation delivery uses bounded start/update/stop diffs over a per-node revision; full checkpoints establish or repair the baseline. Public ingress is a single Envoy instance driven by the control plane as xDS authority; the fleet and availability policy are still open.
-
-The stream contract, durable acknowledgements, removal scope and authority-expiration assumptions are defined in [Agent reconciliation](docs/agent-reconciliation.md).
-
-- CockroachDB is the authoritative control-plane store for projects, memberships, repository grants, environments, agents, services, revisions, volumes, domains, allocations, and status projections. The console uses its own schema in the same cluster for users, sessions, and onboarding. Probe ticks, logs, metrics samples, and queue coordination do not become product-journal commands. Typed persistence mutations combine SQL and journal effects; journal replay and the live owner share one immutable indexed projection. Sync renders and decrypts only invalidated assignments and changed observation overlays. A process boots from the normalized product tables and follows the retained journal tail rather than storing a second whole-state JSON checkpoint. Command receipts survive log truncation for a documented retry window: one hour for internally generated commit-resolution IDs and seven days for caller-provided idempotency keys.
-- Service, build, and deploy logs flow through a bounded durable pipeline into ClickHouse: agents and builders spool to disk and ship with stable line identities so reconnect retries deduplicate, raw lines are byte-exact under a 64 KiB limit, and every dropped window surfaces as an explicit read gap instead of silently closing. Per-project retention TTLs and post-deletion purge bound tenant log lifetime. See [Durable bounded logs](docs/durable-logs.md).
-- The control plane is authoritative for placement; an agent is authoritative for supervising the accepted work assigned to its node. Each agent durably commits its accepted desired state, authority epoch, reconciliation cursor, allocation generations, runtime identities, pending operations, drains, and observation sequence in `agent-state.db`. On restart it discovers stable `platform-<allocation-id>` runtime resources and reconciles them before connecting, so loss of a control-plane connection never ends workload supervision. Pull credentials are stored separately inside the mode-`0600` database and renewal does not manufacture an allocation change.
-- A missing database with discovered managed resources, or any corrupt database, enters recovery. Corrupt data is quarantined, unknown resources are reported in the hello inventory, and destructive pruning remains disabled until an authenticated complete checkpoint establishes their ownership or authoritative absence. Without a prior cluster binding, every discovered resource must be claimed before the fence is lifted.
-- Policy is fail-closed and identity-based: a workload-pool deny plus exact allows. Those allows are scoped to the environments the node currently hosts, including remote allocations in those environments. Node configuration delivers those identities independently of allocation changes. The target gives Envoy instances only the backends they route rather than the mesh catalog.
-- WireGuard is overlay transport and eBPF is identity policy. Peering is scoped to nodes that share an environment, excluding self, retired, and revoked peers; each peer's AllowedIPs are that peer's overlay IPv4 and IPv6 prefixes. The target adds peers between those nodes and the Envoy instances that publish their services once the fleet lands.
-- Public ingress is a single Envoy instance. The control plane serves a versioned xDS snapshot (LDS/CDS/EDS/RDS) derived from CockroachDB; Envoy ACK/NACK is the apply protocol and a NACK never withdraws the last-known-good snapshot. Snapshot versions are content hashes, so replicas racing to compute one converge. The target is a fleet with an availability policy; until then Envoy subscribes to the live owner.
-- Overlay dual-stack is live: every allocation gets IPv4 and IPv6, both are routed in AllowedIPs, and both are enforced by the same `network_identity`. The agent's `advertise_addr` remains its IPv6 host identity; the independently advertised WireGuard `IP:port` endpoint may use IPv4 or IPv6 underlay.
-- The console is the current product-facing caller of `platform.v1.PlatformService`. A public API, when it exists, must use the same application services.
-- The console uses generated protobuf JSON for platform resources and one authenticated RPC adapter. Protocol int64 values stay decimal strings, timestamps stay RFC 3339 strings, and optional messages and oneofs preserve presence through server functions and SSE. Browser layout and auth/session data remain console-owned; new platform fields do not need a second model or mapper.
-- Agent-facing and console-facing internal gRPC are protected by mTLS with distinct caller identities.
-- The console owns OAuth, canonical user profiles, and browser sessions. For each product RPC it signs a 30-second user assertion with a control-plane audience; the control plane verifies the signature, issuer, audience, lifetime, and subject before applying project membership and role authorization.
-- GitHub repositories are linked to a project only after the console confirms that the signed-in GitHub account can see them. Inspection, service mutation, and background source reconciliation use the project-specific repository grant. GitHub App grants produce immutable source snapshots; scheduled workloads already require a persisted image digest, but the full deploy-by-digest artifact contract is still open.
-- Registry authorization is part of the control-plane process. It mints short-lived Distribution bearer tokens and exact-repository builder/agent capabilities; the registry verifies those tokens locally from the control-plane signing certificate.
-- Control-plane replicas have no node-local authority as a production contract. Shared `CONTROLPLANE_STATE_DIR` / source-archive disks are a current constraint, not that contract.
-
-## Bootstrap
-
-- `controlplane` bootstraps from flags and environment, then owns node mesh/workload assignment in CockroachDB.
-- `agent` bootstraps from flags and environment, discovers local host facts, persists its own WireGuard private key, enrolls, and waits for assigned node config from the control plane.
-
-### Multiple control-plane replicas
-
-Control-plane replicas coordinate singleton reconcilers through a fenced CockroachDB lease. Agent streams and platform blocking reads observe durable database revisions, so a write handled by one replica wakes clients connected to another. Replica clocks are not used for lease, rollout, or failover decisions.
-
-Agents accept a comma-separated `AGENT_CONTROLPLANE_ADDRESSES` (or `--controlplane-addresses`) seed list. Each agent start replaces the durable seed set with that config; successful enrollment, dashboard-certificate, and sync responses replace the durable replica view independently. Agents use the union only to find a reachable replica; a non-owner replica returns a live-owner redirect so the agent pins and reconnects to the leaseholder. A dead owner is quarantined briefly so a redirect cannot immediately re-pin it, and that cooldown is not extended by later redirects. Bootstrap enrollment is retry-safe for the same agent key after a lost response.
-
-Every replica for one database must currently mount the same read-write `CONTROLPLANE_STATE_DIR`. That directory contains the shared internal PKI, registry identity, and revocation data. Startup binds the mount to the database using a persistent storage marker and fails if a replica is pointed at node-local or replacement storage. That shared-disk contract is scheduled to go away once a key provider lands. Source snapshots are content-addressed objects in operator-provided S3-compatible storage (`CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER=s3` with `..._S3_ENDPOINT`, `..._S3_REGION`, and `..._S3_BUCKET`); the filesystem provider (`CONTROLPLANE_SOURCE_ARCHIVES_DIR`) is development-only and rejected in production. Every replica computes the same xDS snapshot identity from shared state; only the live owner publishes it.
-
-Common bootstrap inputs:
-
-- control plane: listen addresses, advertised replica addresses (`CONTROLPLANE_REPLICA_ADDRESSES`), this replica's dial address (`CONTROLPLANE_ADVERTISE_ADDR`, required when more than one replica address is set), single-use agent-bound bootstrap token(s) (`agent_id=token`), DB URL, state dir, xDS listen address, managed console service settings
-- agent: control-plane seed address(es), control-plane CA, bootstrap token, data dir
-
-### xDS security posture
-
-The control plane serves the xDS management API on `CONTROLPLANE_INGRESS_XDS_LISTEN` (or `--ingress-xds-listen`), defaulting to `127.0.0.1:18000`; production requires an explicit host. The transport is currently plaintext without client authentication, so the listener must be network-isolated to the Envoy instances until xDS mTLS lands with the fleet work. The local Docker test stack binds all interfaces because the Envoy container dials xDS over the Docker bridge. TLS termination for public traffic arrives with the domain/certificate lifecycle (2.8), which pushes materials over SDS; until then Envoy serves plaintext.
-
-### Deployment and health semantics
-
-`UpdateService` stages a new service revision. `ReleaseEnvironment` publishes every staged revision in one transaction. Deployment-history operations use `ApplyDeploymentAction` with a selected `deployment_id` and a caller-generated `idempotency_key`; reusing a key for the same request is a no-op, while reusing it for different parameters is rejected.
-
-The supported deployment actions are:
-
-- `RESTART` rolls one selected allocation, or every replica when `allocation_id` is empty, through the same overlap, ingress-withdrawal, and graceful-drain path without building a new image.
-- `EXACT_REDEPLOY` creates a rollout from the selected deployment's persisted resolved spec and digest-pinned image. It does not inspect source or fetch a newer revision.
-- `ROLLBACK` creates a new rollout from a non-current successful deployment, including the environment-variable versions captured with that deployment. Existing deployment rows remain history.
-- `CANCEL` terminates current queued, building, or deploying work. Builders learn cancellation through their heartbeat, and late builder or agent reports cannot move the cancelled deployment out of its terminal state. The control plane restores the last successful digest-pinned deployment when one exists.
-- `REMOVE` withdraws ingress, drains the current allocation set with the runtime's graceful-stop path, and retains the service and deployment history.
-- `RETRY` retries failed, cancelled, or crashed work. Failed builds reuse their immutable source snapshot; runtime failures reuse the persisted resolved spec and image digest.
-
-Owners and editors may apply actions; viewers cannot. The console exposes only actions valid for each history row and records each accepted action in that deployment's history. A `NotFound` response means the selected deployment or allocation no longer exists; `FailedPrecondition` means it exists but is stale or is in an incompatible state, so callers should refresh deployment history before deciding whether to issue a new action with a new idempotency key.
-
-Readiness checks are rollout gates, not continuous monitors. With no health check configured, a deployment becomes ready as soon as its process is running. With an explicit HTTP readiness check, the agent retries the endpoint over both overlay families while the rollout is starting and marks the deployment ready after an HTTP `200` on IPv4, IPv6, or both. That successful readiness result is latched for the rollout and is not queried again during ordinary reconciliation; an optional HTTP liveness check can still run after ready and request a restart.
-
-Deployments use a persisted rolling strategy with platform-managed replacement concurrency: healthy capacity is preserved and at most one extra allocation is created at a time. The user-configurable defaults are a 300-second healthcheck timeout and 0 seconds of draining time. The control plane creates replacement allocations alongside the serving generation, waits for readiness, publishes the healthy replacement and withdraws its predecessor from ingress, and only sends the predecessor a drain intent after that ingress update succeeds. Agents send `SIGTERM`, preserve the container and network namespace during the draining window, and use `SIGKILL` only after the absolute deadline. Control-plane and agent restarts resume from the CockroachDB allocation state and desired drain deadline. A readiness or scheduling timeout fails the rollout without removing healthy serving allocations. Services with a volume reject overlapping replacement rollouts: the current allocation is stopped before the next starts, and replicas cannot be used with volumes (see basic volumes, item 6.1 in the [GitHub project](https://github.com/users/jklq/projects/6)).
-
-HTTP health-check paths must be absolute request paths beginning with a single `/`. Checks never follow redirects or use proxy environment variables. Production requests originate in the workload's persisted network namespace and target only the control-plane-assigned overlay IPv4 and IPv6 addresses and configured port (or the primary declared port when no check port is set). Ingress publishes one upstream per healthy allocation, preferring IPv4 when that family passed the probe. A missing or stale namespace keeps readiness pending; the agent does not fall back to host-network probing.
-
-`runtime.cpu_millis` is enforced with Linux CFS quota using a 100 ms period (for example, `500` millicpu becomes a `50 ms / 100 ms` quota). It is not interpreted as a cpuset.
-
-Customer workloads always run under one production OCI sandbox: the image USER is preserved, the ephemeral overlay root is writable, and a bounded Docker-like capability set supports ordinary images while excluding administrative/network capabilities. The agent also enforces `no_new_privileges`, seccomp, AppArmor or SELinux when the host supports them, isolated namespaces, masked dangerous proc/sys paths, PID limits, and hard cgroup v2 CPU/memory/swap/OOM controls. The customer API has no privileged, host-network, host-PID, sysctl, device, bind-mount, or sandbox-profile fields. See [docs/workload-isolation.md](docs/workload-isolation.md).
-
-### Agent fleet
-
-Operators enroll, cordon, drain, and retire compute nodes from the console **Fleet** page. Region, zone, failure domain, and host reservations are operator policy; agents only report observed capacity, capabilities, software version, and heartbeat. New placement skips cordoned/draining/unavailable/retired nodes, spreads replicas across failure domains when it can, honors `placement_region`, and leaves a pending explanation when it cannot. Drain moves stateless allocations through the existing failover path; volume-backed allocations stay on their node. Retirement revokes credentials and removes mesh identity only after allocations are gone. See [docs/operator-fleet.md](docs/operator-fleet.md).
-
-Database request-unit investigations should follow [docs/operator-database-cost.md](docs/operator-database-cost.md); do not infer a fixed RU figure from loop frequency alone.
-
-Each service can generate a stable platform hostname under `CONTROLPLANE_INGRESS_PUBLIC_ADDR`, such as `violet-7k3.platform.example`. The Domains panel exposes separate **Generate Domain** and **Custom Domain** actions. The custom flow creates the platform hostname when needed, then keeps the required record (`app.customer.com CNAME violet-7k3.platform.example`) visible until verification succeeds. The control plane resolves and verifies the CNAME itself before routing the custom hostname; no TXT challenge is required.
-
-Services also receive an environment-private hostname derived from their unique service name, such as `accurate-reflection.mesh.internal`. Workloads in the same environment can use either the full hostname or the short `accurate-reflection` alias; these names resolve to the service's private IPv4 and IPv6 addresses and are not published externally.
+- [docs/map](docs/map/README.md): architecture map, one block per file. Render it with `go run ./cmd/archmap`.
+- [CONTEXT.md](CONTEXT.md): domain vocabulary.
+- [GitHub project](https://github.com/users/jklq/projects/6): backlog and priorities.
 
 ## Build
-
-Generate protobuf and BPF artifacts as needed:
 
 ```bash
 go generate ./api/proto
 go generate ./internal/firewall
+bun --cwd=console install   # Node.js is also required: Vite runs on Node
 ```
 
-Run tests:
+## Test
 
 ```bash
 make test-unit-go
 make test-unit-console
-make test-integration
+make test-integration      # Cockroach-backed
+make test-e2e-local        # Playwright against an ephemeral local stack
+make test-e2e-vm           # Hetzner VMs; needs HCLOUD_TOKEN
+make test-smoke-local      # local QEMU/KVM fleet; run `make localvm-setup` once
 ```
 
-Dashboard-local Bun commands:
-
-Install Node.js alongside Bun: Vite runs on Node in both development and builds
-to avoid Bun's JIT miscompiling StyleX media queries. The production server runs
-on Bun.
-
-```bash
-bun --cwd=console install
-bun --cwd=console run test:unit
-bun --cwd=console run test:integration
-bun --cwd=console run test:e2e:local
-bun --cwd=console run build
-bun --cwd=console run start
-```
-
-Smoke E2E against a local ephemeral stack (requires the public Cloudflare tunnel
-credentials used by `LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1`; open dev logins stay
-disabled on the public hostname, and Playwright authenticates with a per-run
-session cookie written only to `console/artifacts/e2e-local/stack.json`):
-
-```bash
-make test-e2e-local
-```
-
-Interactive ephemeral local stack for manual exploration:
+## Develop
 
 ```bash
 make dev-ephemeral
 ```
 
-GitHub-enabled interactive devstack via 1Password Environments:
-
-**Preferred for local dev:** mount the Environment as a repo-root `.env` in the 1Password desktop app (Developer → Environments → local `.env` destination). `localteststack` loads that file automatically, including 1Password’s FIFO mount. No `OP_*` vars are needed.
-
-Public GitHub OAuth/webhook mode is deliberately opt-in because it exposes the local ingress through Cloudflare. Start it with strong per-run session secrets and GitHub auth (dev users are disabled in this mode):
-
-```bash
-LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1 make dev-ephemeral
-```
-
-**Headless / automation (SDK):** load the Environment remotely when the local contract is incomplete:
-
-```bash
-export OP_ENVIRONMENT_ID=envs/...
-export OP_SERVICE_ACCOUNT_TOKEN=ops_... # preferred; full token from a service account
-# or: export OP_ACCOUNT=my.1password.account
-LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1 make dev-ephemeral
-```
-
-You can also put bootstrap or feature keys in a normal gitignored `.env` (process env still wins over file values):
-
-```bash
-# .env — either a 1Password-mounted Environment, or plain KEY=VALUE pairs
-# CONTROLPLANE_GITHUB_APP_ID=...
-# CLOUDFLARE_TUNNEL_TOKEN=...
-# CLOUDFLARE_HOSTNAME=...
-```
-
-- When neither process/`.env` nor a remote Environment provides the GitHub contract, `make dev-ephemeral` keeps the existing local-only behavior.
-- When secrets are already complete in process env / mounted `.env`, the 1Password SDK is skipped even if `OP_ENVIRONMENT_ID` is set (avoids bad/placeholder service-account tokens breaking local runs). They are not activated unless `LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1` is also set.
-- When the remote Environment is readable but incomplete, the stack still starts and logs the missing key names while leaving GitHub disabled.
-- Service-account auth takes precedence over desktop-app auth when both `OP_SERVICE_ACCOUNT_TOKEN` and `OP_ACCOUNT` are set.
-- `localteststack` loads `.env` from the repo root before reading config. Already-exported shell variables are not overwritten.
-
-Required 1Password Environment keys for GitHub-enabled `make dev-ephemeral`:
-
-- Public endpoint: `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_HOSTNAME` for a pre-provisioned Cloudflare Tunnel. `localteststack` starts `cloudflared` locally and uses `https://{CLOUDFLARE_HOSTNAME}` as the public base URL.
-- Control plane GitHub: `CONTROLPLANE_GITHUB_APP_ID`, `CONTROLPLANE_GITHUB_WEBHOOK_SECRET`, `CONTROLPLANE_GITHUB_PRIVATE_KEY_PEM` (base64-encoded PEM is recommended if your secret store strips newlines).
-- Optional control plane overrides: `CONTROLPLANE_GITHUB_API_BASE_URL`, `CONTROLPLANE_GITHUB_WEB_BASE_URL`, `CONTROLPLANE_GITHUB_WEBHOOK_PATH`.
-- Optional dashboard install link: `CONTROLPLANE_DASHBOARD_GITHUB_INSTALL_URL`.
-- Console GitHub auth: `DASHBOARD_GITHUB_APP_ID`, `DASHBOARD_GITHUB_CLIENT_ID`, `DASHBOARD_GITHUB_CLIENT_SECRET`.
-- Console token storage: `DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY` (required even when GitHub login is disabled; a base64url/base64 encoding of exactly 32 random bytes, with `_FILE` supported). Generate it independently with `openssl rand -base64 32`; do not reuse the JWT or user-assertion secret.
-- Optional console overrides: `DASHBOARD_GITHUB_AUTH_BASE_URL`, `DASHBOARD_GITHUB_API_BASE_URL`.
-
-### Embedded registry authorization
-
-The registry ACL and token minter run inside `cmd/controlplane`; there is no credential-broker deployment. Build credentials expire after `CONTROLPLANE_REGISTRY_CREDENTIAL_TTL_SECONDS` (60–900 seconds, default 300) and contain only `pull,push` for the assigned build repository. Desired agent state carries a durable pull-only capability for that same exact repository so a node can cold-pull after a restart. The capability can mint only short-lived registry access tokens and cannot read a parent namespace or sibling project/build.
-
-The token endpoint is `http://CONTROLPLANE_REGISTRY_AUTH_LISTEN/v1/registry/token`. Keep the listener private and publish it through HTTPS for non-local clients. The signing key and trust certificate are generated once under `CONTROLPLANE_STATE_DIR/registry-auth/`; protect the key and persist that directory across restarts.
-
-Configure a CNCF Distribution registry to trust it:
-
-```yaml
-auth:
-  token:
-    realm: https://controlplane.example.test/v1/registry/token
-    service: registry.example.test
-    issuer: ebpf-wg-mesh
-    rootcertbundle: /run/secrets/registry-auth-signing-cert.pem
-```
-
-`service` and `issuer` must match `CONTROLPLANE_REGISTRY_TOKEN_SERVICE` (defaults to `CONTROLPLANE_REGISTRY_HOST`) and `CONTROLPLANE_REGISTRY_TOKEN_ISSUER`. Mount `CONTROLPLANE_STATE_DIR/registry-auth/signing-cert.pem` at the registry's `rootcertbundle` path. The local harness performs this wiring automatically and exercises the same token challenge/ACL flow with a managed `registry:2` container.
-
-Cloudflare Tunnel prerequisites:
-
-- `cloudflared` is installed locally.
-- The Cloudflare tunnel is created outside `localteststack`.
-- The public hostname is already assigned/routed to that tunnel in Cloudflare, and the tunnel origin points at the local ingress origin `http://platform.localtest.me:8080` by default, or whatever `LOCALTESTSTACK_INGRESS_HOST` and `LOCALTESTSTACK_INGRESS_PORT` resolve to in your shell.
-- The tunnel token and hostname are stored in the 1Password environment or exported in the shell as `CLOUDFLARE_TUNNEL_TOKEN` and `CLOUDFLARE_HOSTNAME`.
-
-Hostname shape and free SSL:
-
-- Prefer **not** putting the tunnel on the zone apex if the apex is a real site or protected by Cloudflare Access.
-- Recommended split (free Universal SSL, no Advanced Certificate Manager):
-  - `CLOUDFLARE_HOSTNAME=mesh.relay5.com` — dashboard / GitHub OAuth / webhooks (CNAME → tunnel).
-  - `LOCALTESTSTACK_PLATFORM_DOMAIN_SUFFIX=relay5.com` — generated service hosts `*.relay5.com` (CNAME `*` → tunnel). Covered by free `*.relay5.com` certs.
-  - Leave apex `relay5.com` as normal **A/AAAA** to production. Cloudflare’s “CNAME on apex / flattening” note only applies if you CNAME the apex; you do not need that for this setup.
-- Nested hosts such as `*.mesh.relay5.com` are **not** on Universal SSL and need Advanced Certificate Manager (or a dedicated zone).
-- Tunnel public hostnames: `mesh.relay5.com`, optionally `*.mesh.relay5.com`, and `*.relay5.com` → local ingress. Do **not** attach the apex if Access or production content lives there.
-- Existing **named** subdomains with their own DNS records (for example `www`) keep those records and are not overridden by the wildcard.
-
-One-time operator setup:
-
-- Create the tunnel in Cloudflare.
-- Assign `CLOUDFLARE_HOSTNAME` and the generated-host wildcard (`*.relay5.com` in the split above) to the tunnel. Do not attach the zone apex if Access or production content lives there.
-- Set the tunnel origin to the local ingress URL exposed by `make dev-ephemeral`.
-- Obtain the tunnel token.
-- Store the token and hostname in 1Password or shell env.
-
-Derived GitHub URLs from `https://{CLOUDFLARE_HOSTNAME}`:
-
-- Callback URL: `{publicBaseURL}/auth/callback`
-- Webhook URL: `{publicBaseURL}/webhooks/github` by default, or `{publicBaseURL}{CONTROLPLANE_GITHUB_WEBHOOK_PATH}` when that override is set.
-
-Production-replica VM smoke on Hetzner:
-
-```bash
-# Put HCLOUD_TOKEN in repo-root .env (or export it); process env wins over .env
-make test-e2e-vm
-```
-
-## Testing Pyramid
-
-- `test-unit-go`: pure Go tests only. Cockroach-backed store coverage is excluded from this tier.
-- `test-unit-console`: Vitest unit tests for console session logic, loaders, and React rendering.
-- `test-integration`: Cockroach-backed Go tests behind the `integration` build tag, plus console Vitest tests that run against `cmd/testdb`.
-- `test-e2e-local`: thin Playwright smoke against an ephemeral local Cockroach + control plane + console stack.
-- `test-e2e-vm`: Hetzner-backed smoke that provisions disposable VMs, deploys pinned binaries, runs remote checks, collects artifacts, and destroys the environment.
-
-The Cockroach-backed integration suite includes regressions for environment-scoped cross-node identity distribution/removal and direct-image `A` → `B` redeploys. Agent unit coverage checks failed probe phases/reasons, redirect refusal, and millicpu-to-CFS conversion.
-
-## VM Harness
-
-- Infrastructure lives under `infra/test-vm/`.
-- `cmd/testvm` builds Linux binaries, provisions the Hetzner topology through OpenTofu, waits for server readiness with `hcloud-go`, deploys two independent control-plane processes and two agents over SSH, runs the gRPC scenarios, collects host artifacts, and tears everything down.
-- The multi-replica scenario drives writes and owner-local delivery through the singleton owner while a blocking `ListServices` on the second replica observes the same write, rejects replica-local control-plane storage, stops the original singleton owner, and verifies fenced lease takeover plus ingress re-publication before continuing the rollout and agent-failover checks.
-- Cockroach and the two control-plane processes are colocated on the control-plane VM; the processes use the same database and state directory while retaining independent in-memory state and lifecycles.
-- Artifacts are written under `artifacts/e2e-vm/<run-id>/`.
-
-### Local QEMU/KVM fleet
-
-`-provider local` runs the same stress and smoke scenarios against real QEMU/KVM
-guests on the current host, with no cloud credentials and no per-run cost. The
-Ubuntu cloud image is cached under `~/.cache/ebpf-wg-mesh/`. Default runs still
-fetch the upstream `SHA256SUMS` to confirm the cached file, and download the
-image when it is missing or stale. A prepared image is then baked with
-`virt-customize --network` (guest is never booted; `apt-get` still needs
-network) and reused from a content-addressed cache keyed on the base digest,
-package recipe, apt mirror, and a manual builder version. That key does not
-include qemu/virt-customize or apt package versions — bump
-`localImageBuilderVersion` when those must invalidate the cache. Later runs
-skip the guest package install but still `curl` CockroachDB onto the
-control-plane VM. Pass `-local-base-image` to use a local file as-is without
-contacting Ubuntu. The control-plane VM hosts CockroachDB and both
-control-plane replicas; every agent is its own VM on a private bridge with NAT
-to the host uplink. Per-run bridge, taps, and iptables NAT/FORWARD rules are
-created and removed by a narrow passwordless helper.
-
-One-time host preparation (requires root, and AMD-V/VT-x enabled in BIOS).
-If `/dev/kvm` is missing until you re-login after adding your user to the
-`kvm` group, log out and back in after `make localvm-setup`:
-
-```bash
-make localvm-setup
-```
-
-Then run without cloud credentials:
-
-```bash
-make test-stress-local ARGS='-seed 42 -local-agents 2 -stress-stages 2'
-make test-smoke-local ARGS='-local-agents 2'
-make plan-stress-local ARGS='-local-agents 4 -stress-stages 12'
-```
-
-Useful flags: `-local-agents`, `-local-cp-vcpus`, `-local-cp-mem-mb`,
-`-local-agent-vcpus`, `-local-agent-mem-mb`, `-local-disk-gb`,
-`-local-subnet` (defaults to a run-derived private subnet), `-local-bridge`
-(defaults to a run-derived helper-owned name), `-local-apt-mirror` (defaults to the host's apt mirror),
-and `-local-keep-disks`. If a run is killed with
-SIGKILL, use the persisted manifest:
-
-```bash
-make cleanup-local MANIFEST=artifacts/e2e-vm/<run-id>/local-resources.json
-```
-
-## Internal mTLS
-
-- The control plane auto-creates an internal CA and gRPC server certificate under `CONTROLPLANE_STATE_DIR/pki`.
-- Agents no longer need pre-generated client certificates. Each agent generates its own key in `AGENT_DATA_DIR/tls`, enrolls once with its `AGENT_BOOTSTRAP_TOKEN`, receives a short-lived mTLS certificate, and renews it automatically before expiry. Configure the control plane with `CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS=agent_id=token[,agent_id=token...]`; bindings are durable and consumed atomically.
-- Agents still need the control-plane CA certificate for the initial TLS trust root. In the devstack this is shared from the control-plane data volume; on separate VPSes, copy the public `ca.crt` once.
-
-### Revoke a compromised internal client
-
-The control plane maintains a persistent leaf-certificate serial denylist at `CONTROLPLANE_STATE_DIR/pki/revoked-client-cert-serials.txt`. Override it with `CONTROLPLANE_INTERNAL_REVOKED_CLIENT_CERT_SERIALS_FILE` when that file must live on a separately managed persistent volume. The file accepts one hexadecimal serial per line, optional `:` separators, blank lines, and `#` comments. It is re-read at every authenticated handshake and RPC, so atomic file replacement takes effect without a control-plane restart. An unreadable or malformed denylist fails closed for authenticated clients.
-
-For an agent compromise:
-
-1. Stop the agent and record the leaf serial with `openssl x509 -in "$AGENT_DATA_DIR/tls/client.crt" -noout -serial`.
-2. Add the serial value to the denylist. The revoked certificate can no longer call Sync or authenticated Enroll, so it cannot renew itself.
-3. Replace that agent's entry in `CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS` with a new random, agent-bound token and restart the control plane to persist it. Never reuse a consumed or exposed token.
-4. Move the whole compromised TLS directory aside, for example `mv "$AGENT_DATA_DIR/tls" "$AGENT_DATA_DIR/tls.compromised"`, configure the matching fresh `AGENT_BOOTSTRAP_TOKEN`, and restart the agent. Removing the whole directory rotates the private key as well as the certificate. The agent can recover only through certificate-free Enroll, where the fresh token is checked and consumed once.
-5. After verifying Sync with the replacement certificate, securely remove the quarantined TLS material.
-
-Builder and dashboard leaf certificates use the same denylist and are rejected across their RPC surfaces. After revoking one, rotate its private key and certificate material before restarting that client; do not remove the serial from the denylist.
-
-## Managed dashboard trust boundary
-
-The managed dashboard must run on a dedicated, explicitly trusted agent. Set `CONTROLPLANE_DASHBOARD_TRUSTED_AGENT_ID` to that enrolled agent and configure the same node with `AGENT_MANAGED_DASHBOARD_SECRETS_DIR=/absolute/host/path`. The control plane reserves this agent from user workload placement and refuses dashboard placement if another workload is already there.
-
-Create that directory and provision these files through the host secret manager, never through desired-state environment variables:
-
-- `database-url` (use a dashboard-scoped database role, never the control-plane superuser URL)
-- `jwt-secret` (a dashboard-only 32+ character secret for browser sessions)
-- `user-assertion-secret` (a distinct 32+ byte HMAC secret shared only with the control plane)
-- `github-token-encryption-key` (base64url/base64 encoding of exactly 32 random bytes, distinct from both secrets above)
-- `github-client-secret` when dashboard GitHub OAuth is enabled
-
-Configure the same assertion secret on the control-plane host with `CONTROLPLANE_USER_ASSERTION_SECRET` or `CONTROLPLANE_USER_ASSERTION_SECRET_FILE`. Do not reuse `jwt-secret`; keeping the keys separate prevents a control-plane credential from becoming a browser-session signing key.
-
-When the managed dashboard is assigned, the trusted agent creates `controlplane-key.pem` locally and submits only a CSR over its authenticated agent connection. The control plane issues a short-lived certificate with the configured dashboard caller identity only to `CONTROLPLANE_DASHBOARD_TRUSTED_AGENT_ID`. The agent writes `controlplane-cert.pem` and `controlplane-ca.pem`, renews the certificate before expiry, and restarts the dashboard allocation after rotation. The private key never leaves the trusted node.
-
-The agent bind-mounts the directory read-only at `/run/secrets/dashboard` only for the managed dashboard workload. The control plane sends file paths, not secret values, in desired state. The dashboard sends a fresh signed user assertion over its authenticated mTLS connection; the raw `x-platform-user-id` header is rejected. Project membership and role authorization remain in the control plane.
-
-OVH stress and fault testing: see [the stress fixture guide](docs/ovh-stress.md).
-Use `make plan-stress-ovh ARGS='-seed 42'` to inspect a reproducible workload
-schedule offline, and `make test-stress-ovh` to provision and exercise real VMs
-with explicit price and budget settings.
+`localteststack` loads a repo-root `.env`, which can be a 1Password-mounted Environment. Shell variables take precedence. To enable GitHub sign-in and webhooks, set `LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1` and provide `CLOUDFLARE_TUNNEL_TOKEN`, `CLOUDFLARE_HOSTNAME`, and the `CONTROLPLANE_GITHUB_*` and `DASHBOARD_GITHUB_*` keys. Without them the stack runs in local-only mode with dev users.
