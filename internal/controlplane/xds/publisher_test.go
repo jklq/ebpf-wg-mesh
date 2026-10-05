@@ -2,6 +2,7 @@ package xds
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
 	"errors"
 	"sync"
 	"sync/atomic"
@@ -395,7 +396,7 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	// First contact durably registers the subscriber before any config can reach it. Only then
 	// may it receive the snapshot that routes to live allocations.
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
-	if err := server.onFetchRequest(ctx, req); err != nil {
+	if err := server.onFetchRequest(identitytest.Context(t, ctx, req.GetNode().GetId()), req); err != nil {
 		t.Fatal(err)
 	}
 	nodes.mu.Lock()
@@ -411,7 +412,7 @@ func TestPublisherRegistersSubscriberBeforeServing(t *testing.T) {
 	}
 
 	// A node-less follow-up ACK must still update apply state.
-	if err := server.onStreamOpen(ctx, 7, ""); err != nil {
+	if err := server.onStreamOpen(identitytest.Context(t, ctx, "envoy-fresh"), 7, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := server.onStreamRequest(7, req); err != nil {
@@ -438,7 +439,7 @@ func TestServerRejectsUntrackableSubscribers(t *testing.T) {
 	// If a subscriber cannot be recorded durably, it must not be served.
 	server := NewServer(context.Background())
 	server.SetNodeStore(failingNodes{})
-	err := server.onFetchRequest(context.Background(),
+	err := server.onFetchRequest(identitytest.Context(t, context.Background(), "envoy-x"),
 		&discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-x"}, TypeUrl: resourcev3.EndpointType})
 	if err == nil {
 		t.Fatal("expected registration failure to fail the request closed")
@@ -537,7 +538,7 @@ func TestPublisherFirstContactRegistersThenRefreshesBeforeServing(t *testing.T) 
 
 	// First contact must register durably and then serve the durable publication, never the stale local cache.
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-fresh"}, TypeUrl: resourcev3.EndpointType}
-	if err := server.onFetchRequest(context.Background(), req); err != nil {
+	if err := server.onFetchRequest(identitytest.Context(t, context.Background(), req.GetNode().GetId()), req); err != nil {
 		t.Fatal(err)
 	}
 	if len(events) != 2 || events[0] != "register" || events[1] != "refresh" {
@@ -584,10 +585,10 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	req := &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-x"}, TypeUrl: resourcev3.EndpointType}
 	// First attempt hits a store outage: fail closed, but the node must not count as handled —
 	// the next request reruns the full register-then-refresh sequence.
-	if err := server.onFetchRequest(context.Background(), req); err == nil {
+	if err := server.onFetchRequest(identitytest.Context(t, context.Background(), req.GetNode().GetId()), req); err == nil {
 		t.Fatal("expected registration failure to fail the request closed")
 	}
-	if err := server.onFetchRequest(context.Background(), req); err != nil {
+	if err := server.onFetchRequest(identitytest.Context(t, context.Background(), req.GetNode().GetId()), req); err != nil {
 		t.Fatal(err)
 	}
 	nodes.mu.Lock()
@@ -601,7 +602,7 @@ func TestServerRetriesRegistrationAfterFailure(t *testing.T) {
 	}
 
 	// Once registered, later requests skip the sequence.
-	if err := server.onFetchRequest(context.Background(), req); err != nil {
+	if err := server.onFetchRequest(identitytest.Context(t, context.Background(), req.GetNode().GetId()), req); err != nil {
 		t.Fatal(err)
 	}
 	if refreshes != 1 {

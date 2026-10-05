@@ -16,6 +16,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/controlplane/xds"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -63,7 +64,7 @@ func signingKeysUsageError() error {
 func runSigningKeysCommand(command string, args []string) error {
 	var dbURL, stateDir, hmacSecret, hmacSecretFile, registryIssuer, minOverlapRaw, outPath string
 	var scopes scopeListFlag
-	var callerClass, callerID, ttlRaw string
+	var callerClass, callerID, ttlRaw, identityDir, mountedDir string
 	var force bool
 	var keysCfg config.SecretKeysConfig
 	fs := flag.NewFlagSet("controlplane signing-keys "+command, flag.ContinueOnError)
@@ -90,7 +91,9 @@ func runSigningKeysCommand(command string, args []string) error {
 		stringFlag(fs, &outPath, "out", "CONTROLPLANE_SIGNING_KEYS_EXPORT_OUT", "", "write to this file instead of stdout")
 	}
 	if command == "issue-client-cert" {
-		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (dashboard or builder)")
+		fs.StringVar(&identityDir, "out-dir", "", "atomically install ingress credentials for filesystem SDS")
+		fs.StringVar(&mountedDir, "mounted-dir", "", "identity directory as mounted in Envoy (defaults to out-dir)")
+		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (dashboard, builder, or ingress)")
 		stringFlag(fs, &callerID, "caller-id", "CONTROLPLANE_SIGNING_KEYS_CALLER_ID", "", "client caller id")
 		stringFlag(fs, &ttlRaw, "ttl", "CONTROLPLANE_SIGNING_KEYS_CLIENT_TTL", "24h", "client certificate lifetime")
 	}
@@ -144,7 +147,7 @@ func runSigningKeysCommand(command string, args []string) error {
 	case "check":
 		return signingKeysCheck(ctx, svc)
 	case "issue-client-cert":
-		return signingKeysIssueClientCert(ctx, svc, callerClass, callerID, ttlRaw)
+		return signingKeysIssueClientCert(ctx, svc, callerClass, callerID, ttlRaw, identityDir, mountedDir)
 	default:
 		return signingKeysUsageError()
 	}
@@ -322,15 +325,17 @@ func signingKeysCheck(ctx context.Context, svc *signkeys.Service) error {
 	return nil
 }
 
-func signingKeysIssueClientCert(ctx context.Context, svc *signkeys.Service, callerClass, callerID, ttlRaw string) error {
+func signingKeysIssueClientCert(ctx context.Context, svc *signkeys.Service, callerClass, callerID, ttlRaw, identityDir, mountedDir string) error {
 	var class identity.CallerClass
 	switch strings.TrimSpace(callerClass) {
 	case string(identity.CallerDashboard):
 		class = identity.CallerDashboard
 	case string(identity.CallerBuilder):
 		class = identity.CallerBuilder
+	case string(identity.CallerIngress):
+		class = identity.CallerIngress
 	default:
-		return fmt.Errorf("controlplane signing-keys issue-client-cert: caller class must be dashboard or builder")
+		return fmt.Errorf("controlplane signing-keys issue-client-cert: caller class must be dashboard, builder, or ingress")
 	}
 	if strings.TrimSpace(callerID) == "" {
 		return fmt.Errorf("controlplane signing-keys issue-client-cert: --caller-id is required")
@@ -342,6 +347,15 @@ func signingKeysIssueClientCert(ctx context.Context, svc *signkeys.Service, call
 	material, err := identity.IssueClientCertificate(ctx, svc, class, strings.TrimSpace(callerID), ttl)
 	if err != nil {
 		return fmt.Errorf("controlplane signing-keys issue-client-cert: %w", err)
+	}
+	if identityDir != "" {
+		if class != identity.CallerIngress {
+			return fmt.Errorf("--out-dir requires the ingress caller class")
+		}
+		if mountedDir == "" {
+			mountedDir = identityDir
+		}
+		return xds.WriteIdentity(identityDir, mountedDir, material)
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]string{
 		"ca_pem_b64":   base64.StdEncoding.EncodeToString(material.CAPEM),

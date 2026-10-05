@@ -6,6 +6,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"errors"
 	"fmt"
 	"net"
@@ -214,24 +217,47 @@ func (s routingOnlyInputs) WithLeaseGuard(ctx context.Context, fn func() error) 
 	return s.routing.WithLeaseGuard(ctx, fn)
 }
 
-func serveXDSServer(t *testing.T, server *xds.Server) string {
+type testXDSEndpoint struct {
+	address    string
+	keys       signkeys.Provider
+	serverName string
+}
+
+func serveXDSServer(t *testing.T, server *xds.Server) testXDSEndpoint {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	grpcServer := server.GRPCServer()
+	pki := identitytest.New(t)
+	grpcServer := server.GRPCServer(pki.Authority.XDSConfig(), pki.Authority.Revocations())
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
 	t.Cleanup(func() { _ = listener.Close() })
-	return listener.Addr().String()
+	return testXDSEndpoint{address: listener.Addr().String(), keys: pki.Keys}
 }
 
-func subscribeType(t *testing.T, addr, nodeID, typeURL string) *discoveryv3.DiscoveryResponse {
+func subscribeType(t *testing.T, addr testXDSEndpoint, nodeID, typeURL string) *discoveryv3.DiscoveryResponse {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client, err := xds.Dial(ctx, addr, nodeID)
+	material, err := identity.IssueClientCertificate(ctx, addr.keys, identity.CallerIngress, nodeID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := xds.WriteIdentity(dir, dir, material); err != nil {
+		t.Fatal(err)
+	}
+	name := addr.serverName
+	if name == "" {
+		name = "controlplane"
+	}
+	tlsConfig, err := xds.ClientTLS(dir, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := xds.Dial(ctx, addr.address, nodeID, tlsConfig)
 	if err != nil {
 		t.Fatal(err)
 	}

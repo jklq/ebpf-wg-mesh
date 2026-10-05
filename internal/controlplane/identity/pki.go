@@ -123,6 +123,24 @@ func (a *TLSAuthority) HTTPConfig() *tls.Config {
 	}
 }
 
+// XDSConfig shares the rotating server identity and trust bundle, but requires
+// a client certificate. Enrollment's optional client authentication never
+// applies to the xDS listener, which distributes public TLS private keys.
+func (a *TLSAuthority) XDSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS13,
+		GetConfigForClient: func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			cfg, err := a.tlsConfigForClient(hello)
+			if err != nil {
+				return nil, err
+			}
+			cfg.ClientAuth = tls.RequireAndVerifyClientCert
+			cfg.NextProtos = []string{"h2"}
+			return cfg, nil
+		},
+	}
+}
+
 // tlsConfigForClient builds a per-handshake config with the current leaf and
 // trust bundle, so rotation takes effect without a restart.
 func (a *TLSAuthority) tlsConfigForClient(_ *tls.ClientHelloInfo) (*tls.Config, error) {
@@ -525,7 +543,7 @@ func (a *TLSAuthority) EnsureClientIdentity(ctx context.Context, class CallerCla
 // operator CLI uses it; replicas use the cached EnsureClientIdentity.
 func IssueClientCertificate(ctx context.Context, keys signkeys.Provider, class CallerClass, id string, ttl time.Duration) (ClientIdentityMaterial, error) {
 	switch class {
-	case CallerAgent, CallerBuilder, CallerDashboard:
+	case CallerAgent, CallerBuilder, CallerDashboard, CallerIngress:
 	default:
 		return ClientIdentityMaterial{}, errors.New("unknown client certificate caller class")
 	}
@@ -537,6 +555,9 @@ func IssueClientCertificate(ctx context.Context, keys signkeys.Provider, class C
 	}
 	if ttl <= 0 {
 		return ClientIdentityMaterial{}, errors.New("client identity ttl must be greater than 0")
+	}
+	if class == CallerIngress && ttl > 24*time.Hour {
+		return ClientIdentityMaterial{}, errors.New("ingress client identity ttl must not exceed 24h")
 	}
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

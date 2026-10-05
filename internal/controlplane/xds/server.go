@@ -2,11 +2,13 @@ package xds
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
+
+	"ebof-wg-mesh/internal/controlplane/identity"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
@@ -20,6 +22,11 @@ import (
 	serverv3 "github.com/envoyproxy/go-control-plane/pkg/server/v3"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/keepalive"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 )
 
 type NodeStatus struct {
@@ -63,6 +70,7 @@ type Server struct {
 
 	nodeStore    NodeStore
 	firstContact func(context.Context) error
+	revocations  *identity.CertificateRevocations
 }
 
 type nodeState struct {
@@ -93,6 +101,9 @@ func NewServer(ctx context.Context) *Server {
 		StreamRequestFunc: s.onStreamRequest,
 		StreamClosedFunc:  s.onStreamClosed,
 		FetchRequestFunc:  s.onFetchRequest,
+		DeltaStreamOpenFunc: func(context.Context, int64, string) error {
+			return status.Error(codes.Unimplemented, "delta xDS is not supported")
+		},
 	})
 	return s
 }
@@ -114,8 +125,31 @@ func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	s.firstContact = hook
 }
 
-func (s *Server) GRPCServer() *grpc.Server {
-	grpcServer := grpc.NewServer()
+func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.CertificateRevocations) *grpc.Server {
+	if tlsConfig == nil {
+		panic("xDS requires mTLS configuration")
+	}
+	cfg := tlsConfig.Clone()
+	cfg.ClientAuth = tls.RequireAndVerifyClientCert
+	cfg.MinVersion = tls.VersionTLS13
+	if getConfig := cfg.GetConfigForClient; getConfig != nil {
+		cfg.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			current, err := getConfig(hello)
+			if err != nil {
+				return nil, err
+			}
+			if current == nil {
+				current = tlsConfig
+			}
+			current = current.Clone()
+			current.ClientAuth = tls.RequireAndVerifyClientCert
+			current.MinVersion = tls.VersionTLS13
+			return current, nil
+		}
+	}
+	s.revocations = revocations
+	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.StreamInterceptor(s.secureStream),
+		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Hour, MaxConnectionAgeGrace: time.Minute}))
 	discoveryv3.RegisterAggregatedDiscoveryServiceServer(grpcServer, s.xds)
 	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, s.xds)
 	clusterservice.RegisterClusterDiscoveryServiceServer(grpcServer, s.xds)
@@ -170,6 +204,9 @@ func (s *Server) Status() Status {
 }
 
 func (s *Server) onStreamOpen(ctx context.Context, streamID int64, _ string) error {
+	if _, err := s.authenticatedNode(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.streamCtxs[streamID] = ctx
@@ -180,7 +217,7 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 	if req == nil {
 		return nil
 	}
-	nodeID := strings.TrimSpace(req.GetNode().GetId())
+	nodeID := req.GetNode().GetId()
 	s.mu.Lock()
 	ctx := s.streamCtxs[streamID]
 	if nodeID == "" {
@@ -191,8 +228,14 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 	if ctx == nil {
 		return fmt.Errorf("xds request on untracked stream %d", streamID)
 	}
-	if nodeID == "" {
-		return nil
+	if err := s.authorizeNode(ctx, nodeID); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	previous := s.streams[streamID]
+	s.mu.Unlock()
+	if previous != "" && previous != nodeID {
+		return status.Error(codes.PermissionDenied, "xDS stream node identity cannot change")
 	}
 	s.observe(ctx, streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
 	return s.atFirstContact(ctx, nodeID)
@@ -202,12 +245,65 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 	if req == nil {
 		return nil
 	}
-	nodeID := strings.TrimSpace(req.GetNode().GetId())
-	if nodeID == "" {
-		return nil
+	nodeID := req.GetNode().GetId()
+	if err := s.authorizeNode(ctx, nodeID); err != nil {
+		return err
 	}
 	s.observe(ctx, 0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
 	return s.atFirstContact(ctx, nodeID)
+}
+
+func (s *Server) authenticatedNode(ctx context.Context) (string, error) {
+	p, ok := peer.FromContext(ctx)
+	if !ok {
+		return "", status.Error(codes.Unauthenticated, "xDS requires mTLS")
+	}
+	tlsInfo, ok := p.AuthInfo.(credentials.TLSInfo)
+	if !ok || len(tlsInfo.State.VerifiedChains) == 0 || len(tlsInfo.State.PeerCertificates) == 0 {
+		return "", status.Error(codes.Unauthenticated, "xDS requires a verified client certificate")
+	}
+	cert := tlsInfo.State.PeerCertificates[0]
+	now := time.Now()
+	if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) {
+		return "", status.Error(codes.Unauthenticated, "xDS client certificate expired or not yet valid")
+	}
+	if err := identity.CheckClientCertificateRevocation(s.revocations, cert); err != nil {
+		return "", err
+	}
+	caller, authenticated, err := identity.AuthenticatedServiceCallerFromContext(identity.WithVerifiedClientCertificate(ctx, cert))
+	if err != nil || !authenticated || caller.Class != identity.CallerIngress {
+		return "", status.Error(codes.PermissionDenied, "dedicated ingress client certificate required")
+	}
+	return caller.ID, nil
+}
+
+func (s *Server) authorizeNode(ctx context.Context, nodeID string) error {
+	id, err := s.authenticatedNode(ctx)
+	if err != nil {
+		return err
+	}
+	if nodeID == "" || nodeID != id {
+		return status.Error(codes.PermissionDenied, "xDS node ID must match the authenticated ingress identity")
+	}
+	return nil
+}
+
+// Recheck credentials on every push as well as every request. A long-lived
+// stream cannot keep receiving secrets after certificate expiry or revocation.
+func (s *Server) secureStream(srv any, stream grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	return handler(srv, &authorizedStream{ServerStream: stream, server: s})
+}
+
+type authorizedStream struct {
+	grpc.ServerStream
+	server *Server
+}
+
+func (s *authorizedStream) SendMsg(message any) error {
+	if _, err := s.server.authenticatedNode(s.Context()); err != nil {
+		return err
+	}
+	return s.ServerStream.SendMsg(message)
 }
 
 // atFirstContact durably registers a subscriber and refreshes from the durable publication

@@ -17,8 +17,10 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/testdb"
 	"ebof-wg-mesh/internal/testutil"
@@ -121,33 +123,7 @@ func run() error {
 	if err := localteststack.RemoveDockerNetwork(ctx, localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
 		return fmt.Errorf("reset local workload network: %w", err)
 	}
-	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
-		StateDir:      filepath.Join(stateDir, "local-ingress"),
-		DockerNetwork: stackCfg.DockerNetwork,
-		ContainerName: "localteststack-envoy",
-		NodeID:        "localteststack-envoy",
-		XDSServerAddr: net.JoinHostPort(hostGateway, strconv.Itoa(xdsPort)),
-		PublicHost:    stackCfg.IngressHost,
-		PublicPort:    stackCfg.IngressPort,
-		AdminPort:     ingressAdminPort,
-	}, localteststack.ExecDockerRunner{})
-	if err != nil {
-		return fmt.Errorf("start managed local ingress: %v", err)
-	}
-	defer func() {
-		if err := ingress.Close(); err != nil {
-			log.Printf("stop managed local ingress: %v", err)
-		}
-		// Agent shutdown deliberately preserves workloads; an ephemeral stack owns
-		// and removes those containers before dropping their ingress bridge.
-		if _, err := localteststack.CleanupStaleLocalteststackContainers(context.Background(), localteststack.ExecDockerRunner{}); err != nil {
-			log.Printf("remove local workload containers: %v", err)
-		}
-		if err := localteststack.RemoveDockerNetwork(context.Background(), localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
-			log.Printf("remove local docker network: %v", err)
-		}
-	}()
-	ingressURL := ingress.BaseURL() + "/"
+	ingressURL := fmt.Sprintf("http://%s:%d/", stackCfg.IngressHost, stackCfg.IngressPort)
 	clickHouse, err := localteststack.StartManagedClickHouse(ctx, localteststack.LocalClickHouseConfig{
 		ContainerName: "localteststack-clickhouse",
 		NativePort:    clickHousePort,
@@ -374,6 +350,41 @@ func run() error {
 		return fmt.Errorf("create controlplane server: %v", err)
 	}
 	defer server.Close()
+	material, err := identity.IssueClientCertificate(ctx, server.SigningKeys(), identity.CallerIngress, "localteststack-envoy", 24*time.Hour)
+	if err != nil {
+		return fmt.Errorf("provision ingress identity: %w", err)
+	}
+	if err := xds.WriteIdentity(filepath.Join(stateDir, "local-ingress", "identity"), "/etc/envoy/identity", material); err != nil {
+		return err
+	}
+	ingress, err := localteststack.StartManagedIngress(ctx, localteststack.LocalIngressConfig{
+		StateDir:      filepath.Join(stateDir, "local-ingress"),
+		DockerNetwork: stackCfg.DockerNetwork,
+		ContainerName: "localteststack-envoy",
+		NodeID:        "localteststack-envoy",
+		XDSServerAddr: net.JoinHostPort(hostGateway, strconv.Itoa(xdsPort)),
+		IdentityDir:   filepath.Join(stateDir, "local-ingress", "identity"), ServerName: "controlplane",
+		PublicHost: stackCfg.IngressHost,
+		PublicPort: stackCfg.IngressPort,
+		AdminPort:  ingressAdminPort,
+	}, localteststack.ExecDockerRunner{})
+	if err != nil {
+		return fmt.Errorf("start managed local ingress: %v", err)
+	}
+	defer func() {
+		if err := ingress.Close(); err != nil {
+			log.Printf("stop managed local ingress: %v", err)
+		}
+		// Agent shutdown deliberately preserves workloads; an ephemeral stack owns
+		// and removes those containers before dropping their ingress bridge.
+		if _, err := localteststack.CleanupStaleLocalteststackContainers(context.Background(), localteststack.ExecDockerRunner{}); err != nil {
+			log.Printf("remove local workload containers: %v", err)
+		}
+		if err := localteststack.RemoveDockerNetwork(context.Background(), localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
+			log.Printf("remove local docker network: %v", err)
+		}
+	}()
+
 	// The control plane is the system of record for the secrets the console
 	// holds: development auto-generates them at boot, and the stack exports
 	// the active values here.

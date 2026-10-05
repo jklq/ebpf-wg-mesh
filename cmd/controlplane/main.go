@@ -11,6 +11,13 @@ import (
 )
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "ingress-bootstrap" {
+		if err := bootstrap.RunIngressBootstrap(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "keys" {
 		if err := bootstrap.RunKeys(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

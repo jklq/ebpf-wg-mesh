@@ -142,15 +142,14 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		cfg.SecretKeys.KeyringPath = "var/controlplane/secret-keys/keys.json"
 		mustReject(t, FinalizeControlPlane(&cfg), "secretKeys.keyringPath must not use ephemeral storage")
 	})
-	t.Run("wildcard xds listen", func(t *testing.T) {
+	t.Run("mTLS xds wildcard listen", func(t *testing.T) {
 		t.Parallel()
 		for _, listen := range []string{":18000", "0.0.0.0:18000", "[::]:18000"} {
 			cfg := validMinimalProductionControlPlane(t)
 			cfg.Ingress.XDSListen = listen
-			// The plaintext unauthenticated xDS API must never bind every
-			// interface in production: any reachable client could register
-			// blocking node observations.
-			mustReject(t, FinalizeControlPlane(&cfg), "xdsListen")
+			if err := FinalizeControlPlane(&cfg); err != nil {
+				t.Fatal(err)
+			}
 		}
 	})
 	t.Run("filesystem source storage", func(t *testing.T) {
