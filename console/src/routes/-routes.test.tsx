@@ -14,7 +14,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { LoginPageView } from "#/features/auth/login-page";
-import { NewServiceModal } from "#/features/dashboard/services/new-service-modal";
+import { NewServicePicker } from "#/features/dashboard/services/new-service-picker";
 import {
 	beginGitHubLogin,
 	clearSession,
@@ -124,7 +124,7 @@ describe("dashboard routes", () => {
 
 	it("focuses the repository search on open", () => {
 		render(
-			<NewServiceModal
+			<NewServicePicker
 				state={homeState({})}
 				onClose={() => {}}
 				onCreated={() => {}}
@@ -137,6 +137,23 @@ describe("dashboard routes", () => {
 		expect(document.activeElement).toBe(
 			screen.getByPlaceholderText("Search repositories…"),
 		);
+	});
+
+	it("consumes Enter so the keypress cannot reopen the add menu", () => {
+		render(
+			<NewServicePicker
+				state={homeState({})}
+				onClose={() => {}}
+				onCreated={() => {}}
+			/>,
+		);
+
+		const notCancelled = fireEvent.keyDown(
+			screen.getByPlaceholderText("Search repositories…"),
+			{ key: "Enter" },
+		);
+
+		expect(notCancelled).toBe(false);
 	});
 
 	it("deploys a repository immediately when selected", async () => {
@@ -154,7 +171,7 @@ describe("dashboard routes", () => {
 		let submitted: unknown;
 
 		render(
-			<NewServiceModal
+			<NewServicePicker
 				state={state}
 				onClose={() => {}}
 				onCreated={() => {}}
@@ -194,7 +211,7 @@ describe("dashboard routes", () => {
 		});
 
 		render(
-			<NewServiceModal
+			<NewServicePicker
 				state={state}
 				onClose={() => {}}
 				onCreated={() => {}}
@@ -238,7 +255,11 @@ describe("dashboard routes", () => {
 		});
 
 		render(
-			<NewServiceModal state={state} onClose={() => {}} onCreated={() => {}} />,
+			<NewServicePicker
+				state={state}
+				onClose={() => {}}
+				onCreated={() => {}}
+			/>,
 		);
 
 		const search = screen.getByPlaceholderText(

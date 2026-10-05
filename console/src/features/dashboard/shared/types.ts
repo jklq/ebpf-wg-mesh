@@ -46,6 +46,7 @@ export type RepositoryPickerProps = {
 	loading: boolean;
 	onActivateIndex: (index: number) => void;
 	onClose: () => void;
+	onBack?: () => void;
 	onConfirm: (selector: string) => void;
 	onRepositorySelect: (selector: string) => void;
 	onSearchChange: () => void;

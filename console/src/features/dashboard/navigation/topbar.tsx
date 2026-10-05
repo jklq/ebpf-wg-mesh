@@ -1,7 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import {
 	AlertCircle,
-	HardDrive,
 	History,
 	LogOut,
 	RefreshCw,
@@ -9,7 +8,6 @@ import {
 	Zap,
 } from "lucide-react";
 import { Button, buttonStyles } from "#/components/ui/button";
-import { DeployButton } from "#/features/dashboard/navigation/deploy-button";
 import { EnvironmentSwitcher } from "#/features/dashboard/navigation/environment-switcher";
 import { ProjectSwitcher } from "#/features/dashboard/navigation/project-switcher";
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
@@ -17,18 +15,12 @@ import { colors, fonts, sizes, space } from "#/styles/tokens.stylex";
 
 export function Topbar({
 	state,
-	onNewService,
-	onNewVolume,
-	onPreloadNewService,
 	onRefresh,
 	onNewEnvironment,
 	onEnvironmentsChanged,
 	onNavigateEnvironment,
 }: {
 	state: DashboardHomeState;
-	onNewService: () => void;
-	onNewVolume?: () => void;
-	onPreloadNewService?: () => void;
 	onRefresh: () => void;
 	onNewEnvironment: () => void;
 	onEnvironmentsChanged: () => void;
@@ -104,23 +96,6 @@ export function Topbar({
 			<Button type="button" variant="ghost" onClick={onRefresh}>
 				<RefreshCw size={13} />
 			</Button>
-
-			{onNewVolume && state.controlPlaneReachable && (
-				<Button
-					type="button"
-					variant="secondary"
-					onClick={onNewVolume}
-					title="Create a storage volume"
-				>
-					<HardDrive size={13} /> Volume
-				</Button>
-			)}
-
-			<DeployButton
-				state={state}
-				onNewService={onNewService}
-				onPreload={onPreloadNewService}
-			/>
 
 			<a
 				href="/logout"

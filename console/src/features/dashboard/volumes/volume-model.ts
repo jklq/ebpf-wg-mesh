@@ -123,7 +123,7 @@ const nouns = [
 	"vault",
 ];
 
-/** A readable default name; the user can change it before creating. */
+/** A readable generated name for a new volume. */
 export function suggestVolumeName(
 	taken: Array<string>,
 	random: () => number = Math.random,
@@ -135,15 +135,6 @@ export function suggestVolumeName(
 		if (!taken.includes(name)) return name;
 	}
 	return `volume-${Date.now().toString(36)}`;
-}
-
-const VOLUME_NAME = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
-
-export function volumeNameError(name: string): string | undefined {
-	if (!name.trim()) return "Name is required";
-	if (!VOLUME_NAME.test(name.trim()))
-		return "Use lowercase letters, digits, and hyphens";
-	return undefined;
 }
 
 const SYSTEM_MOUNT_ROOTS = [
@@ -181,5 +172,16 @@ export function mountPathError(path: string): string | undefined {
 		(entry) => value === entry || value.startsWith(`${entry}/`),
 	);
 	if (root) return `Cannot mount inside system directory ${root}`;
+	return undefined;
+}
+
+export function sizeGibError(raw: string, minimum = MIN_VOLUME_SIZE_GIB) {
+	const value = Number(raw.trim());
+	if (!Number.isFinite(value) || raw.trim() === "")
+		return "Enter a size in GiB";
+	if (value < minimum) return `Size must be at least ${minimum} GiB`;
+	if (value > MAX_VOLUME_SIZE_GIB)
+		return `Size must be at most ${MAX_VOLUME_SIZE_GIB} GiB`;
+	if (!Number.isInteger(value * 1024)) return "Use at most three decimals";
 	return undefined;
 }

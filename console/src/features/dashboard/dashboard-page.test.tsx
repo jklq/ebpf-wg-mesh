@@ -19,6 +19,7 @@ import {
 	render,
 	screen,
 	waitFor,
+	within,
 } from "@testing-library/react";
 import {
 	afterEach,
@@ -45,6 +46,7 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 
 const {
+	doCreateVolumeMock,
 	doDeleteServiceMock,
 	doDiscardServiceChangesMock,
 	doReleaseEnvironmentMock,
@@ -55,6 +57,7 @@ const {
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
+	doCreateVolumeMock: vi.fn(),
 	doDeleteServiceMock: vi.fn(),
 	doDiscardServiceChangesMock: vi.fn(),
 	doReleaseEnvironmentMock: vi.fn(),
@@ -71,6 +74,7 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 
 vi.mock("#/lib/dashboard/server-functions", () => ({
 	doCreateServiceFast: doCreateServiceFastMock,
+	doCreateVolume: doCreateVolumeMock,
 	doDeleteService: doDeleteServiceMock,
 	doReleaseEnvironment: doReleaseEnvironmentMock,
 	doDiscardServiceChanges: doDiscardServiceChangesMock,
@@ -85,7 +89,7 @@ beforeAll(async () => {
 		import("#/features/dashboard/service-panel/variables/panel-variables"),
 		import("#/features/dashboard/service-panel/settings/panel-settings"),
 		import("#/features/dashboard/service-panel/domains/panel-domains"),
-		import("#/features/dashboard/services/new-service-modal"),
+		import("#/features/dashboard/services/new-service-picker"),
 	]);
 });
 
@@ -95,6 +99,7 @@ beforeEach(() => {
 	doDeleteServiceMock.mockReset();
 	doDiscardServiceChangesMock.mockReset();
 	doCreateServiceFastMock.mockReset();
+	doCreateVolumeMock.mockReset();
 	doSaveServicePositionMock.mockReset();
 	doUpdateServiceMock.mockReset();
 	fetchGitHubCatalogMock.mockReset();
@@ -654,10 +659,65 @@ describe("DashboardPage", () => {
 		expect(screen.getByRole("button", { name: /worker/i })).toBeTruthy();
 	});
 
+	it("creates a 5 GiB volume and mounts it from the Add menu", async () => {
+		const service = serviceRecord();
+		const created = jsonFixture(VolumeSchema, {
+			id: "volume-1",
+			environmentId: "environment-1",
+			name: "calm-fjord",
+			sizeBytes: String(5 * 1024 ** 3),
+			staged: true,
+		});
+		doCreateVolumeMock.mockResolvedValue(created);
+		doUpdateServiceMock.mockResolvedValue(service);
+		render(<DashboardPage state={dashboardState(service)} />);
+
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+		const menu = screen.getByRole("dialog", { name: "Add to canvas" });
+		fireEvent.click(within(menu).getByRole("button", { name: "Volume" }));
+		expect(within(menu).getByText("Attach volume to service")).toBeTruthy();
+		fireEvent.click(within(menu).getByRole("button", { name: "hello" }));
+		const path = within(menu).getByRole("textbox", {
+			name: "Volume mount path",
+		});
+		fireEvent.change(path, { target: { value: "/var/lib/data" } });
+		fireEvent.keyDown(path, { key: "Enter" });
+
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("dialog", { name: "Add to canvas" }),
+			).toBeNull(),
+		);
+		expect(doCreateVolumeMock).toHaveBeenCalledWith({
+			data: expect.objectContaining({
+				environmentId: "environment-1",
+				sizeBytes: 5 * 1024 ** 3,
+			}),
+		});
+		expect(doUpdateServiceMock).toHaveBeenCalledWith({
+			data: {
+				serviceId: service.id,
+				volumeMount: { volumeName: "calm-fjord", mountPath: "/var/lib/data" },
+			},
+		});
+	});
+
+	it("hides the Add button while a panel is open", async () => {
+		render(<DashboardPage state={dashboardState(serviceRecord())} />);
+		expect(screen.getByRole("button", { name: "Add" })).toBeTruthy();
+
+		fireEvent.click(screen.getByRole("button", { name: /hello/i }));
+
+		await waitFor(() =>
+			expect(screen.queryByRole("button", { name: "Add" })).toBeNull(),
+		);
+	});
+
 	it("loads the GitHub catalog from repository controls", async () => {
 		render(<DashboardPage state={dashboardState(serviceRecord())} />);
 
-		fireEvent.click(screen.getByRole("button", { name: /deploy service/i }));
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+		fireEvent.click(screen.getByRole("button", { name: /github repository/i }));
 
 		await waitFor(() =>
 			expect(fetchGitHubCatalogMock).toHaveBeenCalledTimes(1),

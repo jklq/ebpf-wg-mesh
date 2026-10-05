@@ -1,5 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { lazy, Suspense } from "react";
+import { AddButton, AddMenu } from "#/features/dashboard/canvas/add-menu";
 import { DashboardCanvasStage } from "#/features/dashboard/canvas/dashboard-canvas";
 import { UnappliedChangesDialog } from "#/features/dashboard/changes/dashboard-unapplied";
 import { WorkspaceReleasePrompt } from "#/features/dashboard/changes/workspace-release-prompt";
@@ -7,11 +8,7 @@ import { EnvironmentDialog } from "#/features/dashboard/navigation/environment-d
 import { Topbar } from "#/features/dashboard/navigation/topbar";
 import { ServicePanelFallback } from "#/features/dashboard/service-panel/panel-fallback";
 import { PendingServicePanel } from "#/features/dashboard/service-panel/pending-service-panel";
-import { NewServiceModal } from "#/features/dashboard/services/new-service-modal";
-import {
-	CreateVolumeDialog,
-	MountVolumeDialog,
-} from "#/features/dashboard/volumes/volume-dialogs";
+import { MountVolumeDialog } from "#/features/dashboard/volumes/volume-dialogs";
 import { VolumePanel } from "#/features/dashboard/volumes/volume-panel";
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
 import { colors, motion, sizes } from "#/styles/tokens.stylex";
@@ -47,9 +44,6 @@ export function DashboardPage({
 		<div {...stylex.props(styles.page)}>
 			<Topbar
 				state={homeState}
-				onNewService={creation.open}
-				onNewVolume={volumes.environmentId ? volumes.openCreate : undefined}
-				onPreloadNewService={creation.preload}
 				onRefresh={navigation.refresh}
 				onNewEnvironment={() => navigation.openEnvironmentDialog()}
 				onEnvironmentsChanged={navigation.refresh}
@@ -78,10 +72,16 @@ export function DashboardPage({
 					selection.clear();
 				}}
 				localState={homeState}
-				showNewService={creation.isOpen}
-				onAddService={creation.open}
+				showNewService={creation.step !== null}
+				onAddService={() => creation.goTo("repository")}
 				onPreloadAdd={creation.preload}
 			>
+				{!panelOpen && (
+					<AddButton
+						onOpen={() => creation.goTo("root")}
+						onPreload={creation.preload}
+					/>
+				)}
 				{release.showPrompt && (
 					<WorkspaceReleasePrompt release={release} panelOpen={panelOpen} />
 				)}
@@ -141,20 +141,6 @@ export function DashboardPage({
 				) : null}
 			</div>
 
-			{volumes.createOpen && volumes.environmentId && (
-				<CreateVolumeDialog
-					environmentId={volumes.environmentId}
-					services={volumes.services}
-					volumes={volumes.all}
-					onClose={volumes.closeCreate}
-					onCreated={(volume) => {
-						volumes.upsert(volume);
-						volumes.select(volume.id);
-					}}
-					onServiceUpdated={volumes.serviceUpdated}
-				/>
-			)}
-
 			{volumes.mountTarget && (
 				<MountVolumeDialog
 					volume={volumes.mountTarget}
@@ -165,17 +151,12 @@ export function DashboardPage({
 				/>
 			)}
 
-			{creation.isOpen && (
-				<NewServiceModal
-					state={homeState}
-					catalogLoading={creation.catalogLoading}
-					initialError={creation.error}
-					onClose={creation.close}
-					onCreated={creation.onCreated}
-					onCreating={creation.onCreating}
-					onCreateFailed={creation.onFailed}
-				/>
-			)}
+			<AddMenu
+				state={homeState}
+				panelOpen={panelOpen}
+				creation={creation}
+				volumes={volumes}
+			/>
 
 			{release.showChangeDetails && (
 				<UnappliedChangesDialog

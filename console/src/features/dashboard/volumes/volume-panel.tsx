@@ -14,9 +14,9 @@ import { DeleteResourceDialog } from "#/components/delete-resource-dialog";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { noticeStyles } from "#/components/ui/notice";
-import { sizeGibError } from "#/features/dashboard/volumes/volume-dialogs";
 import {
 	DEFAULT_VOLUME_MOUNT_PATH,
+	sizeGibError,
 	volumeOwner,
 	volumeStateLabel,
 	volumeTone,
