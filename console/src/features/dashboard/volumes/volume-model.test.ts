@@ -3,7 +3,6 @@ import {
 	mountPathError,
 	suggestVolumeName,
 	unattachedVolumes,
-	volumeNameError,
 	volumeTone,
 	volumeUsage,
 } from "#/features/dashboard/volumes/volume-model";
@@ -31,13 +30,6 @@ describe("volume model", () => {
 		expect(mountPathError("/data/")).toMatch(/clean/);
 		expect(mountPathError("/data/../etc")).toMatch(/clean/);
 		expect(mountPathError("/my data")).toMatch(/unsupported/);
-	});
-
-	it("validates volume names like the control plane", () => {
-		expect(volumeNameError("pg-data")).toBeUndefined();
-		expect(volumeNameError("")).toBeDefined();
-		expect(volumeNameError("PG")).toBeDefined();
-		expect(volumeNameError("-data")).toBeDefined();
 	});
 
 	it("suggests a name that is not taken", () => {

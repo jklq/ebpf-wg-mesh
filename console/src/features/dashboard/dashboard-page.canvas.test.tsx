@@ -517,7 +517,8 @@ describe("DashboardPage canvas", () => {
 		});
 		const { container } = render(<DashboardPage state={state} />);
 
-		fireEvent.click(screen.getByRole("button", { name: /deploy service/i }));
+		fireEvent.click(screen.getByRole("button", { name: "Add" }));
+		fireEvent.click(screen.getByRole("button", { name: /github repository/i }));
 		fireEvent.click(
 			await screen.findByRole("button", { name: /octocat\/hello/i }),
 		);

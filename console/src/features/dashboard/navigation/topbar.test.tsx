@@ -28,7 +28,6 @@ function topbar(state: DashboardHomeState) {
 	return (
 		<Topbar
 			state={state}
-			onNewService={vi.fn()}
 			onRefresh={vi.fn()}
 			onNewEnvironment={vi.fn()}
 			onEnvironmentsChanged={vi.fn()}

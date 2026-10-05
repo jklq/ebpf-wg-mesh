@@ -47,6 +47,7 @@ export function RepositoryPicker({
 	loading,
 	onActivateIndex,
 	onClose,
+	onBack,
 	onConfirm,
 	onRepositorySelect,
 	onSearchChange,
@@ -87,6 +88,11 @@ export function RepositoryPicker({
 							onClose();
 							return;
 						}
+						if (event.key === "Backspace" && repoSearch === "" && onBack) {
+							event.preventDefault();
+							onBack();
+							return;
+						}
 						if (event.key === "ArrowDown") {
 							event.preventDefault();
 							if (selectableCount > 0) {
@@ -103,8 +109,11 @@ export function RepositoryPicker({
 							}
 							return;
 						}
-						if (event.key === "Enter" && selectableCount > 0) {
-							onActivateIndex(highlightedIndex);
+						if (event.key === "Enter") {
+							// Without this, the Enter keypress lands on whatever regains
+							// focus once the picker closes and reopens it.
+							event.preventDefault();
+							if (selectableCount > 0) onActivateIndex(highlightedIndex);
 						}
 					}}
 					{...stylex.props(styles.searchInput)}

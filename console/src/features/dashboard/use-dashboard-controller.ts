@@ -7,6 +7,7 @@ import {
 	useState,
 	useTransition,
 } from "react";
+import type { AddMenuStep } from "#/features/dashboard/canvas/add-menu";
 import { serviceLayoutPositions } from "#/features/dashboard/canvas/canvas-math";
 import {
 	nextNodePositionNear,
@@ -79,10 +80,9 @@ export function useDashboardController({
 		[pendingRecords],
 	);
 	const [activeTab, setActiveTab] = useState<DashboardTab>("deployments");
-	const [showNewService, setShowNewService] = useState(false);
+	const [addStep, setAddStep] = useState<AddMenuStep | null>(null);
 	const [showEnvironmentDialog, setShowEnvironmentDialog] = useState(false);
 	const [selectedVolumeId, setSelectedVolumeId] = useState<string | null>(null);
-	const [showNewVolume, setShowNewVolume] = useState(false);
 	const [mountVolumeId, setMountVolumeId] = useState<string | null>(null);
 	const volumes = homeState.volumes;
 	const stagedVolumeList = useMemo(
@@ -221,7 +221,7 @@ export function useDashboardController({
 		previousEnvironmentIdRef.current = environmentId;
 		setSelectedVolumeId(null);
 		setMountVolumeId(null);
-		setShowNewVolume(false);
+		setAddStep(null);
 		setNodePositions(serviceLayoutPositions(servicesRef.current));
 		nodePositionsRef.current = serviceLayoutPositions(servicesRef.current);
 	}, [environmentId, nodePositionsRef, setNodePositions]);
@@ -230,11 +230,6 @@ export function useDashboardController({
 		const onKeyDown = (event: KeyboardEvent) => {
 			if (event.key !== "Escape" || event.defaultPrevented) return;
 			if ((event.target as Element | null)?.closest?.('[role="dialog"]')) {
-				return;
-			}
-			if (showNewService) {
-				setShowNewService(false);
-				setCreateError(undefined);
 				return;
 			}
 			if (showChangeDetails) {
@@ -252,7 +247,6 @@ export function useDashboardController({
 		selectedId,
 		selectedVolumeId,
 		showChangeDetails,
-		showNewService,
 		setShowChangeDetails,
 	]);
 
@@ -281,18 +275,18 @@ export function useDashboardController({
 		});
 	};
 
-	const openNewService = () => {
+	const goToAddStep = (step: AddMenuStep) => {
 		setCreateError(undefined);
-		setShowNewService(true);
+		setAddStep(step);
 		void ensureGitHubCatalog();
 	};
 
-	const preloadNewService = () => {
+	const preloadAddMenu = () => {
 		void ensureGitHubCatalog();
 	};
 
-	const closeNewService = () => {
-		setShowNewService(false);
+	const closeAddMenu = () => {
+		setAddStep(null);
 		setCreateError(undefined);
 	};
 
@@ -336,7 +330,7 @@ export function useDashboardController({
 		]);
 		setSelectedCreationId(provisionalId);
 		setCreateError(undefined);
-		setShowNewService(false);
+		setAddStep(null);
 	};
 
 	const handleCreateFailed = (selector: string, message: string) => {
@@ -353,7 +347,7 @@ export function useDashboardController({
 			);
 		}
 		setCreateError(message);
-		setShowNewService(true);
+		setAddStep("repository");
 	};
 
 	const handleCreated = (result: CreateServiceFastResult) => {
@@ -442,7 +436,7 @@ export function useDashboardController({
 		setSelectedCreationId(undefined);
 		canvas.hasUserPanned.current = false;
 		setActiveTab("deployments");
-		setShowNewService(false);
+		setAddStep(null);
 		if (!environmentId || environmentId !== result.environment.id) {
 			startTransition(() => {
 				void router.navigate({
@@ -515,9 +509,6 @@ export function useDashboardController({
 			environmentId,
 			selected: selectedVolume,
 			select: selectVolume,
-			createOpen: showNewVolume,
-			openCreate: () => setShowNewVolume(true),
-			closeCreate: () => setShowNewVolume(false),
 			mountTarget: mountVolume,
 			openMount: (volumeId: string) => setMountVolumeId(volumeId),
 			closeMount: () => setMountVolumeId(null),
@@ -526,10 +517,10 @@ export function useDashboardController({
 			serviceUpdated: mergeService,
 		},
 		creation: {
-			isOpen: showNewService,
-			open: openNewService,
-			preload: preloadNewService,
-			close: closeNewService,
+			step: addStep,
+			goTo: goToAddStep,
+			preload: preloadAddMenu,
+			close: closeAddMenu,
 			error: createError,
 			catalogLoading: githubCatalogLoading,
 			onCreated: handleCreated,
