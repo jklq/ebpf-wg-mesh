@@ -636,3 +636,6 @@ func TestPublisherConvergesWithoutEDSSubscription(t *testing.T) {
 		t.Fatalf("applied version = %q, want %q without any EDS ACK", got.AppliedVersion, version)
 	}
 }
+
+func (f *fakeNodes) NodeActive(context.Context, string) (bool, error) { return true, nil }
+func (failingNodes) NodeActive(context.Context, string) (bool, error) { return true, nil }

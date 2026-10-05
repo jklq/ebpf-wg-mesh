@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 37
+const currentSchemaVersion = 38
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -704,8 +704,15 @@ var currentSchema = []string{
 			publisher STRING NOT NULL DEFAULT '',
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
-	`CREATE TABLE xds_node_observations (
+	`CREATE TABLE ingress_nodes (
 			node_id STRING PRIMARY KEY,
+			state STRING NOT NULL CHECK (state IN ('active', 'retired')),
+			created_at TIMESTAMPTZ NOT NULL,
+			retired_at TIMESTAMPTZ NULL,
+			CHECK ((state = 'retired') = (retired_at IS NOT NULL))
+		)`,
+	`CREATE TABLE xds_node_observations (
+			node_id STRING PRIMARY KEY REFERENCES ingress_nodes(node_id),
 			applied_version STRING NOT NULL DEFAULT '',
 			nacks INT8 NOT NULL DEFAULT 0,
 			last_nack STRING NOT NULL DEFAULT '',

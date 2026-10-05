@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
+	"ebof-wg-mesh/internal/controlplane/ingressnodes"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"errors"
 	"fmt"
@@ -198,7 +199,7 @@ func testXDSPublisher(store *persistence, server *xds.Server, publisherID string
 	return xds.NewPublisher(xds.PublisherConfig{
 		Source:          routingOnlyInputs{store.routing},
 		Publications:    store.routing,
-		Nodes:           store.routing,
+		Nodes:           ingressnodes.New(store.db),
 		Server:          server,
 		HTTPListenAddrs: []string{":8080"},
 		PublisherID:     publisherID,
@@ -221,9 +222,10 @@ type testXDSEndpoint struct {
 	address    string
 	keys       signkeys.Provider
 	serverName string
+	registry   *ingressnodes.Registry
 }
 
-func serveXDSServer(t *testing.T, server *xds.Server) testXDSEndpoint {
+func serveXDSServer(t *testing.T, server *xds.Server, store *persistence) testXDSEndpoint {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -234,7 +236,7 @@ func serveXDSServer(t *testing.T, server *xds.Server) testXDSEndpoint {
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
 	t.Cleanup(func() { _ = listener.Close() })
-	return testXDSEndpoint{address: listener.Addr().String(), keys: pki.Keys}
+	return testXDSEndpoint{address: listener.Addr().String(), keys: pki.Keys, registry: ingressnodes.New(store.db)}
 }
 
 func subscribeType(t *testing.T, addr testXDSEndpoint, nodeID, typeURL string) *discoveryv3.DiscoveryResponse {
@@ -255,6 +257,9 @@ func subscribeType(t *testing.T, addr testXDSEndpoint, nodeID, typeURL string) *
 	}
 	tlsConfig, err := xds.ClientTLS(dir, name)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := addr.registry.Register(ctx, nodeID); err != nil {
 		t.Fatal(err)
 	}
 	client, err := xds.Dial(ctx, addr.address, nodeID, tlsConfig)
@@ -355,7 +360,7 @@ func TestXDSPublisherRoutesHealthyDomains(t *testing.T) {
 		t.Fatalf("publication row = %+v, status version %s", pub, status.Version)
 	}
 
-	addr := serveXDSServer(t, server)
+	addr := serveXDSServer(t, server, store)
 	// Every type converges on the same content version.
 	for _, typeURL := range []string{
 		resourcev3.ListenerType, resourcev3.ClusterType,
@@ -399,7 +404,7 @@ func TestXDSRemovesDrainingBackendsBeforeShutdown(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 	v1 := server.Status().Version
-	addr := serveXDSServer(t, server)
+	addr := serveXDSServer(t, server, store)
 	if got := endpointsFromEDS(t, subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)); len(got) != 1 {
 		t.Fatalf("serving EDS endpoints = %v, want one", got)
 	}
@@ -464,7 +469,7 @@ func TestXDSSplitOwnershipConverges(t *testing.T) {
 	if pub.Version != versionA || pub.Publisher != "replica-a" {
 		t.Fatalf("publication row = %+v, want winner replica-a at %s", pub, versionA)
 	}
-	addrA, addrB := serveXDSServer(t, serverA), serveXDSServer(t, serverB)
+	addrA, addrB := serveXDSServer(t, serverA, store), serveXDSServer(t, serverB, store)
 	marshal := proto.MarshalOptions{Deterministic: true}
 	for _, typeURL := range []string{resourcev3.ListenerType, resourcev3.ClusterType, resourcev3.RouteType, resourcev3.EndpointType} {
 		respA := subscribeType(t, addrA, "envoy-1", typeURL)
@@ -560,7 +565,7 @@ func TestXDSFollowerServesPublicationWithoutLease(t *testing.T) {
 	if !status.HasSnapshot || status.Version != published.Version {
 		t.Fatalf("follower served %+v, want version %s", status, published.Version)
 	}
-	addrB := serveXDSServer(t, serverB)
+	addrB := serveXDSServer(t, serverB, store)
 	eds := subscribeType(t, addrB, "envoy-1", resourcev3.EndpointType)
 	if eds.GetVersionInfo() != published.Version {
 		t.Fatalf("follower EDS version %s, want %s", eds.GetVersionInfo(), published.Version)
@@ -588,7 +593,7 @@ func TestXDSFirstContactServesCurrentPublication(t *testing.T) {
 	serverB := xds.NewServer(ctx)
 	publisherB := testXDSPublisher(store, serverB, "replica-b")
 	serverB.SetFirstContactHook(publisherB.Refresh)
-	addrB := serveXDSServer(t, serverB)
+	addrB := serveXDSServer(t, serverB, store)
 	eds := subscribeType(t, addrB, "envoy-1", resourcev3.EndpointType)
 	if eds.GetVersionInfo() != published.Version {
 		t.Fatalf("first contact EDS version %s, want current publication %s", eds.GetVersionInfo(), published.Version)
@@ -605,16 +610,16 @@ func TestXDSRegistersSubscriberDurablyAtFirstContact(t *testing.T) {
 	ctx := context.Background()
 
 	server := xds.NewServer(ctx)
-	server.SetNodeStore(store.routing)
+	server.SetNodeStore(ingressnodes.New(store.db))
 	publisher := testXDSPublisher(store, server, "replica-a")
 	if err := publisher.Sync(ctx); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	addr := serveXDSServer(t, server)
+	addr := serveXDSServer(t, server, store)
 	subscribeType(t, addr, "envoy-1", resourcev3.EndpointType)
 
 	// The observation exists only if first contact registered it.
-	nodes, err := store.routing.ListNodeObservations(ctx)
+	nodes, err := ingressnodes.New(store.db).ListNodeObservations(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -631,20 +636,25 @@ func TestXDSNodeObservationRetention(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
+	for _, id := range []string{"envoy-1"} {
+		if err := ingressnodes.New(store.db).Register(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// A regressed node keeps routing with the stale version until a full apply
 	// lands again.
-	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
+	if err := ingressnodes.New(store.db).UpsertNodeObservations(ctx, []xds.NodeObservation{
 		{NodeID: "envoy-1", AppliedVersion: "v2", NACKs: 1, LastNACK: "bad eds"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
+	if err := ingressnodes.New(store.db).UpsertNodeObservations(ctx, []xds.NodeObservation{
 		{NodeID: "envoy-1", AppliedVersion: ""},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	nodes, err := store.routing.ListNodeObservations(ctx)
+	nodes, err := ingressnodes.New(store.db).ListNodeObservations(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -653,12 +663,15 @@ func TestXDSNodeObservationRetention(t *testing.T) {
 	}
 
 	// A disconnected Envoy keeps routing with last-known-good until its ACK arrives.
-	if err := store.routing.UpsertNodeObservations(ctx, []xds.NodeObservation{
+	if err := ingressnodes.New(store.db).Register(ctx, "envoy-2"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ingressnodes.New(store.db).UpsertNodeObservations(ctx, []xds.NodeObservation{
 		{NodeID: "envoy-2", AppliedVersion: "v2"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	nodes, err = store.routing.ListNodeObservations(ctx)
+	nodes, err = ingressnodes.New(store.db).ListNodeObservations(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

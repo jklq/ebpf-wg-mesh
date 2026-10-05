@@ -22,7 +22,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/certificates"
-	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/ingressnodes"
 	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/testutil"
@@ -108,12 +108,16 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 		TLS: config.IngressTLSConfig{ACME: config.ACMEConfig{DirectoryURL: directory, CAFile: caFile}},
 	}})
 
-	material, err := identity.IssueClientCertificate(ctx, cp.server.SigningKeys(), identity.CallerIngress, "envoy-tls-"+id, time.Hour)
+	material, err := cp.server.ProvisionIngressIdentity(ctx, "envoy-tls-"+id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	identityDir := filepath.Join(stateDir, "identity")
 	if err := xds.WriteIdentity(identityDir, "/etc/envoy/identity", material); err != nil {
+		t.Fatal(err)
+	}
+	registry := ingressnodes.New(cp.server.store.db)
+	if err := registry.Register(ctx, "removed-envoy"); err != nil {
 		t.Fatal(err)
 	}
 	bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{
@@ -145,6 +149,22 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
+
+	// An absent active instance blocks real HTTP-01 validation until the operator
+	// confirms permanent removal. The live Envoy alone must then finish issuance.
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 10 * time.Second}, func(ctx context.Context) (bool, error) {
+		challenges, err := cp.server.store.certificates.ListChallenges(ctx)
+		if err != nil || len(challenges) == 0 {
+			return false, err
+		}
+		nodes, converged, err := cp.server.ingress.Applied(ctx)
+		return nodes == 2 && !converged, err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Retire(ctx, "removed-envoy"); err != nil {
+		t.Fatal(err)
+	}
 
 	// A generated hostname without healthy backends still answers its challenge.
 	service := domainOperationFixture(t, cp.server.store, "owner")

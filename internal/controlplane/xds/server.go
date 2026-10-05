@@ -148,7 +148,7 @@ func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.Certifi
 		}
 	}
 	s.revocations = revocations
-	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.StreamInterceptor(s.secureStream),
+	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.StreamInterceptor(s.secureStream), grpc.UnaryInterceptor(s.secureUnary),
 		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Hour, MaxConnectionAgeGrace: time.Minute}))
 	discoveryv3.RegisterAggregatedDiscoveryServiceServer(grpcServer, s.xds)
 	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, s.xds)
@@ -285,6 +285,15 @@ func (s *Server) authorizeNode(ctx context.Context, nodeID string) error {
 	if nodeID == "" || nodeID != id {
 		return status.Error(codes.PermissionDenied, "xDS node ID must match the authenticated ingress identity")
 	}
+	if s.nodeStore != nil {
+		active, err := s.nodeStore.NodeActive(ctx, id)
+		if err != nil {
+			return status.Error(codes.Unavailable, "ingress membership is unavailable")
+		}
+		if !active {
+			return status.Error(codes.PermissionDenied, "ingress node is not active")
+		}
+	}
 	return nil
 }
 
@@ -294,13 +303,32 @@ func (s *Server) secureStream(srv any, stream grpc.ServerStream, _ *grpc.StreamS
 	return handler(srv, &authorizedStream{ServerStream: stream, server: s})
 }
 
+func (s *Server) secureUnary(ctx context.Context, request any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	response, err := handler(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	id, err := s.authenticatedNode(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.authorizeNode(ctx, id); err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
 type authorizedStream struct {
 	grpc.ServerStream
 	server *Server
 }
 
 func (s *authorizedStream) SendMsg(message any) error {
-	if _, err := s.server.authenticatedNode(s.Context()); err != nil {
+	id, err := s.server.authenticatedNode(s.Context())
+	if err != nil {
+		return err
+	}
+	if err := s.server.authorizeNode(s.Context(), id); err != nil {
 		return err
 	}
 	return s.ServerStream.SendMsg(message)

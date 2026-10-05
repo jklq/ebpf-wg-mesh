@@ -355,3 +355,5 @@ func testClientTLS(t *testing.T, listener *bufconn.Listener, nodeID string) *tls
 	}
 	return p.(*identitytest.PKI).Client(t, identity.CallerIngress, nodeID)
 }
+
+func (*blockingNodes) NodeActive(context.Context, string) (bool, error) { return true, nil }

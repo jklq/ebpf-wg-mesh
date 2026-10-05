@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,8 +16,10 @@ import (
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 func securityEndpoint(t *testing.T, pki *identitytest.PKI) (*Server, string) {
@@ -32,6 +35,46 @@ func securityEndpoint(t *testing.T, pki *identitytest.PKI) (*Server, string) {
 	t.Cleanup(grpcServer.Stop)
 	t.Cleanup(func() { _ = listener.Close() })
 	return server, listener.Addr().String()
+}
+
+type controlledMembership struct {
+	*fakeNodes
+	active atomic.Bool
+}
+
+func (m *controlledMembership) NodeActive(context.Context, string) (bool, error) {
+	return m.active.Load(), nil
+}
+
+func TestRetirementStopsSecretPushesOnExistingStream(t *testing.T) {
+	t.Parallel()
+	pki := identitytest.New(t)
+	server, address := securityEndpoint(t, pki)
+	members := &controlledMembership{fakeNodes: newFakeNodes()}
+	members.active.Store(true)
+	server.SetNodeStore(members)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	client, err := Dial(ctx, address, "envoy-1", pki.Client(t, identity.CallerIngress, "envoy-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	response, err := client.Subscribe(ctx, resourcev3.SecretType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Request(response.TypeUrl, response.VersionInfo, response.Nonce, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitForApplied(t, server, "envoy-1", []string{resourcev3.SecretType}, response.VersionInfo)
+	members.active.Store(false)
+	input := tlsInput()
+	input.Backends = append(input.Backends, Backend{Domain: "new.example.com", Upstream: "10.0.0.99:80"})
+	server.Publish(ctx, mustBuild(t, input))
+	if response, err := client.RecvContext(ctx); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("retired stream response = %v, error = %v; want PermissionDenied", response, err)
+	}
 }
 
 func TestUnauthorizedClientsCannotRetrieveConfigurationOrKeys(t *testing.T) {
@@ -145,20 +188,48 @@ func TestIngressCARotationAndRevocationOnExistingStream(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if _, err := client.Subscribe(ctx, resourcev3.SecretType); err != nil {
+	response, err := client.Subscribe(ctx, resourcev3.SecretType)
+	if err != nil {
 		t.Fatal(err)
 	}
+	if err := client.Request(response.TypeUrl, response.VersionInfo, response.Nonce, nil); err != nil {
+		t.Fatal(err)
+	}
+	waitForApplied(t, server, "envoy-1", []string{resourcev3.SecretType}, response.VersionInfo)
 	leaf, err := x509.ParseCertificate(current.Certificates[0].Certificate[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := pki.Authority.Revocations().Add(leaf.SerialNumber.String()); err != nil {
+	if err := pki.Authority.Revocations().Add(leaf.SerialNumber.Text(16)); err != nil {
 		t.Fatal(err)
 	}
 	input := tlsInput()
 	input.Backends = append(input.Backends, Backend{Domain: "new.example.com", Upstream: "10.0.0.99:80"})
 	server.Publish(ctx, mustBuild(t, input))
-	if response, err := client.RecvContext(ctx); err == nil {
-		t.Fatalf("revoked stream received %v", response)
+	if response, err := client.RecvContext(ctx); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("revoked stream response = %v, error = %v; want Unauthenticated", response, err)
+	}
+}
+
+func TestFetchRechecksRevocationAfterFirstContactRefresh(t *testing.T) {
+	t.Parallel()
+	pki := identitytest.New(t)
+	server, address := securityEndpoint(t, pki)
+	clientTLS := pki.Client(t, identity.CallerIngress, "envoy-1")
+	leaf, err := x509.ParseCertificate(clientTLS.Certificates[0].Certificate[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.SetFirstContactHook(func(context.Context) error { return pki.Authority.Revocations().Add(leaf.SerialNumber.Text(16)) })
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(credentials.NewTLS(clientTLS)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = conn.Invoke(ctx, "/envoy.service.secret.v3.SecretDiscoveryService/FetchSecrets", &discoveryv3.DiscoveryRequest{Node: &corev3.Node{Id: "envoy-1"}, TypeUrl: resourcev3.SecretType}, &discoveryv3.DiscoveryResponse{})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("fetch after revocation during refresh = %v; want Unauthenticated", err)
 	}
 }

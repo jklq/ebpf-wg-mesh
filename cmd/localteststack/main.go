@@ -17,7 +17,6 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
-	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/xds"
@@ -350,7 +349,7 @@ func run() error {
 		return fmt.Errorf("create controlplane server: %v", err)
 	}
 	defer server.Close()
-	material, err := identity.IssueClientCertificate(ctx, server.SigningKeys(), identity.CallerIngress, "localteststack-envoy", 24*time.Hour)
+	material, err := server.ProvisionIngressIdentity(ctx, "localteststack-envoy")
 	if err != nil {
 		return fmt.Errorf("provision ingress identity: %w", err)
 	}

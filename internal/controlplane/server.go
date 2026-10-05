@@ -19,6 +19,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/ingressnodes"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
@@ -213,7 +214,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	xdsServer := xds.NewServer(context.Background())
-	xdsServer.SetNodeStore(store.routing)
+	nodeRegistry := ingressnodes.New(store.db)
+	xdsServer.SetNodeStore(nodeRegistry)
 	publisherID := strings.TrimSpace(cfg.AdvertiseAddr)
 	if publisherID == "" {
 		publisherID = strings.TrimSpace(cfg.InternalGRPC.Listen)
@@ -221,7 +223,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	ingress := xds.NewPublisher(xds.PublisherConfig{
 		Source:           ingressInputs{routing: store.routing, certificates: certs},
 		Publications:     store.routing,
-		Nodes:            store.routing,
+		Nodes:            nodeRegistry,
 		Server:           xdsServer,
 		Keys:             certs,
 		Static:           staticRoutes,
@@ -907,4 +909,17 @@ func dualProtocolHandler(grpcServer *grpc.Server, connectHandler http.Handler) h
 		}
 		connectHandler.ServeHTTP(w, r)
 	})
+}
+
+// ProvisionIngressIdentity establishes membership before exposing credentials.
+// It is an operator provisioning entry, used by the local deployment harness.
+func (s *Server) ProvisionIngressIdentity(ctx context.Context, id string) (identity.ClientIdentityMaterial, error) {
+	material, err := identity.IssueClientCertificate(ctx, s.signKeys, identity.CallerIngress, id, 24*time.Hour)
+	if err != nil {
+		return identity.ClientIdentityMaterial{}, err
+	}
+	if err := ingressnodes.New(s.store.db).Register(ctx, id); err != nil {
+		return identity.ClientIdentityMaterial{}, err
+	}
+	return material, nil
 }

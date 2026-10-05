@@ -14,6 +14,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/ingressnodes"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/xds"
@@ -147,7 +148,7 @@ func runSigningKeysCommand(command string, args []string) error {
 	case "check":
 		return signingKeysCheck(ctx, svc)
 	case "issue-client-cert":
-		return signingKeysIssueClientCert(ctx, svc, callerClass, callerID, ttlRaw, identityDir, mountedDir)
+		return signingKeysIssueClientCert(ctx, db, svc, callerClass, callerID, ttlRaw, identityDir, mountedDir)
 	default:
 		return signingKeysUsageError()
 	}
@@ -325,7 +326,7 @@ func signingKeysCheck(ctx context.Context, svc *signkeys.Service) error {
 	return nil
 }
 
-func signingKeysIssueClientCert(ctx context.Context, svc *signkeys.Service, callerClass, callerID, ttlRaw, identityDir, mountedDir string) error {
+func signingKeysIssueClientCert(ctx context.Context, db *sql.DB, svc *signkeys.Service, callerClass, callerID, ttlRaw, identityDir, mountedDir string) error {
 	var class identity.CallerClass
 	switch strings.TrimSpace(callerClass) {
 	case string(identity.CallerDashboard):
@@ -347,6 +348,11 @@ func signingKeysIssueClientCert(ctx context.Context, svc *signkeys.Service, call
 	material, err := identity.IssueClientCertificate(ctx, svc, class, strings.TrimSpace(callerID), ttl)
 	if err != nil {
 		return fmt.Errorf("controlplane signing-keys issue-client-cert: %w", err)
+	}
+	if class == identity.CallerIngress {
+		if err := ingressnodes.New(db).Register(ctx, strings.TrimSpace(callerID)); err != nil {
+			return fmt.Errorf("register ingress node: %w", err)
+		}
 	}
 	if identityDir != "" {
 		if class != identity.CallerIngress {

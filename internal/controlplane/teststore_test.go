@@ -189,6 +189,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 
 	tables := []string{
 		"xds_node_observations",
+		"ingress_nodes",
 		"xds_publications",
 		"control_plane_leases",
 		"control_plane_storage",
