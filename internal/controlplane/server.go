@@ -15,12 +15,14 @@ import (
 	"sync"
 	"time"
 
+	"ebof-wg-mesh/internal/controlplane/certificates"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -58,6 +60,7 @@ type Server struct {
 	internalGRPC    *grpc.Server
 	internalHTTP    *http.Server
 	ingress         *xds.Publisher
+	certificates    *certificates.Service
 	xdsServer       *xds.Server
 	xdsGRPC         *grpc.Server
 	xdsLn           net.Listener
@@ -202,6 +205,13 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			Upstream: route.Upstream,
 		})
 	}
+	for _, route := range cfg.Ingress.StaticRoutes {
+		store.routing.staticHosts = append(store.routing.staticHosts, route.Hosts...)
+	}
+	certs, err := newCertificateService(cfg, store)
+	if err != nil {
+		return nil, err
+	}
 	xdsServer := xds.NewServer(context.Background())
 	xdsServer.SetNodeStore(store.routing)
 	publisherID := strings.TrimSpace(cfg.AdvertiseAddr)
@@ -209,14 +219,17 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		publisherID = strings.TrimSpace(cfg.InternalGRPC.Listen)
 	}
 	ingress := xds.NewPublisher(xds.PublisherConfig{
-		Source:       store.routing,
-		Publications: store.routing,
-		Nodes:        store.routing,
-		Server:       xdsServer,
-		Static:       staticRoutes,
-		ListenAddrs:  cfg.Ingress.ListenAddrs,
-		PublisherID:  publisherID,
+		Source:           ingressInputs{routing: store.routing, certificates: certs},
+		Publications:     store.routing,
+		Nodes:            store.routing,
+		Server:           xdsServer,
+		Keys:             certs,
+		Static:           staticRoutes,
+		HTTPListenAddrs:  cfg.Ingress.HTTPListenAddrs,
+		HTTPSListenAddrs: cfg.Ingress.HTTPSListenAddrs,
+		PublisherID:      publisherID,
 	})
+	certs.SetIngress(ingress)
 	xdsServer.SetFirstContactHook(ingress.Refresh)
 	policy := registry.NewPolicy(cfg.Registry, registryAuth)
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
@@ -249,6 +262,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withServiceLogEmitter(logEmitter),
 		withGitHubSourceInspection(githubCatalog, githubClient, store.authorizer()),
 		withPlatformDomainSuffix(cfg.Ingress.PublicAddr),
+		withCertificates(certs),
 		withPlatformEvents(platformEvents),
 		withPlatformLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
 	)
@@ -322,6 +336,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		authority:       authority,
 		internalGRPC:    internal,
 		ingress:         ingress,
+		certificates:    certs,
 		xdsServer:       xdsServer,
 		xdsGRPC:         xdsGRPC,
 		xdsLn:           xdsLn,
@@ -356,6 +371,37 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	logsOwnedByServer = true
 	return server, nil
+}
+
+// newCertificateService issues certificates over ACME when a directory is set
+// and serves the operator wildcard certificate when its files are set.
+func newCertificateService(cfg config.ControlPlaneConfig, store *persistence) (*certificates.Service, error) {
+	var issuer certificates.Issuer
+	if strings.TrimSpace(cfg.Ingress.TLS.ACME.DirectoryURL) != "" {
+		acme, err := certificates.NewACMEIssuer(cfg.Ingress.TLS.ACME, store.certificates)
+		if err != nil {
+			return nil, fmt.Errorf("configure ACME: %w", err)
+		}
+		issuer = acme
+	}
+	resolver := routing.NewPublicDNSResolver()
+	certs, err := certificates.New(certificates.Config{
+		Store:  store.certificates,
+		Hosts:  store.routing,
+		Issuer: issuer,
+		Verify: func(ctx context.Context, hostname, platformHostname string) error {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			return routing.VerifyOwnership(ctx, resolver, hostname, platformHostname)
+		},
+		PlatformSuffix:   cfg.Ingress.PublicAddr,
+		PlatformCertFile: cfg.Ingress.TLS.PlatformCertFile,
+		PlatformKeyFile:  cfg.Ingress.TLS.PlatformKeyFile,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("configure ingress certificates: %w", err)
+	}
+	return certs, nil
 }
 
 func (s *Server) readyReport(ctx context.Context) health.Report {
@@ -497,6 +543,9 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { errCh <- s.delivery.ServeLive(ctx) }()
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Run(ctx) }()
+	}
+	if s.certificates != nil {
+		go func() { errCh <- s.certificates.Run(ctx) }()
 	}
 	if s.rollouts != nil {
 		go func() { errCh <- s.rollouts.Run(ctx) }()

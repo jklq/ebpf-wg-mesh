@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { recommendedTargetPort } from "#/features/dashboard/service-panel/domains/domain-model";
+import {
+	domainBindingPhase,
+	recommendedTargetPort,
+} from "#/features/dashboard/service-panel/domains/domain-model";
 import { usePolling } from "#/hooks/use-polling";
 import type {
 	DashboardDomainBinding,
@@ -94,10 +97,9 @@ export function useServiceDomains({
 		if (deleteConfirm) removeDomainRef.current?.focus();
 	}, [deleteConfirm]);
 
+	// Poll until every hostname is live: DNS, then the certificate, settle on the server.
 	const needsOwnershipPoll = bindings.some(
-		(binding) =>
-			!binding.platformGenerated &&
-			binding.ownershipState !== "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+		(binding) => domainBindingPhase(binding) !== "live",
 	);
 
 	usePolling(
@@ -148,7 +150,11 @@ export function useServiceDomains({
 					.catch(() => undefined);
 				setPendingDomain(null);
 			}
-			setSuccess(`${binding.hostname} is ready.`);
+			setSuccess(
+				domainBindingPhase(binding) === "issuing-certificate"
+					? `${binding.hostname} is ready. Its HTTPS certificate is being issued.`
+					: `${binding.hostname} is ready.`,
+			);
 		} catch (e) {
 			setPendingDomain(null);
 			setError(formatError(e));

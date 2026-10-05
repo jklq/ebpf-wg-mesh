@@ -34,6 +34,9 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionXDSListen(cfg.Ingress); err != nil {
 		return err
 	}
+	if strings.TrimSpace(cfg.Ingress.TLS.ACME.DirectoryURL) == "" {
+		return errors.New("controlplane.ingress.tls.acme.directoryUrl is required in production: public traffic must use HTTPS")
+	}
 	if strings.TrimSpace(cfg.Health.Listen) == "" {
 		return errors.New("controlplane.health.listen is required in production")
 	}

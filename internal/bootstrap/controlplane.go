@@ -24,6 +24,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var replicaAddresses string
 	var advertiseAddr string
 	var directImageAllowedPrivateRegistries string
+	var ingressHTTPListen string
+	var ingressHTTPSListen string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
 	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
@@ -62,7 +64,16 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.BuildArtifacts.KeepRecent, "build-artifacts-keep-recent", "CONTROLPLANE_BUILD_ARTIFACTS_KEEP_RECENT", 20, "aged-out unreferenced build artifacts kept per service regardless of age; artifacts inside the retention window are never pruned")
 	stringFlag(fs, &directImageAllowedPrivateRegistries, "direct-image-allowed-private-registries", "CONTROLPLANE_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES", "", "comma-separated registry hosts (host[:port]) the control plane may resolve direct images from even on private networks")
 	stringFlag(fs, &cfg.Ingress.XDSListen, "ingress-xds-listen", "CONTROLPLANE_INGRESS_XDS_LISTEN", "127.0.0.1:18000", "xDS management API listen address for Envoy instances")
-	stringFlag(fs, &cfg.Ingress.PublicAddr, "ingress-public-addr", "CONTROLPLANE_INGRESS_PUBLIC_ADDR", "platform.local", "")
+	stringFlag(fs, &cfg.Ingress.PublicAddr, "ingress-public-addr", "CONTROLPLANE_INGRESS_PUBLIC_ADDR", "platform.local", "platform domain suffix of generated hostnames")
+	stringFlag(fs, &ingressHTTPListen, "ingress-http-listen", "CONTROLPLANE_INGRESS_HTTP_LISTEN", ":80", "comma-separated Envoy HTTP listen addresses; ACME HTTP-01 needs port 80 to reach one")
+	stringFlag(fs, &ingressHTTPSListen, "ingress-https-listen", "CONTROLPLANE_INGRESS_HTTPS_LISTEN", ":443", "comma-separated Envoy HTTPS listen addresses")
+	stringFlag(fs, &cfg.Ingress.TLS.ACME.DirectoryURL, "ingress-acme-directory-url", "CONTROLPLANE_INGRESS_ACME_DIRECTORY_URL", "", "ACME directory that issues public certificates; production defaults to Let's Encrypt, development leaves automatic HTTPS off")
+	stringFlag(fs, &cfg.Ingress.TLS.ACME.Email, "ingress-acme-email", "CONTROLPLANE_INGRESS_ACME_EMAIL", "", "contact address registered with the ACME account")
+	stringFlag(fs, &cfg.Ingress.TLS.ACME.CAFile, "ingress-acme-ca-file", "CONTROLPLANE_INGRESS_ACME_CA_FILE", "", "extra PEM roots for the ACME directory's own TLS, e.g. a private CA")
+	stringFlag(fs, &cfg.Ingress.TLS.ACME.EABKeyID, "ingress-acme-eab-key-id", "CONTROLPLANE_INGRESS_ACME_EAB_KEY_ID", "", "external account binding key ID for CAs that require it")
+	stringFlag(fs, &cfg.Ingress.TLS.ACME.EABHMACKey, "ingress-acme-eab-hmac-key", "CONTROLPLANE_INGRESS_ACME_EAB_HMAC_KEY", "", "external account binding HMAC key, base64url")
+	stringFlag(fs, &cfg.Ingress.TLS.PlatformCertFile, "ingress-platform-tls-cert-file", "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE", "", "PEM wildcard certificate chain for *.<ingress-public-addr>; generated hostnames use it instead of ACME")
+	stringFlag(fs, &cfg.Ingress.TLS.PlatformKeyFile, "ingress-platform-tls-key-file", "CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE", "", "PEM private key of the platform wildcard certificate")
 	stringFlag(fs, &cfg.Ingress.ControlPlaneHTTPUpstream, "ingress-controlplane-upstream", "CONTROLPLANE_INGRESS_CONTROLPLANE_UPSTREAM", "127.0.0.1:8080", "")
 	boolFlag(fs, &cfg.Dashboard.Enabled, "dashboard-enabled", "CONTROLPLANE_DASHBOARD_ENABLED", false, "")
 	stringFlag(fs, &cfg.Dashboard.ProjectName, "dashboard-project-name", "CONTROLPLANE_DASHBOARD_PROJECT_NAME", "Platform Dashboard", "")
@@ -129,6 +140,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
 	cfg.ReplicaAddresses = splitCommaList(replicaAddresses)
 	cfg.DirectImages.AllowedPrivateRegistryHosts = splitCommaList(directImageAllowedPrivateRegistries)
+	cfg.Ingress.HTTPListenAddrs = splitCommaList(ingressHTTPListen)
+	cfg.Ingress.HTTPSListenAddrs = splitCommaList(ingressHTTPSListen)
 	cfg.AdvertiseAddr = strings.TrimSpace(advertiseAddr)
 	cfg.InternalGRPC.TLS.BootstrapTokens, err = parseAgentBootstrapTokens(agentBootstrapTokens)
 	if err != nil {

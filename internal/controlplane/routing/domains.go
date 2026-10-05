@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/certificates"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -21,8 +22,15 @@ type Domains struct {
 	store                Store
 	notifier             deliverycore.PlatformNotifier
 	ingress              deliverycore.PlatformIngress
+	certificates         Certificates
 	platformDomainSuffix string
 	dnsResolver          Resolver
+}
+
+// Certificates reports the HTTPS state of a hostname and starts issuance after a binding change.
+type Certificates interface {
+	Status(ctx context.Context, hostname string) certificates.Status
+	RequestReconcile()
 }
 
 type Store interface {
@@ -39,8 +47,16 @@ type Store interface {
 	ListDomainBindings(context.Context, authz.User, string, bool) ([]deliverycore.DomainBindingRecord, error)
 }
 
-func NewDomains(store Store, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, suffix string, resolver Resolver) *Domains {
-	return &Domains{store: store, notifier: notifier, ingress: ingress, platformDomainSuffix: suffix, dnsResolver: resolver}
+func NewDomains(store Store, notifier deliverycore.PlatformNotifier, ingress deliverycore.PlatformIngress, certs Certificates, suffix string, resolver Resolver) *Domains {
+	return &Domains{store: store, notifier: notifier, ingress: ingress, certificates: certs, platformDomainSuffix: suffix, dnsResolver: resolver}
+}
+
+// changed republishes ingress and lets certificate issuance see the new hostnames.
+func (s *Domains) changed() {
+	s.ingress.RequestSync()
+	if s.certificates != nil {
+		s.certificates.RequestReconcile()
+	}
 }
 
 func (s *Domains) GetDomainBinding(ctx context.Context, user authz.User, hostname string) (*platformv1.DomainBinding, error) {
@@ -106,7 +122,7 @@ func (s *Domains) CreateDomainBinding(ctx context.Context, user authz.User, req 
 	}
 	if changed {
 		s.notifyServices(ctx, user, binding.ServiceID)
-		s.ingress.RequestSync()
+		s.changed()
 	}
 	return s.AnnotateDomainBinding(ctx, user, binding), nil
 }
@@ -154,7 +170,7 @@ func (s *Domains) GenerateDomainBinding(ctx context.Context, user authz.User, re
 	}
 	if changed {
 		s.notifyServices(ctx, user, binding.ServiceID)
-		s.ingress.RequestSync()
+		s.changed()
 	}
 	return s.AnnotateDomainBinding(ctx, user, binding), nil
 }
@@ -197,7 +213,7 @@ func (s *Domains) UpdateDomainBinding(ctx context.Context, user authz.User, req 
 	}
 	if changed {
 		s.notifyServices(ctx, user, previousServiceID, binding.ServiceID)
-		s.ingress.RequestSync()
+		s.changed()
 	}
 	return s.AnnotateDomainBinding(ctx, user, binding), nil
 }
@@ -239,7 +255,7 @@ func (s *Domains) DeleteDomainBinding(ctx context.Context, user authz.User, req 
 
 	if changed {
 		s.notifyServices(ctx, user, binding.ServiceID)
-		s.ingress.RequestSync()
+		s.changed()
 	}
 	return &emptypb.Empty{}, nil
 }
@@ -262,7 +278,7 @@ func (s *Domains) RestoreDomainBinding(ctx context.Context, user authz.User, hos
 		return nil, status.Errorf(codes.Internal, "restore domain binding: %v", err)
 	}
 	s.notifyServices(ctx, user, binding.ServiceID)
-	s.ingress.RequestSync()
+	s.changed()
 	return s.AnnotateDomainBinding(ctx, user, binding), nil
 }
 

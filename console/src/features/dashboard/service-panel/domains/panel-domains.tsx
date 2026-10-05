@@ -2,7 +2,13 @@ import * as stylex from "@stylexjs/stylex";
 import { Button, buttonStyles } from "#/components/ui/button";
 import { noticeStyles } from "#/components/ui/notice";
 import { DomainDialogs } from "#/features/dashboard/service-panel/domains/domain-dialogs";
-import { formatOwnershipMessage } from "#/features/dashboard/service-panel/domains/domain-model";
+import {
+	type DomainBindingPhase,
+	domainBindingPhase,
+	formatCertificateMessage,
+	formatOwnershipMessage,
+	servesHTTPS,
+} from "#/features/dashboard/service-panel/domains/domain-model";
 import { useServiceDomains } from "#/features/dashboard/service-panel/domains/use-service-domains";
 import { colors, fonts, space } from "#/styles/tokens.stylex";
 
@@ -13,6 +19,7 @@ import {
 	CircleCheck,
 	Globe,
 	Loader2,
+	Lock,
 	Pencil,
 	Trash2,
 } from "lucide-react";
@@ -109,24 +116,35 @@ export function PanelDomains({
 					)}
 					{visibleBindings.map((binding) => {
 						const pending = pendingDomain?.hostname === binding.hostname;
-						const unverified =
-							!binding.platformGenerated &&
-							binding.ownershipState !== "DOMAIN_OWNERSHIP_STATE_VERIFIED";
+						const phase = domainBindingPhase(binding);
+						const unverified = phase === "awaiting-dns";
+						const waiting = pending || phase !== "live";
+						const https = servesHTTPS(binding);
+						const certificateMessage = formatCertificateMessage(binding);
 						return (
 							<div
 								key={binding.hostname}
 								{...stylex.props([
 									styles.bindingCard,
-									pending || unverified
-										? styles.pendingBindingCard
-										: styles.readyBindingCard,
+									waiting ? styles.pendingBindingCard : styles.readyBindingCard,
 								])}
 							>
 								<div {...stylex.props(styles.bindingHeader)}>
 									<div {...stylex.props(styles.bindingSummary)}>
 										<div {...stylex.props(styles.pendingBindingContent)}>
-											{pending || unverified ? (
+											{phase === "certificate-failed" ? (
+												<CircleAlert
+													size={12}
+													{...stylex.props(styles.failedIcon)}
+												/>
+											) : waiting ? (
 												<Loader2 size={12} {...stylex.props(styles.spinner)} />
+											) : https ? (
+												<Lock
+													size={12}
+													aria-label="HTTPS"
+													{...stylex.props(styles.readyIcon)}
+												/>
 											) : (
 												<Globe size={12} {...stylex.props(styles.readyIcon)} />
 											)}
@@ -143,16 +161,16 @@ export function PanelDomains({
 												<span
 													{...stylex.props([
 														styles.ownershipBadge,
-														unverified
-															? styles.unverifiedBadge
-															: styles.liveBadge,
+														phaseBadgeStyles[phase],
 													])}
 												>
-													{unverified ? "Waiting for CNAME" : "Live"}
+													{phaseLabels[phase]}
 												</span>
 											)}
 											<a
-												href={buildServiceURL(state, binding.hostname)}
+												href={buildServiceURL(state, binding.hostname, {
+													https,
+												})}
 												target="_blank"
 												rel="noreferrer"
 												{...stylex.props([
@@ -199,6 +217,12 @@ export function PanelDomains({
 											)}
 										</div>
 									)}
+									{!unverified && certificateMessage && (
+										<p {...stylex.props(styles.ownershipMessage)}>
+											<CircleAlert size={12} aria-hidden="true" />
+											{certificateMessage}
+										</p>
+									)}
 								</div>
 							</div>
 						);
@@ -230,6 +254,13 @@ export function PanelDomains({
 		</div>
 	);
 }
+
+const phaseLabels: Record<DomainBindingPhase, string> = {
+	"awaiting-dns": "Waiting for CNAME",
+	"issuing-certificate": "Issuing certificate",
+	"certificate-failed": "Certificate failed",
+	live: "Live",
+};
 
 const styles = stylex.create({
 	panel: { display: "flex", flexDirection: "column", gap: "1.75rem" },
@@ -372,6 +403,8 @@ const styles = stylex.create({
 	},
 	unverifiedBadge: { color: colors.accent },
 	liveBadge: { color: colors.healthy },
+	failedBadge: { color: colors.failed },
+	failedIcon: { flexShrink: "0", color: colors.failed },
 	openLink: { fontSize: "11px" },
 	removeButton: {
 		paddingInline: "0.375rem",
@@ -411,3 +444,10 @@ const styles = stylex.create({
 		paddingTop: "0.125rem",
 	},
 });
+
+const phaseBadgeStyles: Record<DomainBindingPhase, stylex.StyleXStyles> = {
+	"awaiting-dns": styles.unverifiedBadge,
+	"issuing-certificate": styles.unverifiedBadge,
+	"certificate-failed": styles.failedBadge,
+	live: styles.liveBadge,
+};

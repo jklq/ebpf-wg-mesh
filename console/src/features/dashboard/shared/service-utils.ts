@@ -98,9 +98,12 @@ export function shortId(id: string): string {
 	return id.slice(0, 8);
 }
 
+// buildServiceURL links a public hostname. A hostname with an active certificate
+// always links over HTTPS; the ingress redirects plain HTTP for it anyway.
 export function buildServiceURL(
 	state: DashboardHomeState,
 	hostname: string,
+	{ https = false }: { https?: boolean } = {},
 ): string {
 	const base =
 		state.localIngressBaseURL &&
@@ -111,6 +114,10 @@ export function buildServiceURL(
 	try {
 		const url = new URL(base);
 		url.hostname = hostname;
+		if (https && url.protocol !== "https:") {
+			url.protocol = "https:";
+			url.port = "";
+		}
 		if (
 			(url.protocol === "https:" && url.port === "443") ||
 			(url.protocol === "http:" && url.port === "80")

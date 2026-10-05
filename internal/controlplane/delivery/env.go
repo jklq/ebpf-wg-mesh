@@ -78,7 +78,7 @@ func (s *persistence) insertServiceRevisionTx(ctx context.Context, q ServiceQuer
 		if err != nil {
 			return err
 		}
-		encrypted, err := s.secrets.Encrypt(ctx, q, environmentID, revisionEnvAAD(serviceID, specRevision), plaintext)
+		encrypted, err := s.secrets.Encrypt(ctx, q, secretkeys.EnvironmentScope(environmentID), revisionEnvAAD(serviceID, specRevision), plaintext)
 		clear(plaintext)
 		if err != nil {
 			return fmt.Errorf("encrypt service %s env: %w", serviceID, err)

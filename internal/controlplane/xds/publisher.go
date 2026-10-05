@@ -8,8 +8,15 @@ import (
 	"time"
 )
 
+// Inputs is the live control-plane state that one snapshot renders.
+type Inputs struct {
+	Backends     []Backend
+	Certificates []Certificate
+	Challenges   []Challenge
+}
+
 type SnapshotSource interface {
-	HealthyIngressBackends(context.Context) ([]Backend, error)
+	IngressInputs(context.Context) (Inputs, error)
 	WithLeaseGuard(context.Context, func() error) error
 }
 
@@ -45,8 +52,10 @@ type Publisher struct {
 	pubs      PublicationStore
 	nodes     NodeStore
 	server    *Server
+	keys      KeyPairSource
 	static    []StaticRoute
-	listen    []string
+	http      []string
+	https     []string
 	publisher string
 	minSync   time.Duration
 	pushMu    sync.Mutex
@@ -54,14 +63,16 @@ type Publisher struct {
 }
 
 type PublisherConfig struct {
-	Source       SnapshotSource
-	Publications PublicationStore
-	Nodes        NodeStore
-	Server       *Server
-	Static       []StaticRoute
-	ListenAddrs  []string
-	PublisherID  string
-	MinSync      time.Duration
+	Source           SnapshotSource
+	Publications     PublicationStore
+	Nodes            NodeStore
+	Server           *Server
+	Keys             KeyPairSource
+	Static           []StaticRoute
+	HTTPListenAddrs  []string
+	HTTPSListenAddrs []string
+	PublisherID      string
+	MinSync          time.Duration
 }
 
 // NewPublisher builds a Publisher. A nil Server disables local serving; a nil PublicationStore
@@ -76,8 +87,10 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 		pubs:      cfg.Publications,
 		nodes:     cfg.Nodes,
 		server:    cfg.Server,
+		keys:      cfg.Keys,
 		static:    append([]StaticRoute(nil), cfg.Static...),
-		listen:    append([]string(nil), cfg.ListenAddrs...),
+		http:      append([]string(nil), cfg.HTTPListenAddrs...),
+		https:     append([]string(nil), cfg.HTTPSListenAddrs...),
 		publisher: cfg.PublisherID,
 		minSync:   minSync,
 		requestCh: make(chan struct{}, 1),
@@ -92,14 +105,18 @@ func (p *Publisher) Sync(ctx context.Context) error {
 	p.pushMu.Lock()
 	defer p.pushMu.Unlock()
 
-	backends, err := p.source.HealthyIngressBackends(ctx)
+	inputs, err := p.source.IngressInputs(ctx)
 	if err != nil {
 		return err
 	}
-	snap, err := Build(BuildInput{
-		Backends:    backends,
-		Static:      p.static,
-		ListenAddrs: p.listen,
+	snap, err := Build(ctx, BuildInput{
+		Backends:         inputs.Backends,
+		Static:           p.static,
+		HTTPListenAddrs:  p.http,
+		HTTPSListenAddrs: p.https,
+		Certificates:     inputs.Certificates,
+		Challenges:       inputs.Challenges,
+		Keys:             p.keys,
 	})
 	if err != nil {
 		return err
@@ -159,8 +176,15 @@ func (p *Publisher) loop(ctx context.Context, requestCh <-chan struct{}, tick fu
 
 // Converged gates destroying withdrawn allocations: every known Envoy must fully apply first.
 func (p *Publisher) Converged(ctx context.Context) (bool, error) {
+	_, converged, err := p.Applied(ctx)
+	return converged, err
+}
+
+// Applied reports how many Envoy nodes are known and whether each fully applied
+// the served version. With no nodes the snapshot counts as applied.
+func (p *Publisher) Applied(ctx context.Context) (nodes int, converged bool, err error) {
 	if p == nil || p.nodes == nil {
-		return true, nil
+		return 0, true, nil
 	}
 	version := ""
 	if p.server != nil {
@@ -171,26 +195,26 @@ func (p *Publisher) Converged(ctx context.Context) (bool, error) {
 	if version == "" && p.pubs != nil {
 		pub, err := p.pubs.LoadPublication(ctx)
 		if err != nil {
-			return false, err
+			return 0, false, err
 		}
 		version = pub.Version
 	}
 	if version == "" {
-		return true, nil
+		return 0, true, nil
 	}
 	if err := p.flushNodeObservations(ctx); err != nil {
-		return false, err
+		return 0, false, err
 	}
-	nodes, err := p.nodes.ListNodeObservations(ctx)
+	observations, err := p.nodes.ListNodeObservations(ctx)
 	if err != nil {
-		return false, err
+		return 0, false, err
 	}
-	for _, node := range nodes {
+	for _, node := range observations {
 		if node.AppliedVersion != version {
-			return false, nil
+			return len(observations), false, nil
 		}
 	}
-	return true, nil
+	return len(observations), true, nil
 }
 
 // Replicate adopts the durable publication and flushes node apply state once.
@@ -234,7 +258,7 @@ func (p *Publisher) adoptPublicationLocked(ctx context.Context) (done bool, err 
 	if status := p.server.Status(); status.HasSnapshot && status.Version == pub.Version {
 		return true, nil
 	}
-	snap, err := BuildFromInputs(pub.Inputs)
+	snap, err := BuildFromInputs(ctx, pub.Inputs, p.keys)
 	if err != nil {
 		return false, fmt.Errorf("published snapshot unusable: %w", err)
 	}

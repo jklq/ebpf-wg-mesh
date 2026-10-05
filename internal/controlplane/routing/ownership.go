@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/certificates"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"encoding/base32"
 	"errors"
@@ -14,6 +15,8 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
@@ -71,6 +74,9 @@ func isPlatformHostname(hostname, suffix string) bool {
 
 func (s *Domains) AnnotateDomainBinding(ctx context.Context, user authz.User, rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {
 	binding := toProtoDomainBinding(rec)
+	if s.certificates != nil {
+		binding.Certificate = toProtoDomainCertificate(s.certificates.Status(ctx, rec.Hostname))
+	}
 	if rec.PlatformGenerated {
 		binding.OwnershipState = platformv1.DomainOwnershipState_DOMAIN_OWNERSHIP_STATE_VERIFIED
 		return binding
@@ -105,22 +111,28 @@ func (s *Domains) inspectDomainOwnership(ctx context.Context, user authz.User, s
 }
 
 func (s *Domains) proveDomainOwnership(ctx context.Context, hostname, platformHostname string) error {
+	return VerifyOwnership(ctx, s.dnsResolver, hostname, platformHostname)
+}
+
+// VerifyOwnership proves that a custom hostname points at its platform hostname:
+// by CNAME, or by resolving to an address that the platform hostname also has.
+func VerifyOwnership(ctx context.Context, resolver Resolver, hostname, platformHostname string) error {
 	hostname = normalizeDNSName(hostname)
 	platformHostname = normalizeDNSName(platformHostname)
-	target, cnameErr := s.dnsResolver.LookupCNAME(ctx, hostname)
+	target, cnameErr := resolver.LookupCNAME(ctx, hostname)
 	target = normalizeDNSName(target)
 	if cnameErr == nil && target != "" && target != hostname {
 		if target == platformHostname {
 			return nil
 		}
-		platformCanon, err := s.dnsResolver.LookupCNAME(ctx, platformHostname)
+		platformCanon, err := resolver.LookupCNAME(ctx, platformHostname)
 		if err == nil && normalizeDNSName(platformCanon) == target {
 			return nil
 		}
 	}
 
-	customAddrs, customAddrErr := s.dnsResolver.LookupHost(ctx, hostname)
-	platformAddrs, platformAddrErr := s.dnsResolver.LookupHost(ctx, platformHostname)
+	customAddrs, customAddrErr := resolver.LookupHost(ctx, hostname)
+	platformAddrs, platformAddrErr := resolver.LookupHost(ctx, platformHostname)
 	if customAddrErr == nil && platformAddrErr == nil && addressSetsOverlap(customAddrs, platformAddrs) {
 		return nil
 	}
@@ -166,6 +178,27 @@ func NewPublicDNSResolver() *net.Resolver {
 			return dialer.DialContext(ctx, network, net.JoinHostPort("1.1.1.1", "53"))
 		},
 	}
+}
+
+func toProtoDomainCertificate(status certificates.Status) *platformv1.DomainCertificate {
+	out := &platformv1.DomainCertificate{Message: status.Message}
+	switch status.State {
+	case certificates.StatePending:
+		out.State = platformv1.DomainCertificateState_DOMAIN_CERTIFICATE_STATE_PENDING
+	case certificates.StateActive:
+		out.State = platformv1.DomainCertificateState_DOMAIN_CERTIFICATE_STATE_ACTIVE
+	case certificates.StateFailed:
+		out.State = platformv1.DomainCertificateState_DOMAIN_CERTIFICATE_STATE_FAILED
+	default:
+		out.State = platformv1.DomainCertificateState_DOMAIN_CERTIFICATE_STATE_UNSPECIFIED
+	}
+	if !status.ExpiresAt.IsZero() {
+		out.ExpiresAt = timestamppb.New(status.ExpiresAt)
+	}
+	if !status.RetryAt.IsZero() {
+		out.RetryAt = timestamppb.New(status.RetryAt)
+	}
+	return out
 }
 
 func toProtoDomainBinding(rec deliverycore.DomainBindingRecord) *platformv1.DomainBinding {

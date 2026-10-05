@@ -84,12 +84,42 @@ type BootstrapUser struct {
 
 type IngressConfig struct {
 	// XDSListen is the address the control plane serves the xDS management API on for Envoy instances.
-	XDSListen                string
-	ListenAddrs              []string
+	XDSListen string
+	// HTTPListenAddrs serve plaintext HTTP: ACME HTTP-01 challenges, redirects to HTTPS,
+	// and hostnames that do not hold a certificate yet.
+	HTTPListenAddrs []string
+	// HTTPSListenAddrs terminate TLS for each hostname that holds a certificate.
+	HTTPSListenAddrs         []string
 	StaticRoutes             []StaticIngressRouteConfig
 	PublicAddr               string
 	ControlPlaneHTTPUpstream string
+	TLS                      IngressTLSConfig
 }
+
+type IngressTLSConfig struct {
+	ACME ACMEConfig
+	// PlatformCertFile and PlatformKeyFile hold an operator-managed wildcard certificate
+	// for the platform domain suffix. Generated platform hostnames use it instead of a
+	// certificate per hostname. Every replica reads the same files.
+	PlatformCertFile string
+	PlatformKeyFile  string
+}
+
+// ACMEConfig selects the certificate authority that issues a certificate for each
+// public hostname. An empty DirectoryURL disables automatic certificates.
+type ACMEConfig struct {
+	DirectoryURL string
+	Email        string
+	// CAFile adds PEM roots that the ACME directory's own TLS certificate chains to.
+	CAFile string
+	// EABKeyID and EABHMACKey bind the account to a CA that requires external
+	// account binding. EABHMACKey is base64url without padding.
+	EABKeyID   string
+	EABHMACKey string
+}
+
+// LetsEncryptDirectoryURL is the production ACME directory of Let's Encrypt.
+const LetsEncryptDirectoryURL = "https://acme-v02.api.letsencrypt.org/directory"
 
 type StaticIngressRouteConfig struct {
 	Hosts    []string

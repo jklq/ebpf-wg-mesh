@@ -230,6 +230,73 @@ describe("domains panel", () => {
 		expect(screen.getByText("Live")).toBeTruthy();
 		expect(screen.queryByText(/violet-7k3\.platform\.example/)).toBeNull();
 	});
+
+	it("shows certificate issuance until the hostname serves HTTPS", async () => {
+		const issuing: DashboardDomainBinding = jsonFixture(DomainBindingSchema, {
+			hostname: "violet-7k3.platform.example",
+			serviceId: "service-1",
+			targetPort: 8080,
+			platformGenerated: true,
+			ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+			certificate: { state: "DOMAIN_CERTIFICATE_STATE_PENDING" },
+		});
+		const active: DashboardDomainBinding = jsonFixture(DomainBindingSchema, {
+			...issuing,
+			certificate: {
+				state: "DOMAIN_CERTIFICATE_STATE_ACTIVE",
+				expiresAt: "2027-01-01T00:00:00Z",
+			},
+		});
+		serverFns.list.mockResolvedValueOnce([issuing]);
+		serverFns.list.mockResolvedValue([active]);
+		vi.useFakeTimers({ shouldAdvanceTime: true });
+		try {
+			render(
+				<PanelDomains
+					service={domainService()}
+					state={
+						{
+							domainBindings: [],
+							publicBaseURL: "http://console.platform.example",
+						} as unknown as DashboardHomeState
+					}
+				/>,
+			);
+			expect(await screen.findByText("Issuing certificate")).toBeTruthy();
+			await vi.advanceTimersByTimeAsync(5000);
+			expect(await screen.findByText("Live")).toBeTruthy();
+			expect(
+				screen.getByRole("link", { name: "Open ↗" }).getAttribute("href"),
+			).toBe("https://violet-7k3.platform.example");
+			expect(screen.getByLabelText("HTTPS")).toBeTruthy();
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it("explains a failed certificate and when it retries", async () => {
+		serverFns.list.mockResolvedValue([
+			jsonFixture(DomainBindingSchema, {
+				hostname: "violet-7k3.platform.example",
+				serviceId: "service-1",
+				targetPort: 8080,
+				platformGenerated: true,
+				ownershipState: "DOMAIN_OWNERSHIP_STATE_VERIFIED",
+				certificate: {
+					state: "DOMAIN_CERTIFICATE_STATE_FAILED",
+					message: "CAA record forbids issuance",
+					retryAt: "2026-10-05T12:30:00Z",
+				},
+			}),
+		]);
+
+		render(<PanelDomains service={domainService()} state={domainState()} />);
+
+		expect(await screen.findByText("Certificate failed")).toBeTruthy();
+		expect(
+			screen.getByText(/CAA record forbids issuance\. Retrying at/),
+		).toBeTruthy();
+	});
 });
 
 function domainService(): DashboardServiceRecord {

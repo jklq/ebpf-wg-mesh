@@ -16,6 +16,24 @@ import (
 // isolation scope — bounding a key compromise to one environment.
 const DEKScopeKindEnvironment = "environment"
 
+// DEKScopeKindPlatform scopes a DEK to platform-owned secrets that belong to no
+// environment, such as ingress TLS keys and the ACME account key.
+const DEKScopeKindPlatform = "platform"
+
+// Scope names the owner of one data-encryption key.
+type Scope struct {
+	Kind string
+	ID   string
+}
+
+// EnvironmentScope is the DEK scope of one environment's secrets.
+func EnvironmentScope(environmentID string) Scope {
+	return Scope{Kind: DEKScopeKindEnvironment, ID: environmentID}
+}
+
+// IngressTLSScope is the DEK scope of public ingress certificate keys.
+var IngressTLSScope = Scope{Kind: DEKScopeKindPlatform, ID: "ingress-tls"}
+
 // DEKWrapPurposeContext binds a wrapped DEK to its own row so copied bytes do not unwrap.
 const DEKWrapPurposeContext = "dek-wrap/v1"
 

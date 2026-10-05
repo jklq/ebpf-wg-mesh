@@ -53,7 +53,7 @@ func TestDomainOperationsDeleteTombstonesGeneratedBindingAtomically(t *testing.T
 	ctx := contextWithDelegatedUser("owner", "owner@example.com")
 	user := testUser("owner")
 	ingress := &countingIngress{}
-	operations := NewDomains(store.platform(), noopNotifier{}, ingress, "platform.example", staticCNAMEResolver{})
+	operations := NewDomains(store.platform(), noopNotifier{}, ingress, nil, "platform.example", staticCNAMEResolver{})
 	generated, err := operations.GenerateDomainBinding(ctx, user, &platformv1.GenerateDomainBindingRequest{ServiceId: service.ID, TargetPort: 8080})
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	source := domainOperationFixture(t, store, "owner")
 	target := domainOperationFixture(t, store, "attacker")
 	ingress := &countingIngress{}
-	operations := NewDomains(store.platform(), noopNotifier{}, ingress, "platform.example", staticCNAMEResolver{})
+	operations := NewDomains(store.platform(), noopNotifier{}, ingress, nil, "platform.example", staticCNAMEResolver{})
 	owner := contextWithDelegatedUser("owner", "owner@example.com")
 	attacker := contextWithDelegatedUser("attacker", "attacker@example.com")
 	for _, entry := range []struct {
@@ -193,13 +193,25 @@ func TestDomainOperationsCrossProjectDuplicateHostname(t *testing.T) {
 
 func testXDSPublisher(store *persistence, server *xds.Server, publisherID string) *xds.Publisher {
 	return xds.NewPublisher(xds.PublisherConfig{
-		Source:       store.routing,
-		Publications: store.routing,
-		Nodes:        store.routing,
-		Server:       server,
-		ListenAddrs:  []string{":8080"},
-		PublisherID:  publisherID,
+		Source:          routingOnlyInputs{store.routing},
+		Publications:    store.routing,
+		Nodes:           store.routing,
+		Server:          server,
+		HTTPListenAddrs: []string{":8080"},
+		PublisherID:     publisherID,
 	})
+}
+
+// routingOnlyInputs publishes backends without certificates.
+type routingOnlyInputs struct{ routing *routingPersistence }
+
+func (s routingOnlyInputs) IngressInputs(ctx context.Context) (xds.Inputs, error) {
+	backends, err := s.routing.HealthyIngressBackends(ctx)
+	return xds.Inputs{Backends: backends}, err
+}
+
+func (s routingOnlyInputs) WithLeaseGuard(ctx context.Context, fn func() error) error {
+	return s.routing.WithLeaseGuard(ctx, fn)
 }
 
 func serveXDSServer(t *testing.T, server *xds.Server) string {

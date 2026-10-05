@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 36
+const currentSchemaVersion = 37
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -710,5 +710,43 @@ var currentSchema = []string{
 			nacks INT8 NOT NULL DEFAULT 0,
 			last_nack STRING NOT NULL DEFAULT '',
 			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	// ingress_certificates holds the issuance state of each public hostname. It
+	// outlives a tombstoned binding, so a restore serves HTTPS at once.
+	`CREATE TABLE ingress_certificates (
+			hostname STRING PRIMARY KEY,
+			fingerprint STRING NOT NULL DEFAULT '',
+			not_after TIMESTAMPTZ NULL,
+			renew_at TIMESTAMPTZ NULL,
+			attempts INT8 NOT NULL DEFAULT 0,
+			next_attempt_at TIMESTAMPTZ NOT NULL,
+			last_error STRING NOT NULL DEFAULT '',
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	// ingress_certificate_versions are immutable. A replica that adopts an older
+	// publication still finds the version that it references.
+	`CREATE TABLE ingress_certificate_versions (
+			fingerprint STRING PRIMARY KEY,
+			hostname STRING NOT NULL,
+			chain_pem BYTES NOT NULL,
+			key_dek_id STRING NOT NULL,
+			key_ciphertext BYTES NOT NULL,
+			not_before TIMESTAMPTZ NOT NULL,
+			not_after TIMESTAMPTZ NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_ingress_certificate_versions_hostname ON ingress_certificate_versions(hostname, created_at)`,
+	`CREATE TABLE acme_http_challenges (
+			token STRING PRIMARY KEY,
+			hostname STRING NOT NULL,
+			key_authorization STRING NOT NULL,
+			expires_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE TABLE acme_accounts (
+			directory_url STRING PRIMARY KEY,
+			account_uri STRING NOT NULL,
+			key_dek_id STRING NOT NULL,
+			key_ciphertext BYTES NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL
 		)`,
 }

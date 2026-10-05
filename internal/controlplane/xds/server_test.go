@@ -128,7 +128,7 @@ func waitForApplied(t *testing.T, server *Server, nodeID string, types []string,
 
 func mustBuild(t *testing.T, input BuildInput) *Snapshot {
 	t.Helper()
-	snap, err := Build(input)
+	snap, err := Build(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
 	}

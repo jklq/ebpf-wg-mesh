@@ -1,7 +1,53 @@
 import type {
+	DashboardDomainBinding,
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+
+// The user-visible readiness of one public hostname, in the order a new domain passes through.
+export type DomainBindingPhase =
+	| "awaiting-dns"
+	| "issuing-certificate"
+	| "certificate-failed"
+	| "live";
+
+export function domainBindingPhase(
+	binding: DashboardDomainBinding,
+): DomainBindingPhase {
+	if (
+		!binding.platformGenerated &&
+		binding.ownershipState !== "DOMAIN_OWNERSHIP_STATE_VERIFIED"
+	) {
+		return "awaiting-dns";
+	}
+	switch (binding.certificate?.state) {
+		case "DOMAIN_CERTIFICATE_STATE_PENDING":
+			return "issuing-certificate";
+		case "DOMAIN_CERTIFICATE_STATE_FAILED":
+			return "certificate-failed";
+		default:
+			return "live";
+	}
+}
+
+export function servesHTTPS(binding: DashboardDomainBinding): boolean {
+	return binding.certificate?.state === "DOMAIN_CERTIFICATE_STATE_ACTIVE";
+}
+
+export function formatCertificateMessage(
+	binding: DashboardDomainBinding,
+): string | undefined {
+	const certificate = binding.certificate;
+	if (!certificate?.message) {
+		return undefined;
+	}
+	const retry = certificate.retryAt ? new Date(certificate.retryAt) : null;
+	const retryText =
+		retry && !Number.isNaN(retry.getTime())
+			? ` Retrying at ${retry.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`
+			: "";
+	return `${certificate.message.replace(/\.?$/, ".")}${retryText}`;
+}
 
 export function formatOwnershipMessage(
 	message: string | undefined,

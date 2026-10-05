@@ -2,6 +2,7 @@ package xds
 
 import (
 	"bytes"
+	"context"
 	"sort"
 	"testing"
 
@@ -26,7 +27,7 @@ func testInput() BuildInput {
 			Hosts:    []string{"console.example.test"},
 			Upstream: "host.docker.internal:3000",
 		}},
-		ListenAddrs: []string{":8080"},
+		HTTPListenAddrs: []string{":8080"},
 	}
 }
 
@@ -54,7 +55,7 @@ func snapshotBytes(t *testing.T, snap *Snapshot) []byte {
 func TestBuildIsDeterministic(t *testing.T) {
 	t.Parallel()
 
-	first, err := Build(testInput())
+	first, err := Build(context.Background(), testInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +72,7 @@ func TestBuildIsDeterministic(t *testing.T) {
 		if i%2 == 0 {
 			input = testInput()
 		}
-		got, err := Build(input)
+		got, err := Build(context.Background(), input)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -87,7 +88,7 @@ func TestBuildIsDeterministic(t *testing.T) {
 func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 	t.Parallel()
 
-	snap, err := Build(testInput())
+	snap, err := Build(context.Background(), testInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 		t.Fatal("Build must record its canonical inputs")
 	}
 	// A replica that never saw the live state rebuilds the exact snapshot from the published preimage.
-	rebuilt, err := BuildFromInputs(snap.Inputs)
+	rebuilt, err := BuildFromInputs(context.Background(), snap.Inputs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +111,7 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 	}
 
 	for _, raw := range [][]byte{nil, {}, []byte("not json"), []byte(`{"domains":[{"name":"x","endpoints":["nope"]}]}`)} {
-		if _, err := BuildFromInputs(raw); err == nil {
+		if _, err := BuildFromInputs(context.Background(), raw, nil); err == nil {
 			t.Fatalf("BuildFromInputs(%q): expected error", raw)
 		}
 	}
@@ -119,12 +120,12 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 func TestBuildGoldenVersion(t *testing.T) {
 	t.Parallel()
 
-	snap, err := Build(testInput())
+	snap, err := Build(context.Background(), testInput())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// A fixed input must hash to a fixed version across processes and replicas.
-	const want = "12210c47172b093efdcad005bd745cec1283ab3c1e32638678ff36e7f29decc9"
+	const want = "45dc7e8fe8944408c0a614e06e2dde86ff47ebc5555e554eb79ce5466b2905f6"
 	if snap.Version != want {
 		t.Fatalf("version = %s, want %s", snap.Version, want)
 	}
@@ -133,7 +134,7 @@ func TestBuildGoldenVersion(t *testing.T) {
 func TestBuildRoutesMultipleReplicasPerService(t *testing.T) {
 	t.Parallel()
 
-	snap, err := Build(testInput())
+	snap, err := Build(context.Background(), testInput())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,9 +174,9 @@ func TestBuildRoutesMultipleReplicasPerService(t *testing.T) {
 	}
 
 	routes := routeResources(t, snap)
-	routeConfig, ok := routes[RouteConfigName]
+	routeConfig, ok := routes[HTTPRouteConfigName]
 	if !ok {
-		t.Fatalf("missing route config %q", RouteConfigName)
+		t.Fatalf("missing route config %q", HTTPRouteConfigName)
 	}
 	vhostByName := make(map[string]*routev3.VirtualHost)
 	for _, vhost := range routeConfig.GetVirtualHosts() {
@@ -205,12 +206,12 @@ func TestBuildRoutesMultipleReplicasPerService(t *testing.T) {
 func TestBuildOmitsDomainsWithoutValidEndpoints(t *testing.T) {
 	t.Parallel()
 
-	snap, err := Build(BuildInput{
+	snap, err := Build(context.Background(), BuildInput{
 		Backends: []Backend{
 			{Domain: "bad.example.com", Upstream: "not-an-endpoint", AllocationID: "alloc-1"},
 			{Domain: "good.example.com", Upstream: "10.0.0.10:8080", AllocationID: "alloc-2"},
 		},
-		ListenAddrs: []string{":8080"},
+		HTTPListenAddrs: []string{":8080"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -228,14 +229,14 @@ func TestBuildOmitsDomainsWithoutValidEndpoints(t *testing.T) {
 func TestBuildEmptySnapshotIsConsistent(t *testing.T) {
 	t.Parallel()
 
-	snap, err := Build(BuildInput{ListenAddrs: []string{":8080"}})
+	snap, err := Build(context.Background(), BuildInput{HTTPListenAddrs: []string{":8080"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := snap.CacheSnapshot().Consistent(); err != nil {
 		t.Fatalf("empty snapshot inconsistent: %v", err)
 	}
-	if len(routeResources(t, snap)[RouteConfigName].GetVirtualHosts()) != 0 {
+	if len(routeResources(t, snap)[HTTPRouteConfigName].GetVirtualHosts()) != 0 {
 		t.Fatal("empty snapshot must carry an empty route table")
 	}
 	if len(listenerResources(t, snap)) != 1 {
@@ -247,11 +248,11 @@ func TestBuildRejectsBadListenAddr(t *testing.T) {
 	t.Parallel()
 
 	for _, addr := range []string{"", "not-an-addr", ":0", ":99999", "example.com:http"} {
-		if _, err := Build(BuildInput{ListenAddrs: []string{addr}}); err == nil {
+		if _, err := Build(context.Background(), BuildInput{HTTPListenAddrs: []string{addr}}); err == nil {
 			t.Fatalf("addr %q: expected error", addr)
 		}
 	}
-	if _, err := Build(BuildInput{}); err == nil {
+	if _, err := Build(context.Background(), BuildInput{}); err == nil {
 		t.Fatal("expected error with no listen addrs")
 	}
 }
@@ -259,13 +260,13 @@ func TestBuildRejectsBadListenAddr(t *testing.T) {
 func TestBuildVersionChangesWithEndpoints(t *testing.T) {
 	t.Parallel()
 
-	before, err := Build(testInput())
+	before, err := Build(context.Background(), testInput())
 	if err != nil {
 		t.Fatal(err)
 	}
 	changed := testInput()
 	changed.Backends = append(changed.Backends, Backend{Domain: "c.example.com", Upstream: "10.0.0.20:8080"})
-	after, err := Build(changed)
+	after, err := Build(context.Background(), changed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,14 +350,14 @@ func TestRequiredTypesOmitEndpointsWithoutEndpoints(t *testing.T) {
 
 	// Envoy opens EDS subscriptions only for the EDS clusters CDS announces. With no endpoints
 	// the drain barrier must not wait for an EDS ACK that can never arrive.
-	snap := mustBuild(t, BuildInput{ListenAddrs: []string{":8080"}})
+	snap := mustBuild(t, BuildInput{HTTPListenAddrs: []string{":8080"}})
 	if got := snap.RequiredTypes(); len(got) != 3 {
 		t.Fatalf("RequiredTypes without endpoints = %v, want LDS/CDS/RDS only", got)
 	}
 
 	snap = mustBuild(t, BuildInput{
-		Backends:    []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
-		ListenAddrs: []string{":8080"},
+		Backends:        []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		HTTPListenAddrs: []string{":8080"},
 	})
 	if got := snap.RequiredTypes(); len(got) != 4 {
 		t.Fatalf("RequiredTypes with endpoints = %v, want all four", got)
