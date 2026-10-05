@@ -266,7 +266,7 @@ func TestControlPlaneRestartContinuesFailoverAndIngress(t *testing.T) {
 	if !status.HasSnapshot {
 		t.Fatal("expected a published xDS snapshot after restart")
 	}
-	eds := subscribeType(t, second.server.XDSAddr(), "restart-envoy", resourcev3.EndpointType)
+	eds := subscribeType(t, testXDSEndpoint{address: second.server.XDSAddr(), keys: second.server.SigningKeys(), serverName: "localhost"}, "restart-envoy", resourcev3.EndpointType)
 	if eds.GetVersionInfo() != status.Version {
 		t.Fatalf("EDS version %s, want published %s", eds.GetVersionInfo(), status.Version)
 	}

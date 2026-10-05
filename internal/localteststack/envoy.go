@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ type LocalIngressConfig struct {
 	ContainerName string
 	NodeID        string
 	XDSServerAddr string
+	IdentityDir   string
+	ServerName    string
 	PublicHost    string
 	PublicPort    int
 	AdminPort     int
@@ -58,6 +61,9 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 	if strings.TrimSpace(cfg.XDSServerAddr) == "" {
 		return nil, fmt.Errorf("local ingress xds server address is required")
 	}
+	if cfg.IdentityDir == "" || cfg.ServerName == "" {
+		return nil, fmt.Errorf("local ingress identity directory and server name are required")
+	}
 	if strings.TrimSpace(cfg.PublicHost) == "" {
 		return nil, fmt.Errorf("local ingress public host is required")
 	}
@@ -85,6 +91,7 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 	}
 	args := []string{
 		"run", "--detach", "--rm",
+		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
 		"--name", cfg.ContainerName,
 		"--memory", "256m", "--memory-swap", "256m",
 		"--network", cfg.DockerNetwork,
@@ -92,6 +99,7 @@ func StartManagedIngress(ctx context.Context, cfg LocalIngressConfig, runner Doc
 		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.PublicPort, cfg.PublicPort),
 		"--publish", fmt.Sprintf("127.0.0.1:%d:%d", cfg.AdminPort, envoyContainerAdminPort),
 		"--volume", configPath + ":/etc/envoy/envoy.yaml:ro",
+		"--volume", cfg.IdentityDir + ":/etc/envoy/identity:ro",
 		cfg.Image,
 		"envoy", "--config-path", "/etc/envoy/envoy.yaml",
 	}
@@ -150,7 +158,8 @@ func (m *ManagedIngress) WaitReady(ctx context.Context) error {
 
 func writeLocalIngressBootstrapConfig(cfg LocalIngressConfig) (string, error) {
 	bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{
-		NodeID:       cfg.NodeID,
+		NodeID:      cfg.NodeID,
+		IdentityDir: "/etc/envoy/identity", ServerName: cfg.ServerName,
 		XDSAddresses: []string{cfg.XDSServerAddr},
 		AdminAddress: fmt.Sprintf("0.0.0.0:%d", envoyContainerAdminPort),
 	})

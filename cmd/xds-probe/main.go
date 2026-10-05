@@ -48,9 +48,11 @@ func shortType(typeURL string) string {
 }
 
 type probeConfig struct {
-	addrs  []string
-	dir    string
-	nodeID string
+	addrs       []string
+	dir         string
+	nodeID      string
+	identityDir string
+	serverName  string
 }
 
 type probe struct {
@@ -70,6 +72,8 @@ func main() {
 	addrsFlag := flag.String("xds-addrs", "", "comma-separated control-plane xDS addresses (host:port)")
 	dirFlag := flag.String("probe-dir", "", "directory for latest.json and requests.log")
 	nodeFlag := flag.String("node-id", "testvm-xds-probe", "xDS node identity to subscribe as")
+	identityFlag := flag.String("identity-dir", "", "provisioned ingress identity directory")
+	serverNameFlag := flag.String("server-name", "", "control plane certificate SAN to verify")
 	flag.Parse()
 
 	var addrs []string
@@ -81,7 +85,7 @@ func main() {
 	if len(addrs) == 0 || strings.TrimSpace(*dirFlag) == "" {
 		log.Fatal("xds-probe requires -xds-addrs and -probe-dir")
 	}
-	if err := run(context.Background(), probeConfig{addrs: addrs, dir: *dirFlag, nodeID: *nodeFlag}); err != nil {
+	if err := run(context.Background(), probeConfig{addrs: addrs, dir: *dirFlag, nodeID: *nodeFlag, identityDir: *identityFlag, serverName: *serverNameFlag}); err != nil {
 		log.Fatalf("xds-probe: %v", err)
 	}
 }
@@ -92,6 +96,12 @@ func run(ctx context.Context, cfg probeConfig) error {
 	}
 	if strings.TrimSpace(cfg.dir) == "" {
 		return fmt.Errorf("probe dir is required")
+	}
+	if cfg.nodeID == "" || cfg.identityDir == "" || cfg.serverName == "" {
+		return fmt.Errorf("node-id, identity-dir, and server-name are required")
+	}
+	if _, err := xds.ClientTLS(cfg.identityDir, cfg.serverName); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(cfg.dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir probe dir: %w", err)
@@ -133,7 +143,11 @@ func (p *probe) follow(ctx context.Context, addr string) {
 }
 
 func (p *probe) subscribeOnce(ctx context.Context, addr string) error {
-	client, err := xds.Dial(ctx, addr, p.cfg.nodeID+"@"+sanitizeAddr(addr))
+	tlsConfig, err := xds.ClientTLS(p.cfg.identityDir, p.cfg.serverName)
+	if err != nil {
+		return err
+	}
+	client, err := xds.Dial(ctx, addr, p.cfg.nodeID, tlsConfig)
 	if err != nil {
 		return err
 	}
@@ -300,17 +314,4 @@ func copyVersions(versions map[string]map[string]string) map[string]map[string]s
 		out[addr] = dup
 	}
 	return out
-}
-
-func sanitizeAddr(addr string) string {
-	var b strings.Builder
-	for _, r := range addr {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == ':':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return b.String()
 }

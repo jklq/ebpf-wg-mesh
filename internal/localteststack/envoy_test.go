@@ -49,10 +49,11 @@ func TestStartManagedIngressRunsEnvoyWithBootstrapConfig(t *testing.T) {
 		ContainerName: "localteststack-envoy-test",
 		NodeID:        "localteststack-envoy-test",
 		XDSServerAddr: "host.docker.internal:18000",
-		PublicHost:    "platform.localtest.me",
-		PublicPort:    publicPort,
-		AdminPort:     adminPort,
-		Image:         "envoyproxy/envoy:v1.36-latest",
+		IdentityDir:   stateDir, ServerName: "controlplane",
+		PublicHost: "platform.localtest.me",
+		PublicPort: publicPort,
+		AdminPort:  adminPort,
+		Image:      "envoyproxy/envoy:v1.36-latest",
 	}, runner)
 	if err != nil {
 		t.Fatalf("StartManagedIngress: %v", err)

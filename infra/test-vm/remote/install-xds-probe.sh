@@ -7,6 +7,13 @@ XDS_ADDRS=${XDS_ADDRS:?XDS_ADDRS must list comma-separated control-plane xDS add
 
 mkdir -p /opt/ebpf-wg-mesh "${PROBE_DIR}"
 
+# A probe is an operator-owned ingress subscriber, never a fleet agent.
+/opt/ebpf-wg-mesh/controlplane signing-keys issue-client-cert \
+  --db-url 'postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable' \
+  --state-dir /var/lib/ebpf-wg-mesh/controlplane \
+  --caller-class ingress --caller-id testvm-xds-probe --ttl 24h \
+  --out-dir "${PROBE_DIR}/identity"
+
 cat >/etc/systemd/system/ebpf-wg-mesh-xds-probe.service <<EOF
 [Unit]
 Description=ebpf-wg-mesh xDS probe
@@ -15,7 +22,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${XDS_PROBE_BIN} -xds-addrs ${XDS_ADDRS} -probe-dir ${PROBE_DIR}
+ExecStart=${XDS_PROBE_BIN} -xds-addrs ${XDS_ADDRS} -probe-dir ${PROBE_DIR} -identity-dir ${PROBE_DIR}/identity -server-name controlplane
 Restart=always
 RestartSec=1
 

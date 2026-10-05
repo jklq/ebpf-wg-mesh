@@ -31,9 +31,6 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
 		return err
 	}
-	if err := validateProductionXDSListen(cfg.Ingress); err != nil {
-		return err
-	}
 	if strings.TrimSpace(cfg.Ingress.TLS.ACME.DirectoryURL) == "" {
 		return errors.New("controlplane.ingress.tls.acme.directoryUrl is required in production: public traffic must use HTTPS")
 	}
@@ -124,21 +121,6 @@ func insecureDashboardCookieEnv(env map[string]string) bool {
 	}
 	publicBase := strings.TrimSpace(env["DASHBOARD_PUBLIC_BASE_URL"])
 	return publicBase != "" && !strings.HasPrefix(strings.ToLower(publicBase), "https://")
-}
-
-func validateProductionXDSListen(cfg IngressConfig) error {
-	host, _, err := net.SplitHostPort(cfg.XDSListen)
-	if err != nil {
-		return fmt.Errorf("controlplane.ingress.xdsListen must be host:port: %w", err)
-	}
-	host = strings.Trim(strings.TrimSpace(host), "[]")
-	if host == "" {
-		return errors.New("controlplane.ingress.xdsListen must bind an explicit host in production")
-	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsUnspecified() {
-		return errors.New("controlplane.ingress.xdsListen must not bind a wildcard address in production; the xDS transport is unauthenticated until mTLS")
-	}
-	return nil
 }
 
 func validateProductionTLSIdentity(field string, names []string) error {

@@ -2,13 +2,14 @@ package xds
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	discoveryv3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	rpcstatus "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/credentials"
 )
 
 type Client struct {
@@ -18,8 +19,16 @@ type Client struct {
 	sent   bool
 }
 
-func Dial(ctx context.Context, addr, nodeID string, opts ...grpc.DialOption) (*Client, error) {
-	opts = append([]grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}, opts...)
+func Dial(ctx context.Context, addr, nodeID string, tlsConfig *tls.Config, opts ...grpc.DialOption) (*Client, error) {
+	if tlsConfig == nil {
+		return nil, fmt.Errorf("xDS requires client TLS configuration")
+	}
+	if tlsConfig.InsecureSkipVerify || tlsConfig.ServerName == "" || (len(tlsConfig.Certificates) == 0 && tlsConfig.GetClientCertificate == nil) {
+		return nil, fmt.Errorf("xDS requires server verification and an ingress client certificate")
+	}
+	tlsConfig = tlsConfig.Clone()
+	tlsConfig.MinVersion = tls.VersionTLS13
+	opts = append(opts, grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig)))
 	conn, err := grpc.NewClient(addr, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("dial xds %s: %w", addr, err)

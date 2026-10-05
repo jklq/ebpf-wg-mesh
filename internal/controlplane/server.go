@@ -302,7 +302,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = internalLn.Close()
 		return nil, fmt.Errorf("listen xds: %w", err)
 	}
-	xdsGRPC := xdsServer.GRPCServer()
+	xdsGRPC := xdsServer.GRPCServer(authority.XDSConfig(), authority.Revocations())
 	var registryLn net.Listener
 	var registryHTTP *http.Server
 	if registryAuth != nil {

@@ -30,6 +30,7 @@ const (
 	CallerAgent     CallerClass = "agent"
 	CallerBuilder   CallerClass = "builder"
 	CallerDashboard CallerClass = "dashboard"
+	CallerIngress   CallerClass = "ingress"
 )
 
 const (
@@ -317,7 +318,7 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	}
 	class := CallerClass(strings.TrimSpace(cert.Subject.OrganizationalUnit[0]))
 	switch class {
-	case CallerAgent, CallerBuilder, CallerDashboard:
+	case CallerAgent, CallerBuilder, CallerDashboard, CallerIngress:
 		return ServiceCaller{Class: class, ID: id}, true, nil
 	default:
 		return ServiceCaller{}, false, errors.New("unknown client certificate caller class")

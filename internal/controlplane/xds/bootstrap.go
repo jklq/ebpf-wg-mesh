@@ -3,6 +3,7 @@ package xds
 import (
 	"fmt"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -11,12 +12,21 @@ type BootstrapConfig struct {
 	NodeID       string
 	XDSAddresses []string
 	AdminAddress string
+	IdentityDir  string
+	ServerName   string
 }
 
 func RenderBootstrap(cfg BootstrapConfig) (string, error) {
 	nodeID := strings.TrimSpace(cfg.NodeID)
 	if nodeID == "" {
 		return "", fmt.Errorf("xds bootstrap node id is required")
+	}
+	if strings.TrimSpace(cfg.IdentityDir) == "" || strings.TrimSpace(cfg.ServerName) == "" {
+		return "", fmt.Errorf("xds bootstrap identity directory and server name are required")
+	}
+	sanType := "DNS"
+	if net.ParseIP(cfg.ServerName) != nil {
+		sanType = "IP_ADDRESS"
 	}
 	var xdsEndpoints strings.Builder
 	for _, address := range cfg.XDSAddresses {
@@ -65,9 +75,38 @@ static_resources:
   - name: xds_cluster
     connect_timeout: 5s
     type: STRICT_DNS
+    transport_socket:
+      name: envoy.transport_sockets.tls
+      typed_config:
+        "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.UpstreamTlsContext
+        sni: %s
+        common_tls_context:
+          tls_params:
+            tls_minimum_protocol_version: TLSv1_3
+            tls_maximum_protocol_version: TLSv1_3
+          tls_certificate_sds_secret_configs:
+          - name: xds-client
+            sds_config:
+              path_config_source:
+                path: %s
+              resource_api_version: V3
+          combined_validation_context:
+            default_validation_context:
+              match_typed_subject_alt_names:
+              - san_type: %s
+                matcher:
+                  exact: %s
+            validation_context_sds_secret_config:
+              name: xds-ca
+              sds_config:
+                path_config_source:
+                  path: %s
+                resource_api_version: V3
     typed_extension_protocol_options:
       envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
         "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+        common_http_protocol_options:
+          max_requests_per_connection: 1
         explicit_http_config:
           http2_protocol_options: {}
     load_assignment:
@@ -77,6 +116,7 @@ static_resources:
 %s`,
 		yamlScalar(nodeID),
 		yamlScalar(adminHost), adminPort,
+		yamlScalar(cfg.ServerName), yamlScalar(filepath.Join(cfg.IdentityDir, "client-sds.json")), sanType, yamlScalar(cfg.ServerName), yamlScalar(filepath.Join(cfg.IdentityDir, "ca-sds.json")),
 		xdsEndpoints.String(),
 	), nil
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
 	"encoding/json"
 	"net"
 	"os"
@@ -15,7 +17,7 @@ import (
 
 // serveXDSEndpoint runs a publishing xDS server on a random loopback port,
 // returning its address, a publish function, and a stop function.
-func serveXDSEndpoint(ctx context.Context, t *testing.T, backends []xds.Backend) (addr string, publish func([]xds.Backend), stop func()) {
+func serveXDSEndpoint(ctx context.Context, t *testing.T, pki *identitytest.PKI, backends []xds.Backend) (addr string, publish func([]xds.Backend), stop func()) {
 	t.Helper()
 	server := xds.NewServer(ctx)
 	publish = func(backends []xds.Backend) {
@@ -31,7 +33,7 @@ func serveXDSEndpoint(ctx context.Context, t *testing.T, backends []xds.Backend)
 	if err != nil {
 		t.Fatal(err)
 	}
-	grpcServer := server.GRPCServer()
+	grpcServer := server.GRPCServer(pki.Authority.XDSConfig(), pki.Authority.Revocations())
 	go func() { _ = grpcServer.Serve(listener) }()
 	return listener.Addr().String(), publish, func() {
 		grpcServer.Stop()
@@ -121,19 +123,24 @@ func allTypesTracked(versions map[string]map[string]string) bool {
 func TestProbeRecordsUnionAcrossEndpoints(t *testing.T) {
 	t.Parallel()
 
+	pki := identitytest.New(t)
+	identityDir := t.TempDir()
+	if err := xds.WriteIdentity(identityDir, identityDir, pki.Material(t, identity.CallerIngress, "probe-test")); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	addrA, _, stopA := serveXDSEndpoint(ctx, t, []xds.Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}})
+	addrA, _, stopA := serveXDSEndpoint(ctx, t, pki, []xds.Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}})
 	t.Cleanup(stopA)
-	addrB, _, stopB := serveXDSEndpoint(ctx, t, []xds.Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}})
+	addrB, _, stopB := serveXDSEndpoint(ctx, t, pki, []xds.Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}})
 	t.Cleanup(stopB)
 
 	dir := t.TempDir()
 	runCtx, stopProbe := context.WithCancel(ctx)
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- run(runCtx, probeConfig{addrs: []string{addrA, addrB}, dir: dir, nodeID: "probe-test"})
+		runDone <- run(runCtx, probeConfig{addrs: []string{addrA, addrB}, dir: dir, nodeID: "probe-test", identityDir: identityDir, serverName: "controlplane"})
 	}()
 	defer func() {
 		stopProbe()
@@ -179,17 +186,22 @@ func TestProbeRecordsUnionAcrossEndpoints(t *testing.T) {
 func TestProbeDropsWithdrawnResources(t *testing.T) {
 	t.Parallel()
 
+	pki := identitytest.New(t)
+	identityDir := t.TempDir()
+	if err := xds.WriteIdentity(identityDir, identityDir, pki.Material(t, identity.CallerIngress, "probe-test")); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	addr, publish, stop := serveXDSEndpoint(ctx, t, []xds.Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}})
+	addr, publish, stop := serveXDSEndpoint(ctx, t, pki, []xds.Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}})
 	t.Cleanup(stop)
 
 	dir := t.TempDir()
 	runCtx, stopProbe := context.WithCancel(ctx)
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- run(runCtx, probeConfig{addrs: []string{addr}, dir: dir, nodeID: "probe-test"})
+		runDone <- run(runCtx, probeConfig{addrs: []string{addr}, dir: dir, nodeID: "probe-test", identityDir: identityDir, serverName: "controlplane"})
 	}()
 	defer func() {
 		stopProbe()
@@ -208,18 +220,23 @@ func TestProbeDropsWithdrawnResources(t *testing.T) {
 func TestProbeDropsResourcesOfDisconnectedEndpoints(t *testing.T) {
 	t.Parallel()
 
+	pki := identitytest.New(t)
+	identityDir := t.TempDir()
+	if err := xds.WriteIdentity(identityDir, identityDir, pki.Material(t, identity.CallerIngress, "probe-test")); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	addrA, _, stopA := serveXDSEndpoint(ctx, t, []xds.Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}})
-	addrB, _, stopB := serveXDSEndpoint(ctx, t, []xds.Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}})
+	addrA, _, stopA := serveXDSEndpoint(ctx, t, pki, []xds.Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}})
+	addrB, _, stopB := serveXDSEndpoint(ctx, t, pki, []xds.Backend{{Domain: "b.example.com", Upstream: "10.0.0.11:8080"}})
 	t.Cleanup(stopB)
 
 	dir := t.TempDir()
 	runCtx, stopProbe := context.WithCancel(ctx)
 	runDone := make(chan error, 1)
 	go func() {
-		runDone <- run(runCtx, probeConfig{addrs: []string{addrA, addrB}, dir: dir, nodeID: "probe-test"})
+		runDone <- run(runCtx, probeConfig{addrs: []string{addrA, addrB}, dir: dir, nodeID: "probe-test", identityDir: identityDir, serverName: "controlplane"})
 	}()
 	defer func() {
 		stopProbe()

@@ -2,6 +2,9 @@ package xds
 
 import (
 	"context"
+	"crypto/tls"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
 	"errors"
 	"net"
 	"sync"
@@ -15,6 +18,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/test/bufconn"
 )
+
+var testPKIs sync.Map // listener -> PKI
 
 type adsClient struct {
 	t      *testing.T
@@ -34,7 +39,10 @@ func testServer(t *testing.T) (*Server, *bufconn.Listener) {
 	server := NewServer(ctx)
 	listener := bufconn.Listen(1 << 20)
 	t.Cleanup(func() { _ = listener.Close() })
-	grpcServer := server.GRPCServer()
+	pki := identitytest.New(t)
+	testPKIs.Store(listener, pki)
+	t.Cleanup(func() { testPKIs.Delete(listener) })
+	grpcServer := server.GRPCServer(pki.Authority.XDSConfig(), pki.Authority.Revocations())
 	go func() { _ = grpcServer.Serve(listener) }()
 	t.Cleanup(grpcServer.Stop)
 	return server, listener
@@ -42,7 +50,7 @@ func testServer(t *testing.T) (*Server, *bufconn.Listener) {
 
 func dialADS(t *testing.T, listener *bufconn.Listener, nodeID string) *adsClient {
 	t.Helper()
-	client, err := Dial(context.Background(), "passthrough://bufnet", nodeID,
+	client, err := Dial(context.Background(), "passthrough://bufnet", nodeID, testClientTLS(t, listener, nodeID),
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
 			return listener.DialContext(ctx)
 		}),
@@ -338,4 +346,12 @@ func (b *blockingNodes) UpsertNodeObservations(ctx context.Context, _ []NodeObse
 
 func (b *blockingNodes) ListNodeObservations(context.Context) ([]NodeObservation, error) {
 	return nil, nil
+}
+
+func testClientTLS(t *testing.T, listener *bufconn.Listener, nodeID string) *tls.Config {
+	p, ok := testPKIs.Load(listener)
+	if !ok {
+		t.Fatal("missing test PKI")
+	}
+	return p.(*identitytest.PKI).Client(t, identity.CallerIngress, nodeID)
 }

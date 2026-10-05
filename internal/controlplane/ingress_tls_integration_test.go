@@ -22,6 +22,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/certificates"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/localteststack"
 	"ebof-wg-mesh/internal/testutil"
@@ -107,8 +108,17 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 		TLS: config.IngressTLSConfig{ACME: config.ACMEConfig{DirectoryURL: directory, CAFile: caFile}},
 	}})
 
+	material, err := identity.IssueClientCertificate(ctx, cp.server.SigningKeys(), identity.CallerIngress, "envoy-tls-"+id, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identityDir := filepath.Join(stateDir, "identity")
+	if err := xds.WriteIdentity(identityDir, "/etc/envoy/identity", material); err != nil {
+		t.Fatal(err)
+	}
 	bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{
-		NodeID:       "envoy-tls-" + id,
+		NodeID:      "envoy-tls-" + id,
+		IdentityDir: "/etc/envoy/identity", ServerName: "localhost",
 		XDSAddresses: []string{net.JoinHostPort(hostGateway, strconv.Itoa(xdsPort))},
 		AdminAddress: "0.0.0.0:19000",
 	})
@@ -121,8 +131,10 @@ func TestIngressServesAutomaticHTTPSEndToEnd(t *testing.T) {
 	}
 	envoyName := "envoy-tls-" + id
 	dockerContainer(t, docker, envoyName, "--network", network,
+		"--user", strconv.Itoa(os.Getuid())+":"+strconv.Itoa(os.Getgid()),
 		"--publish", fmt.Sprintf("127.0.0.1::%d", tlsE2EHTTPPort), "--publish", fmt.Sprintf("127.0.0.1::%d", tlsE2EHTTPSPort),
 		"--volume", bootstrapPath+":/etc/envoy/envoy.yaml:ro",
+		"--volume", identityDir+":/etc/envoy/identity:ro",
 		tlsEnvoyImage, "envoy", "--config-path", "/etc/envoy/envoy.yaml")
 	envoyIP := strings.TrimSpace(string(dockerRun(t, docker, "inspect", "--format",
 		fmt.Sprintf(`{{(index .NetworkSettings.Networks %q).IPAddress}}`, network), envoyName)))

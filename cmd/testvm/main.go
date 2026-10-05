@@ -390,15 +390,6 @@ func main() {
 	if err := copyFile(ctx, sshKeyPath, binaries["xds-probe"], controlplane.PublicIPv4, "/opt/ebpf-wg-mesh/xds-probe"); err != nil {
 		failf("copy xds-probe binary: %v", err)
 	}
-	infof("installing xds probe on %s", controlplane.Name)
-	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-xds-probe.sh"), map[string]string{
-		"XDS_ADDRS": "127.0.0.1:" + primaryXDSPort + ",127.0.0.1:" + replicaXDSPort,
-	}); err != nil {
-		failf("install xds probe: %v", err)
-	}
-	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-xds-probe"); err != nil {
-		failf("wait for xds probe readiness: %v", err)
-	}
 
 	infof("installing primary controlplane replica on %s", controlplane.Name)
 	bootstrapBindings := make([]string, 0, len(vmAgentBootstrapTokens))
@@ -455,6 +446,16 @@ func main() {
 		failf("verify replica-local storage rejection: %v", err)
 	}
 	infof("replica-local controlplane state was rejected as expected")
+
+	infof("installing xds probe on %s", controlplane.Name)
+	if err := runRemoteScript(ctx, sshKeyPath, controlplane.PublicIPv4, filepath.Join(repoRoot, "infra/test-vm/remote/install-xds-probe.sh"), map[string]string{
+		"XDS_ADDRS": "127.0.0.1:" + primaryXDSPort + ",127.0.0.1:" + replicaXDSPort,
+	}); err != nil {
+		failf("install xds probe: %v", err)
+	}
+	if err := waitForRemoteCommand(ctx, sshKeyPath, controlplane.PublicIPv4, "systemctl is-active --quiet ebpf-wg-mesh-xds-probe"); err != nil {
+		failf("wait for xds probe readiness: %v", err)
+	}
 
 	caPath := filepath.Join(artifactRoot, "controlplane-ca.crt")
 	infof("fetching controlplane ca certificate")
