@@ -41,7 +41,7 @@ func TestFinalizeAcceptsValidMinimalProductionConfigs(t *testing.T) {
 	for _, part := range []string{
 		"component=controlplane",
 		"profile=production",
-		"features=ingress,ingress_acme,registry_auth,source_storage,sandbox_production",
+		"features=ingress,ingress_acme,ingress_platform_certificate,registry_auth,source_storage,sandbox_production",
 		"database=durable",
 		"source_storage=durable",
 		"envelope_keys=durable",
@@ -294,6 +294,7 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 		},
 		Ingress: IngressConfig{
 			PublicAddr: "platform.example.test",
+			TLS:        IngressTLSConfig{PlatformCertFile: "/etc/ingress/platform.crt", PlatformKeyFile: "/etc/ingress/platform.key"},
 		},
 		Registry: RegistryConfig{
 			Host: "registry.example.test",

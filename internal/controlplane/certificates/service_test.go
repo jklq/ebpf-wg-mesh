@@ -223,11 +223,15 @@ type fakeIssuer struct {
 
 	mu        sync.Mutex
 	issued    []string
+	orders    []string
 	validated []bool
 	store     *memoryStore
 }
 
 func (f *fakeIssuer) Issue(ctx context.Context, hostname string, solver Solver) (Issued, error) {
+	f.mu.Lock()
+	f.orders = append(f.orders, hostname)
+	f.mu.Unlock()
 	if f.err != nil {
 		return Issued{}, f.err
 	}

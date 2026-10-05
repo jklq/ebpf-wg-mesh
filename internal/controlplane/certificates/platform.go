@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,9 +86,15 @@ func (p *platformCertificate) verifyWildcard(version Version) error {
 	if err != nil {
 		return err
 	}
-	probe := "probe" + strings.TrimPrefix(p.serverName, "*")
-	if err := leaf.VerifyHostname(probe); err != nil {
-		return fmt.Errorf("platform certificate does not cover %s: %w", p.serverName, err)
+	if !slices.ContainsFunc(leaf.DNSNames, func(name string) bool { return strings.EqualFold(name, p.serverName) }) {
+		return fmt.Errorf("platform certificate must contain the wildcard SAN %s", p.serverName)
+	}
+	now := time.Now()
+	if now.Before(version.NotBefore) || !now.Before(version.NotAfter) {
+		return fmt.Errorf("platform wildcard certificate is expired or not yet valid")
+	}
+	if len(leaf.ExtKeyUsage) > 0 && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageServerAuth) && !slices.Contains(leaf.ExtKeyUsage, x509.ExtKeyUsageAny) {
+		return fmt.Errorf("platform wildcard certificate must permit TLS server authentication")
 	}
 	return nil
 }
@@ -95,18 +102,10 @@ func (p *platformCertificate) verifyWildcard(version Version) error {
 func (p *platformCertificate) fallback(err error) (Version, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.current.Fingerprint != "" {
+	if p.current.Fingerprint != "" && time.Now().Before(p.current.NotAfter) {
 		return p.current, nil
 	}
 	return Version{}, err
-}
-
-func (p *platformCertificate) covers(hostname string) bool {
-	if p == nil {
-		return false
-	}
-	label, rest, ok := strings.Cut(hostname, ".")
-	return ok && label != "" && "*."+rest == p.serverName
 }
 
 func parseLeaf(chainPEM []byte) (*x509.Certificate, error) {

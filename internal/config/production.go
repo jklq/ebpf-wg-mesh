@@ -31,6 +31,9 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionPublicHost("controlplane.ingress.publicAddr", cfg.Ingress.PublicAddr); err != nil {
 		return err
 	}
+	if strings.TrimSpace(cfg.Ingress.TLS.PlatformCertFile) == "" || strings.TrimSpace(cfg.Ingress.TLS.PlatformKeyFile) == "" {
+		return errors.New("controlplane.ingress.tls.platformCertFile and platformKeyFile are required in production: provision the platform wildcard externally with DNS-01")
+	}
 	if strings.TrimSpace(cfg.Ingress.TLS.ACME.DirectoryURL) == "" {
 		return errors.New("controlplane.ingress.tls.acme.directoryUrl is required in production: public traffic must use HTTPS")
 	}

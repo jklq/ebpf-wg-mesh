@@ -100,7 +100,8 @@ type IngressTLSConfig struct {
 	ACME ACMEConfig
 	// PlatformCertFile and PlatformKeyFile hold an operator-managed wildcard certificate
 	// for the platform domain suffix. Generated platform hostnames use it instead of a
-	// certificate per hostname. Every replica reads the same files.
+	// certificate per hostname. Required in production; every replica reads the
+	// same externally renewed files. Generated names never fall back to ACME.
 	PlatformCertFile string
 	PlatformKeyFile  string
 }

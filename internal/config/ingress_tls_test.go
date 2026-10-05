@@ -74,3 +74,12 @@ func TestFinalizeControlPlaneValidatesIngressTLS(t *testing.T) {
 		})
 	}
 }
+
+func TestProductionRequiresPlatformWildcardFiles(t *testing.T) {
+	t.Parallel()
+	cfg := validMinimalProductionControlPlane(t)
+	cfg.Ingress.TLS.PlatformCertFile, cfg.Ingress.TLS.PlatformKeyFile = "", ""
+	if err := FinalizeControlPlane(&cfg); err == nil || !strings.Contains(err.Error(), "platformCertFile") {
+		t.Fatalf("missing platform wildcard = %v", err)
+	}
+}

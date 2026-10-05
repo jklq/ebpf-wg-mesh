@@ -396,9 +396,10 @@ func newCertificateService(cfg config.ControlPlaneConfig, store *persistence) (*
 			defer cancel()
 			return routing.VerifyOwnership(ctx, resolver, hostname, platformHostname)
 		},
-		PlatformSuffix:   cfg.Ingress.PublicAddr,
-		PlatformCertFile: cfg.Ingress.TLS.PlatformCertFile,
-		PlatformKeyFile:  cfg.Ingress.TLS.PlatformKeyFile,
+		PlatformSuffix:             cfg.Ingress.PublicAddr,
+		PlatformCertFile:           cfg.Ingress.TLS.PlatformCertFile,
+		PlatformKeyFile:            cfg.Ingress.TLS.PlatformKeyFile,
+		RequirePlatformCertificate: cfg.Profile.IsProduction(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("configure ingress certificates: %w", err)
