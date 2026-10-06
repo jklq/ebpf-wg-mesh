@@ -191,7 +191,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		replicaID = "default"
 	}
 	logIngester, err = logs.NewAsyncIngester(logStore, logs.AsyncIngesterConfig{
-		SpoolDir:   filepath.Join(cfg.StateDir, "log-ingest", replicaID),
+		SpoolDir:   filepath.Join(cfg.Logs.File.Directory, "ingest", replicaID),
 		QueueBytes: int64(cfg.Logs.IngestQueueBytes),
 		RatePerSec: float64(cfg.Logs.IngestRatePerSec),
 		Burst:      cfg.Logs.IngestBurst,

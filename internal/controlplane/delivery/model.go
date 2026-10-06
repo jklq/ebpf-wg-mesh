@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"database/sql"
+	"ebof-wg-mesh/internal/config"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,6 +166,7 @@ type DomainBindingRecord struct {
 }
 
 type AgentRecord struct {
+	HostType                config.HostType
 	ID                      string
 	Name                    string
 	LifecycleState          AgentLifecycleState
@@ -319,12 +321,17 @@ type BuildAttemptRecord struct {
 }
 
 type BuilderWorkerRecord struct {
-	ID             string
-	Name           string
-	CurrentBuildID string
-	LastHeartbeat  time.Time
-	Drained        bool
-	UpdatedAt      time.Time
+	HostType             config.HostType
+	AvailableMemoryBytes int64
+	RequiredMemoryBytes  int64
+	AvailableCPUMillis   int64
+	RequiredCPUMillis    int64
+	ID                   string
+	Name                 string
+	CurrentBuildID       string
+	LastHeartbeat        time.Time
+	Drained              bool
+	UpdatedAt            time.Time
 }
 
 type BuildSchedulerState struct {

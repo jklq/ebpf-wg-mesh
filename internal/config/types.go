@@ -367,7 +367,16 @@ type BuilderControlPlaneConfig struct {
 	TLS     InternalClientTLSConfig
 }
 
+type BuilderCapacityConfig struct {
+	ReserveMemoryBytes int64
+	ReserveCPUMillis   int64
+	BuildCPUMillis     int64
+	DaemonMemoryBytes  int64
+}
+
 type BuilderConfig struct {
+	HostType                 HostType
+	Capacity                 BuilderCapacityConfig
 	Profile                  Profile
 	Health                   HealthConfig
 	ID                       string

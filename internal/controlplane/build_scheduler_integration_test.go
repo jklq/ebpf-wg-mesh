@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
@@ -44,7 +45,7 @@ func schedulerTestDelivery(store *persistence, cfg deliverycore.BuildSchedulerCo
 
 func claimBuildWith(t *testing.T, d *testDeliveryHarness, ctx context.Context, builderID, expectedBuildID string) deliverycore.BuildRunRecord {
 	t.Helper()
-	claimed, err := d.ClaimNextBuild(ctx, builderID, builderID)
+	claimed, err := d.ClaimNextBuild(ctx, testBuilderOffer(builderID, builderID))
 	if err != nil {
 		t.Fatalf("ClaimNextBuild(%s): %v", builderID, err)
 	}
@@ -56,7 +57,7 @@ func claimBuildWith(t *testing.T, d *testDeliveryHarness, ctx context.Context, b
 
 func assertNoClaim(t *testing.T, d *testDeliveryHarness, ctx context.Context, builderID string) {
 	t.Helper()
-	claimed, err := d.ClaimNextBuild(ctx, builderID, builderID)
+	claimed, err := d.ClaimNextBuild(ctx, testBuilderOffer(builderID, builderID))
 	if err != nil {
 		t.Fatalf("ClaimNextBuild(%s): %v", builderID, err)
 	}
@@ -567,7 +568,9 @@ func TestBuildSchedulerReleasesCapOnRunningTerminalPaths(t *testing.T) {
 
 func TestBuildSchedulerQueuedTerminalPaths(t *testing.T) {
 	store, ctx, userID, _, service := setupSourceServiceForDeployment(t)
-	d := schedulerTestDelivery(store, deliverycore.DefaultBuildSchedulerConfig())
+	scheduler := deliverycore.DefaultBuildSchedulerConfig()
+	scheduler.MaxQueueAge = 2 * time.Hour
+	d := schedulerTestDelivery(store, scheduler)
 
 	// Cancelling a queued build finishes it immediately; the queue keeps moving.
 	if err := seedReadySourceState(t, store, service, "commit-queued-cancel"); err != nil {
@@ -721,11 +724,15 @@ func TestBuildSchedulerDrainAndPause(t *testing.T) {
 	if _, err := d.SetBuildSchedulerPaused(ctx, testUser(userID), false); err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := d.ClaimNextBuild(ctx, "builder-3", "builder-3")
+	resumed, err := d.ClaimNextBuild(ctx, testBuilderOffer("builder-3", "builder-3"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if resumed.ID == "" {
 		t.Fatal("expected builder-3 to claim the queued build after unpause")
 	}
+}
+
+func testBuilderOffer(id, name string) deliverycore.BuilderOffer {
+	return deliverycore.BuilderOffer{ID: id, Name: name, AvailableMemoryBytes: 16 << 30, RequiredMemoryBytes: 8 << 30, AvailableCPUMillis: 2000, RequiredCPUMillis: 1000}
 }

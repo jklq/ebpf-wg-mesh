@@ -187,8 +187,8 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Builder.BuildTimeoutSeconds <= 0 {
 		return errors.New("controlplane.builder.buildTimeoutSeconds must be greater than 0")
 	}
-	if cfg.Builder.MaxQueueAgeSeconds <= 0 {
-		return errors.New("controlplane.builder.maxQueueAgeSeconds must be greater than 0")
+	if cfg.Builder.MaxQueueAgeSeconds < 0 {
+		return errors.New("controlplane.builder.maxQueueAgeSeconds must be non-negative (zero waits indefinitely)")
 	}
 	if cfg.Failover.ReconcileIntervalSeconds <= 0 {
 		return errors.New("controlplane.failover.reconcileIntervalSeconds must be greater than 0")
@@ -359,6 +359,12 @@ func validateAgent(cfg AgentConfig) error {
 }
 
 func validateBuilder(cfg BuilderConfig) error {
+	if _, err := NormalizeHostType(string(cfg.HostType)); err != nil {
+		return err
+	}
+	if cfg.Capacity.ReserveMemoryBytes < 0 || cfg.Capacity.ReserveCPUMillis < 0 || cfg.Capacity.BuildCPUMillis <= 0 || cfg.Capacity.DaemonMemoryBytes < 0 {
+		return errors.New("builder capacity requires non-negative reserves and daemon memory, and positive build CPU")
+	}
 	if cfg.ID == "" {
 		return errors.New("builder.id is required")
 	}

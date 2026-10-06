@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"database/sql"
+	"ebof-wg-mesh/internal/config"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -82,7 +83,7 @@ func (s *buildOperations) ClaimBuild(ctx context.Context, req *platformv1.ClaimB
 	if s.db == nil || s.delivery == nil || s.registry == nil || s.credentials == nil || !s.registry.Enabled() {
 		return nil, status.Error(codes.FailedPrecondition, "builder dependencies are not configured")
 	}
-	build, err := s.delivery.ClaimNextBuild(ctx, builderID, req.GetBuilderName())
+	build, err := s.delivery.ClaimNextBuild(ctx, deliverycore.BuilderOffer{ID: builderID, Name: req.GetBuilderName(), HostType: config.HostType(req.GetHostType()), AvailableMemoryBytes: req.GetAvailableMemoryBytes(), RequiredMemoryBytes: req.GetRequiredMemoryBytes(), AvailableCPUMillis: req.GetAvailableCpuMillis(), RequiredCPUMillis: req.GetRequiredCpuMillis()})
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "claim build: %v", err)
 	}

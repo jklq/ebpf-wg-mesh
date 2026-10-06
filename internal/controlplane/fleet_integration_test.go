@@ -850,3 +850,41 @@ func testAgentHello(n int) *agentv1.AgentHello {
 		SoftwareVersion:         "test",
 	}
 }
+
+func TestIntermittentFleetAgentIsExcludedFromApplications(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
+	seedFleetOperator(t, store, ctx)
+	d := testDelivery(store)
+	req := &platformv1.CreateAgentRequest{AgentId: "node-b", Name: "Home PC", Region: "default", FailureDomain: "node-b", HostType: "intermittent"}
+	home, _, err := d.CreateFleetAgent(ctx, testUser("ops"), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home.HostType != config.HostIntermittent {
+		t.Fatal(home.HostType)
+	}
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-b")); err != nil {
+		t.Fatal(err)
+	}
+	placed, err := chooseAgentForService(ctx, store, envID, replicaSpec(100, 64))
+	if err != nil || placed != "node-a" {
+		t.Fatalf("application placed on %s: %v", placed, err)
+	}
+	snapshot, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Administration["node-b"].HostType != "intermittent" {
+		t.Fatal("host type lost from journal")
+	}
+	restarted := journal.New(store.db, "default", nil)
+	replayed, err := restarted.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Administration["node-b"].HostType != "intermittent" {
+		t.Fatal("host type lost on restart")
+	}
+}

@@ -603,6 +603,8 @@ message Agent {
   // Volume data the agent retains on disk with no desired entry. Agents never
   // delete these on their own; an operator decides.
   repeated string orphaned_volume_ids = 27;
+  // Stable hosts run applications. Intermittent hosts may power off and run builds only.
+  string host_type = 28;
 }
 
 message AllocationStatus {
@@ -1073,6 +1075,7 @@ message ListAgentsResponse {
 }
 
 message CreateAgentRequest {
+  string host_type = 8;
   string agent_id = 1;
   string name = 2;
   string region = 3;
@@ -1088,6 +1091,7 @@ message AgentEnrollment {
 }
 
 message UpdateAgentRequest {
+  string host_type = 8;
   string agent_id = 1;
   string name = 2;
   string region = 3;
@@ -1121,6 +1125,11 @@ message Fleet {
 }
 
 message ClaimBuildRequest {
+  string host_type = 3;
+  int64 available_memory_bytes = 4;
+  int64 required_memory_bytes = 5;
+  int64 available_cpu_millis = 6;
+  int64 required_cpu_millis = 7;
   string builder_id = 1;
   string builder_name = 2;
 }
@@ -1263,6 +1272,11 @@ service PlatformService {
 }
 
 message BuilderWorker {
+  string host_type = 7;
+  int64 available_memory_bytes = 8;
+  int64 required_memory_bytes = 9;
+  int64 available_cpu_millis = 10;
+  int64 required_cpu_millis = 11;
   string id = 1;
   string name = 2;
   string current_build_id = 3;

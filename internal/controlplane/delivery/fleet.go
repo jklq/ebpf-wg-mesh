@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"ebof-wg-mesh/internal/config"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -28,6 +29,10 @@ func (d *Delivery) CreateFleetAgent(ctx context.Context, user authz.User, req *p
 
 func (d *Delivery) createFleetAgent(ctx context.Context, _ authz.Operator, req *platformv1.CreateAgentRequest) (AgentRecord, string, error) {
 	s := d.store
+	hostType, err := config.NormalizeHostType(req.GetHostType())
+	if err != nil {
+		return AgentRecord{}, "", fmt.Errorf("%w: %v", ErrInvalidFleetAgentInput, err)
+	}
 	if err := ValidateFleetAgentInput(req.GetAgentId(), req.GetName(), req.GetRegion(), req.GetZone(), req.GetFailureDomain(), req.GetReservedCpuMillis(), req.GetReservedMemoryMebibytes()); err != nil {
 		return AgentRecord{}, "", err
 	}
@@ -49,8 +54,8 @@ func (d *Delivery) createFleetAgent(ctx context.Context, _ authz.Operator, req *
 			return err
 		}
 
-		if _, err := journal.AdministrationRow(req.GetAgentId()).Exec(ctx, tx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
-			VALUES ($1, 'enrolling', $2)`, req.GetAgentId(), now); err != nil {
+		if _, err := journal.AdministrationRow(req.GetAgentId()).Exec(ctx, tx, `INSERT INTO agent_administration(agent_id, host_type, lifecycle_state, updated_at)
+			VALUES ($1, $3, 'enrolling', $2)`, req.GetAgentId(), now, hostType); err != nil {
 			return err
 		}
 		if err := insertAgentBootstrapTokenTx(ctx, tx, req.GetAgentId(), token, "operator", now); err != nil {
@@ -72,17 +77,33 @@ func (d *Delivery) UpdateFleetAgent(ctx context.Context, user authz.User, req *p
 
 func (d *Delivery) updateFleetAgent(ctx context.Context, _ authz.Operator, req *platformv1.UpdateAgentRequest) (AgentRecord, error) {
 	s := d.store
+	hostType, err := config.NormalizeHostType(req.GetHostType())
+	if err != nil {
+		return AgentRecord{}, fmt.Errorf("%w: %v", ErrInvalidFleetAgentInput, err)
+	}
 	if err := ValidateFleetAgentInput(req.GetAgentId(), req.GetName(), req.GetRegion(), req.GetZone(), req.GetFailureDomain(), req.GetReservedCpuMillis(), req.GetReservedMemoryMebibytes()); err != nil {
 		return AgentRecord{}, err
 	}
 	var rec AgentRecord
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var locked string
 		if err := tx.QueryRowContext(ctx, `SELECT id FROM agent_registrations WHERE id = $1 FOR UPDATE`, req.GetAgentId()).Scan(&locked); err != nil {
 			return err
 		}
 		current, err := agentByIDQuerier(ctx, tx, locked, false)
 		if err != nil {
+			return err
+		}
+		if hostType == config.HostIntermittent && current.HostType != hostType {
+			var count int
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocation_assignments WHERE agent_id=$1`, req.GetAgentId()).Scan(&count); err != nil {
+				return err
+			}
+			if count > 0 {
+				return fmt.Errorf("%w: drain allocations before changing host type to intermittent", ErrInvalidFleetAgentInput)
+			}
+		}
+		if _, err := journal.AdministrationRow(req.GetAgentId()).Exec(ctx, tx, `UPDATE agent_administration SET host_type=$2 WHERE agent_id=$1`, req.GetAgentId(), hostType); err != nil {
 			return err
 		}
 		if current.LifecycleState == AgentStateRetired {
@@ -205,7 +226,7 @@ var (
 	fleetLabelPattern         = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9._-]{0,62})$`)
 )
 
-const agentSelectSQL = `SELECT id, name, lifecycle_state, state_before_unavailable,
+const agentSelectSQL = `SELECT id, name, host_type, lifecycle_state, state_before_unavailable,
 		region, zone, failure_domain, reserved_cpu_millis, reserved_memory_mebibytes,
 		advertise_addr, workload_ipv4_subnet, workload_ipv6_subnet, wireguard_public_key, wireguard_listen_port,
 		wireguard_endpoint, wireguard_ipv6, cpu_millis_capacity, memory_mebibytes_capacity,
@@ -217,7 +238,7 @@ func scanAgentRecord(scanner interface{ Scan(...any) error }) (AgentRecord, erro
 	var rec AgentRecord
 	var capabilities jsonStringSlice
 	if err := scanner.Scan(
-		&rec.ID, &rec.Name, &rec.LifecycleState, &rec.StateBeforeUnavailable,
+		&rec.ID, &rec.Name, &rec.HostType, &rec.LifecycleState, &rec.StateBeforeUnavailable,
 		&rec.Region, &rec.Zone, &rec.FailureDomain, &rec.ReservedCPUMillis, &rec.ReservedMemoryMebibytes,
 		&rec.AdvertiseAddr, &rec.WorkloadIPv4Subnet, &rec.WorkloadIPv6Subnet, &rec.WireGuardPublicKey, &rec.WireGuardListenPort,
 		&rec.WireGuardEndpoint, &rec.WireGuardIPv6, &rec.CPUMillisCapacity, &rec.MemoryMebibytesCapcity,

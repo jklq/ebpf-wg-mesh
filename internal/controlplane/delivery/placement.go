@@ -225,7 +225,7 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 			WHERE a.rollout_state <> 'lost'
 			GROUP BY a.agent_id
 		) stats ON stats.agent_id = r.id
-		WHERE ad.lifecycle_state = 'active'
+		WHERE ad.lifecycle_state = 'active' AND ad.host_type = 'stable'
 		ORDER BY COALESCE(stats.service_count, 0), r.id`)
 	if err != nil {
 		return nil, err

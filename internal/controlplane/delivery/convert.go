@@ -97,9 +97,10 @@ func ToProtoBuildAttempt(rec BuildAttemptRecord) *platformv1.BuildAttempt {
 
 func ToProtoBuilderWorker(rec BuilderWorkerRecord) *platformv1.BuilderWorker {
 	return &platformv1.BuilderWorker{
-		Id:              rec.ID,
-		Name:            rec.Name,
-		CurrentBuildId:  rec.CurrentBuildID,
+		Id:             rec.ID,
+		Name:           rec.Name,
+		CurrentBuildId: rec.CurrentBuildID,
+		HostType:       string(rec.HostType), AvailableMemoryBytes: rec.AvailableMemoryBytes, RequiredMemoryBytes: rec.RequiredMemoryBytes, AvailableCpuMillis: rec.AvailableCPUMillis, RequiredCpuMillis: rec.RequiredCPUMillis,
 		LastHeartbeatAt: ts(rec.LastHeartbeat),
 		Drained:         rec.Drained,
 		UpdatedAt:       ts(rec.UpdatedAt),

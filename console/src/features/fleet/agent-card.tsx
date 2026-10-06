@@ -207,7 +207,7 @@ export function AgentCard({
 			<div {...stylex.props(styles.metrics)}>
 				<Metric
 					label="Failure domain"
-					value={`${agent.region}${agent.zone ? ` / ${agent.zone}` : ""} / ${agent.failureDomain}`}
+					value={`${agent.hostType === "intermittent" ? "Intermittent · " : ""}${agent.region}${agent.zone ? ` / ${agent.zone}` : ""} / ${agent.failureDomain}`}
 				/>
 				<Metric label="Allocations" value={String(agent.allocationCount)} />
 				<Metric
