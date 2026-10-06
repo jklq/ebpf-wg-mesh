@@ -123,19 +123,17 @@ func run() error {
 		return fmt.Errorf("reset local workload network: %w", err)
 	}
 	ingressURL := fmt.Sprintf("http://%s:%d/", stackCfg.IngressHost, stackCfg.IngressPort)
-	clickHouse, err := localteststack.StartManagedClickHouse(ctx, localteststack.LocalClickHouseConfig{
-		ContainerName: "localteststack-clickhouse",
-		NativePort:    clickHousePort,
-	}, localteststack.ExecDockerRunner{})
-	if err != nil {
-		return fmt.Errorf("start managed local clickhouse: %v", err)
-	}
-	defer func() {
-		if err := clickHouse.Close(); err != nil {
-			log.Printf("stop managed local clickhouse: %v", err)
+	clickHouseURL := ""
+	if os.Getenv("LOCALTESTSTACK_ENABLE_CLICKHOUSE") == "1" {
+		clickHouse, err := localteststack.StartManagedClickHouse(ctx, localteststack.LocalClickHouseConfig{
+			ContainerName: "localteststack-clickhouse", NativePort: clickHousePort,
+		}, localteststack.ExecDockerRunner{})
+		if err != nil {
+			return fmt.Errorf("start managed local clickhouse: %w", err)
 		}
-	}()
-	clickHouseURL := clickHouse.URL()
+		defer clickHouse.Close()
+		clickHouseURL = clickHouse.URL()
+	}
 	githubTokenEncryptionKey, err := randomSecret(32)
 	if err != nil {
 		return fmt.Errorf("generate GitHub token encryption key: %v", err)

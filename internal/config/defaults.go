@@ -54,6 +54,15 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
 		cfg.Database.MaxIdleConns = cfg.Database.MaxOpenConns
 	}
+	if cfg.Logs.File.Directory == "" {
+		cfg.Logs.File.Directory = filepath.Join(cfg.StateDir, "logs")
+	}
+	if cfg.Logs.File.MaxBytes == 0 {
+		cfg.Logs.File.MaxBytes = 64 << 20
+	}
+	if cfg.Logs.File.SegmentBytes == 0 {
+		cfg.Logs.File.SegmentBytes = 1 << 20
+	}
 	if cfg.Logs.RetentionDays <= 0 {
 		cfg.Logs.RetentionDays = 14
 	}

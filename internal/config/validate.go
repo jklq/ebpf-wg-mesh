@@ -31,6 +31,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Database.MaxIdleConns < 0 {
 		return errors.New("controlplane.database.maxIdleConns must be non-negative")
 	}
+	if cfg.Logs.File.MaxBytes < 256<<10 || cfg.Logs.File.SegmentBytes < 256<<10 || cfg.Logs.File.SegmentBytes > cfg.Logs.File.MaxBytes {
+		return errors.New("controlplane.logs.file requires maxBytes >= segmentBytes >= 256 KiB")
+	}
 	if cfg.Logs.RetentionDays <= 0 {
 		return errors.New("controlplane.logs.retentionDays must be greater than 0")
 	}
