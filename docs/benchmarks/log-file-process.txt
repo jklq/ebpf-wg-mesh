@@ -1,0 +1,4 @@
+peak_rss_kib=23328
+user_cpu_seconds=0.78
+system_cpu_seconds=0.56
+elapsed_seconds=9.61

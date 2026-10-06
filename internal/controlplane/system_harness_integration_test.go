@@ -69,8 +69,8 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 		},
 		Database: config.DatabaseConfig{
 			URL:          firstNonEmpty(opts.databaseURL, createTestDatabase(t)),
-			MaxOpenConns: 4,
-			MaxIdleConns: 4,
+			MaxOpenConns: firstPositive(opts.maxOpenConns, 4),
+			MaxIdleConns: firstPositive(opts.maxIdleConns, 4),
 		},
 		Logs:      config.LogCaptureConfig{File: config.FileLogConfig{Directory: t.TempDir()}, ClickHouse: config.ClickHouseConfig{URL: opts.clickhouseURL}},
 		StateDir:  firstNonEmpty(opts.stateDir, stateDir),
@@ -159,6 +159,8 @@ func (h *systemControlPlane) stop() {
 
 type systemControlPlaneOptions struct {
 	databaseURL     string
+	maxOpenConns    int
+	maxIdleConns    int
 	stateDir        string
 	clickhouseURL   string
 	bootstrap       config.BootstrapConfig
@@ -167,6 +169,13 @@ type systemControlPlaneOptions struct {
 	ingress         *config.IngressConfig
 	withDashboard   bool
 	standby         bool
+}
+
+func firstPositive(value, fallback int) int {
+	if value > 0 {
+		return value
+	}
+	return fallback
 }
 
 func requireDocker(t *testing.T) {

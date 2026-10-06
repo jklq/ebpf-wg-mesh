@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -71,6 +70,7 @@ func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMes
 	db.SetMaxOpenConns(dbCfg.MaxOpenConns)
 	db.SetMaxIdleConns(dbCfg.MaxIdleConns)
 	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(time.Minute)
 	if err := db.PingContext(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
@@ -265,10 +265,10 @@ func normalizeDatabaseConfig(dbCfg *config.DatabaseConfig) {
 		return
 	}
 	if dbCfg.MaxOpenConns <= 0 {
-		dbCfg.MaxOpenConns = max(32, runtime.GOMAXPROCS(0)*8)
+		dbCfg.MaxOpenConns = 8
 	}
 	if dbCfg.MaxIdleConns <= 0 {
-		dbCfg.MaxIdleConns = min(dbCfg.MaxOpenConns, max(16, runtime.GOMAXPROCS(0)*4))
+		dbCfg.MaxIdleConns = min(dbCfg.MaxOpenConns, 2)
 	}
 	if dbCfg.MaxIdleConns > dbCfg.MaxOpenConns {
 		dbCfg.MaxIdleConns = dbCfg.MaxOpenConns

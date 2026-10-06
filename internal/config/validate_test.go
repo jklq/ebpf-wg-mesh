@@ -30,10 +30,10 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	if got := cfg.Mesh.NetworkCIDR; got != "fd00:44::/64" {
 		t.Fatalf("unexpected mesh network cidr %q", got)
 	}
-	if cfg.Database.MaxOpenConns < 32 {
-		t.Fatalf("expected default max open conns >= 32, got %d", cfg.Database.MaxOpenConns)
+	if cfg.Database.MaxOpenConns != 8 {
+		t.Fatalf("expected default max open conns 8, got %d", cfg.Database.MaxOpenConns)
 	}
-	if cfg.Database.MaxIdleConns <= 0 || cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
+	if cfg.Database.MaxIdleConns != 2 {
 		t.Fatalf("unexpected idle/open conns %d/%d", cfg.Database.MaxIdleConns, cfg.Database.MaxOpenConns)
 	}
 	if len(cfg.InternalGRPC.TLS.ServerNames) == 0 {

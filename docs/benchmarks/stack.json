@@ -1,0 +1,27 @@
+{
+  "compact-bench-stack": {
+    "samples": [
+      {
+        "ram_mib": 389.9765625,
+        "cpu_seconds": 0.034693,
+        "elapsed_seconds": 5.064703226002166,
+        "cpu_percent_one_core": 0.6849957135076795
+      },
+      {
+        "ram_mib": 390.4296875,
+        "cpu_seconds": 0.025397,
+        "elapsed_seconds": 5.068346578991623,
+        "cpu_percent_one_core": 0.501090436578883
+      },
+      {
+        "ram_mib": 390.87109375,
+        "cpu_seconds": 0.081141,
+        "elapsed_seconds": 5.064884808001807,
+        "cpu_percent_one_core": 1.6020305115687647
+      }
+    ],
+    "median_ram_mib": 390.4296875,
+    "median_cpu_percent_one_core": 0.6849957135076795
+  },
+  "limits_events_processes": "2147483648\n1113923584\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n    PID   RSS COMMAND\n      1  2996 bash\n   5182 47924 containerd\n   7158 22576 postgres\n   7159  6480 postgres\n   7160  6924 postgres\n   7162  7568 postgres\n   7163  9704 postgres\n   7164  8932 postgres\n   7180 15188 registry\n   7181 102996 controlplane.te\n   7198 28892 postgres\n   7205 25688 postgres\n   7252 13144 containerd-shim\n   7272 215936 python\n   7287 59488 envoy\n   7334  4116 ps\n"
+}

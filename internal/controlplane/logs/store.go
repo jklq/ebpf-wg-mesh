@@ -231,10 +231,10 @@ func normalizeLogCaptureConfig(cfg *config.LogCaptureConfig) {
 		cfg.RetentionDays = 14
 	}
 	if cfg.ClickHouse.MaxOpenConns <= 0 {
-		cfg.ClickHouse.MaxOpenConns = 8
+		cfg.ClickHouse.MaxOpenConns = 2
 	}
 	if cfg.ClickHouse.MaxIdleConns <= 0 {
-		cfg.ClickHouse.MaxIdleConns = cfg.ClickHouse.MaxOpenConns
+		cfg.ClickHouse.MaxIdleConns = 1
 	}
 	if cfg.ClickHouse.MaxIdleConns > cfg.ClickHouse.MaxOpenConns {
 		cfg.ClickHouse.MaxIdleConns = cfg.ClickHouse.MaxOpenConns

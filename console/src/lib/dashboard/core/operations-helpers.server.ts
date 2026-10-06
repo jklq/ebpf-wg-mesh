@@ -27,7 +27,7 @@ export function normalizeFleetAgentInput(
 ): FleetAgentInput {
 	return {
 		agentId: input.agentId.trim(),
- hostType: input.hostType?.trim().toLowerCase() || "stable",
+		hostType: input.hostType?.trim().toLowerCase() || "stable",
 		name: input.name.trim(),
 		region: input.region.trim().toLowerCase(),
 		zone: input.zone.trim().toLowerCase(),

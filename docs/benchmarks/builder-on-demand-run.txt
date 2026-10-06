@@ -1,0 +1,6 @@
+goos: linux
+goarch: amd64
+pkg: ebof-wg-mesh/internal/builder
+cpu: AMD Ryzen 7 2700X Eight-Core Processor
+BenchmarkHardenedStartup/on-demand-16         	    1000	       471.1 ns/op	     704 B/op	       1 allocs/op
+PASS

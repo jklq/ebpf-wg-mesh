@@ -16,13 +16,13 @@ import (
 
 const (
 	defaultIngestQueueBytes      = 64 << 20
-	ingestJournalRecordBytes     = 2 << 20
-	ingestFlushRecords           = 8
+	ingestJournalRecordBytes     = 256 << 10
+	ingestFlushRecords           = 1
 	ingestRowOverheadBytes       = 256
 	ingestAttributeOverheadBytes = 48
 	defaultIngestRatePerSec      = 2000.0
 	defaultIngestBurst           = 10000
-	maxIngestCoalescedLines      = 5000
+	maxIngestCoalescedLines      = 500
 	defaultIngestShutdownGrace   = 15 * time.Second
 	reporterControlPlane         = "controlplane"
 )

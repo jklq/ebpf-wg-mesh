@@ -1,0 +1,60 @@
+{
+  "legacy": {
+    "sample": {
+      "compact-bench-postgres": {
+        "samples": [
+          {
+            "ram_mib": 128.05078125,
+            "cpu_seconds": 0.05719,
+            "elapsed_seconds": 5.07072960298683,
+            "cpu_percent_one_core": 1.1278455858958278
+          },
+          {
+            "ram_mib": 131.19921875,
+            "cpu_seconds": 0.059032,
+            "elapsed_seconds": 5.070085348997964,
+            "cpu_percent_one_core": 1.1643196501941906
+          },
+          {
+            "ram_mib": 131.20703125,
+            "cpu_seconds": 0.055194,
+            "elapsed_seconds": 5.065960076011834,
+            "cpu_percent_one_core": 1.089507204396513
+          }
+        ],
+        "median_ram_mib": 131.19921875,
+        "median_cpu_percent_one_core": 1.1278455858958278
+      }
+    },
+    "probe": "=== RUN   TestCompactPoolResourceProbe\n    compact_bench_integration_test.go:53: open limit=32 idle=16\n    compact_bench_integration_test.go:75: 32-request burst elapsed=29.475198ms wait_count=0\n--- PASS: TestCompactPoolResourceProbe (20.21s)\nPASS\n"
+  },
+  "compact": {
+    "sample": {
+      "compact-bench-postgres": {
+        "samples": [
+          {
+            "ram_mib": 110.59765625,
+            "cpu_seconds": 0.058419,
+            "elapsed_seconds": 5.072588811002788,
+            "cpu_percent_one_core": 1.151660467201387
+          },
+          {
+            "ram_mib": 109.6328125,
+            "cpu_seconds": 0.056629,
+            "elapsed_seconds": 5.071338690991979,
+            "cpu_percent_one_core": 1.1166479592575405
+          },
+          {
+            "ram_mib": 110.5625,
+            "cpu_seconds": 0.053197,
+            "elapsed_seconds": 5.078852553997422,
+            "cpu_percent_one_core": 1.047421625936554
+          }
+        ],
+        "median_ram_mib": 110.5625,
+        "median_cpu_percent_one_core": 1.1166479592575405
+      }
+    },
+    "probe": "=== RUN   TestCompactPoolResourceProbe\n    compact_bench_integration_test.go:53: open limit=8 idle=2\n    compact_bench_integration_test.go:75: 32-request burst elapsed=52.388352ms wait_count=24\n--- PASS: TestCompactPoolResourceProbe (20.09s)\nPASS\n"
+  }
+}
