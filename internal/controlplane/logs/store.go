@@ -54,6 +54,7 @@ type ProjectRetention struct {
 type ProjectResolver func(ctx context.Context, serviceIDs []string) (map[string]ProjectRetention, error)
 
 type LogStore struct {
+	file                 *fileStore
 	db                   *sql.DB
 	resolve              ProjectResolver
 	defaultRetentionDays int
@@ -189,10 +190,14 @@ TTL expires_at`,
 }
 
 func OpenLogStore(ctx context.Context, cfg config.LogCaptureConfig) (*LogStore, error) {
-	if strings.TrimSpace(cfg.ClickHouse.URL) == "" {
-		return nil, nil
-	}
 	normalizeLogCaptureConfig(&cfg)
+	if strings.TrimSpace(cfg.ClickHouse.URL) == "" {
+		file, err := openFileStore(cfg.File)
+		if err != nil {
+			return nil, err
+		}
+		return &LogStore{file: file, defaultRetentionDays: cfg.RetentionDays}, nil
+	}
 	db, err := sql.Open("clickhouse", cfg.ClickHouse.URL)
 	if err != nil {
 		return nil, fmt.Errorf("open clickhouse: %w", err)
@@ -237,19 +242,28 @@ func normalizeLogCaptureConfig(cfg *config.LogCaptureConfig) {
 }
 
 func (s *LogStore) Close() error {
-	if s == nil || s.db == nil {
+	if s == nil {
+		return nil
+	}
+	if s.file != nil {
+		return s.file.close()
+	}
+	if s.db == nil {
 		return nil
 	}
 	return s.db.Close()
 }
 
 func (s *LogStore) Enabled() bool {
-	return s != nil && s.db != nil
+	return s != nil && (s.db != nil || s.file != nil)
 }
 
 func (s *LogStore) Ready(ctx context.Context) bool {
 	if !s.Enabled() {
 		return true
+	}
+	if s.file != nil {
+		return s.file.ready()
 	}
 	return s.db.PingContext(ctx) == nil
 }
@@ -404,6 +418,9 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 	if !s.Enabled() || len(inputs) == 0 {
 		return nil
 	}
+	if s.file != nil {
+		return s.writeFileLines(ctx, inputs)
+	}
 	now := time.Now().UTC()
 	resolved, err := s.resolveProjects(ctx, inputs)
 	if err != nil {
@@ -500,6 +517,9 @@ func (s *LogStore) WriteLogLines(ctx context.Context, inputs []LogLineInput) err
 func (s *LogStore) WriteGaps(ctx context.Context, gaps []GapInput) error {
 	if !s.Enabled() || len(gaps) == 0 {
 		return nil
+	}
+	if s.file != nil {
+		return s.writeFileGaps(ctx, gaps)
 	}
 	now := time.Now().UTC()
 	serviceIDs := make([]string, 0, len(gaps))
@@ -656,6 +676,9 @@ func (s *LogStore) PurgeProjectLogs(ctx context.Context, projectID string) error
 	if strings.TrimSpace(projectID) == "" {
 		return errors.New("project id is required")
 	}
+	if s.file != nil {
+		return s.file.purge(ctx, projectID)
+	}
 	if _, err := s.db.ExecContext(ctx, `ALTER TABLE service_logs DELETE WHERE project_id = ? SETTINGS mutations_sync = 1`, projectID); err != nil {
 		return fmt.Errorf("purge project logs: %w", err)
 	}
@@ -671,6 +694,9 @@ func (s *LogStore) ListServiceLogs(ctx context.Context, req *platformv1.ListServ
 	var page ServiceLogPage
 	if !s.Enabled() {
 		return page, ErrDisabled
+	}
+	if s.file != nil {
+		return s.file.list(ctx, req)
 	}
 	limit := int(req.GetLimit())
 	if limit <= 0 {

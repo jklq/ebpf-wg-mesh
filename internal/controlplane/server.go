@@ -164,6 +164,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, fmt.Errorf("initialize shared control-plane identity: %w", err)
 	}
+	if cfg.Logs.File.Directory == "" {
+		cfg.Logs.File.Directory = filepath.Join(cfg.StateDir, "logs")
+	}
 	logStore, err := logs.OpenLogStore(ctx, cfg.Logs)
 	if err != nil {
 		_ = store.Close()

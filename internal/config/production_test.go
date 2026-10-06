@@ -41,7 +41,7 @@ func TestFinalizeAcceptsValidMinimalProductionConfigs(t *testing.T) {
 	for _, part := range []string{
 		"component=controlplane",
 		"profile=production",
-		"features=ingress,ingress_acme,ingress_platform_certificate,registry_auth,source_storage,sandbox_production",
+		"features=ingress,ingress_acme,ingress_platform_certificate,registry_auth,source_storage,logs,sandbox_production",
 		"database=durable",
 		"source_storage=durable",
 		"envelope_keys=durable",

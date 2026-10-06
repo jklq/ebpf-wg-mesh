@@ -65,8 +65,10 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 		features = append(features, "github")
 	}
 	features = append(features, "source_storage")
+	features = append(features, "logs")
+	logClass := dependencyClassForPath(cfg.Logs.File.Directory)
 	if strings.TrimSpace(cfg.Logs.ClickHouse.URL) != "" {
-		features = append(features, "logs")
+		logClass = dependencyClassForURL(cfg.Logs.ClickHouse.URL)
 	}
 	features = append(features, "sandbox_production")
 	return StartupContract{
@@ -75,7 +77,7 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 		Features:  features,
 		Dependencies: []DependencyRef{
 			{Name: "database", Class: dependencyClassForURL(cfg.Database.URL)},
-			{Name: "logs", Class: dependencyClassForURL(cfg.Logs.ClickHouse.URL)},
+			{Name: "logs", Class: logClass},
 			{Name: "source_storage", Class: dependencyClassForSourceArchives(cfg.SourceArchives)},
 			{Name: "envelope_keys", Class: dependencyClassForSecretKeys(cfg.SecretKeys)},
 			{Name: "ingress_xds", Class: dependencyClassForAdmin(cfg.Ingress)},

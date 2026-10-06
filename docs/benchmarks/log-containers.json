@@ -1,0 +1,50 @@
+{
+  "compact-bench-clickhouse": {
+    "samples": [
+      {
+        "ram_mib": 237.3828125,
+        "cpu_seconds": 0.246204,
+        "elapsed_seconds": 5.129319065003074,
+        "cpu_percent_one_core": 4.799935369196076
+      },
+      {
+        "ram_mib": 243.640625,
+        "cpu_seconds": 0.464641,
+        "elapsed_seconds": 5.063715266995132,
+        "cpu_percent_one_core": 9.175891129354977
+      },
+      {
+        "ram_mib": 295.62109375,
+        "cpu_seconds": 0.547138,
+        "elapsed_seconds": 5.073223627987318,
+        "cpu_percent_one_core": 10.784819281011353
+      }
+    ],
+    "median_ram_mib": 243.640625,
+    "median_cpu_percent_one_core": 9.175891129354977
+  },
+  "compact-bench-registry": {
+    "samples": [
+      {
+        "ram_mib": 9.46875,
+        "cpu_seconds": 0.021054,
+        "elapsed_seconds": 5.071683368005324,
+        "cpu_percent_one_core": 0.4151284390665829
+      },
+      {
+        "ram_mib": 9.703125,
+        "cpu_seconds": 0.022021,
+        "elapsed_seconds": 5.060925808997126,
+        "cpu_percent_one_core": 0.4351180165662947
+      },
+      {
+        "ram_mib": 9.4765625,
+        "cpu_seconds": 0.023132,
+        "elapsed_seconds": 5.080762883007992,
+        "cpu_percent_one_core": 0.4552859586768402
+      }
+    ],
+    "median_ram_mib": 9.4765625,
+    "median_cpu_percent_one_core": 0.4351180165662947
+  }
+}

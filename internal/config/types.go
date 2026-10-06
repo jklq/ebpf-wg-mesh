@@ -60,7 +60,14 @@ type ClickHouseConfig struct {
 	MaxIdleConns int
 }
 
+type FileLogConfig struct {
+	Directory    string
+	MaxBytes     int64
+	SegmentBytes int64
+}
+
 type LogCaptureConfig struct {
+	File          FileLogConfig
 	ClickHouse    ClickHouseConfig
 	RetentionDays int
 	// IngestQueueBytes caps the retained size of the durable ingest journal. Past the
