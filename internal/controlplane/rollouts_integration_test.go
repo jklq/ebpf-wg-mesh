@@ -114,11 +114,21 @@ func TestConcurrentUpdateServiceAdvancesUniqueRevisions(t *testing.T) {
 		port := port
 		go func() {
 			<-start
-			_, _, err := updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
-				CpuMillis:       100,
-				MemoryMebibytes: 64 + int64(i),
-				Ports:           runtimePortsFromInts([]int32{port}),
-			}))
+			// Both writers read the same draft revision, so one loses the
+			// optimistic guard. A real client re-reads and replays its edit; the
+			// point here is that the retry lands on its own revision instead of
+			// overwriting the winner's.
+			var err error
+			for attempt := 0; attempt < 5; attempt++ {
+				_, _, err = updateService(ctx, store, "user-1", service.ID, "", directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{
+					CpuMillis:       100,
+					MemoryMebibytes: 64 + int64(i),
+					Ports:           runtimePortsFromInts([]int32{port}),
+				}))
+				if !errors.Is(err, deliverycore.ErrConcurrentUpdate) {
+					break
+				}
+			}
 
 			errs <- err
 		}()
