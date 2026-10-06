@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const identifier = z.string().min(1);
 const fleetAgentInput = z.object({
+ hostType: z.enum(["stable", "intermittent"]),
 	agentId: identifier,
 	name: identifier,
 	region: z.string(),

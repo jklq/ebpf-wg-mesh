@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 39
+const currentSchemaVersion = 40
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -148,6 +148,7 @@ var currentSchema = []string{
 	`CREATE UNIQUE INDEX idx_agent_registrations_workload_ipv4_subnet ON agent_registrations(workload_ipv4_subnet) WHERE workload_ipv4_subnet <> ''`,
 	`CREATE TABLE agent_administration (
 			agent_id TEXT PRIMARY KEY REFERENCES agent_registrations(id) ON DELETE CASCADE,
+ host_type TEXT NOT NULL DEFAULT 'stable' CHECK (host_type IN ('stable', 'intermittent')),
 			lifecycle_state TEXT NOT NULL,
 			operator_intent TEXT NOT NULL DEFAULT '',
 			maintenance_message TEXT NOT NULL DEFAULT '',
@@ -155,7 +156,7 @@ var currentSchema = []string{
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE VIEW agents AS SELECT r.id, r.name,
-			ad.lifecycle_state,
+			ad.host_type, ad.lifecycle_state,
 			ad.lifecycle_state AS state_before_unavailable,
 			r.region, r.zone, r.failure_domain, r.reserved_cpu_millis, r.reserved_memory_mebibytes,
 			r.advertise_addr, r.workload_ipv4_subnet, r.workload_ipv6_subnet, r.wireguard_public_key,
@@ -409,6 +410,11 @@ var currentSchema = []string{
 		)`,
 	`CREATE INDEX idx_deployment_actions_target ON deployment_actions(target_deployment_id, created_at, id)`,
 	`CREATE TABLE builder_workers (
+ host_type TEXT NOT NULL DEFAULT 'stable' CHECK (host_type IN ('stable', 'intermittent')),
+ available_memory_bytes INT8 NOT NULL DEFAULT 0,
+ required_memory_bytes INT8 NOT NULL DEFAULT 0,
+ available_cpu_millis INT8 NOT NULL DEFAULT 0,
+ required_cpu_millis INT8 NOT NULL DEFAULT 0,
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			current_build_id TEXT NOT NULL DEFAULT '',

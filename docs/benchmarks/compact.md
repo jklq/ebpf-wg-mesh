@@ -72,3 +72,32 @@ CONTROLPLANE_TEST_DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/testdb?
 The database URL must name a disposable test database; the control-plane fixture
 creates isolated databases on that server. Run the dashboard integration tests
 against PostgreSQL with `DASHBOARD_TEST_DATABASE_URL` set to that test database.
+
+## 3. Idle and active builds
+
+The startup benchmark uses a real containerd backend and a pre-pulled BusyBox
+image in the privileged Linux runtime fixture. The eager case is the previous
+constructor path: connect, inspect the image, and unpack it. The new constructor
+creates only an executor description. No build runs in either case.
+
+| Metric per startup | Previous eager setup | On-demand setup | Change |
+| --- | ---: | ---: | ---: |
+| Median allocated bytes | 470,972 | 704 | 99.85% less |
+| Median elapsed time | 14.11 ms | 0.000992 ms | 99.99% less |
+| Allocations | 4,671 | 1 | 99.98% less |
+
+These are startup allocation/work savings, **not idle RSS or CPU-time savings**.
+The startup work moves to the first claimed build. Sandbox and BuildKit daemons
+were already per-build, so their additional idle saving is **zero**. Capacity and
+preference tests show that a small VM claims no oversized build, that a capable
+home builder gets priority, and that a fenced takeover follows power loss. That
+keeps build memory and CPU off the VM; it does not reduce the build's total work.
+
+Raw data: [builder-startup.txt](builder-startup.txt).
+
+```sh
+./scripts/test-linux-runtime-docker.zsh bash -c \
+  'ctr -n compact-bench images pull docker.io/library/busybox:1.36.1 &&
+   COMPACT_BENCH_SANDBOX=1 go test ./internal/builder -run "^$" \
+   -bench BenchmarkHardenedStartup -benchtime=10x -count=3'
+```

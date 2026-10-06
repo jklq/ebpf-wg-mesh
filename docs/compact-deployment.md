@@ -60,3 +60,41 @@ storage to another machine. Back up the control-plane state and provisioned
 keyring separately from the database. The encrypted database alone cannot
 recover service secrets or signing keys. Test a restore into a fresh database
 and disk directory before relying on the backups.
+
+## Intermittent hosts and builds
+
+Choose **Intermittent (builds only)** when creating or editing a fleet agent.
+The protocol field is `host_type=intermittent`. Normal application placement,
+including volumes, uses stable agents. Drain existing allocations before changing
+a stable agent to intermittent. The host type survives disconnects and restarts.
+
+Run one builder per machine. On the home PC, set `BUILDER_HOST_TYPE=intermittent`.
+Keep its state, mTLS credentials, toolchain image, and work directory across restarts.
+The VM can run a stable builder as fallback, or omit the builder entirely.
+Online, idle, capable intermittent builders have priority. A busy or stale home
+builder does not prevent a capable stable builder from claiming work.
+
+Every offer reports free memory, cgroup v2 memory headroom, CPU quota/affinity,
+and the resources required for one build. The defaults keep 256 MiB free for
+other work and require one CPU core. The default build step memory limit is
+8 GiB; another 512 MiB covers BuildKit headroom. Such a build waits on a 2 GiB VM.
+It can run when the home PC has enough free capacity. These values are tunable:
+`BUILDER_RESERVE_MEMORY_BYTES`, `BUILDER_RESERVE_CPU_MILLIS`,
+`BUILDER_BUILD_CPU_MILLIS`, `BUILDER_DAEMON_MEMORY_BYTES`, and
+`BUILDER_BUILD_MEMORY_BYTES` (see `builder -h` for the exact limit flag).
+Admission does not reserve memory against unrelated processes on the home PC.
+Keep the configured reserve large enough for your desktop and other work.
+
+An idle builder opens no containerd client and unpacks no toolchain image.
+Each claimed build opens its backend, starts its sandbox and BuildKit daemon,
+and releases them afterward. Workspace recovery also opens a backend only when
+leftover execution state needs it. BuildKit was already per-build before this
+change; the new saving is deferred backend setup and keeping active builds off
+the small VM.
+
+No capacity means queued work, with no claimed attempt. Queued builds wait
+indefinitely by default, including when the home PC stays off overnight.
+`CONTROLPLANE_BUILDER_MAX_QUEUE_AGE_SECONDS` can set an explicit queue deadline.
+Running builds keep the existing lease, timeout, and attempt limits. A powered-off
+builder loses its lease; a capable builder can retry the work with a new fenced
+owner epoch. Repeated interruptions can exhaust the attempt limit.

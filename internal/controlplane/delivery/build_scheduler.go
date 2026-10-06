@@ -61,7 +61,7 @@ func (c BuildSchedulerConfig) WithDefaults() BuildSchedulerConfig {
 	if c.BuildTimeout <= 0 {
 		c.BuildTimeout = def.BuildTimeout
 	}
-	if c.MaxQueueAge <= 0 {
+	if c.MaxQueueAge < 0 {
 		c.MaxQueueAge = def.MaxQueueAge
 	}
 	return c
@@ -125,7 +125,12 @@ func scanBuildAttemptRow(scanner interface{ Scan(...any) error }) (BuildAttemptR
 	return rec, err
 }
 
-func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName string) (BuildRunRecord, error) {
+func (d *Delivery) ClaimNextBuild(ctx context.Context, offer BuilderOffer) (BuildRunRecord, error) {
+	if err := offer.validate(); err != nil {
+		return BuildRunRecord{}, err
+	}
+	offer.HostType, _ = config.NormalizeHostType(string(offer.HostType))
+	builderID, builderName := offer.ID, offer.Name
 	s := d.store
 	scheduler := d.buildScheduler
 	var rec BuildRunRecord
@@ -136,13 +141,13 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO builder_workers(id, name, current_build_id, last_heartbeat_at, created_at, updated_at, drained)
-			 VALUES ($1, $2, '', $3, $3, $3, FALSE)
+			`INSERT INTO builder_workers(id, name, current_build_id, last_heartbeat_at, created_at, updated_at, drained, host_type, available_memory_bytes, required_memory_bytes, available_cpu_millis, required_cpu_millis)
+			 VALUES ($1, $2, '', $3, $3, $3, FALSE, $4, $5, $6, $7, $8)
 			 ON CONFLICT(id) DO UPDATE
-			    SET name = excluded.name,
+			    SET host_type=excluded.host_type, available_memory_bytes=excluded.available_memory_bytes, required_memory_bytes=excluded.required_memory_bytes, available_cpu_millis=excluded.available_cpu_millis, required_cpu_millis=excluded.required_cpu_millis, name = excluded.name,
 			        last_heartbeat_at = excluded.last_heartbeat_at,
 			        updated_at = excluded.updated_at`,
-			builderID, builderName, now,
+			builderID, builderName, now, offer.HostType, offer.AvailableMemoryBytes, offer.RequiredMemoryBytes, offer.AvailableCPUMillis, offer.RequiredCPUMillis,
 		); err != nil {
 			return err
 		}
@@ -153,11 +158,24 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, builderID, builderName st
 		// scheduler still hands back its own work so running builds finish.
 		existing, err := scanBuildRunRow(tx.QueryRowContext(ctx, `SELECT `+buildRunSelectColumns+` FROM build_runs WHERE state = $1 AND builder_id = $2 ORDER BY started_at, id LIMIT 1`, BuildStateRunning, builderID))
 		if err == nil {
+			if !offer.fits() {
+				return nil
+			}
 			rec, err = s.buildRunByIDQuerier(ctx, tx, existing.ID)
 			return err
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
+		}
+		if !offer.fits() {
+			return nil
+		}
+		preferred, err := preferredBuilderAvailable(ctx, tx, offer, now, scheduler.LeaseTTL)
+		if err != nil {
+			return err
+		}
+		if preferred {
+			return nil
 		}
 		var drained bool
 		if err := tx.QueryRowContext(ctx, `SELECT drained FROM builder_workers WHERE id = $1`, builderID).Scan(&drained); err != nil {
@@ -394,6 +412,9 @@ func (d *Delivery) recoverExpiredBuildsTx(ctx context.Context, tx *sql.Tx, now t
 
 func (d *Delivery) expireQueuedBuildsTx(ctx context.Context, tx *sql.Tx, now time.Time, scheduler BuildSchedulerConfig) error {
 	s := d.store
+	if scheduler.MaxQueueAge <= 0 {
+		return nil
+	}
 	cutoff := now.Add(-scheduler.MaxQueueAge)
 	rows, err := tx.QueryContext(ctx,
 		`SELECT id, service_id FROM build_runs WHERE state = $1 AND queued_at < $2 ORDER BY queued_at ASC, id ASC LIMIT 100`,
@@ -732,7 +753,7 @@ func (d *Delivery) ListBuilders(ctx context.Context, user authz.User) ([]Builder
 		return nil, err
 	}
 	rows, err := d.store.db.QueryContext(ctx,
-		`SELECT id, name, current_build_id, last_heartbeat_at, drained, updated_at FROM builder_workers ORDER BY id ASC`)
+		`SELECT id, name, current_build_id, last_heartbeat_at, drained, updated_at, host_type, available_memory_bytes, required_memory_bytes, available_cpu_millis, required_cpu_millis FROM builder_workers ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -740,7 +761,7 @@ func (d *Delivery) ListBuilders(ctx context.Context, user authz.User) ([]Builder
 	var out []BuilderWorkerRecord
 	for rows.Next() {
 		var rec BuilderWorkerRecord
-		if err := rows.Scan(&rec.ID, &rec.Name, &rec.CurrentBuildID, &rec.LastHeartbeat, &rec.Drained, &rec.UpdatedAt); err != nil {
+		if err := rows.Scan(&rec.ID, &rec.Name, &rec.CurrentBuildID, &rec.LastHeartbeat, &rec.Drained, &rec.UpdatedAt, &rec.HostType, &rec.AvailableMemoryBytes, &rec.RequiredMemoryBytes, &rec.AvailableCPUMillis, &rec.RequiredCPUMillis); err != nil {
 			return nil, err
 		}
 		out = append(out, rec)
@@ -779,9 +800,9 @@ func (d *Delivery) SetBuilderDrain(ctx context.Context, user authz.User, builder
 			return sql.ErrNoRows
 		}
 		return tx.QueryRowContext(ctx,
-			`SELECT id, name, current_build_id, last_heartbeat_at, drained, updated_at FROM builder_workers WHERE id = $1`,
+			`SELECT id, name, current_build_id, last_heartbeat_at, drained, updated_at, host_type, available_memory_bytes, required_memory_bytes, available_cpu_millis, required_cpu_millis FROM builder_workers WHERE id = $1`,
 			builderID,
-		).Scan(&rec.ID, &rec.Name, &rec.CurrentBuildID, &rec.LastHeartbeat, &rec.Drained, &rec.UpdatedAt)
+		).Scan(&rec.ID, &rec.Name, &rec.CurrentBuildID, &rec.LastHeartbeat, &rec.Drained, &rec.UpdatedAt, &rec.HostType, &rec.AvailableMemoryBytes, &rec.RequiredMemoryBytes, &rec.AvailableCPUMillis, &rec.RequiredCPUMillis)
 	})
 	return rec, err
 }

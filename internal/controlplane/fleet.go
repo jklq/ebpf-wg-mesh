@@ -138,7 +138,7 @@ func (s *fleetPersistence) fleetView(ctx context.Context, user authz.User) (*pla
 		if rec.LifecycleState != deliverycore.AgentStateRetired {
 			fleet.Capacity.NodeCount++
 		}
-		if rec.LifecycleState == deliverycore.AgentStateActive && rec.Healthy(now) {
+		if rec.HostType != config.HostIntermittent && rec.LifecycleState == deliverycore.AgentStateActive && rec.Healthy(now) {
 			fleet.Capacity.SchedulableNodeCount++
 			fleet.Capacity.SchedulableCpuMillis += item.SchedulableCpuMillis
 			fleet.Capacity.SchedulableMemoryMebibytes += item.SchedulableMemoryMebibytes

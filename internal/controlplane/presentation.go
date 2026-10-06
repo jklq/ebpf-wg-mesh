@@ -1,6 +1,7 @@
 package controlplane
 
 import (
+	"ebof-wg-mesh/internal/config"
 	"slices"
 	"time"
 
@@ -193,6 +194,7 @@ func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {
 		Name:                       rec.Name,
 		AdvertiseAddr:              rec.AdvertiseAddr,
 		WireguardEndpoint:          rec.WireGuardEndpoint,
+		HostType:                   string(rec.HostType),
 		Healthy:                    rec.Healthy(time.Now().UTC()),
 		CpuMillisCapacity:          rec.CPUMillisCapacity,
 		MemoryMebibytesCapacity:    rec.MemoryMebibytesCapcity,
@@ -208,6 +210,10 @@ func toProtoAgent(rec deliverycore.AgentRecord) *platformv1.Agent {
 		RuntimeCapabilities:        append([]string(nil), rec.RuntimeCapabilities...),
 		SoftwareVersion:            rec.SoftwareVersion,
 		MaintenanceMessage:         rec.MaintenanceMessage,
+	}
+	if rec.HostType == config.HostIntermittent {
+		out.SchedulableCpuMillis = 0
+		out.SchedulableMemoryMebibytes = 0
 	}
 	if rec.CredentialRevokedAt.Valid {
 		out.CredentialRevokedAt = ts(rec.CredentialRevokedAt.Time)

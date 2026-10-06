@@ -4486,8 +4486,10 @@ type Agent struct {
 	// Volume data the agent retains on disk with no desired entry. Agents never
 	// delete these on their own; an operator decides.
 	OrphanedVolumeIds []string `protobuf:"bytes,27,rep,name=orphaned_volume_ids,json=orphanedVolumeIds,proto3" json:"orphaned_volume_ids,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Stable hosts run applications. Intermittent hosts may power off and run builds only.
+	HostType      string `protobuf:"bytes,28,opt,name=host_type,json=hostType,proto3" json:"host_type,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Agent) Reset() {
@@ -4707,6 +4709,13 @@ func (x *Agent) GetOrphanedVolumeIds() []string {
 		return x.OrphanedVolumeIds
 	}
 	return nil
+}
+
+func (x *Agent) GetHostType() string {
+	if x != nil {
+		return x.HostType
+	}
+	return ""
 }
 
 type AllocationStatus struct {
@@ -8924,6 +8933,7 @@ func (x *ListAgentsResponse) GetLive() *LiveReadMeta {
 
 type CreateAgentRequest struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
+	HostType                string                 `protobuf:"bytes,8,opt,name=host_type,json=hostType,proto3" json:"host_type,omitempty"`
 	AgentId                 string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	Name                    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Region                  string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
@@ -8963,6 +8973,13 @@ func (x *CreateAgentRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CreateAgentRequest.ProtoReflect.Descriptor instead.
 func (*CreateAgentRequest) Descriptor() ([]byte, []int) {
 	return file_platform_proto_rawDescGZIP(), []int{107}
+}
+
+func (x *CreateAgentRequest) GetHostType() string {
+	if x != nil {
+		return x.HostType
+	}
+	return ""
 }
 
 func (x *CreateAgentRequest) GetAgentId() string {
@@ -9068,6 +9085,7 @@ func (x *AgentEnrollment) GetBootstrapToken() string {
 
 type UpdateAgentRequest struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
+	HostType                string                 `protobuf:"bytes,8,opt,name=host_type,json=hostType,proto3" json:"host_type,omitempty"`
 	AgentId                 string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
 	Name                    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Region                  string                 `protobuf:"bytes,3,opt,name=region,proto3" json:"region,omitempty"`
@@ -9107,6 +9125,13 @@ func (x *UpdateAgentRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UpdateAgentRequest.ProtoReflect.Descriptor instead.
 func (*UpdateAgentRequest) Descriptor() ([]byte, []int) {
 	return file_platform_proto_rawDescGZIP(), []int{109}
+}
+
+func (x *UpdateAgentRequest) GetHostType() string {
+	if x != nil {
+		return x.HostType
+	}
+	return ""
 }
 
 func (x *UpdateAgentRequest) GetAgentId() string {
@@ -9379,11 +9404,16 @@ func (x *Fleet) GetLive() *LiveReadMeta {
 }
 
 type ClaimBuildRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	BuilderId     string                 `protobuf:"bytes,1,opt,name=builder_id,json=builderId,proto3" json:"builder_id,omitempty"`
-	BuilderName   string                 `protobuf:"bytes,2,opt,name=builder_name,json=builderName,proto3" json:"builder_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	HostType             string                 `protobuf:"bytes,3,opt,name=host_type,json=hostType,proto3" json:"host_type,omitempty"`
+	AvailableMemoryBytes int64                  `protobuf:"varint,4,opt,name=available_memory_bytes,json=availableMemoryBytes,proto3" json:"available_memory_bytes,omitempty"`
+	RequiredMemoryBytes  int64                  `protobuf:"varint,5,opt,name=required_memory_bytes,json=requiredMemoryBytes,proto3" json:"required_memory_bytes,omitempty"`
+	AvailableCpuMillis   int64                  `protobuf:"varint,6,opt,name=available_cpu_millis,json=availableCpuMillis,proto3" json:"available_cpu_millis,omitempty"`
+	RequiredCpuMillis    int64                  `protobuf:"varint,7,opt,name=required_cpu_millis,json=requiredCpuMillis,proto3" json:"required_cpu_millis,omitempty"`
+	BuilderId            string                 `protobuf:"bytes,1,opt,name=builder_id,json=builderId,proto3" json:"builder_id,omitempty"`
+	BuilderName          string                 `protobuf:"bytes,2,opt,name=builder_name,json=builderName,proto3" json:"builder_name,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ClaimBuildRequest) Reset() {
@@ -9414,6 +9444,41 @@ func (x *ClaimBuildRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ClaimBuildRequest.ProtoReflect.Descriptor instead.
 func (*ClaimBuildRequest) Descriptor() ([]byte, []int) {
 	return file_platform_proto_rawDescGZIP(), []int{113}
+}
+
+func (x *ClaimBuildRequest) GetHostType() string {
+	if x != nil {
+		return x.HostType
+	}
+	return ""
+}
+
+func (x *ClaimBuildRequest) GetAvailableMemoryBytes() int64 {
+	if x != nil {
+		return x.AvailableMemoryBytes
+	}
+	return 0
+}
+
+func (x *ClaimBuildRequest) GetRequiredMemoryBytes() int64 {
+	if x != nil {
+		return x.RequiredMemoryBytes
+	}
+	return 0
+}
+
+func (x *ClaimBuildRequest) GetAvailableCpuMillis() int64 {
+	if x != nil {
+		return x.AvailableCpuMillis
+	}
+	return 0
+}
+
+func (x *ClaimBuildRequest) GetRequiredCpuMillis() int64 {
+	if x != nil {
+		return x.RequiredCpuMillis
+	}
+	return 0
 }
 
 func (x *ClaimBuildRequest) GetBuilderId() string {
@@ -10148,15 +10213,20 @@ func (x *LinkGitHubRepositoryRequest) GetGithubUserAccessToken() string {
 }
 
 type BuilderWorker struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name            string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	CurrentBuildId  string                 `protobuf:"bytes,3,opt,name=current_build_id,json=currentBuildId,proto3" json:"current_build_id,omitempty"`
-	LastHeartbeatAt *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_heartbeat_at,json=lastHeartbeatAt,proto3" json:"last_heartbeat_at,omitempty"`
-	Drained         bool                   `protobuf:"varint,5,opt,name=drained,proto3" json:"drained,omitempty"`
-	UpdatedAt       *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	HostType             string                 `protobuf:"bytes,7,opt,name=host_type,json=hostType,proto3" json:"host_type,omitempty"`
+	AvailableMemoryBytes int64                  `protobuf:"varint,8,opt,name=available_memory_bytes,json=availableMemoryBytes,proto3" json:"available_memory_bytes,omitempty"`
+	RequiredMemoryBytes  int64                  `protobuf:"varint,9,opt,name=required_memory_bytes,json=requiredMemoryBytes,proto3" json:"required_memory_bytes,omitempty"`
+	AvailableCpuMillis   int64                  `protobuf:"varint,10,opt,name=available_cpu_millis,json=availableCpuMillis,proto3" json:"available_cpu_millis,omitempty"`
+	RequiredCpuMillis    int64                  `protobuf:"varint,11,opt,name=required_cpu_millis,json=requiredCpuMillis,proto3" json:"required_cpu_millis,omitempty"`
+	Id                   string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name                 string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	CurrentBuildId       string                 `protobuf:"bytes,3,opt,name=current_build_id,json=currentBuildId,proto3" json:"current_build_id,omitempty"`
+	LastHeartbeatAt      *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_heartbeat_at,json=lastHeartbeatAt,proto3" json:"last_heartbeat_at,omitempty"`
+	Drained              bool                   `protobuf:"varint,5,opt,name=drained,proto3" json:"drained,omitempty"`
+	UpdatedAt            *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *BuilderWorker) Reset() {
@@ -10187,6 +10257,41 @@ func (x *BuilderWorker) ProtoReflect() protoreflect.Message {
 // Deprecated: Use BuilderWorker.ProtoReflect.Descriptor instead.
 func (*BuilderWorker) Descriptor() ([]byte, []int) {
 	return file_platform_proto_rawDescGZIP(), []int{123}
+}
+
+func (x *BuilderWorker) GetHostType() string {
+	if x != nil {
+		return x.HostType
+	}
+	return ""
+}
+
+func (x *BuilderWorker) GetAvailableMemoryBytes() int64 {
+	if x != nil {
+		return x.AvailableMemoryBytes
+	}
+	return 0
+}
+
+func (x *BuilderWorker) GetRequiredMemoryBytes() int64 {
+	if x != nil {
+		return x.RequiredMemoryBytes
+	}
+	return 0
+}
+
+func (x *BuilderWorker) GetAvailableCpuMillis() int64 {
+	if x != nil {
+		return x.AvailableCpuMillis
+	}
+	return 0
+}
+
+func (x *BuilderWorker) GetRequiredCpuMillis() int64 {
+	if x != nil {
+		return x.RequiredCpuMillis
+	}
+	return 0
 }
 
 func (x *BuilderWorker) GetId() string {
@@ -10817,7 +10922,7 @@ const file_platform_proto_rawDesc = "" +
 	"used_bytes\x18\v \x01(\x03R\tusedBytes\x12;\n" +
 	"\vobserved_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12\x16\n" +
-	"\x06staged\x18\r \x01(\bR\x06staged\"\x8f\n" +
+	"\x06staged\x18\r \x01(\bR\x06staged\"\xac\n" +
 	"\n" +
 	"\x05Agent\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
@@ -10848,7 +10953,8 @@ const file_platform_proto_rawDesc = "" +
 	"\x13maintenance_message\x18\x18 \x01(\tR\x12maintenanceMessage\x12N\n" +
 	"\x15credential_revoked_at\x18\x19 \x01(\v2\x1a.google.protobuf.TimestampR\x13credentialRevokedAt\x12-\n" +
 	"\x12wireguard_endpoint\x18\x1a \x01(\tR\x11wireguardEndpoint\x12.\n" +
-	"\x13orphaned_volume_ids\x18\x1b \x03(\tR\x11orphanedVolumeIds\"\xa7\a\n" +
+	"\x13orphaned_volume_ids\x18\x1b \x03(\tR\x11orphanedVolumeIds\x12\x1b\n" +
+	"\thost_type\x18\x1c \x01(\tR\bhostType\"\xa7\a\n" +
 	"\x10AllocationStatus\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -11190,8 +11296,9 @@ const file_platform_proto_rawDesc = "" +
 	"\vdeployments\x18\x01 \x03(\v2\x1d.platform.v1.DeploymentRecordR\vdeployments\"o\n" +
 	"\x12ListAgentsResponse\x12*\n" +
 	"\x06agents\x18\x01 \x03(\v2\x12.platform.v1.AgentR\x06agents\x12-\n" +
-	"\x04live\x18\x02 \x01(\v2\x19.platform.v1.LiveReadMetaR\x04live\"\x82\x02\n" +
-	"\x12CreateAgentRequest\x12\x19\n" +
+	"\x04live\x18\x02 \x01(\v2\x19.platform.v1.LiveReadMetaR\x04live\"\x9f\x02\n" +
+	"\x12CreateAgentRequest\x12\x1b\n" +
+	"\thost_type\x18\b \x01(\tR\bhostType\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06region\x18\x03 \x01(\tR\x06region\x12\x12\n" +
@@ -11201,8 +11308,9 @@ const file_platform_proto_rawDesc = "" +
 	"\x19reserved_memory_mebibytes\x18\a \x01(\x03R\x17reservedMemoryMebibytes\"i\n" +
 	"\x0fAgentEnrollment\x12(\n" +
 	"\x05agent\x18\x01 \x01(\v2\x12.platform.v1.AgentR\x05agent\x12,\n" +
-	"\x0fbootstrap_token\x18\x02 \x01(\tB\x03\x80\x01\x01R\x0ebootstrapToken\"\x82\x02\n" +
-	"\x12UpdateAgentRequest\x12\x19\n" +
+	"\x0fbootstrap_token\x18\x02 \x01(\tB\x03\x80\x01\x01R\x0ebootstrapToken\"\x9f\x02\n" +
+	"\x12UpdateAgentRequest\x12\x1b\n" +
+	"\thost_type\x18\b \x01(\tR\bhostType\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06region\x18\x03 \x01(\tR\x06region\x12\x12\n" +
@@ -11227,8 +11335,13 @@ const file_platform_proto_rawDesc = "" +
 	"\x06agents\x18\x01 \x03(\v2\x12.platform.v1.AgentR\x06agents\x126\n" +
 	"\bcapacity\x18\x02 \x01(\v2\x1a.platform.v1.FleetCapacityR\bcapacity\x12'\n" +
 	"\x0fversion_warning\x18\x03 \x01(\tR\x0eversionWarning\x12-\n" +
-	"\x04live\x18\x04 \x01(\v2\x19.platform.v1.LiveReadMetaR\x04live\"U\n" +
-	"\x11ClaimBuildRequest\x12\x1d\n" +
+	"\x04live\x18\x04 \x01(\v2\x19.platform.v1.LiveReadMetaR\x04live\"\xbe\x02\n" +
+	"\x11ClaimBuildRequest\x12\x1b\n" +
+	"\thost_type\x18\x03 \x01(\tR\bhostType\x124\n" +
+	"\x16available_memory_bytes\x18\x04 \x01(\x03R\x14availableMemoryBytes\x122\n" +
+	"\x15required_memory_bytes\x18\x05 \x01(\x03R\x13requiredMemoryBytes\x120\n" +
+	"\x14available_cpu_millis\x18\x06 \x01(\x03R\x12availableCpuMillis\x12.\n" +
+	"\x13required_cpu_millis\x18\a \x01(\x03R\x11requiredCpuMillis\x12\x1d\n" +
 	"\n" +
 	"builder_id\x18\x01 \x01(\tR\tbuilderId\x12!\n" +
 	"\fbuilder_name\x18\x02 \x01(\tR\vbuilderName\"\xb7\x04\n" +
@@ -11308,8 +11421,14 @@ const file_platform_proto_rawDesc = "" +
 	"\n" +
 	"project_id\x18\x01 \x01(\tR\tprojectId\x12/\n" +
 	"\x13repository_selector\x18\x02 \x01(\tR\x12repositorySelector\x12<\n" +
-	"\x18github_user_access_token\x18\x03 \x01(\tB\x03\x80\x01\x01R\x15githubUserAccessToken\"\xfa\x01\n" +
-	"\rBuilderWorker\x12\x0e\n" +
+	"\x18github_user_access_token\x18\x03 \x01(\tB\x03\x80\x01\x01R\x15githubUserAccessToken\"\xe3\x03\n" +
+	"\rBuilderWorker\x12\x1b\n" +
+	"\thost_type\x18\a \x01(\tR\bhostType\x124\n" +
+	"\x16available_memory_bytes\x18\b \x01(\x03R\x14availableMemoryBytes\x122\n" +
+	"\x15required_memory_bytes\x18\t \x01(\x03R\x13requiredMemoryBytes\x120\n" +
+	"\x14available_cpu_millis\x18\n" +
+	" \x01(\x03R\x12availableCpuMillis\x12.\n" +
+	"\x13required_cpu_millis\x18\v \x01(\x03R\x11requiredCpuMillis\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12(\n" +
 	"\x10current_build_id\x18\x03 \x01(\tR\x0ecurrentBuildId\x12F\n" +

@@ -10,11 +10,17 @@ import (
 func Builder(args []string) (config.BuilderConfig, error) {
 	var cfg config.BuilderConfig
 	var profile string
+	var hostType string
 	var deniedCIDRs string
 	var nameservers string
 
 	fs := flag.NewFlagSet("builder", flag.ContinueOnError)
 	limits := config.DefaultBuilderLimits()
+	stringFlag(fs, &hostType, "host-type", "BUILDER_HOST_TYPE", "stable", "stable or intermittent (preferred for builds)")
+	int64Flag(fs, &cfg.Capacity.ReserveMemoryBytes, "reserve-memory-bytes", "BUILDER_RESERVE_MEMORY_BYTES", 256<<20, "memory kept free for other work")
+	int64Flag(fs, &cfg.Capacity.ReserveCPUMillis, "reserve-cpu-millis", "BUILDER_RESERVE_CPU_MILLIS", 0, "CPU capacity reserved for other work")
+	int64Flag(fs, &cfg.Capacity.BuildCPUMillis, "build-cpu-millis", "BUILDER_BUILD_CPU_MILLIS", 1000, "required build CPU capacity")
+	int64Flag(fs, &cfg.Capacity.DaemonMemoryBytes, "daemon-memory-bytes", "BUILDER_DAEMON_MEMORY_BYTES", 512<<20, "headroom for BuildKit outside the build step")
 	stringFlag(fs, &profile, "profile", "BUILDER_PROFILE", "", "development or production; empty defaults to production")
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "BUILDER_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.ID, "builder-id", "BUILDER_ID", "", "")
@@ -73,6 +79,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	if servers := splitCommaList(nameservers); len(servers) > 0 {
 		cfg.Sandbox.Nameservers = servers
 	}
+	cfg.HostType = config.HostType(hostType)
 	if err := config.FinalizeBuilder(&cfg); err != nil {
 		return config.BuilderConfig{}, fmt.Errorf("bootstrap builder: %w", err)
 	}

@@ -64,6 +64,7 @@ export function FleetAgentDialog({
 		region: agent?.region ?? "",
 		zone: agent?.zone ?? "",
 		failureDomain: agent?.failureDomain ?? "",
+ hostType:agent?.hostType ?? "stable",
 		reservedCpuMillis: safeInteger(agent?.reservedCpuMillis ?? "0"),
 		reservedMemoryMebibytes: safeInteger(agent?.reservedMemoryMebibytes ?? "0"),
 	});
@@ -126,6 +127,14 @@ export function FleetAgentDialog({
 						value={draft.failureDomain}
 						onChange={(failureDomain) => setDraft({ ...draft, failureDomain })}
 					/>
+                    <label>
+                      <span {...stylex.props(fieldStyles.label)}>Host availability</span>
+                      <select {...stylex.props(fieldStyles.input)} value={draft.hostType}
+                        onChange={(event) => setDraft({...draft, hostType:event.target.value})}>
+                        <option value="stable">Always on</option>
+                        <option value="intermittent">Intermittent (builds only)</option>
+                      </select>
+                    </label>
 					<FleetField
 						label="Reserved CPU (mCPU)"
 						type="number"

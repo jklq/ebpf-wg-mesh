@@ -396,7 +396,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	logWriter := &recordingLogWriter{enabled: true}
 	operations := newBuildOperations(store.db, store.source, newDelivery(store, notifier, nil, nil, nil), policy, credentials, withBuilderLogEmitter(logs.NewLogEmitter(logWriter, nil)))
 	builder := contextWithClientIdentity(serviceCallerBuilder, "builder-1")
-	claim := &platformv1.ClaimBuildRequest{BuilderId: "builder-1"}
+	claim := &platformv1.ClaimBuildRequest{AvailableMemoryBytes: 16 << 30, RequiredMemoryBytes: 8 << 30, AvailableCpuMillis: 2000, RequiredCpuMillis: 1000, BuilderId: "builder-1"}
 	if _, err := operations.ClaimBuild(builder, claim); err == nil {
 		t.Fatal("expected credential preparation failure")
 	}

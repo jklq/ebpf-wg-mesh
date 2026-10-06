@@ -173,7 +173,7 @@ func TestConnectedPublishLateCompleteCannotStealDesiredDigest(t *testing.T) {
 		t.Fatalf("enqueue build 1: %v", err)
 	}
 	late := dialBuilderClient(t, cp.server, "builder-late")
-	job1, err := late.ClaimBuild(ctx, &platformv1.ClaimBuildRequest{BuilderId: "builder-late", BuilderName: "late"})
+	job1, err := late.ClaimBuild(ctx, &platformv1.ClaimBuildRequest{AvailableMemoryBytes: 16 << 30, RequiredMemoryBytes: 8 << 30, AvailableCpuMillis: 2000, RequiredCpuMillis: 1000, BuilderId: "builder-late", BuilderName: "late"})
 	if err != nil || job1.GetBuildId() != build1.ID {
 		t.Fatalf("claim build 1: %+v %v", job1, err)
 	}

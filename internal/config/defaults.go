@@ -220,7 +220,7 @@ func DefaultControlPlaneBuilderConfig() ControlPlaneBuilderConfig {
 	return ControlPlaneBuilderConfig{
 		HeartbeatTimeoutSeconds: 120, LeaseTTLSeconds: 120, MaxAttempts: 3,
 		MaxConcurrentGlobal: 20, MaxConcurrentPerProject: 5,
-		BuildTimeoutSeconds: 1800, MaxQueueAgeSeconds: 7200,
+		BuildTimeoutSeconds: 1800, MaxQueueAgeSeconds: 0,
 	}
 }
 
@@ -338,6 +338,18 @@ func applyAgentDefaults(cfg *AgentConfig) {
 }
 
 func applyBuilderDefaults(cfg *BuilderConfig) {
+	if cfg.HostType == "" {
+		cfg.HostType = HostStable
+	}
+	if cfg.Capacity.ReserveMemoryBytes == 0 {
+		cfg.Capacity.ReserveMemoryBytes = 256 << 20
+	}
+	if cfg.Capacity.BuildCPUMillis == 0 {
+		cfg.Capacity.BuildCPUMillis = 1000
+	}
+	if cfg.Capacity.DaemonMemoryBytes == 0 {
+		cfg.Capacity.DaemonMemoryBytes = 512 << 20
+	}
 	limits := DefaultBuilderLimits()
 	if cfg.Name == "" {
 		cfg.Name = cfg.ID

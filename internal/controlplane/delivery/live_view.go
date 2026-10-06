@@ -2,6 +2,7 @@ package delivery
 
 import (
 	"database/sql"
+	"ebof-wg-mesh/internal/config"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -483,6 +484,7 @@ func agentRecordFromDurable(reg journal.AgentRegistration, admin journal.AgentAd
 		ID:                      reg.ID,
 		Name:                    reg.Name,
 		LifecycleState:          AgentLifecycleState(admin.LifecycleState),
+		HostType:                config.HostType(admin.HostType),
 		Region:                  reg.Region,
 		Zone:                    reg.Zone,
 		FailureDomain:           reg.FailureDomain,

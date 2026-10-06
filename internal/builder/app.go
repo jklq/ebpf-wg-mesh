@@ -126,23 +126,7 @@ func newExecutorForConfig(cfg config.BuilderConfig) (BuildExecutor, error) {
 	case "", ExecutorDevelopment:
 		return newDevelopmentExecutor(cfg.WorkDir, osCommandRunner{}, os.Getenv("PATH")), nil
 	case ExecutorHardened:
-		backend, err := NewSandboxBackend(SandboxBackendConfig{
-			Socket:          cfg.Sandbox.Socket,
-			Namespace:       cfg.Sandbox.Namespace,
-			Image:           cfg.Sandbox.Image,
-			Runtime:         cfg.Sandbox.Runtime,
-			Snapshotter:     cfg.Sandbox.Snapshotter,
-			CNIPluginDir:    cfg.Sandbox.CNIPluginDir,
-			CNIConfDir:      cfg.Sandbox.CNIConfDir,
-			CNINetwork:      cfg.Sandbox.CNINetwork,
-			Nameservers:     cfg.Sandbox.Nameservers,
-			BuildkitdBinary: cfg.Sandbox.BuildkitdBinary,
-			WorkDir:         cfg.WorkDir,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return newHardenedExecutor(cfg.WorkDir, backend, cfg.Sandbox.BuildkitdBinary, cfg.Sandbox.Nameservers), nil
+		return &onDemandExecutor{cfg: cfg, open: NewSandboxBackend}, nil
 	default:
 		return nil, fmt.Errorf("unknown build executor %q", cfg.Executor)
 	}
@@ -194,8 +178,13 @@ func (a *App) Run(ctx context.Context) error {
 		default:
 		}
 		job, err := a.client.ClaimBuild(ctx, &platformv1.ClaimBuildRequest{
-			BuilderId:   a.cfg.ID,
-			BuilderName: a.cfg.Name,
+			BuilderId:            a.cfg.ID,
+			BuilderName:          a.cfg.Name,
+			HostType:             string(a.cfg.HostType),
+			AvailableMemoryBytes: availableBuildMemory(a.cfg.Capacity.ReserveMemoryBytes),
+			RequiredMemoryBytes:  a.cfg.Limits.MemoryBytes + a.cfg.Capacity.DaemonMemoryBytes,
+			AvailableCpuMillis:   availableBuildCPU(a.cfg.Capacity.ReserveCPUMillis),
+			RequiredCpuMillis:    a.cfg.Capacity.BuildCPUMillis,
 		})
 		if err != nil {
 			return err

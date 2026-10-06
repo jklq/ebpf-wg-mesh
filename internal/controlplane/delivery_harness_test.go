@@ -284,7 +284,7 @@ func desiredStateForAgent(ctx context.Context, store *persistence, agentID strin
 }
 
 func claimNextBuild(ctx context.Context, store *persistence, builderID, builderName string) (deliverycore.BuildRunRecord, error) {
-	return testDelivery(store).ClaimNextBuild(ctx, builderID, builderName)
+	return testDelivery(store).ClaimNextBuild(ctx, testBuilderOffer(builderID, builderName))
 }
 
 func chooseAgentForService(ctx context.Context, store *persistence, environmentID string, spec *platformv1.ServiceSpec) (string, error) {

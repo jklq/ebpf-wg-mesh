@@ -125,6 +125,7 @@ type AgentRegistration struct {
 }
 
 type AgentAdministration struct {
+	HostType            string     `json:"host_type"`
 	AgentID             string     `json:"agent_id"`
 	LifecycleState      string     `json:"lifecycle_state"`
 	OperatorIntent      string     `json:"operator_intent"`
