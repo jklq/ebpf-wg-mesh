@@ -68,6 +68,7 @@ const (
 	SourceWorkKindSourceSpecChanged     = "source_spec_changed"
 	SourceWorkKindProviderAccessChanged = "provider_access_changed"
 	SourceWorkKindRevisionObserved      = "revision_observed"
+	SourceWorkKindDeploymentRebuild     = "deployment_rebuild"
 )
 
 // SourceWorkKinds lists every durable-work kind the source layer enqueues. Claims are
@@ -76,6 +77,7 @@ var SourceWorkKinds = []string{
 	SourceWorkKindSourceSpecChanged,
 	SourceWorkKindProviderAccessChanged,
 	SourceWorkKindRevisionObserved,
+	SourceWorkKindDeploymentRebuild,
 }
 
 func CloneBuildRecipe(recipe *platformv1.BuildRecipe) *platformv1.BuildRecipe {

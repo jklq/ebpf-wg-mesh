@@ -57,6 +57,9 @@ func TestContainerdEngineCreateServeDestroy(t *testing.T) {
 		t.Fatalf("RemoveService: %v", err)
 	}
 	assertServiceTornDown(t, ctx, engine, cfg, allocID, netnsPath)
+	if _, err := engine.(*containerdEngine).client.GetImage(namespaces.WithNamespace(ctx, cfg.Containerd.Namespace), containerdTestImage); !errdefs.IsNotFound(err) {
+		t.Fatalf("last allocation removal kept image cache: %v", err)
+	}
 }
 
 func TestContainerdEngineDrainSendsSIGTERMThenSIGKILLAfterDeadline(t *testing.T) {

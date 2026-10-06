@@ -55,11 +55,79 @@ address it can reach, such as an authenticated HTTPS endpoint or a VPN address.
 The operator's local registry must retain its data on a persistent filesystem.
 The PaaS authenticates the registry; it does not run the registry storage process.
 
-Back up PostgreSQL with `pg_dump`, and copy the source archives and registry
-storage to another machine. Back up the control-plane state and provisioned
+Back up PostgreSQL with `pg_dump`, and copy the registry storage to another
+machine. Source archives are temporary build inputs. Back up the control-plane state and provisioned
 keyring separately from the database. The encrypted database alone cannot
 recover service secrets or signing keys. Test a restore into a fresh database
 and disk directory before relying on the backups.
+
+## Source and image retention
+
+Source archives stay while any build that uses them is queued or running. This
+includes automatic retries after an expired builder lease. A terminal build
+(succeeded, failed, cancelled, or superseded) releases its source archive. The
+collector runs every minute. A five-minute staging window protects a freshly
+stored object while its source work queues a build, so a short build's bytes
+can remain for that window. Waiting for an offline home builder keeps the
+queued build's source; its code is still needed.
+
+The database keeps commit, recipe, and deployment metadata. A manual retry
+refetches the recorded commit from GitHub when its archive is gone. It does not
+use the current branch head. If fetching fails, the deployment shows the
+repository and commit, explains the retention rule, and asks the user to check
+access and whether the commit still exists. Retrying that failed fetch keeps
+the same commit. A serving predecessor stays in place while the fetch or build
+runs, including when the fetch fails.
+
+Each service keeps its current image, images needed by in-progress rollouts
+and live or draining allocations, and one previous successful image. The
+previous image expires **24 hours after its last successful activation**. It
+can expire immediately on replacement if it had already served for more than
+24 hours. Cleanup checks once a minute. Old deployment history keeps its
+metadata and no longer pins image bytes forever. Agent image caches drop an
+image after its last container disappears; containerd collects unused layers
+and snapshots while keeping shared or live content.
+
+A rollback or exact redeploy whose image has expired queues a best effort
+rebuild of its historical commit, recipe, and service configuration. It waits
+for builder capacity under the same rules as other builds. External build
+dependencies can change, so rebuilding does not guarantee the same digest.
+Historical direct-image deployments have no GitHub source to rebuild. Their
+expired-image actions return a helpful error; deploy an available image instead.
+The collector deletes platform build images only, never a user's external image.
+
+The external Distribution registry must allow manifest deletion:
+
+```yaml
+storage:
+  delete:
+    enabled: true
+  filesystem:
+    rootdirectory: /var/lib/registry
+```
+
+The control plane retries manifest deletion failures from a durable queue.
+Only the collector receives a delete grant; builder and agent credentials keep
+their existing scopes. The managed development registry also enables deletion.
+Manifest deletion makes an image unavailable but does not free its blob files.
+Schedule the registry's blob collection regularly to reclaim disk space. With
+the registry stopped or read only, run the same registry version against its
+mounted data and configuration:
+
+```sh
+registry garbage-collect /etc/distribution/config.yml
+```
+
+Then resume the registry. Run collection without concurrent pushes; shared
+blobs remain until no retained image uses them. Keep untagged manifest roots:
+the control plane deletes expired digests explicitly, and a retained runtime
+image can still be needed even if its tag moved. See the
+[Distribution collection guide](https://distribution.github.io/distribution/about/garbage-collection/)
+and [retention measurements](benchmarks/retention.md).
+
+This is schema version 41, a flat cutover. Recreate an older control-plane
+database for this development-stage schema. The old source-archive age and
+build-artifact age/count flags were removed; the lifecycle policy above is fixed.
 
 ## Intermittent hosts and builds
 
@@ -160,10 +228,10 @@ on, and watch query latency and database growth before raising these values.
 Use one PostgreSQL server with separate databases/schemas and roles as needed.
 Do not run a second database just for the dashboard.
 
-The passing capped smoke test used about 390 MiB of working-set RAM, with a
+The latest passing capped smoke test used about 384 MiB of working-set RAM, with a
 256 MiB application limit and 192 MiB of touched application data. It did not
 include the console UI or a separate VM kernel, and shared one process between
 control plane and agent. Reserve space for those costs. See the full measurement
-limits and reproduction commands in [the benchmark report](benchmarks/compact.md).
+limits and reproduction commands in [the retention report](benchmarks/retention.md).
 This supports the 2 GiB target for small traffic. It does not establish a safe
 lower VM size or a high-traffic capacity guarantee.

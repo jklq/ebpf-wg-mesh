@@ -81,6 +81,17 @@ func (d *Delivery) CompleteBuild(ctx context.Context, builderID, buildID string,
 				reason = "superseded by newer build"
 			}
 			now := time.Now().UTC()
+			// A cancelled or superseded build may already have pushed its image.
+			// Its completion must release those bytes even though no artifact is
+			// published into deployment history.
+			if state == platformv1.BuildState_BUILD_STATE_SUCCEEDED && imageDigest != "" {
+				if _, _, err := registry.SplitPinnedReference(imageDigest); err == nil {
+					if _, err := tx.ExecContext(ctx, `INSERT INTO registry_image_deletions(image_ref, created_at)
+						VALUES ($1, $2) ON CONFLICT DO NOTHING`, imageDigest, now); err != nil {
+						return err
+					}
+				}
+			}
 			result, err := tx.ExecContext(ctx,
 				`UPDATE build_runs SET state = $1, failure_reason = $2, finished_at = $3, lease_expires_at = NULL
 				  WHERE id = $4 AND state = $5 AND builder_id = $6 AND owner_epoch = $7`,

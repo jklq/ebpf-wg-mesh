@@ -260,6 +260,13 @@ func TestDeploymentActionCancelIgnoresLateBuilderAndAgent(t *testing.T) {
 	if err := completeBuildForTest(ctx, store, "builder-cancel", build.ID, platformv1.BuildState_BUILD_STATE_SUCCEEDED, "commit-cancel", pinnedImage("c"), ""); err != nil {
 		t.Fatalf("late completeBuild: %v", err)
 	}
+	var queuedDeletion bool
+	if err := store.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM registry_image_deletions WHERE image_ref = $1)`, pinnedImage("c")).Scan(&queuedDeletion); err != nil {
+		t.Fatal(err)
+	}
+	if !queuedDeletion {
+		t.Fatal("cancelled build kept its already-pushed image")
+	}
 	after := currentDeploymentForTest(t, store, ctx, service.ID)
 	cancelled := deploymentByIDForTest(t, store, ctx, userID, projectID, service.ID, current.ID)
 	if cancelled.State != deliverycore.DeploymentStateCancelled {

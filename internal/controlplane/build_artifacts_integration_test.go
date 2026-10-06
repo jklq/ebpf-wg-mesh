@@ -848,79 +848,78 @@ func TestSupersededBuildArtifactAgesOutWithRetention(t *testing.T) {
 	if depState != "superseded" {
 		t.Fatalf("build1 deployment state = %q, want the doomed build's history entry kept as superseded", depState)
 	}
-	deleted, err := testDelivery(store).PruneBuildArtifacts(ctx, time.Now().UTC().Add(time.Hour), 0)
+	deleted, err := testDelivery(store).PruneBuildArtifacts(ctx, time.Now().UTC().Add(time.Hour))
 	if err != nil {
 		t.Fatalf("PruneBuildArtifacts: %v", err)
 	}
 	if deleted != 1 {
 		t.Fatalf("pruned %d artifacts, want the superseded build's undeployed image to age out", deleted)
 	}
-	var count int
-	if err := store.db.QueryRowContext(ctx, `SELECT count(*) FROM build_artifacts WHERE id = $1`, artifactID).Scan(&count); err != nil {
+	var retained bool
+	if err := store.db.QueryRowContext(ctx, `SELECT image_retained FROM build_artifacts WHERE id = $1`, artifactID).Scan(&retained); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatal("a never-deployed artifact evaded retention by pinning itself to its superseded deployment")
+	if retained {
+		t.Fatal("never-deployed image evaded retention")
 	}
 }
 
-// TestPruneBuildArtifactsKeepsRollbackMaterial: referenced and recent artifacts
-// survive; only aged-out unreferenced ones past keep-recent are deleted.
-func TestPruneBuildArtifactsKeepsRollbackMaterial(t *testing.T) {
+func TestPruneBuildArtifactsKeepsCurrentPreviousAndInProgress(t *testing.T) {
 	t.Parallel()
-	store, ctx, _, _, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
-	now := time.Now().UTC()
-
-	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-first", "b", now.AddDate(0, 0, -42))
-	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-second", "c", now.AddDate(0, 0, -41))
-	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-newest", "d", now.AddDate(0, 0, -40))
-	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-old-referenced", "e", now.AddDate(0, 0, -43))
-	seedArtifactForRetentionTest(t, store, ctx, service.ID, "artifact-recent", "f", now.AddDate(0, 0, -1))
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE service_delivery_status SET current_artifact_id = $1 WHERE service_id = $2`,
-		"artifact-old-referenced", service.ID); err != nil {
-		t.Fatal(err)
-	}
-
-	deleted, err := testDelivery(store).PruneBuildArtifacts(ctx, now.AddDate(0, 0, -30), 1)
-	if err != nil {
-		t.Fatalf("PruneBuildArtifacts: %v", err)
-	}
-	if deleted != 2 {
-		t.Fatalf("pruned %d artifacts, want the 2 oldest unreferenced", deleted)
-	}
-
-	rows, err := store.db.QueryContext(ctx, `SELECT id FROM build_artifacts WHERE service_id = $1`, service.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	remaining := make(map[string]bool)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+	store, ctx, userID, _, service := setupPinnedImageServiceForDeployment(t, pinnedImage("a"))
+	completeActionRollout(t, store, service.ID)
+	first := currentDeploymentForTest(t, store, ctx, service.ID)
+	deploy := func(image string) {
+		t.Helper()
+		if _, _, err := updateService(ctx, store, userID, service.ID, "", directImageServiceSpec(image, &platformv1.ServiceRuntime{Ports: runtimePortsFromInts([]int32{8081})})); err != nil {
 			t.Fatal(err)
 		}
-		remaining[id] = true
+		if _, err := releaseEnvironmentServiceForTest(ctx, store, userID, service.EnvironmentID, service.ID); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if err := rows.Err(); err != nil {
+	deploy(pinnedImage("b"))
+	completeActionRollout(t, store, service.ID)
+	second := currentDeploymentForTest(t, store, ctx, service.ID)
+	deploy(pinnedImage("c"))
+	third := currentDeploymentForTest(t, store, ctx, service.ID)
+	now := time.Now().UTC()
+	seedArtifactForRetentionTest(t, store, ctx, service.ID, "unused-recent", "f", now)
+	if _, err := testDelivery(store).PruneBuildArtifacts(ctx, now); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{
-		"artifact-old-newest":     true, // newest unreferenced old artifact kept per keep-recent
-		"artifact-old-referenced": true, // referenced by the current pointer: rollback material
-		"artifact-recent":         true, // inside the retention window
+	assertRetainedImage(t, store, ctx, first.ArtifactID, false)
+	assertRetainedImage(t, store, ctx, second.ArtifactID, true)
+	assertRetainedImage(t, store, ctx, third.ArtifactID, true)
+	assertRetainedImage(t, store, ctx, "unused-recent", false)
+	// Old serving allocations must keep their images even beyond the rollback TTL.
+	if _, err := testDelivery(store).PruneBuildArtifacts(ctx, now.Add(25*time.Hour)); err != nil {
+		t.Fatal(err)
 	}
-	gone := []string{"artifact-old-first", "artifact-old-second"}
-	for id := range want {
-		if !remaining[id] {
-			t.Fatalf("retention deleted %s; remaining = %v", id, remaining)
-		}
+	assertRetainedImage(t, store, ctx, second.ArtifactID, true)
+	completeActionRollout(t, store, service.ID)
+	if _, err := testDelivery(store).PruneBuildArtifacts(ctx, now); err != nil {
+		t.Fatal(err)
 	}
-	for _, id := range gone {
-		if remaining[id] {
-			t.Fatalf("retention kept unreferenced aged artifact %s; remaining = %v", id, remaining)
-		}
+	assertRetainedImage(t, store, ctx, second.ArtifactID, true)
+	if _, err := testDelivery(store).PruneBuildArtifacts(ctx, now.Add(25*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	assertRetainedImage(t, store, ctx, second.ArtifactID, false)
+	assertRetainedImage(t, store, ctx, third.ArtifactID, true)
+	if _, _, err := applyDeploymentActionForTest(ctx, store, userID, service.ID, first.ID, platformv1.DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK, "expired-direct", ""); err == nil || !strings.Contains(err.Error(), "no GitHub source") {
+		t.Fatalf("expired direct image rollback: %v", err)
+	}
+}
+
+func assertRetainedImage(t *testing.T, store *persistence, ctx context.Context, artifactID string, want bool) {
+	t.Helper()
+	var got bool
+	if err := store.db.QueryRowContext(ctx, `SELECT image_retained FROM build_artifacts WHERE id = $1`, artifactID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("artifact %s retained = %v, want %v", artifactID, got, want)
 	}
 }
 

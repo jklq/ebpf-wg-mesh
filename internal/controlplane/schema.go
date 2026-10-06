@@ -1,6 +1,6 @@
 package controlplane
 
-const currentSchemaVersion = 40
+const currentSchemaVersion = 41
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
@@ -353,6 +353,7 @@ var currentSchema = []string{
 			rollout_generation INT8 NOT NULL DEFAULT 0,
 			build_id TEXT NOT NULL DEFAULT '',
 			artifact_id TEXT NULL,
+			source_revision_id TEXT NULL,
 			state TEXT NOT NULL,
 			cause_kind TEXT NOT NULL,
 			cause_id TEXT NOT NULL DEFAULT '',
@@ -488,6 +489,7 @@ var currentSchema = []string{
 			image_manifest_digest TEXT NOT NULL CHECK (image_manifest_digest LIKE 'sha256:%'),
 			image_ref TEXT NOT NULL,
 			source_image_ref TEXT NOT NULL DEFAULT '',
+			image_retained BOOL NOT NULL DEFAULT TRUE,
 			reuse_key TEXT NOT NULL DEFAULT '',
 			build_actor_kind TEXT NOT NULL DEFAULT '',
 			build_actor_id TEXT NOT NULL DEFAULT '',
@@ -497,6 +499,10 @@ var currentSchema = []string{
 	`CREATE UNIQUE INDEX idx_build_artifacts_service_direct_ref ON build_artifacts(service_id, image_ref, source_image_ref) WHERE kind = 'direct_image'`,
 	`CREATE INDEX idx_build_artifacts_service_created ON build_artifacts(service_id, created_at DESC, id)`,
 	`CREATE UNIQUE INDEX idx_build_artifacts_build ON build_artifacts(build_id) WHERE build_id IS NOT NULL`,
+	`CREATE TABLE registry_image_deletions (
+		image_ref TEXT PRIMARY KEY,
+		created_at TIMESTAMPTZ NOT NULL
+	)`,
 	`CREATE TABLE github_installations (
 			installation_id INT8 PRIMARY KEY,
 			account_login TEXT NOT NULL,
@@ -669,6 +675,8 @@ var currentSchema = []string{
 	`CREATE INDEX idx_durable_work_items_resource ON durable_work_items(resource_type, resource_id, state)`,
 	`ALTER TABLE service_delivery_status ADD CONSTRAINT fk_service_delivery_status_latest_build
 			FOREIGN KEY (latest_build_id) REFERENCES build_runs(id) ON DELETE SET NULL`,
+	`ALTER TABLE deployments ADD CONSTRAINT fk_deployments_source_revision
+		FOREIGN KEY (source_revision_id) REFERENCES source_revisions(id) ON DELETE SET NULL`,
 	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_source_revision
 			FOREIGN KEY (source_revision_id) REFERENCES source_revisions(id) ON DELETE SET NULL`,
 	`ALTER TABLE build_runs ADD CONSTRAINT fk_build_runs_source_snapshot

@@ -54,6 +54,8 @@ func StartManagedRegistry(ctx context.Context, cfg LocalRegistryConfig, runner D
 log:
   level: warn
 storage:
+  delete:
+    enabled: true
   filesystem:
     rootdirectory: /var/lib/registry
 http:

@@ -110,7 +110,7 @@ func (r *GitHubReconciler) ProcessNext(ctx context.Context) (bool, error) {
 	}
 	slog.InfoContext(ctx, "github work item claimed", "kind", rec.Kind, "service_id", payload.ServiceID, "provider_scope_external_id", payload.ProviderScopeExternalID, "provider_repository_external_id", payload.ProviderRepositoryExternalID, "tracked_ref", payload.TrackedRef, "commit_sha", payload.CommitSHA)
 	if err := r.coordinator.processWorkItem(ctx, rec, payload); err != nil {
-		retryable := !errors.Is(err, errUnknownWorkKind)
+		retryable := rec.Kind != SourceWorkKindDeploymentRebuild && !errors.Is(err, errUnknownWorkKind)
 		if failErr := r.coordinator.FailWorkItem(ctx, rec, err, retryable); failErr != nil {
 			return false, failErr
 		}
