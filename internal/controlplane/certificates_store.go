@@ -101,9 +101,9 @@ func (s *certificatePersistence) SaveIssued(ctx context.Context, version certifi
 		); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPSERT INTO ingress_certificates(
+		_, err = tx.ExecContext(ctx, `INSERT INTO ingress_certificates(
 				hostname, fingerprint, not_after, renew_at, attempts, next_attempt_at, last_error, updated_at
-			) VALUES ($1, $2, $3, $4, 0, $4, '', $5)`,
+			) VALUES ($1, $2, $3, $4, 0, $4, '', $5) ON CONFLICT(hostname) DO UPDATE SET fingerprint=EXCLUDED.fingerprint, not_after=EXCLUDED.not_after, renew_at=EXCLUDED.renew_at, attempts=0, next_attempt_at=EXCLUDED.next_attempt_at, last_error='', updated_at=EXCLUDED.updated_at`,
 			version.Hostname, version.Fingerprint, version.NotAfter, renewAt, now,
 		)
 		return err
@@ -146,7 +146,7 @@ func (s *certificatePersistence) PruneCertificates(ctx context.Context, keep []s
 	}
 	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM ingress_certificates c
-			WHERE NOT (c.hostname = ANY($1::STRING[]))
+			WHERE NOT (c.hostname = ANY($1::TEXT[]))
 			  AND NOT EXISTS (SELECT 1 FROM domain_bindings d WHERE d.hostname = c.hostname)`, keep); err != nil {
 			return err
 		}
@@ -161,8 +161,8 @@ func (s *certificatePersistence) PruneCertificates(ctx context.Context, keep []s
 }
 
 func (s *certificatePersistence) PutChallenge(ctx context.Context, challenge xds.Challenge, expiresAt time.Time) error {
-	_, err := s.db.ExecContext(ctx, `UPSERT INTO acme_http_challenges(token, hostname, key_authorization, expires_at)
-		VALUES ($1, $2, $3, $4)`, challenge.Token, challenge.Hostname, challenge.KeyAuthorization, expiresAt)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO acme_http_challenges(token, hostname, key_authorization, expires_at)
+		VALUES ($1, $2, $3, $4) ON CONFLICT(token) DO UPDATE SET hostname=EXCLUDED.hostname,key_authorization=EXCLUDED.key_authorization,expires_at=EXCLUDED.expires_at`, challenge.Token, challenge.Hostname, challenge.KeyAuthorization, expiresAt)
 	return err
 }
 
@@ -214,8 +214,8 @@ func (s *certificatePersistence) SaveACMEAccount(ctx context.Context, account ce
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPSERT INTO acme_accounts(directory_url, account_uri, key_dek_id, key_ciphertext, created_at)
-			VALUES ($1, $2, $3, $4, $5)`, account.DirectoryURL, account.URI, key.DEKID, key.Data, time.Now().UTC())
+		_, err = tx.ExecContext(ctx, `INSERT INTO acme_accounts(directory_url, account_uri, key_dek_id, key_ciphertext, created_at)
+			VALUES ($1, $2, $3, $4, $5) ON CONFLICT(directory_url) DO UPDATE SET account_uri=EXCLUDED.account_uri,key_dek_id=EXCLUDED.key_dek_id,key_ciphertext=EXCLUDED.key_ciphertext,created_at=EXCLUDED.created_at`, account.DirectoryURL, account.URI, key.DEKID, key.Data, time.Now().UTC())
 		return err
 	})
 }

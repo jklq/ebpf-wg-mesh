@@ -257,7 +257,7 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	_ = allocB
 }
 
-func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
+func TestServiceLogsMixedAuthorsAndFileStoreDefault(t *testing.T) {
 	clickhouseURL := startTestClickHouse(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -367,8 +367,8 @@ func TestServiceLogsMixedAuthorsAndDisabledStoreFailClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = disabled.dashboard.ListServiceLogs(userContext(t, disabled, ctx, "user-a"), &platformv1.ListServiceLogsRequest{ServiceId: disabledSvc.ID})
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("disabled log store returned %v, want FailedPrecondition", err)
+	if err != nil {
+		t.Fatalf("default file log store returned %v", err)
 	}
 }
 

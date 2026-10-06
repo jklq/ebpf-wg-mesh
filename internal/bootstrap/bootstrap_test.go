@@ -72,7 +72,7 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 }
 
-func TestControlPlaneBootstrapDefaultsToProductionAndRejectsLoopbackDatabase(t *testing.T) {
+func TestControlPlaneBootstrapDefaultsToProductionAndRejectsEphemeralState(t *testing.T) {
 	t.Parallel()
 
 	_, err := ControlPlane([]string{
@@ -86,8 +86,8 @@ func TestControlPlaneBootstrapDefaultsToProductionAndRejectsLoopbackDatabase(t *
 		"-source-archives-s3-bucket", "platform-source-archives",
 		"-ingress-public-addr", "platform.example.test",
 	})
-	if err == nil || !strings.Contains(err.Error(), "loopback host") {
-		t.Fatalf("expected production to reject loopback database, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "stateDir must not use ephemeral storage") {
+		t.Fatalf("expected production to reject ephemeral state, got %v", err)
 	}
 }
 

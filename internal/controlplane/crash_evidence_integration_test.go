@@ -146,7 +146,8 @@ func TestCrashEvidenceSurvivesContainerRemoval(t *testing.T) {
 		if alloc == nil || !alloc.GetRestart().GetCrashLoop() {
 			return false, nil
 		}
-		return alloc.GetRestart().GetRestartCount() == 5 &&
+		state := resp.GetService().GetLatestDeployment().GetState()
+		return (state == platformv1.DeploymentState_DEPLOYMENT_STATE_CRASHED || state == platformv1.DeploymentState_DEPLOYMENT_STATE_FAILED) && alloc.GetRestart().GetRestartCount() == 5 &&
 			alloc.GetRestart().GetLastExitCode() == 137 &&
 			alloc.GetRestart().GetLastCause() == platformv1.RestartCause_RESTART_CAUSE_OOM_KILL, nil
 	}); err != nil {

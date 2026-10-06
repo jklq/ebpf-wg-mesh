@@ -690,6 +690,9 @@ func (s *database) LoadPublication(ctx context.Context) (xds.Publication, error)
 }
 
 func (s *database) CompareAndSwapPublication(ctx context.Context, oldVersion string, pub xds.Publication) (bool, error) {
+	if pub.Inputs == nil {
+		pub.Inputs = []byte{}
+	}
 	now := time.Now().UTC()
 	if oldVersion == "" {
 		result, err := s.db.ExecContext(ctx, `INSERT INTO xds_publications(

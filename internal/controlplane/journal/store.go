@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/google/uuid"
 )
 
@@ -130,7 +130,7 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 	recordedNoOp := false
 	resolvedReceipt := false
 	resolvedNoOp := false
-	err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		appended = false
 		recordedNoOp = false
 		resolvedReceipt = false
@@ -224,7 +224,7 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO cluster_journal_receipts
 			(cluster_id, command_id, log_index, command_version, command_type, payload, authorizing_epoch, created_at, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8 + $9::INT8 * INTERVAL '1 microsecond')`,
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8::TIMESTAMPTZ + $9::INT8 * INTERVAL '1 microsecond')`,
 			receipt.ClusterID, receipt.CommandID, receipt.LogIndex, receipt.CommandVersion, receipt.CommandType, receipt.Payload, receipt.AuthorizingEpoch, receipt.CreatedAt, receiptLifetime.Microseconds()); err != nil {
 			return err
 		}
@@ -318,7 +318,7 @@ func (s *Store) appliedLocked(ok bool) (func(Applied), Applied) {
 func (s *Store) read(ctx context.Context, fn func(*sql.Tx, *Projection) error) error {
 	var next *Projection
 	var batches []Batch
-	err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		var head int64
 		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&head); err != nil {
 			return err

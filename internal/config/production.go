@@ -11,6 +11,14 @@ import (
 )
 
 func validateProductionControlPlane(cfg ControlPlaneConfig) error {
+	if err := validateProductionDurablePath("controlplane.stateDir", cfg.StateDir); err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Logs.ClickHouse.URL) == "" {
+		if err := validateProductionDurablePath("controlplane.logs.file.directory", cfg.Logs.File.Directory); err != nil {
+			return err
+		}
+	}
 	if err := validateProductionTLSIdentity("controlplane.internalGrpc.tls.serverNames", cfg.InternalGRPC.TLS.ServerNames); err != nil {
 		return err
 	}
@@ -47,7 +55,7 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 		return err
 	}
 	if cfg.Registry.Host != "" {
-		if err := validateProductionPublicHost("controlplane.registry.host", hostnameFromDialTarget(cfg.Registry.Host)); err != nil {
+		if err := validateProductionDurableHost("controlplane.registry.host", hostnameFromDialTarget(cfg.Registry.Host)); err != nil {
 			return err
 		}
 	}
@@ -161,9 +169,6 @@ func validateProductionDurableHost(field, host string) error {
 	if host == "" {
 		return fmt.Errorf("%s is required in production", field)
 	}
-	if isLoopbackHost(host) {
-		return fmt.Errorf("%s must not use a loopback host as a durable service in production", field)
-	}
 	return nil
 }
 
@@ -205,8 +210,8 @@ func validateProductionSourceArchives(cfg SourceArchiveConfig) error {
 	if provider == "" {
 		provider = SourceArchiveProviderFile
 	}
-	if provider != SourceArchiveProviderS3 {
-		return errors.New("controlplane.sourceArchives.provider must be s3 in production; the filesystem provider is for development only")
+	if provider == SourceArchiveProviderFile {
+		return validateProductionDurablePath("controlplane.sourceArchives.directory", cfg.Directory)
 	}
 	if strings.TrimSpace(cfg.S3.Endpoint) == "" || strings.TrimSpace(cfg.S3.Region) == "" || strings.TrimSpace(cfg.S3.Bucket) == "" {
 		return errors.New("controlplane.sourceArchives.s3 endpoint, region, and bucket are required in production")
@@ -237,7 +242,12 @@ func isEphemeralPath(path string) bool {
 	if path == tmp || strings.HasPrefix(path, tmp+string(os.PathSeparator)) {
 		return true
 	}
-	return path == "/tmp" || strings.HasPrefix(path, "/tmp"+string(os.PathSeparator))
+	for _, base := range []string{"/tmp", "/var/tmp", "/run", "/dev/shm"} {
+		if path == base || strings.HasPrefix(path, base+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func hostnameFromDialTarget(raw string) string {

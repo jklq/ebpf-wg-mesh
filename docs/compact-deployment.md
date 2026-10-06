@@ -32,3 +32,31 @@ The local development stack uses file logs by default. Set
 See [benchmarks/compact.md](benchmarks/compact.md). RAM values are measurements,
 not a guarantee for every workload. Allocation bytes measure temporary work;
 they are not the same as resident RAM.
+
+## Durable local storage and PostgreSQL
+
+Set `CONTROLPLANE_STATE_DIR=/var/lib/ebpf-wg-mesh/controlplane` on a persistent
+filesystem. The file archive provider works in production. It defaults to the
+`source-archives` directory below the state directory. Use
+`CONTROLPLANE_SOURCE_ARCHIVES_DIR` for a separate persistent disk.
+Relative paths, `/tmp`, `/var/tmp`, `/run`, and `/dev/shm` are rejected in production.
+Local file storage does not provide replication. Keep a backup on another machine.
+
+The control-plane schema and dashboard schema use PostgreSQL SQL types.
+Transactions use serializable isolation and retry the whole transaction on
+serialization conflicts and deadlocks. CockroachDB remains supported by the
+same SQL. This is a flat schema cutover: recreate a database with an older
+control-plane schema version rather than applying a migration chain.
+
+The production database, registry, and optional ClickHouse can use loopback.
+Keep mTLS identities and the public HTTPS ingress settings. A loopback registry
+works for a builder and agent on the same VM. A home builder must use a registry
+address it can reach, such as an authenticated HTTPS endpoint or a VPN address.
+The operator's local registry must retain its data on a persistent filesystem.
+The PaaS authenticates the registry; it does not run the registry storage process.
+
+Back up PostgreSQL with `pg_dump`, and copy the source archives and registry
+storage to another machine. Back up the control-plane state and provisioned
+keyring separately from the database. The encrypted database alone cannot
+recover service secrets or signing keys. Test a restore into a fresh database
+and disk directory before relying on the backups.

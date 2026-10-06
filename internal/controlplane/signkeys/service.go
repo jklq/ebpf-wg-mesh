@@ -12,7 +12,7 @@ import (
 
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -202,7 +202,7 @@ func (s *Service) RotateStart(ctx context.Context, scope string, opts RotateOpti
 		return Record{}, Record{}, err
 	}
 	var newActive Record
-	if err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	if err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		res, err := tx.ExecContext(ctx,
 			`UPDATE platform_signing_keys SET state = 'retiring', retired_at = $1, updated_at = $1
@@ -283,7 +283,7 @@ func (s *Service) RotateFinish(ctx context.Context, scope string, opts FinishOpt
 		return Record{}, fmt.Errorf("%w: scope %q retiring key %s needs %s more overlap (retired %s, minimum %s)",
 			ErrOverlapNotElapsed, scope, retiring.ID, remaining.Round(time.Second), retiredAt.Format(time.RFC3339), minimum)
 	}
-	if err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	if err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`DELETE FROM platform_signing_keys WHERE id = $1 AND state = 'retiring'`, retiring.ID)
 		if err != nil {
@@ -710,7 +710,7 @@ func (s *Service) materialize(ctx context.Context, rec Record) (Material, error)
 
 func (s *Service) casWrapping(ctx context.Context, id, fromKeyID, toKeyID string, wrapped []byte) (bool, error) {
 	var changed bool
-	if err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	if err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE platform_signing_keys SET wrapping_key_id = $1, wrapped_key = $2, updated_at = $3
 			  WHERE id = $4 AND wrapping_key_id = $5`,

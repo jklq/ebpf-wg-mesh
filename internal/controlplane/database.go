@@ -21,7 +21,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -207,7 +207,7 @@ func (s *database) compactJournal(ctx context.Context, retain int64) (int64, err
 }
 
 func (s *database) withCoordinationTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
-	return crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error { return fn(ctx, tx) })
+	return sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error { return fn(ctx, tx) })
 }
 
 func (s *database) withObservationTx(ctx context.Context, fn func(context.Context, *sql.Tx) (bool, error)) error {

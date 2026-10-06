@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -243,7 +243,7 @@ func (s *DEKStore) VerifyAll(ctx context.Context) (verified int, err error) {
 
 func (s *DEKStore) casWrapping(ctx context.Context, dekID, fromKeyID, toKeyID string, wrapped []byte) (bool, error) {
 	var changed bool
-	if err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	if err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE envelope_data_keys SET wrapping_key_id = $1, wrapped_dek = $2, updated_at = $3
 			  WHERE id = $4 AND wrapping_key_id = $5`,

@@ -282,121 +282,121 @@ var productTables = []productTable{
 		},
 	},
 	{
-		name: "services", keySQL: "id::STRING", jsonSQL: serviceJSON, filter: serviceLiveFilter,
+		name: "services", keySQL: "id::TEXT", jsonSQL: serviceJSON, filter: serviceLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Services, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Services, keys, keyedRead[ServiceIntent]{
-				name: "services", keySQL: "id::STRING", jsonSQL: serviceJSON, filter: serviceLiveFilter,
+				name: "services", keySQL: "id::TEXT", jsonSQL: serviceJSON, filter: serviceLiveFilter,
 				decode: decodeValue[ServiceIntent], where: singleKeyWhereID,
 			})
 			return Batch{Services: changes}, err
 		},
 	},
 	{
-		name: "service_revisions", keySQL: "service_id::STRING || '/' || spec_revision::STRING", jsonSQL: revisionJSON, filter: serviceChildLiveFilter("service_revisions", "service_id"),
+		name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: serviceChildLiveFilter("service_revisions", "service_id"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Revisions, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Revisions, keys, keyedRead[ServiceRevision]{
-				name: "service_revisions", keySQL: "service_id::STRING || '/' || spec_revision::STRING", jsonSQL: revisionJSON, filter: serviceChildLiveFilter("service_revisions", "service_id"),
+				name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: serviceChildLiveFilter("service_revisions", "service_id"),
 				decode: decodeValue[ServiceRevision], where: pairKeyWhereRevisions,
 			})
 			return Batch{Revisions: changes}, err
 		},
 	},
 	{
-		name: "allocation_assignments", keySQL: "id::STRING", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
+		name: "allocation_assignments", keySQL: "id::TEXT", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Assignments, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Assignments, keys, keyedRead[Assignment]{
-				name: "allocation_assignments", keySQL: "id::STRING", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
+				name: "allocation_assignments", keySQL: "id::TEXT", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
 				decode: decodeValue[Assignment], where: singleKeyWhereID,
 			})
 			return Batch{Assignments: changes}, err
 		},
 	},
 	{
-		name: "service_rollouts", keySQL: "service_id::STRING || '/' || rollout_generation::STRING", jsonSQL: rolloutJSON, filter: serviceChildLiveFilter("service_rollouts", "service_id"),
+		name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: serviceChildLiveFilter("service_rollouts", "service_id"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Rollouts, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Rollouts, keys, keyedRead[Rollout]{
-				name: "service_rollouts", keySQL: "service_id::STRING || '/' || rollout_generation::STRING", jsonSQL: rolloutJSON, filter: serviceChildLiveFilter("service_rollouts", "service_id"),
+				name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: serviceChildLiveFilter("service_rollouts", "service_id"),
 				decode: decodeValue[Rollout], where: pairKeyWhereRollouts,
 			})
 			return Batch{Rollouts: changes}, err
 		},
 	},
 	{
-		name: "deployments", keySQL: "id::STRING", jsonSQL: deploymentJSON, filter: serviceChildLiveFilter("deployments", "service_id"),
+		name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: serviceChildLiveFilter("deployments", "service_id"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Deployments, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Deployments, keys, keyedRead[Deployment]{
-				name: "deployments", keySQL: "id::STRING", jsonSQL: deploymentJSON, filter: serviceChildLiveFilter("deployments", "service_id"),
+				name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: serviceChildLiveFilter("deployments", "service_id"),
 				decode: decodeValue[Deployment], where: singleKeyWhereID,
 			})
 			return Batch{Deployments: changes}, err
 		},
 	},
 	{
-		name: "agent_registrations", keySQL: "id::STRING", jsonSQL: agentJSON,
+		name: "agent_registrations", keySQL: "id::TEXT", jsonSQL: agentJSON,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Agents, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Agents, keys, keyedRead[AgentRegistration]{
-				name: "agent_registrations", keySQL: "id::STRING", jsonSQL: agentJSON,
+				name: "agent_registrations", keySQL: "id::TEXT", jsonSQL: agentJSON,
 				decode: decodeValue[AgentRegistration], where: singleKeyWhereID,
 			})
 			return Batch{Agents: changes}, err
 		},
 	},
 	{
-		name: "agent_administration", keySQL: "agent_id::STRING", jsonSQL: administrationJSON,
+		name: "agent_administration", keySQL: "agent_id::TEXT", jsonSQL: administrationJSON,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Administration, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Administration, keys, keyedRead[AgentAdministration]{
-				name: "agent_administration", keySQL: "agent_id::STRING", jsonSQL: administrationJSON,
+				name: "agent_administration", keySQL: "agent_id::TEXT", jsonSQL: administrationJSON,
 				decode: decodeValue[AgentAdministration], where: singleKeyWhereAgentID,
 			})
 			return Batch{Administration: changes}, err
 		},
 	},
 	{
-		name: "environments", keySQL: "id::STRING", jsonSQL: environmentJSON, filter: environmentLiveFilter,
+		name: "environments", keySQL: "id::TEXT", jsonSQL: environmentJSON, filter: environmentLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Environments, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Environments, keys, keyedRead[Environment]{
-				name: "environments", keySQL: "id::STRING", jsonSQL: environmentJSON, filter: environmentLiveFilter,
+				name: "environments", keySQL: "id::TEXT", jsonSQL: environmentJSON, filter: environmentLiveFilter,
 				decode: decodeValue[Environment], where: singleKeyWhereID,
 			})
 			return Batch{Environments: changes}, err
 		},
 	},
 	{
-		name: "volumes", keySQL: "id::STRING", jsonSQL: volumeJSON, filter: volumeLiveFilter,
+		name: "volumes", keySQL: "id::TEXT", jsonSQL: volumeJSON, filter: volumeLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Volumes, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Volumes, keys, keyedRead[Volume]{
-				name: "volumes", keySQL: "id::STRING", jsonSQL: volumeJSON, filter: volumeLiveFilter,
+				name: "volumes", keySQL: "id::TEXT", jsonSQL: volumeJSON, filter: volumeLiveFilter,
 				decode: decodeValue[Volume], where: singleKeyWhereID,
 			})
 			return Batch{Volumes: changes}, err
 		},
 	},
 	{
-		name: "volume_destructions", keySQL: "volume_id::STRING", jsonSQL: destructionJSON,
+		name: "volume_destructions", keySQL: "volume_id::TEXT", jsonSQL: destructionJSON,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Destructions, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Destructions, keys, keyedRead[VolumeDestruction]{
-				name: "volume_destructions", keySQL: "volume_id::STRING", jsonSQL: destructionJSON,
+				name: "volume_destructions", keySQL: "volume_id::TEXT", jsonSQL: destructionJSON,
 				decode: decodeValue[VolumeDestruction], where: singleKeyWhereVolumeID,
 			})
 			return Batch{Destructions: changes}, err
 		},
 	},
 	{
-		name: "domain_bindings", keySQL: "hostname::STRING", jsonSQL: domainJSON, filter: domainLiveFilter,
+		name: "domain_bindings", keySQL: "hostname::TEXT", jsonSQL: domainJSON, filter: domainLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Domains, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Domains, keys, keyedRead[Domain]{
-				name: "domain_bindings", keySQL: "hostname::STRING", jsonSQL: domainJSON, filter: domainLiveFilter,
+				name: "domain_bindings", keySQL: "hostname::TEXT", jsonSQL: domainJSON, filter: domainLiveFilter,
 				decode: decodeValue[Domain], where: singleKeyWhereHostname,
 			})
 			return Batch{Domains: changes}, err
@@ -449,5 +449,17 @@ func decodeValue[T any](raw []byte) (T, error) {
 	if err := json.Unmarshal(compact.Bytes(), &value); err != nil {
 		return value, err
 	}
-	return value, nil
+	// PostgreSQL renders UTC SQL timestamps with +00:00. Go can parse that
+	// into time.Local on a UTC host, while replayed JSON uses time.UTC (Z).
+	// Canonicalize through the same encoding used by journal replay so structural
+	// equality does not turn unchanged rows into phantom mutations.
+	canonical, err := json.Marshal(value)
+	if err != nil {
+		return value, err
+	}
+	var normalized T
+	if err := json.Unmarshal(canonical, &normalized); err != nil {
+		return value, err
+	}
+	return normalized, nil
 }

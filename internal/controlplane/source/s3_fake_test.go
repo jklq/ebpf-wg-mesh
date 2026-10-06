@@ -27,7 +27,7 @@ type fakeS3Object struct {
 }
 
 type fakeS3 struct {
-	t      *testing.T
+	t      testing.TB
 	server *httptest.Server
 	bucket string
 
@@ -41,7 +41,7 @@ type fakeS3 struct {
 	putChecksum []string
 }
 
-func newFakeS3(t *testing.T, bucket string) *fakeS3 {
+func newFakeS3(t testing.TB, bucket string) *fakeS3 {
 	t.Helper()
 	fake := &fakeS3{
 		t:          t,

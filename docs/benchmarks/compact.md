@@ -38,3 +38,37 @@ python3 scripts/compact-container-sample.py compact-bench-clickhouse
 ```
 
 The benchmark skips ClickHouse when its environment variable is absent.
+
+## 2. Local durable storage
+
+Read a verified 1 MiB archive range 100 times, three runs. Both adapters start
+with the same content-addressed object. S3 uses an authenticated loopback HTTP
+fixture; this measures the adapter and HTTP work, without WAN latency or the
+RAM/CPU cost of an external S3 server.
+
+| Metric | S3 adapter | Disk adapter | Change |
+| --- | ---: | ---: | ---: |
+| Median allocated bytes/read | 2,258,927 | 1,049,145 | 53.6% less |
+| Median elapsed time/read | 1.632 ms | 0.372 ms | 77.2% less |
+| Allocations/read | 254 | 6 | 97.6% less |
+| Peak benchmark-process RSS, 1,000 reads | 31,628 KiB | 23,200 KiB | 26.6% less |
+| Process CPU time, 1,000 reads | 3.85 s | 1.05 s | 72.7% less |
+
+The process figures use `/usr/bin/time` on the compiled Go test binary and include
+fixture work. They do not include a production S3 server. Allowing a local registry
+address alone has **no measured RAM/CPU reduction**: the same registry still runs.
+The change removes a deployment restriction. Its disk must still be backed up.
+
+Raw data: [archive.txt](archive.txt), [disk process](archive-file-process.txt),
+[S3 process](archive-s3-process.txt).
+
+```sh
+go test ./internal/controlplane/source -run '^$' \
+  -bench BenchmarkArchiveRead -benchtime=100x -count=3
+CONTROLPLANE_TEST_DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/testdb?sslmode=disable \
+  go test -tags=integration ./internal/controlplane ./internal/sqlretry
+```
+
+The database URL must name a disposable test database; the control-plane fixture
+creates isolated databases on that server. Run the dashboard integration tests
+against PostgreSQL with `DASHBOARD_TEST_DATABASE_URL` set to that test database.
