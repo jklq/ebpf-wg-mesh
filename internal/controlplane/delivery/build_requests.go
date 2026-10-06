@@ -42,6 +42,12 @@ func supersedeQueuedBuildsTx(ctx context.Context, tx *sql.Tx, serviceID string, 
 // current spec instead. Only current requests are served; older revisions are refused
 // before they can supersede newer work or regress the rollout. Reuse returns reused=true.
 func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor, transition source.BuildTransition) (BuildRunRecord, DeploymentRecord, bool, error) {
+	return d.enqueueSourceBuildTx(ctx, tx, service, revision, snapshot, buildRecipe, actor, transition, false)
+}
+
+// Historical requests are authorized and fenced by QueueDeploymentRebuild. They
+// deliberately build an old commit without changing the binding's proven head.
+func (d *Delivery) enqueueSourceBuildTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, revision source.SourceRevisionRecord, snapshot source.SourceSnapshotRecord, buildRecipe *platformv1.BuildRecipe, actor deploymentActor, transition source.BuildTransition, historical bool) (BuildRunRecord, DeploymentRecord, bool, error) {
 	s := d.store
 	if err := s.lockServiceTx(ctx, tx, service.ID); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
@@ -68,23 +74,26 @@ func (d *Delivery) enqueueBuildFromSourceStateTx(ctx context.Context, tx *sql.Tx
 	// advances from it, or was just fetched as the tracked head (see source.BuildTransition).
 	// Older revisions carry no proof and are refused. Arrival order is not push order, so
 	// currency is proven against the head, never against "latest observed".
-	head, err := s.sourceStore.SourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID)
-	if err != nil {
-		return BuildRunRecord{}, DeploymentRecord{}, false, err
-	}
-	if !transition.ProvesCurrent(revision.CommitSHA, head) {
-		if transition.PreviousCommit != "" {
-			// A push that cannot prove currency here at all (see errSourceRevisionChainUnproven):
-			// the coordinator reconciles the head and queues the commit still current.
-			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionChainUnproven
-		}
-		return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
-	}
-	if head != revision.CommitSHA {
-		if err := s.sourceStore.SetSourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID, revision.CommitSHA); err != nil {
+	if !historical {
+		head, err := s.sourceStore.SourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID)
+		if err != nil {
 			return BuildRunRecord{}, DeploymentRecord{}, false, err
 		}
+		if !transition.ProvesCurrent(revision.CommitSHA, head) {
+			if transition.PreviousCommit != "" {
+				// A push that cannot prove currency here at all (see errSourceRevisionChainUnproven):
+				// the coordinator reconciles the head and queues the commit still current.
+				return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionChainUnproven
+			}
+			return BuildRunRecord{}, DeploymentRecord{}, false, errSourceRevisionSuperseded
+		}
+		if head != revision.CommitSHA {
+			if err := s.sourceStore.SetSourceBindingHeadCommitTx(ctx, tx, revision.SourceBindingID, revision.CommitSHA); err != nil {
+				return BuildRunRecord{}, DeploymentRecord{}, false, err
+			}
+		}
 	}
+
 	artifact, ok, err := s.buildArtifactByReuseKeyTx(ctx, tx, service.ID, snapshot.Digest, buildRecipe)
 	if err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err

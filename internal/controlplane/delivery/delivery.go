@@ -34,6 +34,7 @@ type Delivery struct {
 	failoverNow    func() time.Time
 	buildScheduler BuildSchedulerConfig
 	imageResolver  registry.ImageResolver
+	imageDeleter   ImageDeleter
 }
 
 // SetImageResolver installs the direct-image tag resolver. Nil resolves digest-pinned

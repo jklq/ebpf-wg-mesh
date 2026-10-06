@@ -47,6 +47,7 @@ const (
 type containerdEngine struct {
 	cfg                     config.AgentConfig
 	client                  *containerd.Client
+	imageMu                 sync.Mutex
 	cni                     cni.CNI
 	logSinkMu               sync.RWMutex
 	logSink                 LogSink
@@ -112,6 +113,11 @@ func (e *containerdEngine) SetLogSink(sink LogSink) {
 }
 
 func (e *containerdEngine) DiscoverServices(ctx context.Context) ([]RuntimeResource, error) {
+	e.imageMu.Lock()
+	defer e.imageMu.Unlock()
+	if err := e.collectUnusedImagesLocked(e.namespaced(ctx)); err != nil {
+		return nil, err
+	}
 	containers, err := e.client.Containers(e.namespaced(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("list containerd resources: %w", err)
@@ -218,7 +224,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 			netnsPath, _ := e.netnsPath(svc.GetAllocationId())
 			return matchedServiceStatus(svc, rec, netnsPath), false, nil
 		}
-		if err := e.RemoveService(ctx, svc.GetAllocationId()); err != nil {
+		if err := e.removeService(ctx, svc.GetAllocationId(), false); err != nil {
 			return serviceStatus{}, false, err
 		}
 		hostsPath, err = e.ensureServiceHostsFile(svc)
@@ -227,6 +233,13 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		}
 	}
 
+	e.imageMu.Lock()
+	defer e.imageMu.Unlock()
+	defer func() {
+		if err := e.collectUnusedImagesLocked(ctx); err != nil {
+			slog.Warn("collect unused allocation images", "error", err)
+		}
+	}()
 	image, err := e.ensureImage(ctx, svc.GetSpec().GetImage(), svc.GetRegistryUsername(), svc.GetRegistryPassword())
 	if err != nil {
 		return serviceStatus{}, false, err
@@ -247,6 +260,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		return serviceStatus{}, false, err
 	}
 	container, err := e.client.NewContainer(ctx, containerID,
+		containerd.WithImage(image),
 		containerd.WithSnapshotter(e.cfg.Runtime.Snapshotter),
 		containerd.WithNewSnapshot(containerID, image),
 		containerd.WithNewSpec(specOpts...),
@@ -356,6 +370,12 @@ func (e *containerdEngine) currentLogSink() LogSink {
 }
 
 func (e *containerdEngine) RemoveService(ctx context.Context, allocationID string) error {
+	return e.removeService(ctx, allocationID, true)
+}
+
+func (e *containerdEngine) removeService(ctx context.Context, allocationID string, collectImages bool) error {
+	e.imageMu.Lock()
+	defer e.imageMu.Unlock()
 	ctx = e.namespaced(ctx)
 	containerID := containerName(allocationID)
 	e.clearOOM(containerID)
@@ -386,6 +406,9 @@ func (e *containerdEngine) RemoveService(ctx context.Context, allocationID strin
 	}
 	if err := e.cleanupServiceHostsFile(allocationID); err != nil {
 		errs = append(errs, err)
+	}
+	if collectImages {
+		errs = append(errs, e.collectUnusedImagesLocked(ctx))
 	}
 	return errors.Join(errs...)
 }
@@ -449,6 +472,8 @@ func (e *containerdEngine) DrainService(ctx context.Context, allocationID string
 }
 
 func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container containerd.Container, containerID, allocationID string) error {
+	e.imageMu.Lock()
+	defer e.imageMu.Unlock()
 	var errs []error
 	if netnsPath, ok := e.netnsPath(allocationID); ok {
 		if err := e.teardownNetwork(ctx, containerID, allocationID, netnsPath); err != nil {
@@ -465,6 +490,7 @@ func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container 
 		errs = append(errs, err)
 	}
 	e.clearOOM(containerID)
+	errs = append(errs, e.collectUnusedImagesLocked(ctx))
 	return errors.Join(errs...)
 }
 
@@ -643,12 +669,21 @@ func (e *containerdEngine) noteOOMEvent(payload typeurl.Any) {
 func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, password string) (containerd.Image, error) {
 	image, err := e.client.GetImage(ctx, ref)
 	if err == nil {
+		metadata := image.Metadata()
+		if metadata.Labels == nil {
+			metadata.Labels = make(map[string]string)
+		}
+		metadata.Labels[meshlabels.Managed] = "true"
+		if _, err := e.client.ImageService().Update(ctx, metadata, "labels"); err != nil {
+			return nil, err
+		}
 		return image, nil
 	}
 	if !errdefs.IsNotFound(err) {
 		return nil, err
 	}
 	opts := []containerd.RemoteOpt{
+		containerd.WithPullLabels(map[string]string{meshlabels.Managed: "true"}),
 		containerd.WithPullUnpack,
 		containerd.WithPullSnapshotter(e.cfg.Runtime.Snapshotter),
 	}

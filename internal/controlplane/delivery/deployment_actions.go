@@ -215,16 +215,24 @@ func (d *Delivery) applyDeploymentActionTx(ctx context.Context, tx *sql.Tx, serv
 	case deploymentActionRestart:
 		return d.restartDeploymentTx(ctx, tx, service, target, allocationID, userID)
 	case deploymentActionExactRedeploy:
-		if strings.TrimSpace(target.ArtifactID) == "" {
-			return "", fmt.Errorf("%w: selected deployment has no pinned image artifact", ErrDeploymentActionInvalid)
+		retained, err := d.retainedDeploymentImageTx(ctx, tx, target)
+		if err != nil {
+			return "", err
+		}
+		if !retained {
+			return d.rebuildHistoricalDeploymentTx(ctx, tx, service, target, userID, reasonExactRedeploy)
 		}
 		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonExactRedeploy, "Exact redeploy scheduled")
 	case deploymentActionRollback:
 		if target.IsCurrent || !deploymentReusableForRollback(target.State) {
 			return "", ErrDeploymentActionInvalid
 		}
-		if strings.TrimSpace(target.ArtifactID) == "" {
-			return "", fmt.Errorf("%w: selected deployment has no pinned image artifact", ErrDeploymentActionInvalid)
+		retained, err := d.retainedDeploymentImageTx(ctx, tx, target)
+		if err != nil {
+			return "", err
+		}
+		if !retained {
+			return d.rebuildHistoricalDeploymentTx(ctx, tx, service, target, userID, reasonRollback)
 		}
 		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonRollback, "Rollback scheduled")
 	case deploymentActionCancel:
@@ -489,55 +497,28 @@ func (s *persistence) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.T
 }
 
 func (d *Delivery) retryDeploymentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, target DeploymentRecord, userID string) (string, error) {
-	s := d.store
 	if target.State != DeploymentStateFailed && target.State != DeploymentStateCancelled && target.State != DeploymentStateCrashed {
 		return "", ErrDeploymentActionInvalid
 	}
-	if strings.TrimSpace(target.ArtifactID) != "" {
+	retained, err := d.retainedDeploymentImageTx(ctx, tx, target)
+	if err != nil {
+		return "", err
+	}
+	if retained {
 		return d.copyDeploymentRolloutTx(ctx, tx, service, target, userID, reasonUserRetry, "Deployment retry scheduled")
 	}
-	if target.BuildID == "" {
+	if target.BuildID == "" && target.SourceRevisionID == "" {
 		return d.retryUnresolvedSourceDeploymentTx(ctx, tx, service, target, userID)
 	}
-	build, err := s.buildRunByIDQuerier(ctx, tx, target.BuildID)
-	if err != nil {
-		return "", err
-	}
-	revision, err := s.sourceStore.SourceRevisionByIDTx(ctx, tx, build.SourceRevisionID)
-	if err != nil {
-		return "", err
-	}
-	snapshot, err := s.sourceStore.SourceSnapshotByRevisionIDTx(ctx, tx, revision.ID)
-	if err != nil {
-		return "", err
-	}
-	nextSpecRevision, err := s.insertCopiedServiceRevisionTx(ctx, tx, service, target.ResolvedSpec)
-	if err != nil {
-		return "", err
-	}
-	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx, `UPDATE services SET current_spec_revision = $1, updated_at = $2 WHERE id = $3`, nextSpecRevision, time.Now().UTC(), service.ID); err != nil {
-		return "", err
-	}
-	service.Spec = target.ResolvedSpec
-	service.SpecRevision = nextSpecRevision
-	_, dep, reused, err := d.enqueueBuildFromSourceStateTx(ctx, tx, service, revision, snapshot, build.BuildRecipe, deploymentActor{Kind: DeploymentCauseUser, ID: userID}, source.BuildTransition{})
-	if errors.Is(err, errSourceRevisionSuperseded) {
-		return "", fmt.Errorf("%w: the deployment's source revision is superseded by a newer one", ErrDeploymentActionInvalid)
-	}
-	if err != nil {
-		return "", err
-	}
-	detail := "Build retry queued from immutable source snapshot"
-	if reused {
-		detail = "Retry reusing previously built image"
-	}
-	if _, err := journal.DeploymentRow(dep.ID).Exec(ctx, tx, `UPDATE deployments SET reason_code = $1, detail = $2 WHERE id = $3`, reasonUserRetry, detail, dep.ID); err != nil {
-		return "", err
-	}
-	return dep.ID, nil
+	return d.rebuildHistoricalDeploymentTx(ctx, tx, service, target, userID, reasonUserRetry)
 }
 
 func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, target DeploymentRecord, userID string) (string, error) {
+	return d.stageSourceDeploymentTx(ctx, tx, service, target, userID, reasonUserRetry,
+		"Deployment retry staged; waiting for source build", "")
+}
+
+func (d *Delivery) stageSourceDeploymentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, target DeploymentRecord, userID, reason, detail, revisionID string) (string, error) {
 	s := d.store
 	if target.ResolvedSpec == nil || source.DesiredSourceSpec(target.ResolvedSpec) == nil {
 		return "", fmt.Errorf("%w: selected deployment has no reusable image or source configuration", ErrDeploymentActionInvalid)
@@ -562,28 +543,33 @@ func (d *Delivery) retryUnresolvedSourceDeploymentTx(ctx context.Context, tx *sq
 	noBuild := ""
 	nextRollout, err := d.bumpServiceRolloutTx(ctx, tx, service, replacementRolloutBump{
 		SpecRevision: nextSpecRevision, Replicas: desiredReplicas,
-		ArtifactID: "", BuildID: &noBuild, RolloutReason: "retry", UserID: userID,
+		ArtifactID: "", BuildID: &noBuild, RolloutReason: strings.ToLower(reason), UserID: userID,
 	}, now)
 	if err != nil {
 		return "", err
 	}
 	dep, err := s.insertDeploymentTx(ctx, tx, service.ID, DeploymentStateStaged,
-		deploymentActor{Kind: DeploymentCauseUser, ID: userID}, reasonUserRetry,
-		"Deployment retry staged; waiting for source build",
+		deploymentActor{Kind: DeploymentCauseUser, ID: userID}, reason, detail,
 		nextSpecRevision, nextRollout, "", "", userID, now)
 	if err != nil {
 		return "", err
 	}
-	if err := s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, nextSpecRevision, true); err != nil {
-		return "", err
+	if revisionID != "" {
+		if _, err := journal.DeploymentRow(dep.ID).Exec(ctx, tx, `UPDATE deployments SET source_revision_id = $1 WHERE id = $2`, revisionID, dep.ID); err != nil {
+			return "", err
+		}
+		_, err = s.enqueueSourceWorkItemTx(ctx, tx, source.DeploymentRebuildParams(dep.ID, service.ID, revisionID))
+	} else {
+		err = s.enqueueSourceSpecChangedTx(ctx, tx, service.ID, nextSpecRevision, true)
 	}
-	return dep.ID, nil
+	return dep.ID, err
 }
 
 func (s *persistence) latestSuccessfulDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID, excludeID string) (DeploymentRecord, bool, error) {
 	rec, err := s.queryDeploymentRow(ctx, tx,
 		`SELECT `+deploymentSelectColumns+` FROM deployments
 		  WHERE service_id = $1 AND id != $2 AND state IN ($3, $4, $5) AND artifact_id IS NOT NULL
+		    AND EXISTS (SELECT 1 FROM build_artifacts a WHERE a.id = deployments.artifact_id AND a.image_retained = TRUE)
 		  ORDER BY rollout_generation DESC, created_at DESC LIMIT 1 FOR UPDATE`,
 		serviceID, excludeID, DeploymentStateActive, DeploymentStateCompleted, DeploymentStateDraining,
 	)

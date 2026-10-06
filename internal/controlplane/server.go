@@ -240,6 +240,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	scheduler := buildSchedulerConfigFromControlPlane(cfg.Builder)
 	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
 	delivery.SetImageResolver(registry.NewHTTPResolver(nil, cfg.DirectImages.AllowedPrivateRegistryHosts))
+	if registryAuth != nil {
+		delivery.SetImageDeleter(registry.NewDeleter(cfg.Registry, registryAuth))
+	}
 	var githubClient *source.GitHubClient
 	var githubCatalog *source.GitHubCatalog
 	var githubCoordinator *source.GitHubCoordinator
@@ -661,8 +664,7 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 			}
 			return
 		}
-		cutoff := now.AddDate(0, 0, -s.cfg.SourceArchives.RetentionDays)
-		deleted, err := s.store.source.PruneSourceArchives(ctx, cutoff)
+		deleted, err := s.store.source.PruneSourceArchives(ctx, now)
 		if err != nil && ctx.Err() == nil {
 			slog.Warn("source archive retention failed", "error", err)
 			return
@@ -672,7 +674,7 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 		}
 	}
 	prune()
-	ticker := time.NewTicker(24 * time.Hour)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
 		select {
@@ -684,8 +686,7 @@ func (s *Server) sourceArchiveRetentionLoop(ctx context.Context) {
 	}
 }
 
-// buildArtifactRetentionLoop prunes unreferenced build artifacts past the retention window.
-// Referenced artifacts are rollback material and never pruned; only unreferenced ones age out.
+// buildArtifactRetentionLoop expires images while retaining deployment provenance.
 func (s *Server) buildArtifactRetentionLoop(ctx context.Context) {
 	prune := func() {
 		now, err := dbtx.DatabaseTime(ctx, s.store.db)
@@ -695,18 +696,20 @@ func (s *Server) buildArtifactRetentionLoop(ctx context.Context) {
 			}
 			return
 		}
-		cutoff := now.AddDate(0, 0, -s.cfg.BuildArtifacts.RetentionDays)
-		deleted, err := s.delivery.PruneBuildArtifacts(ctx, cutoff, s.cfg.BuildArtifacts.KeepRecent)
+		deleted, err := s.delivery.PruneBuildArtifacts(ctx, now)
 		if err != nil && ctx.Err() == nil {
 			slog.Warn("build artifact retention failed", "error", err)
 			return
 		}
 		if deleted > 0 {
-			slog.Info("build artifact retention completed", "artifacts_deleted", deleted)
+			slog.Info("build artifact retention completed", "images_expired", deleted)
+		}
+		if _, err := s.delivery.CollectExpiredImages(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("registry image collection failed", "error", err)
 		}
 	}
 	prune()
-	ticker := time.NewTicker(24 * time.Hour)
+	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
 		select {

@@ -354,6 +354,7 @@ type DeploymentRecord struct {
 	Artifact          *BuildArtifactRecord
 	IsCurrent         bool
 	RequestedByUserID string
+	SourceRevisionID  string
 	BuildID           string
 	// ArtifactID is the runtime identity; ImageDigest mirrors the artifact's pinned image ref.
 	ArtifactID  string

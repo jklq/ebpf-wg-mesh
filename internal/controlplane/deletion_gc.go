@@ -255,9 +255,13 @@ func (p *persistence) hardDeleteExpired(ctx context.Context, deletion expiredDel
 // detachArtifactReferencesTx clears artifact FKs that RESTRICT deletion of
 // build_artifacts. Service/environment/project collection cascades into
 // artifacts in an unspecified order; leaving these pointers in place can
-// block the delete. Prune still uses RESTRICT so live rollback material
-// cannot be removed while these rows exist.
+// block the delete. Queue registry cleanup before cascading away provenance.
 func detachArtifactReferencesTx(ctx context.Context, tx *sql.Tx, servicePredicate string, args ...any) error {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO registry_image_deletions(image_ref, created_at)
+		SELECT image_ref, statement_timestamp() FROM build_artifacts WHERE kind = 'build' AND `+servicePredicate+`
+		ON CONFLICT DO NOTHING`, args...); err != nil {
+		return err
+	}
 	statements := []string{
 		`UPDATE service_delivery_status SET current_artifact_id = NULL WHERE ` + servicePredicate,
 		`UPDATE service_rollouts SET artifact_id = NULL WHERE ` + servicePredicate,

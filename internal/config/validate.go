@@ -72,12 +72,7 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Deletion.GCIntervalSeconds <= 0 {
 		return errors.New("controlplane.deletion.gcIntervalSeconds must be greater than 0")
 	}
-	if cfg.BuildArtifacts.RetentionDays <= 0 {
-		return errors.New("controlplane.buildArtifacts.retentionDays must be greater than 0")
-	}
-	if cfg.BuildArtifacts.KeepRecent <= 0 {
-		return errors.New("controlplane.buildArtifacts.keepRecent must be greater than 0")
-	}
+
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")
 	}
@@ -720,9 +715,7 @@ func validateSourceArchives(cfg SourceArchiveConfig) error {
 	if provider == "" {
 		provider = SourceArchiveProviderFile
 	}
-	if cfg.RetentionDays <= 0 {
-		return errors.New("controlplane.sourceArchives.retentionDays must be greater than 0")
-	}
+
 	switch provider {
 	case SourceArchiveProviderFile:
 		if strings.TrimSpace(cfg.Directory) == "" {

@@ -21,6 +21,8 @@ const SourceWorkAttemptLimit = 25
 // WorkPayload is the source-layer body carried opaquely in a durable-work record's JSON
 // payload. Field names match the retired source_work_items columns.
 type WorkPayload struct {
+	DeploymentID                 string             `json:"deployment_id,omitempty"`
+	SourceRevisionID             string             `json:"source_revision_id,omitempty"`
 	ServiceID                    string             `json:"service_id,omitempty"`
 	SpecRevision                 int64              `json:"spec_revision,omitempty"`
 	Provider                     string             `json:"provider,omitempty"`

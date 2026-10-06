@@ -208,26 +208,7 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	access := intersectRegistryScopes(r.URL.Query()["scope"], capability.Access)
-	active, err := a.keys.Active(r.Context(), signkeys.ScopeRegistry)
-	if err != nil || active.Key == nil || active.Cert == nil {
-		http.Error(w, "mint registry token", http.StatusInternalServerError)
-		return
-	}
-	now := a.now().UTC()
-	claims := registryTokenClaims{
-		Issuer:    a.issuer,
-		Subject:   username,
-		Audience:  a.service,
-		ExpiresAt: jwt.NewNumericDate(now.Add(a.credentialTTL)),
-		NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)),
-		IssuedAt:  jwt.NewNumericDate(now),
-		ID:        uuid.NewString(),
-		Access:    access,
-	}
-	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
-	token.Header["kid"] = active.Record.KID
-	token.Header["x5c"] = []string{base64.StdEncoding.EncodeToString(active.Cert.Raw)}
-	signed, err := token.SignedString(active.Key)
+	signed, now, err := a.mintToken(r.Context(), username, access)
 	if err != nil {
 		http.Error(w, "mint registry token", http.StatusInternalServerError)
 		return
@@ -240,6 +221,37 @@ func (a *Auth) serveToken(w http.ResponseWriter, r *http.Request) {
 		"expires_in":   int64(a.credentialTTL / time.Second),
 		"issued_at":    now.Format(time.RFC3339),
 	})
+}
+
+// deletionToken grants delete only to the control-plane collector. Builder and
+// agent capabilities remain limited to push/pull by normalizedRegistryActions.
+func (a *Auth) deletionToken(ctx context.Context, repository string) (string, error) {
+	if a == nil {
+		return "", errors.New("registry deletion auth is not configured")
+	}
+	token, _, err := a.mintToken(ctx, "image-retention", []registryAccess{{Type: "repository", Name: repository, Actions: []string{"delete"}}})
+	return token, err
+}
+
+func (a *Auth) mintToken(ctx context.Context, subject string, access []registryAccess) (string, time.Time, error) {
+	active, err := a.keys.Active(ctx, signkeys.ScopeRegistry)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	if active.Key == nil || active.Cert == nil {
+		return "", time.Time{}, errors.New("registry signing material unavailable")
+	}
+	now := a.now().UTC()
+	claims := registryTokenClaims{
+		Issuer: a.issuer, Subject: subject, Audience: a.service,
+		ExpiresAt: jwt.NewNumericDate(now.Add(a.credentialTTL)),
+		NotBefore: jwt.NewNumericDate(now.Add(-5 * time.Second)), IssuedAt: jwt.NewNumericDate(now), ID: uuid.NewString(), Access: access,
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+	token.Header["kid"] = active.Record.KID
+	token.Header["x5c"] = []string{base64.StdEncoding.EncodeToString(active.Cert.Raw)}
+	signed, err := token.SignedString(active.Key)
+	return signed, now, err
 }
 
 // parseCapability verifies a capability against the active key first, then the retiring key.

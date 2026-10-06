@@ -199,6 +199,7 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"durable_work_items",
 		"source_snapshots",
 		"source_archive_objects",
+		"registry_image_deletions",
 		"source_revisions",
 		"source_bindings",
 		"github_repository_snapshots",

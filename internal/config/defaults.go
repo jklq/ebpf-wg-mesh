@@ -35,12 +35,7 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Deletion.GCIntervalSeconds <= 0 {
 		cfg.Deletion.GCIntervalSeconds = 60
 	}
-	if cfg.BuildArtifacts.RetentionDays <= 0 {
-		cfg.BuildArtifacts.RetentionDays = 30
-	}
-	if cfg.BuildArtifacts.KeepRecent <= 0 {
-		cfg.BuildArtifacts.KeepRecent = 20
-	}
+
 	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
 		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
 	}
@@ -236,9 +231,6 @@ func applySourceArchiveDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.SourceArchives.Provider == SourceArchiveProviderFile && cfg.SourceArchives.Directory == "" {
 		cfg.SourceArchives.Directory = filepath.Join(cfg.StateDir, "source-archives")
-	}
-	if cfg.SourceArchives.RetentionDays <= 0 {
-		cfg.SourceArchives.RetentionDays = 30
 	}
 	if cfg.SourceArchives.Provider == SourceArchiveProviderS3 {
 		cfg.SourceArchives.S3.ServerSideEncryption = strings.TrimSpace(cfg.SourceArchives.S3.ServerSideEncryption)

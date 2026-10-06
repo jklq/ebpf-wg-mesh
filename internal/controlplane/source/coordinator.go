@@ -128,6 +128,8 @@ func (c *GitHubCoordinator) processWorkItem(ctx context.Context, rec durablework
 		return c.handleProviderAccessChanged(ctx, payload.ProviderScopeExternalID)
 	case SourceWorkKindSourceSpecChanged:
 		return c.syncServiceSource(ctx, payload.ServiceID, payload.SpecRevision)
+	case SourceWorkKindDeploymentRebuild:
+		return c.rebuildDeployment(ctx, payload)
 	case SourceWorkKindRevisionObserved:
 		return c.handleRevisionObserved(ctx, payload)
 	default:
@@ -366,34 +368,8 @@ func (c *GitHubCoordinator) recordBoundRevision(ctx context.Context, binding Sou
 }
 
 func (c *GitHubCoordinator) queueBoundRevisionBuild(ctx context.Context, binding SourceBindingRecord, revision SourceRevisionRecord, transition BuildTransition) error {
-	owner, repo, err := SplitGitHubRepositorySelector(binding.RepositorySelector)
+	pendingSnapshot, err := c.prepareSnapshot(ctx, binding.ProjectID, binding.RepositorySelector, revision)
 	if err != nil {
-		return err
-	}
-	installationID := providerScopeExternalIDToInstallationID(binding.ProviderScopeExternalID)
-	var pendingSnapshot SourceSnapshotRecord
-	if _, err := c.store.SourceSnapshotByRevisionID(ctx, revision.ID); errors.Is(err, sql.ErrNoRows) {
-		stream, size, err := c.client.FetchArchiveStream(ctx, owner, repo, revision.CommitSHA, installationID)
-		if err != nil {
-			return err
-		}
-		digest, objectKey, storedSize, err := c.store.StoreSourceArchiveFromReader(ctx, stream, size)
-		_ = stream.Close()
-		if err != nil {
-			return err
-		}
-		pendingSnapshot = SourceSnapshotRecord{
-			SourceRevisionID:             revision.ID,
-			Provider:                     binding.Provider,
-			ProviderRepositoryExternalID: binding.ProviderRepositoryExternalID,
-			CommitSHA:                    revision.CommitSHA,
-			Digest:                       digest,
-			ObjectKey:                    objectKey,
-			ArchiveSizeBytes:             storedSize,
-			Ready:                        true,
-			FetchedAt:                    sql.NullTime{Time: time.Now().UTC(), Valid: true},
-		}
-	} else if err != nil {
 		return err
 	}
 

@@ -391,7 +391,7 @@ func decideAgentDeploymentTransition(rec DeploymentRecord, observation deploymen
 
 const deploymentSelectColumns = `id, service_id, spec_revision, rollout_generation, build_id, COALESCE(artifact_id, ''),
 	        COALESCE((SELECT image_ref FROM build_artifacts WHERE id = deployments.artifact_id), ''),
-	        state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at`
+	        state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at, COALESCE(source_revision_id, '')`
 
 func (s *persistence) lockServiceTx(ctx context.Context, tx *sql.Tx, serviceID string) error {
 	var id string
@@ -560,9 +560,9 @@ func (s *persistence) insertDeploymentTx(
 	rec.ResolvedSpec = resolvedSpec
 	if _, err := journal.DeploymentRow(rec.ID).Exec(ctx, tx,
 		`INSERT INTO deployments(
-			id, service_id, spec_revision, rollout_generation, build_id, artifact_id,
+			id, service_id, spec_revision, rollout_generation, build_id, artifact_id, source_revision_id,
 			state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), $7, $8, $9, $10, $11, TRUE, $12, $13, $13)`,
+		) VALUES ($1, $2, $3, $4, $5, NULLIF($6, ''), (SELECT source_revision_id FROM build_runs WHERE id = $5), $7, $8, $9, $10, $11, TRUE, $12, $13, $13)`,
 		rec.ID, rec.ServiceID, rec.SpecRevision, rec.RolloutGeneration, rec.BuildID, rec.ArtifactID,
 		rec.State, rec.CauseKind, rec.CauseID, rec.ReasonCode, rec.Detail, rec.RequestedByUserID, rec.CreatedAt,
 	); err != nil {
@@ -820,6 +820,7 @@ func scanDeploymentRow(scanner interface{ Scan(...any) error }) (DeploymentRecor
 		&rec.RequestedByUserID,
 		&rec.CreatedAt,
 		&rec.UpdatedAt,
+		&rec.SourceRevisionID,
 	); err != nil {
 		return DeploymentRecord{}, err
 	}

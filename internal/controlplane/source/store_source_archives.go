@@ -258,23 +258,27 @@ func upsertSourceArchiveObjectTx(ctx context.Context, tx *sql.Tx, key, digest st
 	return err
 }
 
-func (s *SQLStore) PruneSourceArchives(ctx context.Context, cutoff time.Time) (int, error) {
+// PruneSourceArchives keeps archives only for active builds. A short staging window
+// protects a fetch between storing its object and atomically queueing its build.
+func (s *SQLStore) PruneSourceArchives(ctx context.Context, now time.Time) (int, error) {
 	if s.archives == nil {
 		return 0, errors.New("source archive store is not configured")
 	}
-	if err := s.pruneExpiredSnapshots(ctx, cutoff); err != nil {
+	if err := s.pruneFinishedSnapshots(ctx, now); err != nil {
 		return 0, err
 	}
-	return s.collectUnreferencedArchiveObjects(ctx, cutoff)
+	return s.collectUnreferencedArchiveObjects(ctx, now.Add(-WorkLeaseTTL))
 }
 
-func (s *SQLStore) pruneExpiredSnapshots(ctx context.Context, cutoff time.Time) error {
+func (s *SQLStore) pruneFinishedSnapshots(ctx context.Context, now time.Time) error {
 	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx,
 			`SELECT ss.id
 			   FROM source_snapshots ss
-			  WHERE ss.created_at < $1
-			    AND ss.object_key <> ''
+			  WHERE ss.object_key <> ''
+			    AND (ss.created_at < $1 OR EXISTS (
+			        SELECT 1 FROM build_runs b WHERE b.source_snapshot_id = ss.id
+			    ))
 			    AND NOT EXISTS (
 			        SELECT 1 FROM build_runs b
 			         WHERE b.source_snapshot_id = ss.id
@@ -283,7 +287,7 @@ func (s *SQLStore) pruneExpiredSnapshots(ctx context.Context, cutoff time.Time) 
 			  ORDER BY ss.created_at, ss.id
 			  LIMIT 1000
 			  FOR UPDATE OF ss`,
-			cutoff,
+			now.Add(-WorkLeaseTTL),
 		)
 		if err != nil {
 			return err

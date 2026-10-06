@@ -29,8 +29,8 @@ const (
 	BuildArtifactDirectImage = "direct_image"
 )
 
-// BuildArtifactRecord is the immutable source of runtime identity. Rows are insert-only;
-// retention deletes only artifacts nothing references.
+// BuildArtifactRecord keeps immutable runtime identity and provenance. Retention
+// changes image availability while preserving deployment history.
 type BuildArtifactRecord struct {
 	ID                   string
 	ServiceID            string
@@ -48,6 +48,7 @@ type BuildArtifactRecord struct {
 	BuildActorKind       string
 	BuildActorID         string
 	CreatedAt            time.Time
+	ImageRetained        bool
 }
 
 type insertArtifactParams struct {
@@ -69,7 +70,7 @@ type insertArtifactParams struct {
 const buildArtifactSelectColumns = `id, service_id, COALESCE(build_id, ''), kind,
 	source_snapshot_digest, commit_sha, build_recipe_json, builder_version,
 	image_repository, image_manifest_digest, image_ref, source_image_ref,
-	reuse_key, build_actor_kind, build_actor_id, created_at`
+	reuse_key, build_actor_kind, build_actor_id, created_at, image_retained`
 
 func scanBuildArtifactRow(scanner interface{ Scan(...any) error }) (BuildArtifactRecord, error) {
 	var rec BuildArtifactRecord
@@ -91,6 +92,7 @@ func scanBuildArtifactRow(scanner interface{ Scan(...any) error }) (BuildArtifac
 		&rec.BuildActorKind,
 		&rec.BuildActorID,
 		&rec.CreatedAt,
+		&rec.ImageRetained,
 	); err != nil {
 		return BuildArtifactRecord{}, err
 	}
@@ -165,6 +167,7 @@ func buildArtifactRecordFromParams(params insertArtifactParams) (BuildArtifactRe
 		BuildActorKind:       params.BuildActorKind,
 		BuildActorID:         params.BuildActorID,
 		CreatedAt:            params.CreatedAt,
+		ImageRetained:        true,
 	}, nil
 }
 
@@ -213,6 +216,12 @@ func (s *persistence) insertDirectImageArtifactTx(ctx context.Context, tx *sql.T
 	if err != nil {
 		return BuildArtifactRecord{}, err
 	}
+	var deleting string
+	if err := tx.QueryRowContext(ctx, `SELECT image_ref FROM registry_image_deletions WHERE image_ref = $1 FOR UPDATE`, rec.ImageRef).Scan(&deleting); err == nil {
+		return BuildArtifactRecord{}, fmt.Errorf("%w: platform image has expired; rebuild from source", registry.ErrImageNotFound)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return BuildArtifactRecord{}, err
+	}
 	args, err := buildArtifactInsertArgs(rec)
 	if err != nil {
 		return BuildArtifactRecord{}, err
@@ -223,6 +232,14 @@ func (s *persistence) insertDirectImageArtifactTx(ctx context.Context, tx *sql.T
 		 ON CONFLICT DO NOTHING`,
 		args...,
 	); err != nil {
+		return BuildArtifactRecord{}, err
+	}
+	// A fresh direct-image resolution can make the same external image available
+	// again. It never resurrects a platform manifest already queued for deletion.
+	if _, err := tx.ExecContext(ctx, `UPDATE build_artifacts SET image_retained = TRUE
+		WHERE service_id = $1 AND image_ref = $2 AND kind = $3 AND source_image_ref = $4
+		AND NOT EXISTS (SELECT 1 FROM registry_image_deletions WHERE image_ref = $2)`,
+		rec.ServiceID, rec.ImageRef, BuildArtifactDirectImage, rec.SourceImageRef); err != nil {
 		return BuildArtifactRecord{}, err
 	}
 	return scanBuildArtifactRow(tx.QueryRowContext(ctx,
@@ -252,7 +269,7 @@ func (s *persistence) buildArtifactByReuseKeyTx(ctx context.Context, tx *sql.Tx,
 	rec, err := scanBuildArtifactRow(tx.QueryRowContext(ctx,
 		`SELECT `+buildArtifactSelectColumns+`
 		   FROM build_artifacts
-		  WHERE service_id = $1 AND reuse_key = $2
+		  WHERE service_id = $1 AND reuse_key = $2 AND image_retained = TRUE
 		  ORDER BY created_at DESC, id DESC
 		  LIMIT 1`,
 		serviceID, artifactReuseKey(snapshotDigest, recipe),
@@ -298,45 +315,6 @@ func (s *persistence) listBuildArtifacts(ctx context.Context, serviceID string, 
 		out = append(out, rec)
 	}
 	return out, rows.Err()
-}
-
-// pruneBuildArtifactsTx deletes unreferenced artifacts older than cutoff beyond the newest
-// keepRecent per service. Referenced artifacts are rollback material and never pruned.
-func (s *persistence) pruneBuildArtifactsTx(ctx context.Context, tx *sql.Tx, cutoff time.Time, keepRecent int) (int64, error) {
-	if keepRecent < 0 {
-		keepRecent = 0
-	}
-	result, err := tx.ExecContext(ctx,
-		`DELETE FROM build_artifacts WHERE id IN (
-			SELECT id FROM (
-				SELECT a.id,
-				       row_number() OVER (PARTITION BY a.service_id ORDER BY a.created_at DESC, a.id DESC) AS rn
-				  FROM build_artifacts a
-				 WHERE a.created_at < $1
-				   AND NOT EXISTS (SELECT 1 FROM deployments d WHERE d.artifact_id = a.id)
-				   AND NOT EXISTS (SELECT 1 FROM deployment_transitions t WHERE t.artifact_id = a.id)
-				   AND NOT EXISTS (SELECT 1 FROM service_rollouts r WHERE r.artifact_id = a.id)
-				   AND NOT EXISTS (SELECT 1 FROM service_delivery_status s WHERE s.current_artifact_id = a.id)
-			) ranked WHERE rn > $2
-		)`,
-		cutoff, keepRecent,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-// PruneBuildArtifacts removes aged-out unreferenced artifacts, reporting the deleted count.
-func (d *Delivery) PruneBuildArtifacts(ctx context.Context, cutoff time.Time, keepRecent int) (int64, error) {
-	s := d.store
-	var deleted int64
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		var err error
-		deleted, err = s.pruneBuildArtifactsTx(ctx, tx, cutoff, keepRecent)
-		return err
-	})
-	return deleted, err
 }
 
 // preResolveDirectImage pins a creation spec's direct image, or empty when it has none.

@@ -84,6 +84,7 @@ type Deployment struct {
 	ServiceID         string    `json:"service_id"`
 	SpecRevision      int64     `json:"spec_revision"`
 	RolloutGeneration int64     `json:"rollout_generation"`
+	SourceRevisionID  string    `json:"source_revision_id"`
 	BuildID           string    `json:"build_id"`
 	ArtifactID        string    `json:"artifact_id"`
 	ImageDigest       string    `json:"image_digest"`

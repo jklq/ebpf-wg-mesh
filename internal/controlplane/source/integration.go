@@ -43,6 +43,9 @@ type Store interface {
 type Delivery interface {
 	QueueSourceBuild(context.Context, SourceBindingRecord, string, SourceSnapshotRecord, BuildTransition) (QueuedBuild, error)
 	RecoverExpiredBuilds(context.Context) error
+	DeploymentRebuildRequest(context.Context, string, string) (RebuildRequest, bool, error)
+	QueueDeploymentRebuild(context.Context, RebuildRequest, SourceSnapshotRecord) error
+	FailDeploymentRebuild(context.Context, string, string) error
 }
 
 func sourceAccessStateFromGitHubView(view GitHubRepositoryView) string {

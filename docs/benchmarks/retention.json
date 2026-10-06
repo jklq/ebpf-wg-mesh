@@ -1,0 +1,84 @@
+{
+  "source_trials": [
+    {
+      "archive_bytes_after": 0,
+      "archive_bytes_before": 42070120,
+      "cleanup_seconds": 0.260833552,
+      "collected_objects": 40,
+      "completed_builds": 20
+    },
+    {
+      "archive_bytes_after": 0,
+      "archive_bytes_before": 42070120,
+      "cleanup_seconds": 0.231302143,
+      "collected_objects": 40,
+      "completed_builds": 20
+    },
+    {
+      "archive_bytes_after": 0,
+      "archive_bytes_before": 42070120,
+      "cleanup_seconds": 0.24161675,
+      "collected_objects": 40,
+      "completed_builds": 20
+    }
+  ],
+  "image_trials": [
+    {
+      "versions_before": 20,
+      "versions_after": 2,
+      "blob_bytes_before": 22032646,
+      "blob_bytes_after_manifest_delete": 22032646,
+      "blob_bytes_after_gc": 3146984,
+      "reduction_percent": 85.71672235826782,
+      "cleanup_and_restart_seconds": 1.314612053000019,
+      "gc_summary": "blob eligible for deletion: sha256:03f26ddd8b90b04acc561e6b553ab59a55b95ebc0370af6cf22ba0c2f7b89e7b"
+    },
+    {
+      "versions_before": 20,
+      "versions_after": 2,
+      "blob_bytes_before": 22032646,
+      "blob_bytes_after_manifest_delete": 22032646,
+      "blob_bytes_after_gc": 3146984,
+      "reduction_percent": 85.71672235826782,
+      "cleanup_and_restart_seconds": 1.198994913007482,
+      "gc_summary": "blob eligible for deletion: sha256:0e2e02ed7fae339a576cb4403047f1a7a542171178ec93496882c7261028372f"
+    },
+    {
+      "versions_before": 20,
+      "versions_after": 2,
+      "blob_bytes_before": 22032646,
+      "blob_bytes_after_manifest_delete": 22032646,
+      "blob_bytes_after_gc": 3146984,
+      "reduction_percent": 85.71672235826782,
+      "cleanup_and_restart_seconds": 1.2215180769999279,
+      "gc_summary": "blob eligible for deletion: sha256:8f7bc85c6199d775b6072e5ba85a38df5b193a32a13bfab3b2a4dd7d7dd71cef"
+    }
+  ],
+  "compact_stack": {
+    "compact-stack-6d5a06e8e66f": {
+      "samples": [
+        {
+          "ram_mib": 384.02734375,
+          "cpu_seconds": 0.033918,
+          "elapsed_seconds": 5.076542173002963,
+          "cpu_percent_one_core": 0.6681319458031064
+        },
+        {
+          "ram_mib": 384.23046875,
+          "cpu_seconds": 0.030498,
+          "elapsed_seconds": 5.0669645220041275,
+          "cpu_percent_one_core": 0.6018988265569536
+        },
+        {
+          "ram_mib": 384.546875,
+          "cpu_seconds": 0.066411,
+          "elapsed_seconds": 5.060285964995273,
+          "cpu_percent_one_core": 1.3123961858954356
+        }
+      ],
+      "median_ram_mib": 384.23046875,
+      "median_cpu_percent_one_core": 0.6681319458031064
+    },
+    "limits_events_processes": "2147483648\n1112084480\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n    PID   RSS COMMAND\n      1  3064 bash\n   5182 47012 containerd\n   7159 22456 postgres\n   7160  6452 postgres\n   7161  6792 postgres\n   7163  7548 postgres\n   7164  9156 postgres\n   7165  8500 postgres\n   7181 16184 registry\n   7182 102028 controlplane.te\n   7205 24308 postgres\n   7253 13212 containerd-shim\n   7272 215908 python\n   7285 20732 postgres\n   7287 59636 envoy\n   7334  4112 ps\n"
+  }
+}

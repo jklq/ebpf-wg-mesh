@@ -211,10 +211,9 @@ type SourceArchiveS3Config struct {
 }
 
 type SourceArchiveConfig struct {
-	Provider      string
-	Directory     string
-	RetentionDays int
-	S3            SourceArchiveS3Config
+	Provider  string
+	Directory string
+	S3        SourceArchiveS3Config
 }
 
 // SecretKeysConfig points at the provisioned master-key ring that encrypts service env at rest. The
@@ -230,14 +229,6 @@ type SecretKeysConfig struct {
 type DeletionConfig struct {
 	GracePeriodDays   int
 	GCIntervalSeconds int
-}
-
-// BuildArtifactConfig tunes deploy-by-digest artifact retention. Artifacts referenced by a
-// deployment, deployment transition, rollout, or the current pointer are rollback material and
-// survive any age. Only unreferenced artifacts age out past RetentionDays, beyond the newest KeepRecent per service.
-type BuildArtifactConfig struct {
-	RetentionDays int
-	KeepRecent    int
 }
 
 // DirectImageConfig governs how user-supplied direct-image references are resolved against external registries.
@@ -261,7 +252,6 @@ type ControlPlaneConfig struct {
 	SourceArchives   SourceArchiveConfig
 	SecretKeys       SecretKeysConfig
 	Deletion         DeletionConfig
-	BuildArtifacts   BuildArtifactConfig
 	DirectImages     DirectImageConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
