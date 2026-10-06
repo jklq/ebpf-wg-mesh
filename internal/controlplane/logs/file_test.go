@@ -141,6 +141,46 @@ func TestFileLogsSizeExpiryAndSingleWriter(t *testing.T) {
 		t.Fatal("expired segment retained", err)
 	}
 }
+func TestFileLogsRecoverPartialAppendAndContinueSameSegment(t *testing.T) {
+	ctx := context.Background()
+	s := fileLogs(t, 1<<20)
+	dir := s.file.cfg.Directory
+	for i := 0; i < 3; i++ {
+		if err := s.WriteLogLines(ctx, []LogLineInput{{ID: fmt.Sprint(i), ProjectID: "p", ServiceID: "svc", ObservedAt: time.Now(), Line: "acknowledged"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	paths, _ := s.file.paths()
+	if len(paths) != 1 {
+		t.Fatalf("small writes should share a segment, got %d", len(paths))
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(paths[0], os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"line":{"id":"unacknowledged`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	r, err := OpenLogStore(ctx, config.LogCaptureConfig{File: config.FileLogConfig{Directory: dir}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if err := r.WriteLogLines(ctx, []LogLineInput{{ID: "after-restart", ProjectID: "p", ServiceID: "svc", ObservedAt: time.Now(), Line: "new"}}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := r.ListServiceLogs(ctx, &platformv1.ListServiceLogsRequest{ServiceId: "svc"})
+	if err != nil || len(page.Lines) != 4 {
+		t.Fatalf("recovery lost acknowledged lines: %+v, %v", page, err)
+	}
+}
+
 func BenchmarkLogBackend(b *testing.B) {
 	for _, backend := range []string{"file", "clickhouse"} {
 		b.Run(backend, func(b *testing.B) {

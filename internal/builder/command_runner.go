@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	commandScannerInitialBuffer = 64 * 1024
+	commandScannerInitialBuffer = 4 * 1024
 	commandScannerMaxLineBytes  = 256 * 1024
 	commandFailureOutputBytes   = 256 * 1024
 	maxBuildFailureTailBytes    = 8 * 1024

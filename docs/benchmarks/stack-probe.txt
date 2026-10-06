@@ -1,0 +1,44 @@
+=== RUN   TestCompactControlPlaneResourceProbe
+2026/10/06 22:31:52 http: TLS handshake error from 127.0.0.1:39790: EOF
+2026/10/06 22:31:52 INFO starting agent session agent_id=system-test-agent
+2026/10/06 22:31:52 INFO ensuring client tls material agent_id=system-test-agent
+2026/10/06 22:31:52 INFO enrolling client certificate agent_id=system-test-agent renewal=false
+2026/10/06 22:31:52 INFO agent certificate issued agent_id=system-test-agent authenticated_renewal=false
+2026/10/06 22:31:52 INFO client certificate enrolled agent_id=system-test-agent address=127.0.0.1:43821
+2026/10/06 22:31:52 INFO client tls material ready agent_id=system-test-agent not_after=2026-10-07T22:31:52.000Z
+2026/10/06 22:31:52 INFO dialed control plane agent_id=system-test-agent address=127.0.0.1:43821
+2026/10/06 22:31:52 INFO opened sync stream agent_id=system-test-agent
+2026/10/06 22:31:52 INFO sent agent hello agent_id=system-test-agent
+2026/10/06 22:31:52 INFO agent connected agent_id=system-test-agent name=compact
+2026/10/06 22:31:52 INFO watch registered agent_id=system-test-agent
+2026/10/06 22:31:52 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:31:52 INFO sending checkpoint agent_id=system-test-agent cursor=1 services=0 volumes=0
+2026/10/06 22:31:52 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:31:52 INFO desired state unchanged agent_id=system-test-agent cursor=1
+2026/10/06 22:31:52 INFO accepted checkpoint agent_id=system-test-agent authority_epoch=1 cursor=1 services=0 volumes=0
+2026/10/06 22:31:53 INFO agent status report agent_id=system-test-agent services=0 volumes=0 recovery_mode=false
+2026/10/06 22:31:53 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:31:53 INFO sending diff agent_id=system-test-agent base=1 target=2 starts=1 updates=0 stops=0
+2026/10/06 22:31:53 INFO accepted diff agent_id=system-test-agent base=1 target=2 starts=1 updates=0 stops=0
+2026/10/06 22:31:56 INFO routed workload pool through gateway pool=10.200.0.0/16 gateway=10.200.0.1
+2026/10/06 22:31:56 INFO routed workload pool through gateway pool=fd00:200::/48 gateway=fd00:200::1
+2026/10/06 22:31:57 INFO container firewall attached container=platform-4384ac77-7c26-452b-9f33-aad81f3f6fc0 pid=7272 ifindex=5 networkIdentity=1 ipv4=10.200.0.2 ipv6=fd00:200:0:4792:62c5:6f48:4588:4010
+2026/10/06 22:31:57 INFO agent status report agent_id=system-test-agent services=1 volumes=0 recovery_mode=false
+2026/10/06 22:31:57 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:31:57 INFO sending checkpoint agent_id=system-test-agent cursor=2 services=1 volumes=0
+2026/10/06 22:31:57 INFO accepted checkpoint agent_id=system-test-agent authority_epoch=1 cursor=2 services=1 volumes=0
+2026/10/06 22:32:22 INFO agent status report agent_id=system-test-agent services=1 volumes=0 recovery_mode=false
+2026/10/06 22:32:22 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:32:22 INFO desired state unchanged agent_id=system-test-agent cursor=2
+2026/10/06 22:32:23 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:32:23 INFO sending diff agent_id=system-test-agent base=2 target=3 starts=0 updates=1 stops=0
+2026/10/06 22:32:23 INFO accepted diff agent_id=system-test-agent base=2 target=3 starts=0 updates=1 stops=0
+2026/10/06 22:32:23 INFO agent status report agent_id=system-test-agent services=1 volumes=0 recovery_mode=false
+2026/10/06 22:32:43 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:32:43 INFO sending diff agent_id=system-test-agent base=3 target=4 starts=0 updates=0 stops=1
+2026/10/06 22:32:43 INFO checking desired state agent_id=system-test-agent
+2026/10/06 22:32:43 INFO desired state unchanged agent_id=system-test-agent cursor=4
+2026/10/06 22:32:43 INFO accepted diff agent_id=system-test-agent base=3 target=4 starts=0 updates=0 stops=1
+2026/10/06 22:32:53 INFO watch removed agent_id=system-test-agent
+--- PASS: TestCompactControlPlaneResourceProbe (61.68s)
+PASS

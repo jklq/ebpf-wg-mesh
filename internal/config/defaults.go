@@ -3,7 +3,6 @@ package config
 import (
 	"net"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -46,10 +45,10 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
 	}
 	if cfg.Database.MaxOpenConns <= 0 {
-		cfg.Database.MaxOpenConns = max(32, runtime.GOMAXPROCS(0)*8)
+		cfg.Database.MaxOpenConns = 8
 	}
 	if cfg.Database.MaxIdleConns <= 0 {
-		cfg.Database.MaxIdleConns = min(cfg.Database.MaxOpenConns, max(16, runtime.GOMAXPROCS(0)*4))
+		cfg.Database.MaxIdleConns = min(cfg.Database.MaxOpenConns, 2)
 	}
 	if cfg.Database.MaxIdleConns > cfg.Database.MaxOpenConns {
 		cfg.Database.MaxIdleConns = cfg.Database.MaxOpenConns
@@ -68,10 +67,10 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.Logs.ClickHouse.URL != "" {
 		if cfg.Logs.ClickHouse.MaxOpenConns <= 0 {
-			cfg.Logs.ClickHouse.MaxOpenConns = max(8, runtime.GOMAXPROCS(0)*2)
+			cfg.Logs.ClickHouse.MaxOpenConns = 2
 		}
 		if cfg.Logs.ClickHouse.MaxIdleConns <= 0 {
-			cfg.Logs.ClickHouse.MaxIdleConns = min(cfg.Logs.ClickHouse.MaxOpenConns, max(4, runtime.GOMAXPROCS(0)))
+			cfg.Logs.ClickHouse.MaxIdleConns = 1
 		}
 		if cfg.Logs.ClickHouse.MaxIdleConns > cfg.Logs.ClickHouse.MaxOpenConns {
 			cfg.Logs.ClickHouse.MaxIdleConns = cfg.Logs.ClickHouse.MaxOpenConns

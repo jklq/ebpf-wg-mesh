@@ -1,0 +1,12 @@
+goos: linux
+goarch: amd64
+pkg: ebof-wg-mesh/internal/controlplane/logs
+cpu: AMD Ryzen 7 2700X Eight-Core Processor
+BenchmarkLogBackend/file-16         	    1000	   3346180 ns/op	  112081 B/op	     402 allocs/op
+BenchmarkLogBackend/file-16         	    1000	   4806179 ns/op	  112061 B/op	     402 allocs/op
+BenchmarkLogBackend/file-16         	    1000	   5492791 ns/op	  112067 B/op	     402 allocs/op
+BenchmarkLogBackend/clickhouse-16   	    1000	   7825489 ns/op	  464448 B/op	    2705 allocs/op
+BenchmarkLogBackend/clickhouse-16   	    1000	   7805080 ns/op	  464862 B/op	    2705 allocs/op
+BenchmarkLogBackend/clickhouse-16   	    1000	   7909420 ns/op	  466388 B/op	    2706 allocs/op
+PASS
+ok  	ebof-wg-mesh/internal/controlplane/logs	37.421s

@@ -82,7 +82,11 @@ function getConfig(): RuntimeConfig {
 
 function getPool(): Pool {
 	const current = getConfig();
-	pool ??= new Pool({ connectionString: current.databaseURL });
+	pool ??= new Pool({
+		connectionString: current.databaseURL,
+		max: 2,
+		idleTimeoutMillis: 30_000,
+	});
 	return pool;
 }
 
