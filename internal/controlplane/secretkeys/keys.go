@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
@@ -200,7 +200,7 @@ func (r *Registry) DeleteKey(ctx context.Context, id string) error {
 	if id == "" {
 		return ErrUnknownKey
 	}
-	return crdb.ExecuteTx(ctx, r.db, nil, func(tx *sql.Tx) error {
+	return sqlretry.ExecuteTx(ctx, r.db, nil, func(tx *sql.Tx) error {
 		var state string
 		if err := tx.QueryRowContext(ctx, `SELECT state FROM envelope_keys WHERE id = $1`, id).Scan(&state); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -281,7 +281,7 @@ func (r *Registry) insertActiveRecord(ctx context.Context, ref string) (KeyRecor
 		return KeyRecord{}, err
 	}
 	var rec KeyRecord
-	if err := crdb.ExecuteTx(ctx, r.db, nil, func(tx *sql.Tx) error {
+	if err := sqlretry.ExecuteTx(ctx, r.db, nil, func(tx *sql.Tx) error {
 		now := time.Now().UTC()
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE envelope_keys SET state = 'retired', updated_at = $1 WHERE state = 'active'`, now); err != nil {

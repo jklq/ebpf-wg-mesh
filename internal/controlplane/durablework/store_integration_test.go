@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/cockroachdb/cockroach-go/v2/testserver"
 	"github.com/google/uuid"
 
@@ -25,18 +25,18 @@ import (
 // testSchema mirrors the durable_work_items table so the package suite stays
 // self-contained; the control-plane suite exercises the migrated DDL.
 const testSchema = `CREATE TABLE durable_work_items (
-	id STRING PRIMARY KEY,
-	kind STRING NOT NULL,
-	dedup_key STRING NOT NULL UNIQUE,
-	resource_type STRING NOT NULL DEFAULT '',
-	resource_id STRING NOT NULL DEFAULT '',
-	state STRING NOT NULL CHECK (state IN ('pending', 'leased', 'succeeded', 'failed', 'dead')),
+	id TEXT PRIMARY KEY,
+	kind TEXT NOT NULL,
+	dedup_key TEXT NOT NULL UNIQUE,
+	resource_type TEXT NOT NULL DEFAULT '',
+	resource_id TEXT NOT NULL DEFAULT '',
+	state TEXT NOT NULL CHECK (state IN ('pending', 'leased', 'succeeded', 'failed', 'dead')),
 	attempt_count INT8 NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
 	attempt_limit INT8 NOT NULL CHECK (attempt_limit > 0),
-	owner_id STRING NOT NULL DEFAULT '',
+	owner_id TEXT NOT NULL DEFAULT '',
 	owner_epoch INT8 NOT NULL DEFAULT 0 CHECK (owner_epoch >= 0),
 	lease_expires_at TIMESTAMPTZ NULL,
-	last_error STRING NOT NULL DEFAULT '',
+	last_error TEXT NOT NULL DEFAULT '',
 	available_at TIMESTAMPTZ NOT NULL,
 	payload JSONB NOT NULL DEFAULT '{}',
 	created_at TIMESTAMPTZ NOT NULL,
@@ -46,12 +46,12 @@ const testSchema = `CREATE TABLE durable_work_items (
 
 const testEffectSchema = `
 CREATE TABLE test_effect_intents (
-	dedup_key STRING PRIMARY KEY,
+	dedup_key TEXT PRIMARY KEY,
 	completed BOOL NOT NULL DEFAULT FALSE
 );
 CREATE TABLE test_effect_runs (
-	id STRING PRIMARY KEY,
-	dedup_key STRING NOT NULL,
+	id TEXT PRIMARY KEY,
+	dedup_key TEXT NOT NULL,
 	ran_at TIMESTAMPTZ NOT NULL
 )`
 
@@ -102,7 +102,7 @@ func openTestStore(t *testing.T) (*sql.DB, *Store) {
 		t.Fatalf("create effect tables: %v", err)
 	}
 	withTx := func(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
-		return crdb.ExecuteTx(ctx, db, nil, func(tx *sql.Tx) error { return fn(ctx, tx) })
+		return sqlretry.ExecuteTx(ctx, db, nil, func(tx *sql.Tx) error { return fn(ctx, tx) })
 	}
 	return db, NewStore(db, withTx)
 }

@@ -542,7 +542,7 @@ func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) e
 }
 
 func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, serviceID string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id::STRING FROM allocation_assignments WHERE service_id = $1`, serviceID)
+	rows, err := tx.QueryContext(ctx, `SELECT id::TEXT FROM allocation_assignments WHERE service_id = $1`, serviceID)
 	if err != nil {
 		return err
 	}

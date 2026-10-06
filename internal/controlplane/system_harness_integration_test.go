@@ -72,7 +72,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 			MaxOpenConns: 4,
 			MaxIdleConns: 4,
 		},
-		Logs:      config.LogCaptureConfig{ClickHouse: config.ClickHouseConfig{URL: opts.clickhouseURL}},
+		Logs:      config.LogCaptureConfig{File: config.FileLogConfig{Directory: t.TempDir()}, ClickHouse: config.ClickHouseConfig{URL: opts.clickhouseURL}},
 		StateDir:  firstNonEmpty(opts.stateDir, stateDir),
 		Ingress:   config.IngressConfig{PublicAddr: "platform.local", XDSListen: "127.0.0.1:0"},
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: systemTestDashboardID},

@@ -1,0 +1,7 @@
+goos: linux
+goarch: amd64
+pkg: ebof-wg-mesh/internal/controlplane/source
+cpu: AMD Ryzen 7 2700X Eight-Core Processor         
+BenchmarkArchiveRead/s3-16 	    1000	   1984777 ns/op	 2261552 B/op	     258 allocs/op
+PASS
+peak_RSS_KiB=31628 user_seconds=1.99 system_seconds=1.86

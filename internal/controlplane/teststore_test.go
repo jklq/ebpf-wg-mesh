@@ -279,16 +279,16 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 		query  string
 		record func(context.Context, string)
 	}{
-		{`SELECT id::STRING FROM projects`, func(ctx context.Context, id string) { _ = journal.ProjectRow(id).Capture(ctx) }},
-		{`SELECT id::STRING FROM services`, func(ctx context.Context, id string) { _ = journal.ServiceRow(id).Capture(ctx) }},
-		{`SELECT id::STRING FROM allocation_assignments`, func(ctx context.Context, id string) { _ = journal.AssignmentRow(id).Capture(ctx) }},
-		{`SELECT id::STRING FROM deployments`, func(ctx context.Context, id string) { _ = journal.DeploymentRow(id).Capture(ctx) }},
-		{`SELECT id::STRING FROM agent_registrations`, func(ctx context.Context, id string) { _ = journal.AgentRow(id).Capture(ctx) }},
-		{`SELECT agent_id::STRING FROM agent_administration`, func(ctx context.Context, id string) { _ = journal.AdministrationRow(id).Capture(ctx) }},
-		{`SELECT id::STRING FROM environments`, func(ctx context.Context, id string) { _ = journal.EnvironmentRow(id).Capture(ctx) }},
-		{`SELECT id::STRING FROM volumes`, func(ctx context.Context, id string) { _ = journal.VolumeRow(id).Capture(ctx) }},
-		{`SELECT volume_id::STRING FROM volume_destructions`, func(ctx context.Context, id string) { _ = journal.DestructionRow(id).Capture(ctx) }},
-		{`SELECT hostname::STRING FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.DomainRow(hostname).Capture(ctx) }},
+		{`SELECT id::TEXT FROM projects`, func(ctx context.Context, id string) { _ = journal.ProjectRow(id).Capture(ctx) }},
+		{`SELECT id::TEXT FROM services`, func(ctx context.Context, id string) { _ = journal.ServiceRow(id).Capture(ctx) }},
+		{`SELECT id::TEXT FROM allocation_assignments`, func(ctx context.Context, id string) { _ = journal.AssignmentRow(id).Capture(ctx) }},
+		{`SELECT id::TEXT FROM deployments`, func(ctx context.Context, id string) { _ = journal.DeploymentRow(id).Capture(ctx) }},
+		{`SELECT id::TEXT FROM agent_registrations`, func(ctx context.Context, id string) { _ = journal.AgentRow(id).Capture(ctx) }},
+		{`SELECT agent_id::TEXT FROM agent_administration`, func(ctx context.Context, id string) { _ = journal.AdministrationRow(id).Capture(ctx) }},
+		{`SELECT id::TEXT FROM environments`, func(ctx context.Context, id string) { _ = journal.EnvironmentRow(id).Capture(ctx) }},
+		{`SELECT id::TEXT FROM volumes`, func(ctx context.Context, id string) { _ = journal.VolumeRow(id).Capture(ctx) }},
+		{`SELECT volume_id::TEXT FROM volume_destructions`, func(ctx context.Context, id string) { _ = journal.DestructionRow(id).Capture(ctx) }},
+		{`SELECT hostname::TEXT FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.DomainRow(hostname).Capture(ctx) }},
 	}
 	for _, item := range single {
 		rows, err := tx.QueryContext(ctx, item.query)
@@ -307,7 +307,7 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 			return err
 		}
 	}
-	revisionRows, err := tx.QueryContext(ctx, `SELECT service_id::STRING, spec_revision FROM service_revisions`)
+	revisionRows, err := tx.QueryContext(ctx, `SELECT service_id::TEXT, spec_revision FROM service_revisions`)
 	if err != nil {
 		return err
 	}
@@ -323,7 +323,7 @@ func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
 	if err := revisionRows.Close(); err != nil {
 		return err
 	}
-	rolloutRows, err := tx.QueryContext(ctx, `SELECT service_id::STRING, rollout_generation FROM service_rollouts`)
+	rolloutRows, err := tx.QueryContext(ctx, `SELECT service_id::TEXT, rollout_generation FROM service_rollouts`)
 	if err != nil {
 		return err
 	}
@@ -349,15 +349,23 @@ func productionEnvironmentID(t *testing.T, store *persistence, projectID string)
 }
 
 func newTestDatabaseURL() (string, error) {
-	ts, err := getSharedTestServer()
+	raw := os.Getenv("CONTROLPLANE_TEST_DATABASE_URL")
+	if raw == "" {
+		ts, err := getSharedTestServer()
+		if err != nil {
+			return "", err
+		}
+		raw = ts.PGURL().String()
+	}
+	pgURL, err := url.Parse(raw)
 	if err != nil {
 		return "", err
 	}
-
-	adminDB, err := sql.Open("pgx", ts.PGURL().String())
+	adminDB, err := sql.Open("pgx", raw)
 	if err != nil {
-		return "", fmt.Errorf("sql.Open admin db: %w", err)
+		return "", fmt.Errorf("open admin database: %w", err)
 	}
+
 	defer adminDB.Close()
 
 	dbName := "cp_" + strings.ReplaceAll(uuid.NewString(), "-", "")
@@ -365,10 +373,6 @@ func newTestDatabaseURL() (string, error) {
 		return "", fmt.Errorf("CREATE DATABASE %s: %w", dbName, err)
 	}
 
-	pgURL, err := cloneURL(ts.PGURL())
-	if err != nil {
-		return "", err
-	}
 	pgURL.Path = "/" + dbName
 	return pgURL.String(), nil
 }

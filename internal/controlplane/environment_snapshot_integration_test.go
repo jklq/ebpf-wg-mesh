@@ -13,7 +13,7 @@ import (
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -86,7 +86,7 @@ func TestEnvironmentSnapshotIncludesServicesVolumesAndCommittedIndex(t *testing.
 	deps := deliveryDependencies(store, nil, nil, nil, nil)
 	mutated := false
 	deps.ReadState = func(ctx context.Context, read func(*sql.Tx, *journal.Projection) error) error {
-		return crdb.ExecuteTx(ctx, store.db, nil, func(tx *sql.Tx) error {
+		return sqlretry.ExecuteTx(ctx, store.db, nil, func(tx *sql.Tx) error {
 			if _, err := dbtx.EnvironmentRevision(ctx, tx); err != nil {
 				return err
 			}

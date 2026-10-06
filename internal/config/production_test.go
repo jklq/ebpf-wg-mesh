@@ -107,19 +107,25 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
 		cfg.Database.URL = "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"
-		mustReject(t, FinalizeControlPlane(&cfg), "loopback host")
+		if err := FinalizeControlPlane(&cfg); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("loopback clickhouse", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
 		cfg.Logs.ClickHouse.URL = "clickhouse://127.0.0.1:9000/default"
-		mustReject(t, FinalizeControlPlane(&cfg), "loopback host")
+		if err := FinalizeControlPlane(&cfg); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("loopback registry host", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
 		cfg.Registry.Host = "127.0.0.1:5000"
-		mustReject(t, FinalizeControlPlane(&cfg), "loopback host")
+		if err := FinalizeControlPlane(&cfg); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("pull credential TTL must exceed client certificate lifetime", func(t *testing.T) {
 		t.Parallel()
@@ -159,13 +165,15 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 			Provider:  SourceArchiveProviderFile,
 			Directory: filepath.Join(os.TempDir(), "source-archives"),
 		}
-		mustReject(t, FinalizeControlPlane(&cfg), "filesystem provider")
+		mustReject(t, FinalizeControlPlane(&cfg), "sourceArchives.directory must not use ephemeral storage")
 	})
 	t.Run("loopback source object storage", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
 		cfg.SourceArchives.S3.Endpoint = "http://127.0.0.1:9000"
-		mustReject(t, FinalizeControlPlane(&cfg), "loopback host")
+		if err := FinalizeControlPlane(&cfg); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("incomplete public url", func(t *testing.T) {
 		t.Parallel()
@@ -195,7 +203,9 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionAgent()
 		cfg.ControlPlane.Addresses = []string{"127.0.0.1:9443"}
-		mustReject(t, FinalizeAgent(&cfg), "loopback host")
+		if err := FinalizeAgent(&cfg); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("wildcard agent tls identity", func(t *testing.T) {
 		t.Parallel()
@@ -207,7 +217,9 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionBuilder()
 		cfg.ControlPlane.Address = "127.0.0.1:9443"
-		mustReject(t, FinalizeBuilder(&cfg), "loopback host")
+		if err := FinalizeBuilder(&cfg); err != nil {
+			t.Fatal(err)
+		}
 	})
 	t.Run("missing builder tls identity", func(t *testing.T) {
 		t.Parallel()
@@ -349,5 +361,22 @@ func mustReject(t *testing.T, err error, want string) {
 	t.Helper()
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("expected error containing %q, got %v", want, err)
+	}
+}
+
+func TestProductionCompactLocalStorage(t *testing.T) {
+	cfg := validMinimalProductionControlPlane(t)
+	cfg.Database.URL = "postgresql://platform@127.0.0.1:5432/platform?sslmode=disable"
+	cfg.Registry.Host = "127.0.0.1:5000"
+	cfg.SourceArchives = SourceArchiveConfig{Provider: SourceArchiveProviderFile, Directory: "/var/lib/platform/archives"}
+	if err := FinalizeControlPlane(&cfg); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"relative", "/tmp/platform", "/var/tmp/platform", "/run/platform", "/dev/shm/platform"} {
+		changed := cfg
+		changed.SourceArchives.Directory = path
+		if err := FinalizeControlPlane(&changed); err == nil {
+			t.Fatalf("ephemeral archive path accepted: %s", path)
+		}
 	}
 }

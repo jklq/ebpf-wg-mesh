@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/cockroachdb/cockroach-go/v2/crdb"
+	"ebof-wg-mesh/internal/sqlretry"
 )
 
 const (
@@ -24,7 +24,7 @@ func (s *Store) Compact(ctx context.Context, retain int64, fence CompactionFence
 		retain = 0
 	}
 	var compacted int64
-	err := crdb.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
+	err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		if fence != nil {
 			if err := fence(ctx, tx); err != nil {
 				return err

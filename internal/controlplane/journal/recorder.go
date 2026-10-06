@@ -69,17 +69,17 @@ func recordServiceTree(ctx context.Context, tx *sql.Tx, serviceID string) error 
 		table Table
 		sql   string
 	}{
-		{TableRevisions, `SELECT service_id::STRING || '/' || spec_revision::STRING FROM service_revisions WHERE service_id = $1`},
-		{TableRollouts, `SELECT service_id::STRING || '/' || rollout_generation::STRING FROM service_rollouts WHERE service_id = $1`},
-		{TableAssignments, `SELECT id::STRING FROM allocation_assignments WHERE service_id = $1`},
-		{TableDeployments, `SELECT id::STRING FROM deployments WHERE service_id = $1`},
+		{TableRevisions, `SELECT service_id::TEXT || '/' || spec_revision::TEXT FROM service_revisions WHERE service_id = $1`},
+		{TableRollouts, `SELECT service_id::TEXT || '/' || rollout_generation::TEXT FROM service_rollouts WHERE service_id = $1`},
+		{TableAssignments, `SELECT id::TEXT FROM allocation_assignments WHERE service_id = $1`},
+		{TableDeployments, `SELECT id::TEXT FROM deployments WHERE service_id = $1`},
 	}
 	for _, query := range queries {
 		if err := recordQuery(ctx, tx, query.table, query.sql, serviceID); err != nil {
 			return err
 		}
 	}
-	hostnames, err := queryKeys(ctx, tx, `SELECT hostname::STRING FROM domain_bindings WHERE service_id = $1`, serviceID)
+	hostnames, err := queryKeys(ctx, tx, `SELECT hostname::TEXT FROM domain_bindings WHERE service_id = $1`, serviceID)
 	if err != nil {
 		return err
 	}
@@ -91,11 +91,11 @@ func recordServiceTree(ctx context.Context, tx *sql.Tx, serviceID string) error 
 
 func recordEnvironmentTree(ctx context.Context, tx *sql.Tx, environmentID string) error {
 	record(ctx, TableEnvironments, environmentID)
-	serviceIDs, err := queryKeys(ctx, tx, `SELECT id::STRING FROM services WHERE environment_id = $1`, environmentID)
+	serviceIDs, err := queryKeys(ctx, tx, `SELECT id::TEXT FROM services WHERE environment_id = $1`, environmentID)
 	if err != nil {
 		return err
 	}
-	if err := recordQuery(ctx, tx, TableVolumes, `SELECT id::STRING FROM volumes WHERE environment_id = $1`, environmentID); err != nil {
+	if err := recordQuery(ctx, tx, TableVolumes, `SELECT id::TEXT FROM volumes WHERE environment_id = $1`, environmentID); err != nil {
 		return err
 	}
 	for _, serviceID := range serviceIDs {
@@ -108,7 +108,7 @@ func recordEnvironmentTree(ctx context.Context, tx *sql.Tx, environmentID string
 
 func recordProjectTree(ctx context.Context, tx *sql.Tx, projectID string) error {
 	record(ctx, TableProjects, projectID)
-	environmentIDs, err := queryKeys(ctx, tx, `SELECT id::STRING FROM environments WHERE project_id = $1`, projectID)
+	environmentIDs, err := queryKeys(ctx, tx, `SELECT id::TEXT FROM environments WHERE project_id = $1`, projectID)
 	if err != nil {
 		return err
 	}

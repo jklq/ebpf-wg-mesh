@@ -72,13 +72,13 @@ func TestServiceEnvRoundTripsEncryptedAtRest(t *testing.T) {
 		t.Fatalf("revisions with env ciphertext = %d, want 2", withEnv)
 	}
 	scoped := []string{
-		`SELECT spec_json::STRING FROM service_revisions WHERE service_id = $1`,
+		`SELECT spec_json::TEXT FROM service_revisions WHERE service_id = $1`,
 		`SELECT encode(env_ciphertext, 'escape') FROM service_revisions WHERE service_id = $1`,
-		`SELECT row_to_json(d)::STRING FROM deployments d WHERE service_id = $1`,
+		`SELECT row_to_json(d)::TEXT FROM deployments d WHERE service_id = $1`,
 	}
 	global := []string{
-		`SELECT payload::STRING FROM cluster_journal`,
-		`SELECT payload::STRING FROM cluster_journal_receipts`,
+		`SELECT payload::TEXT FROM cluster_journal`,
+		`SELECT payload::TEXT FROM cluster_journal_receipts`,
 		`SELECT encode(wrapped_dek, 'escape') FROM envelope_data_keys`,
 		`SELECT provider_ref FROM envelope_keys`,
 	}

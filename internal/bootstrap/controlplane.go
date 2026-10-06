@@ -48,7 +48,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	intFlag(fs, &cfg.Logs.IngestRatePerSec, "logs-ingest-rate-per-sec", "CONTROLPLANE_LOGS_INGEST_RATE_PER_SEC", 2000, "per-allocation ingest guard above agent-side limits")
 	intFlag(fs, &cfg.Logs.IngestBurst, "logs-ingest-burst", "CONTROLPLANE_LOGS_INGEST_BURST", 10000, "")
 	stringFlag(fs, &cfg.StateDir, "state-dir", "CONTROLPLANE_STATE_DIR", "var/controlplane", "")
-	stringFlag(fs, &cfg.SourceArchives.Provider, "source-archives-provider", "CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER", "", "file (development) or s3 (production); defaults to s3 when S3 fields are set, else file")
+	stringFlag(fs, &cfg.SourceArchives.Provider, "source-archives-provider", "CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER", "", "file or s3; defaults to s3 when S3 fields are set, else file")
 	stringFlag(fs, &cfg.SourceArchives.Directory, "source-archives-dir", "CONTROLPLANE_SOURCE_ARCHIVES_DIR", "", "defaults under the control-plane state directory; file provider only")
 	intFlag(fs, &cfg.SourceArchives.RetentionDays, "source-archives-retention-days", "CONTROLPLANE_SOURCE_ARCHIVES_RETENTION_DAYS", 30, "")
 	stringFlag(fs, &cfg.SourceArchives.S3.Endpoint, "source-archives-s3-endpoint", "CONTROLPLANE_SOURCE_ARCHIVES_S3_ENDPOINT", "", "S3-compatible endpoint URL, e.g. https://s3.us-east-1.amazonaws.com")
