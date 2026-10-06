@@ -302,7 +302,11 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 			delete(r.ready, svc.GetAllocationId())
 		}
 	}
-	if status.DiskExhausted && status.Running {
+	if status.DiskExhausted {
+		// Exhaustion is measured from the snapshot, so it stays true after the
+		// writer exits. Reclaim it either way: gating this on a live task lets an
+		// allocation that already died hold its over-quota snapshot for the whole
+		// backoff window, which is the host disk this check exists to protect.
 		if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			cond.Phase = "Error"
 			cond.Message = err.Error()
