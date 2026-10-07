@@ -592,9 +592,6 @@ func validateServerTLS(prefix string, cfg ServerTLSConfig) error {
 	if cfg.ClientCertValidityHours <= 0 {
 		return fmt.Errorf("%s.clientCertValidityHours must be greater than 0", prefix)
 	}
-	if strings.TrimSpace(cfg.RevokedClientCertSerialsFile) == "" {
-		return fmt.Errorf("%s.revokedClientCertSerialsFile is required", prefix)
-	}
 	return nil
 }
 

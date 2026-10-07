@@ -1,0 +1,298 @@
+version: 1
+id: production
+release: r42
+managementHost: a
+providers:
+    gigahost:
+        kind: gigahost
+        token: gigahost-token
+    hetzner:
+        kind: hetzner
+        token: hetzner-token
+    imported:
+        kind: linux
+secrets:
+    database-url:
+        file: /etc/platform/database-url
+    gigahost-token:
+        file: /etc/platform/gigahost-token
+    hetzner-token:
+        file: /etc/platform/hetzner-token
+    recovery:
+        file: /etc/platform/recovery
+    ssh:
+        file: /etc/platform/ssh
+hosts:
+    - id: a
+      binding:
+        provider: hetzner
+        serverId: "1"
+      ssh:
+        address: 192.0.2.1
+        user: root
+        key: ssh
+        knownHosts: /etc/platform/known_hosts
+      architecture: amd64
+      capacity:
+        cpuMillis: 8000
+        memoryMiB: 32768
+        diskGiB: 500
+      reserve:
+        cpuMillis: 500
+        memoryMiB: 512
+        diskGiB: 10
+      diskClass: ssd
+      capabilities:
+        - systemd
+        - containerd
+        - wireguard
+        - ebpf-policy
+        - cgroup-v2
+        - kvm
+      reliability: reliable
+      trusted: true
+      roles:
+        - cockroachdb
+        - controlplane
+        - console
+        - envoy
+        - registry
+        - builder
+        - agent
+      failureDomain: hetzner/a
+      region: oslo
+      network:
+        address: 10.0.0.1
+        public: true
+        peers:
+            b: 5
+    - id: b
+      binding:
+        provider: imported
+        serverId: home-pc
+      ssh:
+        address: gateway.example.com:2202
+        user: root
+        key: ssh
+        knownHosts: /etc/platform/known_hosts
+      architecture: amd64
+      capacity:
+        cpuMillis: 8000
+        memoryMiB: 32768
+        diskGiB: 500
+      reserve:
+        cpuMillis: 500
+        memoryMiB: 512
+        diskGiB: 10
+      diskClass: ssd
+      capabilities:
+        - systemd
+        - containerd
+        - wireguard
+        - ebpf-policy
+        - cgroup-v2
+        - kvm
+      reliability: intermittent
+      trusted: true
+      roles:
+        - cockroachdb
+        - controlplane
+        - console
+        - envoy
+        - registry
+        - builder
+        - agent
+      failureDomain: gigahost/b
+      region: oslo
+      network:
+        address: 10.0.0.2
+        public: false
+        gateways:
+            - a
+        peers:
+            a: 5
+components:
+    agent:
+        replicas: 2
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 200
+            memoryMiB: 256
+            diskGiB: 1
+        capabilities:
+            - containerd
+            - wireguard
+            - ebpf-policy
+            - cgroup-v2
+        distinctDomains: false
+    builder:
+        replicas: 1
+        reliableReplicas: 0
+        resources:
+            cpuMillis: 1000
+            memoryMiB: 9216
+            diskGiB: 30
+        hosts:
+            - b
+        capabilities:
+            - containerd
+            - cgroup-v2
+            - kvm
+        distinctDomains: false
+    cockroachdb:
+        replicas: 1
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 200
+            memoryMiB: 256
+            diskGiB: 1
+        diskClass: ssd
+        distinctDomains: false
+        storage:
+            - database
+    console:
+        replicas: 2
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 200
+            memoryMiB: 256
+            diskGiB: 1
+        distinctDomains: false
+    controlplane:
+        secretEnv:
+            CONTROLPLANE_DATABASE_URL: database-url
+        replicas: 2
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 200
+            memoryMiB: 256
+            diskGiB: 1
+        distinctDomains: false
+        storage:
+            - archives
+        env:
+            CONTROLPLANE_HEALTH_LISTEN: 127.0.0.1:9090
+            CONTROLPLANE_INGRESS_PUBLIC_ADDR: platform.example.com
+            CONTROLPLANE_SECRET_KEYS_KEYRING: '{configDir}/keyring.json'
+            CONTROLPLANE_SOURCE_ARCHIVES_DIR: /var/lib/platform/archives
+            CONTROLPLANE_STATE_DIR: '{stateDir}'
+    envoy:
+        replicas: 2
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 200
+            memoryMiB: 256
+            diskGiB: 1
+        distinctDomains: false
+    registry:
+        replicas: 2
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 200
+            memoryMiB: 256
+            diskGiB: 1
+        distinctDomains: false
+        storage:
+            - registry
+storage:
+    archives:
+        path: /var/lib/platform/archives
+        hosts:
+            - a
+            - b
+        replicated: true
+    database:
+        path: /var/lib/cockroach
+        hosts:
+            - a
+            - b
+        replicated: false
+    registry:
+        path: /var/lib/registry
+        hosts:
+            - a
+            - b
+        replicated: true
+endpoints:
+    - name: console
+      url: https://console.example.com
+      role: console
+      hosts:
+        - a
+        - b
+    - name: envoy
+      url: https://envoy.example.com
+      role: envoy
+      hosts:
+        - a
+        - b
+    - name: registry
+      url: https://registry.example.com
+      role: registry
+      hosts:
+        - a
+        - b
+backup:
+    target: s3://backups/production
+    credentials:
+        - recovery
+    maxAgeHours: 24
+    includes:
+        - database
+        - keyring
+        - registry
+        - deployment-state
+        - volumes
+recovery:
+    hosts:
+        - id: recovery
+          binding:
+            provider: imported
+            serverId: alternative-machine
+          ssh:
+            address: 192.0.2.1
+            user: root
+            key: ssh
+            knownHosts: /etc/platform/known_hosts
+          architecture: amd64
+          capacity:
+            cpuMillis: 8000
+            memoryMiB: 32768
+            diskGiB: 500
+          reserve:
+            cpuMillis: 500
+            memoryMiB: 512
+            diskGiB: 10
+          diskClass: ssd
+          capabilities:
+            - systemd
+            - containerd
+            - wireguard
+            - ebpf-policy
+            - cgroup-v2
+            - kvm
+          reliability: reliable
+          trusted: true
+          roles:
+            - cockroachdb
+            - controlplane
+            - console
+            - envoy
+            - registry
+            - builder
+            - agent
+          failureDomain: offsite
+          region: oslo
+          network:
+            address: 10.0.0.1
+            public: true
+            peers:
+                b: 5
+    credentials:
+        - recovery
+oneHostFailure: false
+workload:
+    cpuMillis: 500
+    memoryMiB: 512
+    diskGiB: 1
+maxDatabaseRttMillis: 120

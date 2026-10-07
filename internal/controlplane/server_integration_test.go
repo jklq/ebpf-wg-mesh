@@ -59,6 +59,7 @@ func TestControlPlaneServerIntegrationRunsProjectFlowOverRealTLSAndStore(t *test
 			PersistentKeepaliveSeconds: 5,
 		},
 	}
+	cfg.ConsoleCallerIDs = []string{cfg.Dashboard.ServiceCallerID}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		t.Fatalf("FinalizeControlPlane: %v", err)
 	}

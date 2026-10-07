@@ -15,6 +15,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 )
@@ -44,7 +45,8 @@ func TestEnrollWalksPastStalledReplicaFollowsRedirectAndSkipsDeadOwner(t *testin
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), identitytest.Revocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -116,7 +118,8 @@ func TestEnrollRecoversLiveOwnerAfterQuarantineCooldown(t *testing.T) {
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), identitytest.Revocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

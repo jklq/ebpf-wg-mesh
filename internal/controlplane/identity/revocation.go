@@ -2,6 +2,7 @@ package identity
 
 import (
 	"crypto/x509"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math/big"
@@ -15,6 +16,7 @@ var ErrClientCertificateRevoked = errors.New("client certificate is revoked")
 
 type CertificateRevocations struct {
 	path string
+	db   *sql.DB
 }
 
 func NewCertificateRevocations(path string) (*CertificateRevocations, error) {
@@ -42,6 +44,9 @@ func NewCertificateRevocations(path string) (*CertificateRevocations, error) {
 func (r *CertificateRevocations) Add(serials ...string) error {
 	if r == nil {
 		return errors.New("certificate revocation list is not configured")
+	}
+	if r.db != nil {
+		return r.addShared(serials)
 	}
 	known, err := r.load()
 	if err != nil {
@@ -93,6 +98,12 @@ func (r *CertificateRevocations) Check(cert *x509.Certificate) error {
 	if cert == nil || cert.SerialNumber == nil || cert.SerialNumber.Sign() <= 0 {
 		return errors.New("client certificate serial is missing")
 	}
+	if r == nil {
+		return errors.New("certificate revocation list is not configured")
+	}
+	if r.db != nil {
+		return r.checkShared(cert.SerialNumber.Text(16))
+	}
 	serials, err := r.load()
 	if err != nil {
 		return err
@@ -138,3 +149,5 @@ func parseCertificateSerial(value string) (string, error) {
 	}
 	return serial.Text(16), nil
 }
+
+func NormalizeCertificateSerial(value string) (string, error) { return parseCertificateSerial(value) }

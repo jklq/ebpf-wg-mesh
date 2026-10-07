@@ -18,6 +18,7 @@ import (
 	"ebof-wg-mesh/internal/mesh"
 	"ebof-wg-mesh/internal/reconciliation"
 
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -209,7 +210,8 @@ func newTestTLSAuthority(t *testing.T) *identity.TLSAuthority {
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), identitytest.Revocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

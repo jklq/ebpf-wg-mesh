@@ -158,7 +158,7 @@ export async function migrateDashboardStore(
 			if (!currentVersions.has(version)) {
 				throw new DatabaseError({
 					operation: "migrateDashboardStore",
-					message: "database schema is stale; recreate the database",
+					message: "database schema differs from this release; apply a backed-up conversion or restore",
 					cause: version,
 				});
 			}
@@ -167,6 +167,15 @@ export async function migrateDashboardStore(
 		for (const migration of dashboardStoreMigrations(runtime)) {
 			if (appliedVersions.has(migration.version)) {
 				continue;
+			}
+			const populated = await query<{ exists: boolean }>(
+				client,
+				"migrate.inspectExistingTables",
+				`SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations') AS exists`,
+				[runtime.databaseSchema],
+			);
+			if (populated.rows[0]?.exists) {
+				throw new DatabaseError({ operation: "migrateDashboardStore", message: "populated console schema has no matching version; refusing initialization", cause: runtime.databaseSchema });
 			}
 			for (const statement of migration.statements) {
 				await queryVoid(

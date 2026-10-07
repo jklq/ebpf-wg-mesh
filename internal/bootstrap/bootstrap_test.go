@@ -21,7 +21,6 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 		"-failover-reconcile-interval-seconds", "7",
 		"-failover-unhealthy-threshold-seconds", "45",
 		"-state-dir", "var/controlplane",
-		"-internal-revoked-client-cert-serials-file", "var/security/revoked-client-serials.txt",
 		"-bootstrap-user", "demo-user:demo@example.com:demo,ops+operator",
 		"-agent-bootstrap-tokens", "node-a=token-a|region=us-east|failure-domain=zone-1|reserved-cpu-millis=500,node-b=token-b",
 	})
@@ -63,9 +62,6 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	}
 	if got := cfg.StateDir; got != "var/controlplane" {
 		t.Fatalf("unexpected state dir %q", got)
-	}
-	if got := cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile; got != "var/security/revoked-client-serials.txt" {
-		t.Fatalf("unexpected client certificate revocation file %q", got)
 	}
 	if cfg.Failover.ReconcileIntervalSeconds != 7 || cfg.Failover.UnhealthyThresholdSeconds != 45 {
 		t.Fatalf("unexpected failover config: %+v", cfg.Failover)

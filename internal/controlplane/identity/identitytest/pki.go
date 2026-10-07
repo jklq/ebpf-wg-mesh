@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -20,12 +21,22 @@ type PKI struct {
 	Keys      *signkeystest.Fake
 }
 
+func Revocations(t *testing.T) *identity.CertificateRevocations {
+	t.Helper()
+	r, err := identity.NewCertificateRevocations(filepath.Join(t.TempDir(), "revoked.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 func New(t *testing.T) *PKI {
 	t.Helper()
 	keys := signkeystest.New(t)
 	authority, err := identity.NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: t.TempDir(), InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{ServerNames: []string{"controlplane"}}},
-	}, keys)
+	}, keys, Revocations(t),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

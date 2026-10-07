@@ -50,6 +50,7 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-overlay-drift"},
 		Mesh:      testMeshConfig(),
 	}
+	cfg.ConsoleCallerIDs = []string{cfg.Dashboard.ServiceCallerID}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		t.Fatalf("FinalizeControlPlane: %v", err)
 	}
@@ -257,6 +258,7 @@ func TestAgentSyncRepairsObservationOverlayOnReconnect(t *testing.T) {
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-overlay-repair"},
 		Mesh:      testMeshConfig(),
 	}
+	cfg.ConsoleCallerIDs = []string{cfg.Dashboard.ServiceCallerID}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		t.Fatalf("FinalizeControlPlane: %v", err)
 	}

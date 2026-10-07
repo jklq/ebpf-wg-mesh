@@ -45,8 +45,9 @@ Local file storage does not provide replication. Keep a backup on another machin
 The control-plane schema and dashboard schema use PostgreSQL SQL types.
 Transactions use serializable isolation and retry the whole transaction on
 serialization conflicts and deadlocks. CockroachDB remains supported by the
-same SQL. This is a flat schema cutover: recreate a database with an older
-control-plane schema version rather than applying a migration chain.
+same SQL. Schema changes use an explicit backed-up flat conversion after stopping
+the old release. Startup validates versions and refuses populated unversioned
+databases. See [production deployment](production-deployment.md).
 
 The production database, registry, and optional ClickHouse can use loopback.
 Keep mTLS identities and the public HTTPS ingress settings. A loopback registry
@@ -125,16 +126,18 @@ image can still be needed even if its tag moved. See the
 [Distribution collection guide](https://distribution.github.io/distribution/about/garbage-collection/)
 and [retention measurements](benchmarks/retention.md).
 
-This is schema version 41, a flat cutover. Recreate an older control-plane
-database for this development-stage schema. The old source-archive age and
+This is platform schema version 42 and console schema version 3. The explicit
+41-to-42 conversion preserves data and imports certificate revocations into shared
+SQL state. Production consoles run independently under systemd. The old source-archive age and
 build-artifact age/count flags were removed; the lifecycle policy above is fixed.
 
 ## Intermittent hosts and builds
 
-Choose **Intermittent (builds only)** when creating or editing a fleet agent.
-The protocol field is `host_type=intermittent`. Normal application placement,
-including volumes, uses stable agents. Drain existing allocations before changing
-a stable agent to intermittent. The host type survives disconnects and restarts.
+Choose **Intermittent (stateless capacity)** when creating or editing a fleet agent.
+The protocol field is `host_type=intermittent`. Stable agents are preferred for
+application placement; intermittent agents can provide stateless capacity. Volumes
+require stable agents. Drain durable allocations before changing a stable agent
+to intermittent. The host type survives disconnects and restarts.
 
 Run one builder per machine. On the home PC, set `BUILDER_HOST_TYPE=intermittent`.
 Keep its state, mTLS credentials, toolchain image, and work directory across restarts.
@@ -207,9 +210,10 @@ AGENT_DATA_DIR=/var/lib/ebpf-wg-mesh/agent
 
 Leave `CONTROLPLANE_LOGS_CLICKHOUSE_URL` unset. Do not run a builder on the VM
 unless it has capacity for the configured build plus daemon headroom. The
-512 MiB schedulable budget accommodates a 256 MiB managed dashboard and one
-256 MiB application. Keep the dashboard and application's combined CPU requests
-within the remaining 1,000 CPU millis.
+512 MiB schedulable budget accommodates a 256 MiB application with spare
+workload headroom. The independent console belongs in the platform reservation.
+Keep application requests within the remaining 1,000 CPU millis, and increase
+the reservation if the platform's measured usage requires it.
 
 A small PostgreSQL starting configuration is:
 

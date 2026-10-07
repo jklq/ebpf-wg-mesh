@@ -26,6 +26,7 @@ import (
 )
 
 type database struct {
+	initializeSchema bool
 	db               *sql.DB
 	mesh             config.ControlPlaneMeshConfig
 	reservedAgentIDs []string
@@ -36,6 +37,10 @@ type database struct {
 
 // persistenceOption customizes persistence construction.
 type persistenceOption func(*database)
+
+func withSchemaInitialization() persistenceOption {
+	return func(db *database) { db.initializeSchema = true }
+}
 
 // withDeletionGracePeriod overrides how long tombstones stay restorable.
 // Zero selects deliverycore.DefaultDeletionGracePeriod.
@@ -83,7 +88,11 @@ func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMes
 		}
 	}
 	store := newPersistence(handle)
-	if err := store.migrate(context.Background()); err != nil {
+	initialize := store.validateSchema
+	if handle.initializeSchema {
+		initialize = store.migrate
+	}
+	if err := initialize(context.Background()); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -113,11 +122,22 @@ func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 	if err := s.db.PingContext(ctx); err != nil {
 		return false, false
 	}
-	var version int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0) FROM schema_migrations`).Scan(&version); err != nil {
+	var version, count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0),COUNT(*) FROM schema_migrations`).Scan(&version, &count); err != nil {
 		return true, false
 	}
-	return true, version >= currentSchemaVersion
+	return true, version == currentSchemaVersion && count == 1
+}
+
+func (s *database) validateSchema(ctx context.Context) error {
+	var version, count int
+	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0),COUNT(*) FROM schema_migrations`).Scan(&version, &count); err != nil {
+		return fmt.Errorf("schema is not initialized; run explicit controlplane database bootstrap: %w", err)
+	}
+	if version != currentSchemaVersion || count != 1 {
+		return fmt.Errorf("database schema %d does not match release schema %d; apply a backed-up conversion or restore", version, currentSchemaVersion)
+	}
+	return nil
 }
 
 func (s *database) migrate(ctx context.Context) error {
@@ -149,7 +169,14 @@ func (s *database) migrate(ctx context.Context) error {
 					return nil
 				}
 			}
-			return fmt.Errorf("database schema is stale; recreate the database")
+			return fmt.Errorf("database schema does not match release schema %d; stop the old release and apply an explicit backed-up conversion or restore", currentSchemaVersion)
+		}
+		var populated bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations')`).Scan(&populated); err != nil {
+			return fmt.Errorf("inspect database before bootstrap: %w", err)
+		}
+		if populated {
+			return fmt.Errorf("populated database has no schema version; refusing to recreate or initialize it")
 		}
 
 		for _, stmt := range currentSchema {

@@ -54,6 +54,9 @@ func validateProductionControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateProductionDashboard(cfg.Dashboard); err != nil {
 		return err
 	}
+	if cfg.Dashboard.Enabled {
+		return errors.New("controlplane.dashboard.enabled must be false in production: platformctl owns independent console systemd units")
+	}
 	if cfg.Registry.Host != "" {
 		if err := validateProductionDurableHost("controlplane.registry.host", hostnameFromDialTarget(cfg.Registry.Host)); err != nil {
 			return err

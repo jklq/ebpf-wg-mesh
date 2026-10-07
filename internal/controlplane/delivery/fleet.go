@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"ebof-wg-mesh/internal/config"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
@@ -96,11 +96,14 @@ func (d *Delivery) updateFleetAgent(ctx context.Context, _ authz.Operator, req *
 		}
 		if hostType == config.HostIntermittent && current.HostType != hostType {
 			var count int
-			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocation_assignments WHERE agent_id=$1`, req.GetAgentId()).Scan(&count); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM allocation_assignments a
+				JOIN service_revisions r ON r.service_id=a.service_id AND r.spec_revision=a.desired_spec_revision
+				WHERE a.agent_id=$1 AND r.spec_json->'runtime'->'volume' IS NOT NULL
+				AND r.spec_json->'runtime'->'volume' <> 'null'::jsonb`, req.GetAgentId()).Scan(&count); err != nil {
 				return err
 			}
 			if count > 0 {
-				return fmt.Errorf("%w: drain allocations before changing host type to intermittent", ErrInvalidFleetAgentInput)
+				return fmt.Errorf("%w: drain durable allocations before changing host type to intermittent", ErrInvalidFleetAgentInput)
 			}
 		}
 		if _, err := journal.AdministrationRow(req.GetAgentId()).Exec(ctx, tx, `UPDATE agent_administration SET host_type=$2 WHERE agent_id=$1`, req.GetAgentId(), hostType); err != nil {

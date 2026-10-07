@@ -36,9 +36,6 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.Deletion.GCIntervalSeconds = 60
 	}
 
-	if cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile == "" {
-		cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile = filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt")
-	}
 	if cfg.Database.MaxOpenConns <= 0 {
 		cfg.Database.MaxOpenConns = 8
 	}
@@ -100,6 +97,9 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.Dashboard.ServiceCallerID == "" {
 		cfg.Dashboard.ServiceCallerID = "dashboard"
+	}
+	if len(cfg.ConsoleCallerIDs) == 0 {
+		cfg.ConsoleCallerIDs = []string{"console"}
 	}
 	if cfg.Dashboard.PublicDomain == "" {
 		cfg.Dashboard.PublicDomain = cfg.Ingress.PublicAddr

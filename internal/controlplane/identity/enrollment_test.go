@@ -46,7 +46,8 @@ func TestEnrollAgentBindsBootstrapTokenToCSRPublicKey(t *testing.T) {
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), testRevocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

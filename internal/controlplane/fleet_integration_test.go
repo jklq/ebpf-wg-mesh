@@ -589,7 +589,7 @@ func TestIPv4NodePrefixAllocationRejectsExhaustionAndOverlapTransactionally(t *t
 			meshCfg := testMeshConfig()
 			meshCfg.WorkloadIPv4PoolCIDR = "10.42.0.0/29"
 			meshCfg.WorkloadIPv4NodePrefixBits = 30
-			store, err := openPersistence(config.DatabaseConfig{URL: createTestDatabase(t)}, meshCfg)
+			store, err := openPersistence(config.DatabaseConfig{URL: createTestDatabase(t)}, meshCfg, withSchemaInitialization())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -851,7 +851,7 @@ func testAgentHello(n int) *agentv1.AgentHello {
 	}
 }
 
-func TestIntermittentFleetAgentIsExcludedFromApplications(t *testing.T) {
+func TestIntermittentFleetAgentSuppliesStatelessFallbackCapacity(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
@@ -871,6 +871,13 @@ func TestIntermittentFleetAgentIsExcludedFromApplications(t *testing.T) {
 	placed, err := chooseAgentForService(ctx, store, envID, replicaSpec(100, 64))
 	if err != nil || placed != "node-a" {
 		t.Fatalf("application placed on %s: %v", placed, err)
+	}
+	if _, _, err := d.SetAgentLifecycle(ctx, testUser("ops"), "node-a", deliverycore.AgentStateCordoned); err != nil {
+		t.Fatal(err)
+	}
+	placed, err = chooseAgentForService(ctx, store, envID, replicaSpec(100, 64))
+	if err != nil || placed != "node-b" {
+		t.Fatalf("stateless fallback placed on %s: %v", placed, err)
 	}
 	snapshot, err := store.journal.Snapshot(ctx)
 	if err != nil {

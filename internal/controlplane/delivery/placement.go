@@ -14,6 +14,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
@@ -196,6 +197,7 @@ func (d *Delivery) chooseAgentForReplicaQuerier(ctx context.Context, q ServiceQu
 }
 
 type placementCandidate struct {
+	HostType               config.HostType
 	ID                     string
 	Region                 string
 	Zone                   string
@@ -209,7 +211,7 @@ type placementCandidate struct {
 }
 
 func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQueryer) ([]placementCandidate, error) {
-	rows, err := q.QueryContext(ctx, `SELECT r.id, r.region, r.zone, r.failure_domain, r.runtime_capabilities,
+	rows, err := q.QueryContext(ctx, `SELECT r.id, r.region, r.zone, r.failure_domain, r.runtime_capabilities, ad.host_type,
 		greatest(r.cpu_millis_capacity - r.reserved_cpu_millis, 0),
 		greatest(r.memory_mebibytes_capacity - r.reserved_memory_mebibytes, 0),
 		COALESCE(stats.service_count, 0), COALESCE(stats.cpu_millis, 0), COALESCE(stats.memory_mebibytes, 0)
@@ -225,8 +227,8 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 			WHERE a.rollout_state <> 'lost'
 			GROUP BY a.agent_id
 		) stats ON stats.agent_id = r.id
-		WHERE ad.lifecycle_state = 'active' AND ad.host_type = 'stable'
-		ORDER BY COALESCE(stats.service_count, 0), r.id`)
+		WHERE ad.lifecycle_state = 'active'
+		ORDER BY CASE ad.host_type WHEN 'stable' THEN 0 ELSE 1 END, COALESCE(stats.service_count, 0), r.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +237,7 @@ func (s *persistence) placementCandidatesQuerier(ctx context.Context, q ServiceQ
 	for rows.Next() {
 		var candidate placementCandidate
 		if err := rows.Scan(&candidate.ID, &candidate.Region, &candidate.Zone, &candidate.FailureDomain,
-			(*jsonStringSlice)(&candidate.RuntimeCapabilities), &candidate.CPUMillisCapacity,
+			(*jsonStringSlice)(&candidate.RuntimeCapabilities), &candidate.HostType, &candidate.CPUMillisCapacity,
 			&candidate.MemoryMebibytesCapcity, &candidate.ServiceCount, &candidate.UsedCPUMillis,
 			&candidate.UsedMemoryMebibytes); err != nil {
 			return nil, err

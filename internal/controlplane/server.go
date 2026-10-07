@@ -88,8 +88,11 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
-	store, err := openPersistence(cfg.Database, cfg.Mesh,
-		withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays)*24*time.Hour))
+	opts := []persistenceOption{withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays) * 24 * time.Hour)}
+	if !cfg.Profile.IsProduction() {
+		opts = append(opts, withSchemaInitialization())
+	}
+	store, err := openPersistence(cfg.Database, cfg.Mesh, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -115,10 +118,6 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	leases.SetAdvertise(cfg.AdvertiseAddr)
 	archiveStore, err := source.NewSourceArchiveStore(cfg.SourceArchives)
 	if err != nil {
-		_ = store.Close()
-		return nil, err
-	}
-	if err := verifySharedControlPlaneDirectory(ctx, store, "state", cfg.StateDir); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
@@ -151,7 +150,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	var registryAuth *registry.Auth
 	if err := store.withLeaseGuard(initializationCtx, func() error {
 		var err error
-		authority, err = identity.NewTLSAuthority(initializationCtx, cfg, signKeys)
+		authority, err = identity.NewTLSAuthority(initializationCtx, cfg, signKeys, identity.NewSharedCertificateRevocations(store.db))
 		if err != nil {
 			return err
 		}
@@ -184,8 +183,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if logStore != nil {
 		logStore.SetProjectResolver(store.catalog.resolveLogRetention)
 	}
-	// Each replica journals into its own directory: replicas share the state volume but never
-	// the spool files, so failover can't race two drainers over one journal.
+	// Each replica journals into its own durable directory. Shared authority
+	// lives in SQL; local spool files never have two writers.
 	replicaID := strings.NewReplacer(":", "_", "/", "_").Replace(cfg.AdvertiseAddr)
 	if replicaID == "" {
 		replicaID = "default"
@@ -274,7 +273,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withPlatformEvents(platformEvents),
 		withPlatformLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
 	)
-	internalAuth := identity.NewInternalAuth(cfg.Dashboard.ServiceCallerID, userAssertionSecrets(signKeys), authority.Revocations())
+	consoleCallers := strings.Join(cfg.ConsoleCallerIDs, ",")
+	if cfg.Dashboard.Enabled {
+		consoleCallers = cfg.Dashboard.ServiceCallerID
+	}
+	internalAuth := identity.NewInternalAuth(consoleCallers, userAssertionSecrets(signKeys), authority.Revocations())
 	dashboard := newManagedDashboardReconciler(cfg.Dashboard, cfg.Profile, store.catalog, delivery, ingress, notifier)
 	rollouts := newRolloutReconciler(delivery, 2*time.Second)
 	failover := newServiceFailoverReconciler(delivery,

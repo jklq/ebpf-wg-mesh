@@ -10,6 +10,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"github.com/google/uuid"
@@ -376,6 +377,9 @@ func candidateFailureDomain(candidate placementCandidate) string {
 }
 
 func candidateEligible(candidate placementCandidate, spec *platformv1.ServiceSpec) bool {
+	if candidate.HostType == config.HostIntermittent && serviceRuntime(spec).GetVolume() != nil {
+		return false
+	}
 	if spec != nil && strings.TrimSpace(spec.GetPlacementRegion()) != "" && candidate.Region != strings.TrimSpace(spec.GetPlacementRegion()) {
 		return false
 	}

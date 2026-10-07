@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -41,9 +40,6 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	}
 	if got := cfg.Ingress.XDSListen; got != "127.0.0.1:18000" {
 		t.Fatalf("expected loopback xDS listener, got %q", got)
-	}
-	if got, want := cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile, filepath.Join(cfg.StateDir, "pki", "revoked-client-cert-serials.txt"); got != want {
-		t.Fatalf("unexpected default client certificate revocation file %q, want %q", got, want)
 	}
 	if cfg.Failover.ReconcileIntervalSeconds != 60 || cfg.Failover.UnhealthyThresholdSeconds != 30 {
 		t.Fatalf("unexpected failover defaults: %+v", cfg.Failover)
