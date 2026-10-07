@@ -20,6 +20,10 @@ secrets:
         file: /etc/platform/hetzner-token
     recovery:
         file: /etc/platform/recovery
+    backup-writer:
+        file: /etc/platform/backup-writer
+    recovery-key:
+        file: /etc/platform/recovery.key
     ssh:
         file: /etc/platform/ssh
 hosts:
@@ -283,14 +287,12 @@ endpoints:
 backup:
     target: s3://backups/production
     credentials:
-        - recovery
-    maxAgeHours: 24
-    includes:
-        - database
-        - keyring
-        - registry
-        - deployment-state
-        - volumes
+        - backup-writer
+    account: independent-recovery-account
+    primaryAccount: production-account
+    failureDomain: independent-provider/offsite-storage
+    recoveryKey: recovery-key
+    monitor: https://monitor.example.com/recovery/production
 recovery:
     hosts:
         - id: recovery

@@ -127,8 +127,9 @@ an existing key. Keep the encrypted state and its key in independent recovery
 storage and test restoring both.
 
 Reconciliation requires the exact applied policy and release. It can replace
-stateless components, refresh credentials, apply reservations and take due
-backups. It preserves offline database/agent/builder membership. It never buys
+stateless components, refresh credentials and apply reservations. Native backup
+schedules and the independent completion timer continue separately. It preserves
+offline database/agent/builder membership. It never buys
 machines, changes database membership or upgrades a release automatically.
 Unavailable replaced instances remain in `retained`, with their resource budgets
 and identities; elapsed heartbeats never retire an Envoy member. Returning hosts
@@ -169,7 +170,11 @@ and public endpoint services.
 | `storage-verify` | Return a map of storage names to `{hosts, verified}`; verify actual shared backing storage and durability. |
 | `production-verify` | Check actual persistence, TLS, authorization, credentials, secret/keyring coverage and declared traffic/network paths. Topology limitations remain a separate assessment. |
 | `quiesce` | Pause mutations and background work on every old replica, and independently verify the pause. |
-| `backup` | Verify a complete database, keyring, registry, volumes and deployment-state backup. Return `{backup, dataLossCutoff}` JSON only after completion. |
+| `recovery-protect` | Freeze and protect installation/deployment snapshots, key versions, external secrets, release bundles and all pinned release executables before activation/cutover. Verify their protected copies independently. |
+| `backup-schedule` | Register installer dependencies and install/verify native full-cluster CockroachDB schedules: six-hour full, ten-minute incremental, revision history. |
+| `backup` | Publish/verify a complete recovery point with `platformctl recovery`. Return Evidence JSON with `backup`, `dataLossCutoff`, `point` and exact protected `object` only after all dependencies pass. |
+| `recovery-verify` | Independently verify the selected version-pinned point and exact cutoff before fencing or destructive restore; return complete Evidence JSON. |
+| `recovery-finalize` | Retire the previous release's installer inventory after production verification; retained recovery points keep its artifacts. |
 | `resume` | Resume mutations/background work and safely uncordon affected workers after readiness. |
 | `restore` | Verify backup completeness, restore all stores and key material, and validate the requested release's exact schemas. |
 | `recovery-fence` | Independently fence every previous instance and public traffic path using provider or gateway credentials before restoration. An unavailable old host must be fenced externally; heartbeat expiry is insufficient. |
@@ -227,7 +232,7 @@ expired old-release leases. Import the union of the old replicas' revocation fil
 Other source versions require a separately provided explicit conversion.
 
 Rollback across a schema change uses `platformctl restore --installation ...
---bundle ... --backup ... --data-loss-cutoff ...`. Select the intended recovery
+--bundle ... --backup ... --data-loss-cutoff ... --recovery-config ...`. Select the intended recovery
 inventory and externally retained credentials. The command records and reports
 the backup's cutoff before restoration: every mutation after that time is lost.
 Independent fencing precedes restoration. Recovery on alternative hosts does not
@@ -239,6 +244,26 @@ must be resolved through provider discovery first.
 backups; resuming an interrupted restoration reports the cutoff again.
 Interrupted restoration resumes from encrypted state. A recovery inventory is
 never silently substituted into an ordinary deployment.
+
+The [recovery runbook](recovery.md) defines complete independent points and their
+storage/verification contract. `backup` policy now declares an independent S3
+target, account, primary account, failure domain, restricted writer credentials,
+separate recovery-encryption key and external monitor. Recovery credentials are
+distinct from production writer credentials. Recovery storage must provide
+versioning, encryption and Object Lock compliance retention. Complete points
+are retained for 30 days; dependency retention follows their last referencing
+point. Native database schedules and an OS completion timer run independently
+of reconciliation. An external monitor alerts when the latest complete database
+timestamp is older than 15 minutes. Release and key activation, plus active
+archive/image deletion, require protected copies first.
+
+Initial production bootstrap requires a pre-provisioned, protected keyring and
+`--recovery-config` (or `PLATFORM_RECOVERY_CONFIG`). The runbook includes command
+mapping for the new hooks, configuration/policy/timer templates and the offline
+release-tool contract. The two-hour recovery target includes provisioning,
+transfer, restore, validation and platform availability from declaration; publish
+the isolated drill report and tested fleet/capacity assumptions before claiming
+that target for an installation.
 
 `go test ./internal/deploy` exercises the acceptance topologies, stateless
 replacement, controlled database expansion, incomplete replication, full-platform

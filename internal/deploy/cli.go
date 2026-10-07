@@ -10,9 +10,17 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"ebof-wg-mesh/internal/recovery"
 )
 
 func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error {
+	if len(args) == 2 && args[0] == "recovery-isolated" {
+		return recovery.RunIsolated(ctx, args[1])
+	}
+	if len(args) > 0 && args[0] == "recovery" {
+		return RunRecovery(ctx, args[1:], out)
+	}
 	if len(args) > 0 && args[0] == "database-status" {
 		return RunDatabaseStatus(ctx, args[1:], out)
 	}
@@ -20,7 +28,7 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 		return fmt.Errorf("usage: platformctl <init-state|plan|apply|reconcile|status|restore> [flags]")
 	}
 	fs := flag.NewFlagSet("platformctl "+args[0], flag.ContinueOnError)
-	var manifest, bundle, output, statePath, keyPath string
+	var manifest, bundle, output, statePath, keyPath, recoveryConfig string
 	var watch bool
 	var interval time.Duration
 	var backup, cutoff string
@@ -33,11 +41,15 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 	fs.DurationVar(&interval, "interval", 30*time.Second, "reconciliation interval")
 	fs.StringVar(&backup, "backup", "", "verified complete backup to restore")
 	fs.StringVar(&cutoff, "data-loss-cutoff", "", "backup's mutation cutoff as RFC3339")
+	fs.StringVar(&recoveryConfig, "recovery-config", os.Getenv("PLATFORM_RECOVERY_CONFIG"), "independent storage configuration for protected recovery artifact staging")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
 	if fs.NArg() > 1 || (args[0] != "apply" && fs.NArg() != 0) {
 		return fmt.Errorf("unexpected arguments")
+	}
+	if ssh, ok := driver.(*SSHDriver); ok {
+		ssh.RecoveryConfig = recoveryConfig
 	}
 	if keyPath == "" || !filepath.IsAbs(keyPath) {
 		return fmt.Errorf("--key-file or PLATFORMCTL_KEY_FILE must be an absolute private key-file path")
@@ -193,6 +205,7 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 		// Recovery must work after permanent host loss. Independent provider or
 		// gateway fencing proves that old instances cannot mutate or serve traffic;
 		// a missing original machine cannot be required to answer SSH.
+		add("hook", p.AdministrationHost, "recovery-verify", nil)
 		add("hook", p.AdministrationHost, "recovery-fence", nil)
 		for _, pl := range state.Placements {
 			if _, present := i.Host(pl.Host); present {

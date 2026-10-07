@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"ebof-wg-mesh/internal/recovery"
 )
 
 type fakeDriver struct {
@@ -25,13 +30,16 @@ func fake(inv Inventory) *fakeDriver {
 func (d *fakeDriver) Inventory(context.Context, Installation, Release, State) (Inventory, error) {
 	return d.inv, nil
 }
-func (d *fakeDriver) Observe(_ context.Context, _ Plan, _ State, op Operation) (bool, Evidence, error) {
+func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
 	if op.Kind == "purchase" {
 		return d.purchaseDiscovered, Evidence{}, nil
 	}
 	e := Evidence{}
 	if op.Hook == "backup" {
-		e = Evidence{Backup: "s3://backup/complete", DataLossCutoff: testNow}
+		e = completeEvidence(p.Installation.ID, "s3://backups/production/points/production/complete?versionId=protected", testNow)
+	}
+	if op.Hook == "recovery-verify" && state.LastRestore != nil {
+		e = completeEvidence(p.Installation.ID, state.LastRestore.Backup, state.LastRestore.DataLossCutoff)
 	}
 	return d.done[op.ID], e, nil
 }
@@ -270,8 +278,14 @@ func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
 	r.Conversions = map[string]Hook{"r42": {Command: []string{"/opt/convert"}, Verify: []string{"/opt/verify-conversion"}}}
 	p = build(t, i, r, state, inv, false)
 	requireComplete(t, p)
-	quiesce, backup, convert, firstInstall, lastStop, lastDatabase := -1, -1, -1, -1, -1, -1
+	quiesce, backup, convert, firstInstall, lastStop, lastDatabase, protect, schedule := -1, -1, -1, -1, -1, -1, -1, -1
 	for n, op := range p.Operations {
+		if op.Hook == "recovery-protect" {
+			protect = n
+		}
+		if op.Hook == "backup-schedule" {
+			schedule = n
+		}
 		if op.Hook == "quiesce" {
 			quiesce = n
 		}
@@ -294,6 +308,9 @@ func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
 	if !(quiesce < backup && backup < lastStop && lastStop < lastDatabase && lastDatabase < convert && convert < firstInstall) {
 		t.Fatalf("unsafe cutover: q=%d b=%d stop=%d database=%d convert=%d install=%d", quiesce, backup, lastStop, lastDatabase, convert, firstInstall)
 	}
+	if !(protect < quiesce && convert < schedule && schedule < firstInstall) {
+		t.Fatal("activation/cutover bypassed recovery protection or native schedules")
+	}
 	s, _, _ := testStore(t)
 	if err := s.Write(state); err != nil {
 		t.Fatal(err)
@@ -309,5 +326,43 @@ func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
 	r.Conversions = nil
 	if _, err := BuildPlan(i, r, state, inv, false, testNow); err == nil {
 		t.Fatal("unimplemented conversion accepted")
+	}
+}
+
+func completeEvidence(installation, location string, t time.Time) Evidence {
+	until := t.Add(recovery.Retention)
+	object := recovery.Object{Key: "objects/test", Version: "protected", Digest: recovery.Digest([]byte("test")), Size: 4, RetainUntil: until}
+	point := recovery.Point{Version: 1, Installation: installation, Snapshot: recovery.Snapshot{Timestamp: t, Schema: 42, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: recovery.Database{Collection: "external://recovery", Subdirectory: "full", Layers: []recovery.Layer{{End: t}}, Objects: []recovery.Object{object}}, CompletedAt: t, ExpiresAt: until}
+	for _, kind := range []string{"keyring", "console-key", "external-secret", "installation", "deployment-state", "release", "tool"} {
+		point.Snapshot.Requirements = append(point.Snapshot.Requirements, recovery.Requirement{Kind: kind, ID: "required"})
+		point.Dependencies = append(point.Dependencies, recovery.Dependency{Kind: kind, ID: "required", Objects: []recovery.Object{object}})
+	}
+	manifest := object
+	u, _ := url.Parse(location)
+	manifest.Key = strings.TrimPrefix(u.Path, "/")
+	manifest.Version = u.Query().Get("versionId")
+	manifest.Digest = point.ManifestDigest()
+	return Evidence{Backup: location, DataLossCutoff: t, Point: &point, Object: &manifest}
+}
+
+func TestRecoveryEvidenceRejectsAssertionsAndUnprotectedSelection(t *testing.T) {
+	location := "s3://backups/production/points/production/complete?versionId=protected"
+	valid := func() Evidence { return completeEvidence("production", location, testNow) }
+	if err := validateRecoveryEvidence(valid(), "production", "s3://backups/production", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	for _, alter := range []func(*Evidence){
+		func(e *Evidence) { e.Point = nil },
+		func(e *Evidence) { e.Point.Dependencies = nil; e.Object.Digest = e.Point.ManifestDigest() },
+		func(e *Evidence) { e.Backup = "s3://backups/production/points/production/complete" },
+		func(e *Evidence) { e.Object.Version = "different" },
+		func(e *Evidence) { e.Object.RetainUntil = testNow },
+		func(e *Evidence) { e.DataLossCutoff = e.DataLossCutoff.Add(time.Second) },
+	} {
+		e := valid()
+		alter(&e)
+		if err := validateRecoveryEvidence(e, "production", "s3://backups/production", time.Now()); err == nil {
+			t.Fatal("incomplete recovery evidence accepted", e)
+		}
 	}
 }

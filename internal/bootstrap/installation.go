@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/secretkeys"
+	"ebof-wg-mesh/internal/recovery"
 )
 
 func RunInstallationDatabase(args []string) error {
@@ -17,10 +19,11 @@ func RunInstallationDatabase(args []string) error {
 		return fmt.Errorf("usage: controlplane database <bootstrap|convert> [flags]")
 	}
 	fs := flag.NewFlagSet("controlplane database "+args[0], flag.ContinueOnError)
-	var dbURL, keyring, backup, cutoff, revocations, consoleSchema string
+	var dbURL, keyring, backup, cutoff, revocations, consoleSchema, recoveryConfig string
 	var from int
 	stringFlag(fs, &dbURL, "db-url", "CONTROLPLANE_DATABASE_URL", "", "secure database URL")
 	stringFlag(fs, &keyring, "keyring", "CONTROLPLANE_SECRET_KEYS_KEYRING", "", "externally retained master keyring path")
+	stringFlag(fs, &recoveryConfig, "recovery-config", "PLATFORM_RECOVERY_CONFIG", "", "protected initial master-key copy")
 	fs.IntVar(&from, "from-version", 0, "source schema version for a flat conversion")
 	fs.StringVar(&backup, "backup", "", "verified complete backup location")
 	fs.StringVar(&cutoff, "data-loss-cutoff", "", "backup mutation cutoff, RFC3339")
@@ -42,6 +45,27 @@ func RunInstallationDatabase(args []string) error {
 	if args[0] == "bootstrap" {
 		if keyring == "" {
 			return fmt.Errorf("explicit bootstrap requires --keyring")
+		}
+		_, protected, err := recovery.Load(recoveryConfig)
+		if err != nil {
+			return fmt.Errorf("bootstrap requires a protected initial master key: %w", err)
+		}
+		defer clear(protected.RecoveryKey)
+		provider, err := secretkeys.NewKeyring(keyring, secretkeys.KeyringOptions{})
+		if err != nil {
+			return err
+		}
+		versions, err := provider.LocalKeyVersions()
+		if err != nil {
+			return err
+		}
+		if len(versions) == 0 {
+			return fmt.Errorf("provision and protect the initial key before bootstrap")
+		}
+		for _, version := range versions {
+			if err := protected.RequireSecret(ctx, recovery.Requirement{Kind: "keyring", ID: version}, keyring); err != nil {
+				return err
+			}
 		}
 		return controlplane.BootstrapInstallation(ctx, db, keyring)
 	}

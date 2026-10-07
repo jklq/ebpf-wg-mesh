@@ -13,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/recovery"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -52,9 +53,10 @@ func keysUsageError() error {
 }
 
 func runKeysCommand(command string, args []string) error {
-	var dbURL, stateDir, keyID string
+	var dbURL, stateDir, keyID, recoveryConfig string
 	var keysCfg config.SecretKeysConfig
 	fs := flag.NewFlagSet("controlplane keys "+command, flag.ContinueOnError)
+	stringFlag(fs, &recoveryConfig, "recovery-config", "PLATFORM_RECOVERY_CONFIG", "", "independent protected key-copy configuration required before activation")
 	stringFlag(fs, &dbURL, "db-url", "CONTROLPLANE_DB_URL", "", "")
 	stringFlag(fs, &stateDir, "state-dir", "CONTROLPLANE_STATE_DIR", "var/controlplane", "")
 	stringFlag(fs, &keysCfg.KeyringPath, "secret-keys-keyring", "CONTROLPLANE_SECRET_KEYS_KEYRING", "", "provisioned master-key ring file")
@@ -119,6 +121,14 @@ func runKeysCommand(command string, args []string) error {
 	case "list":
 		return keysList(ctx, svc, signing)
 	case "activate":
+		_, backup, err := recovery.Load(recoveryConfig)
+		if err != nil {
+			return fmt.Errorf("key activation requires a protected recovery copy: %w", err)
+		}
+		defer clear(backup.RecoveryKey)
+		if err := backup.RequireSecret(ctx, recovery.Requirement{Kind: "keyring", ID: keyID}, keysCfg.KeyringPath); err != nil {
+			return err
+		}
 		return keysActivate(ctx, svc, keyID)
 	case "rewrap":
 		return keysRewrap(ctx, svc, signing)
@@ -142,7 +152,7 @@ func keysProvision(keysCfg config.SecretKeysConfig, keyID string) error {
 		return fmt.Errorf("controlplane keys provision: %w", err)
 	}
 	fmt.Fprintf(os.Stdout, "provisioned key version %s in %s\n", version, provider.Path())
-	fmt.Fprintln(os.Stdout, "copy this keyring file to every replica (and back it up separately from the database), then run `controlplane keys activate --key-id "+version+"`")
+	fmt.Fprintln(os.Stdout, "protect this version with `platformctl recovery protect --kind keyring --id "+version+" --file "+provider.Path()+" --secret`, distribute it to every replica, then run `controlplane keys activate --key-id "+version+" --recovery-config <path>`")
 	return nil
 }
 

@@ -206,17 +206,26 @@ func (i Installation) Validate(r Release) error {
 			return fmt.Errorf("complete installation requires %s", role)
 		}
 	}
-	for _, name := range []string{"database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "quiesce", "resume", "restore", "recovery-fence"} {
+	for _, name := range []string{"database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence"} {
 		if !hookValid(r.Hooks[name]) {
 			return fmt.Errorf("release requires idempotent %s hook with verification", name)
 		}
 	}
-	if i.Backup.Target == "" || i.Backup.MaxAgeHours < 1 || len(i.Backup.Credentials) == 0 || len(i.Recovery.Hosts) == 0 || len(i.Recovery.Credentials) == 0 {
-		return fmt.Errorf("backup policy and independent recovery inventory/credentials are required")
+
+	if !strings.HasPrefix(i.Backup.Target, "s3://") || len(i.Backup.Credentials) == 0 || len(i.Recovery.Hosts) == 0 || len(i.Recovery.Credentials) == 0 || i.Backup.Account == "" || i.Backup.PrimaryAccount == "" || i.Backup.Account == i.Backup.PrimaryAccount || i.Backup.FailureDomain == "" || i.Backup.Monitor == "" {
+		return fmt.Errorf("independent S3 recovery storage, account/domain, credentials, inventory and external monitor are required")
 	}
-	for _, name := range []string{"database", "keyring", "registry", "deployment-state", "volumes"} {
-		if !contains(i.Backup.Includes, name) {
-			return fmt.Errorf("complete backup must include %s", name)
+	if _, ok := i.Secrets[i.Backup.RecoveryKey]; !ok {
+		return fmt.Errorf("independent recovery encryption key reference is required")
+	}
+	for _, h := range i.Hosts {
+		if h.FailureDomain == i.Backup.FailureDomain {
+			return fmt.Errorf("recovery storage shares primary failure domain %s", h.FailureDomain)
+		}
+	}
+	for _, production := range i.Backup.Credentials {
+		if contains(i.Recovery.Credentials, production) {
+			return fmt.Errorf("production backup and independent recovery credentials must be distinct")
 		}
 	}
 	for _, ref := range append(append([]string{}, i.Backup.Credentials...), i.Recovery.Credentials...) {

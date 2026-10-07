@@ -15,9 +15,14 @@ import (
 // Deleter deletes only build repositories in the operator's platform registry.
 // It cannot delete direct images in a user's external registry.
 type Deleter struct {
-	policy *Policy
-	auth   *Auth
-	client *http.Client
+	policy  *Policy
+	auth    *Auth
+	client  *http.Client
+	protect func(context.Context, string) error
+}
+
+func (d *Deleter) SetRecoveryProtection(protect func(context.Context, string) error) {
+	d.protect = protect
 }
 
 func NewDeleter(cfg config.RegistryConfig, auth *Auth) *Deleter {
@@ -62,6 +67,11 @@ func (d *Deleter) PrepareDelete(ctx context.Context, ref string) (func(context.C
 		return nil, err
 	}
 	return func(ctx context.Context) error {
+		if d.protect != nil {
+			if err := d.protect(ctx, ref); err != nil {
+				return fmt.Errorf("protect registry recovery copy before deletion: %w", err)
+			}
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodDelete, manifestURLFor(parsed.Repository, parsed.Digest), nil)
 		if err != nil {
 			return err

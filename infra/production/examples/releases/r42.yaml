@@ -260,6 +260,14 @@ programs:
                 - registry
                 - '{instance}'
 hooks:
+    recovery-verify:
+        command:
+            - '{tool.operations}'
+            - recovery-verify
+        verify:
+            - '{tool.operations}'
+            - verify
+            - recovery-verify
     recovery-fence:
         command:
             - '{tool.operations}'
@@ -268,6 +276,30 @@ hooks:
             - '{tool.operations}'
             - verify
             - recovery-fence
+    recovery-protect:
+        command:
+            - '{tool.operations}'
+            - recovery-protect
+        verify:
+            - '{tool.operations}'
+            - verify
+            - recovery-protect
+    backup-schedule:
+        command:
+            - '{tool.operations}'
+            - backup-schedule
+        verify:
+            - '{tool.operations}'
+            - verify
+            - backup-schedule
+    recovery-finalize:
+        command:
+            - '{tool.operations}'
+            - recovery-finalize
+        verify:
+            - '{tool.operations}'
+            - verify
+            - recovery-finalize
     backup:
         command:
             - '{tool.operations}'

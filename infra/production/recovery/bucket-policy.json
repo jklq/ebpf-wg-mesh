@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ProductionCannotChangeRecoveryProtection",
+      "Effect": "Deny",
+      "Principal": {"AWS": "arn:aws:iam::111111111111:role/platform-backup-writer"},
+      "Action": [
+        "s3:PutBucketVersioning",
+        "s3:PutBucketObjectLockConfiguration",
+        "s3:PutBucketPolicy",
+        "s3:DeleteBucketPolicy",
+        "s3:DeleteBucket"
+      ],
+      "Resource": "arn:aws:s3:::independent-recovery"
+    },
+    {
+      "Sid": "ProductionCannotDeleteProtectedVersions",
+      "Effect": "Deny",
+      "Principal": {"AWS": "arn:aws:iam::111111111111:role/platform-backup-writer"},
+      "Action": ["s3:DeleteObjectVersion", "s3:BypassGovernanceRetention"],
+      "Resource": "arn:aws:s3:::independent-recovery/*"
+    }
+  ]
+}

@@ -240,6 +240,7 @@ type DirectImageConfig struct {
 }
 
 type ControlPlaneConfig struct {
+	RecoveryConfig   string
 	ConsoleCallerIDs []string
 	Profile          Profile
 	Health           HealthConfig
