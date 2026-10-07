@@ -265,16 +265,178 @@ Missing keys or images prevent a successful drill. The release operations/offlin
 provisioning executable remains operator supplied, as in production deployment;
 the example release does not supply an infrastructure-specific implementation.
 
-For production recovery, obtain the protected installation, state/key material,
-release and tools using independent operator access, choose alternative inventory,
-and run `platformctl restore` with the point URL, exact cutoff and
-`--recovery-config` pointing to independent storage credentials. The SSH driver
-verifies the point before any recovery side effects and streams the protected
-release executables/tools to those hosts with SHA-256 checks and atomic placement.
-It works when the original release-download service is lost. Complete-point verification precedes
-independent provider/gateway fencing; fencing precedes destructive restore.
-Every mutation after the cutoff is lost. Reconnect external services only after
-validation and controlled production availability checks.
+## Restore against a surviving fleet
+
+Obtain the protected installation, encrypted deployment state, keys, exact release
+bundle and tools using independent operator access. Select an explicit point and
+its cutoff. The SSH driver verifies the complete point and its corresponding
+release before provisioning, then streams protected executables to the target
+with digest checks. Recovery works without the original download service or an
+SSH response from lost infrastructure. The target may use either provider or
+imported hosts, with different counts and placements.
+
+Restore into a fresh CockroachDB cluster. `recovery-database` initializes native
+membership and verifies an empty destination; it must not bootstrap platform or
+console schemas. `restore` completes full-cluster restoration and pauses restored
+native backup schedules before any platform process starts. An occupied destination
+is rejected, never cleared automatically. See the
+[CockroachDB restore requirements](https://docs.cockroachlabs.com/docs/stable/restore).
+
+The encrypted deployment state records the operation outside restored SQL before
+any side effects. Repeating the same restore or running `resume` continues the
+same generation. `status` reports the cutoff, pinned release, fencing, phase,
+unresolved resources and elapsed time; a later backup does not replace the recorded
+restore cutoff. Keep this state and its decryption key on the independent operator
+host throughout recovery.
+
+```sh
+platformctl restore --installation /etc/platform/restore-target.yaml \
+  --bundle /etc/platform/selected-release.yaml \
+  --state /var/lib/platformctl/installation.state \
+  --key-file /etc/platform/deployment-state.key \
+  --backup "$RECOVERY_POINT_URL" --data-loss-cutoff "$RECOVERY_CUTOFF" \
+  --recovery-config /etc/platform/recovery.json
+platformctl status --state /var/lib/platformctl/installation.state \
+  --key-file /etc/platform/deployment-state.key
+```
+
+### Authority and pause
+
+Installation identity stays stable. Recovery creates a new generation; normal
+replica failover advances an authority epoch within that generation. The revision
+cursor orders changes within one authority. Agents validate installation and
+generation before observing epochs or cursors, so a high old-generation epoch
+cannot fence out restored commands. RPCs and endpoint discovery cannot admit a
+generation. Only a private local admission file supplied through host administration
+does so. Old generations are recorded as retired locally.
+
+The credentials hook provisions admission for a normal first installation and
+calls `platformctl recovery initialize-authority`. The recovery authority hook
+uses `reset-authority`, replaces all internal signing scopes without retiring-key
+overlap, removes restored client certificates/bootstrap tokens, and provisions new
+client identities and trust on every admitted participant. Console JWTs bind to
+installation and generation, invalidating old sessions even if a signing key is
+still cached. Registry authority is also replaced. Recover the historical envelope
+keys needed to decrypt data; replacing signing authority does not discard them.
+
+Admission files use mode `0600` and an absolute path:
+
+```json
+{
+  "installationId": "production",
+  "generation": "persisted-recovery-generation",
+  "clusterId": "sha256-of-the-current-internal-CA-bundle",
+  "paused": true,
+  "checkpoints": false
+}
+```
+
+The installer sets `CONTROLPLANE_AUTHORITY_FILE`, `AGENT_AUTHORITY_FILE`,
+`BUILDER_AUTHORITY_FILE` and `DASHBOARD_AUTHORITY_FILE` to each instance's
+`authority.json`. The release tool supplies the files before starting units.
+Agent TLS caches also carry the generation marker; provision it with new host-admin
+client material. A missing/mismatched marker forces replacement of the cached identity.
+`controlplane signing-keys issue-client-cert --caller-class agent --caller-id ...`
+issues and records an agent identity over the host administration channel while
+normal enrollment RPCs remain paused. Install its private certificate/key/CA output
+and generation marker on the admitted agent. Fresh agents are enrolled into restored
+desired host state by approved reconciliation before checkpoint delivery.
+The shared SQL authority row prevents a stale unpaused console/control-plane file
+from overriding the restored pause. All replicas start with mutations, webhooks,
+builds, placement, failover, deletion, artifact cleanup and certificate issuance
+paused. Agents still discover durable inventory, and authenticated operator reads
+remain available. Paused builders do not recover executors, claim work or collect
+workspaces. Paused agents do not run periodic reconciliation or image cleanup.
+
+Fence the previous installation using provider or host controls and replace its
+credentials before restoring. Fence its public traffic paths and access to shared
+database, storage, registry and external integrations. DNS changes, heartbeat
+expiry and restored lease counters are insufficient. An unreachable host must
+remain externally isolated; inability to contact it cannot prove a fence.
+
+### Inventory, reservations and approval
+
+`installation.recovery.inventory` names the latest external `FleetInput` JSON
+on the administration host. Maintain this inventory independently of backups and
+SQL, including machines added after the cutoff. The release inventory hook merges
+provider/host records with authenticated agent reports from
+`StateDir/recovery-inventory/<generation>/`. Reachable agents report nonsecret
+allocation identities, actual revisions, rollout generations, addresses and durable
+volumes. Unreachable hosts carry their last recorded protected ranges and verified
+isolation/decommission status. A fresh capture timestamp is required after recovery
+starts. A list obtained only from the restored database cannot locate the entire
+surviving fleet.
+
+The `fleet-inventory` helper replaces caller-supplied desired state with a consistent
+snapshot of restored SQL. The report identifies post-cutoff releases/resources,
+missing hosts, unresolved authority, changed allocations, network conflicts,
+allocations eligible for adoption and changes needed to return to restored desired
+state. Unknown machines, workloads and volumes remain quarantined. Absence from an
+older backup never authorizes deletion. Store identity conflicts and allocations
+observed on the wrong host block admission.
+
+Before approval, `reserve-fleet` protects the union of desired and observed network
+identities, subnets and individual addresses. Allocators skip these reservations;
+the numeric identity counter advances past observed identities. Reservation writes
+are additive. Neither an inventory refresh nor an unreachable host releases a
+range; inventory resolution or verified decommission must do so explicitly.
+
+The controller stops at its internal `recovery-approve` gate after reservations
+are verified. Inspect the concrete report from `status`, resolve blocking conflicts,
+and approve its exact `reportDigest`:
+
+```sh
+platformctl resume --state /var/lib/platformctl/installation.state \
+  --key-file /etc/platform/deployment-state.key \
+  --recovery-config /etc/platform/recovery.json --approve-report "$REPORT_DIGEST"
+```
+
+If the external inventory changes before reconciliation starts, use
+`resume --refresh-inventory` with the same state, key and recovery configuration.
+This invalidates report approval, reruns inventory/reservations and retains the
+operation's generation. Once approved reconciliation has started, resume that
+operation before requesting a new inventory. Elapsed-time display updates do not
+alter the approval digest.
+
+### Release operations and return to operation
+
+Each recovery hook returns typed `Evidence.recovery` for the installation and
+generation, with independently verified `checks`. The pinned operations executable
+owns infrastructure effects and observation, as in normal production deployment.
+Hooks must be idempotent across interruption and verify actual outcomes. Helpers
+are host-admin commands using a private `--database-url-file`, independent of
+platform RPCs and console login.
+
+| Hook | Required effects and verification |
+| --- | --- |
+| `recovery-fence` | Provider/host fence and credential replacement, including unreachable old infrastructure. |
+| `recovery-database` | Native membership ready; `recovery empty-destination` proves no user schema initialized. |
+| `restore` | Native full-cluster restore completes at the selected timestamp with the selected release; pause restored native schedules. |
+| `recovery-authority` | `recovery reset-authority --keyring ...`, new CA/client identities, invalid console sessions, registry authority, host-admin admission and all participants paused. |
+| `recovery-inventory` | `recovery fleet-inventory --fleet ...`; merge the latest external inventory and actual host reports. |
+| `recovery-reserve` | `recovery reserve-fleet --report ...`; return the reserved report digest. |
+| `recovery-reconcile` | Apply only approved restored desired state and preserve quarantined resources; return the approved report digest. |
+| `recovery-checkpoints` | Enable `checkpoints: true` through host administration after approval. Apply complete checkpoints to every admitted agent and publish restored ingress state for acknowledgment verification. Record generation, epoch, cursor and completeness acknowledgments. Incremental updates and normal automation remain paused. |
+| `recovery-work` | Invalidate stale build ownership, establish new worker leases and reconcile external effects before retrying non-idempotent work. Use the durable work/journal interfaces and refresh projections after administrative changes. |
+| `production-verify` | Database health, key access, overlay connectivity, image access, ingress acknowledgments, certificate trust and console login all pass. |
+| `backup-schedule`, `backup` | Re-establish independent native schedules and verify a new complete point whose cutoff is after recovery started. |
+| `recovery-resume` | `recovery resume-authority` validates the independently recorded plan/progress, report approval, checkpoint acknowledgments and new point before clearing shared SQL pause. Update local admission, restart all participants and verify all resumed. |
+
+The controller passes `PLATFORM_INSTALLATION`, `PLATFORM_RECOVERY_GENERATION`,
+`PLATFORM_PLAN`, `PLATFORM_RECOVERY_OPERATION`, `PLATFORM_BACKUP` and
+`PLATFORM_DATA_LOSS_CUTOFF` to hooks. The operation file includes the report,
+reservations/approval digests, acknowledgments and verified new point. Hook
+verification must return these receipts from observed effects, not merely echo
+requested booleans. `reset-authority` proves only signing-key/registry replacement;
+the release tool must complete identity distribution and prove the remaining checks.
+`resume-authority` proves the shared authority transition; the tool must finish the
+local restart and all-participant verification.
+
+The restore plan contains no ordinary bootstrap, drain, retirement or infrastructure
+deletion. Public mutations and background automation resume only after successful
+verification, checkpoints, work reconciliation and a new complete backup. Unknown
+resources still require explicit resolution after recovery; normal cleanup never
+uses their absence from the backup as permission to remove them.
 
 ## Tested scope and the two-hour target
 
@@ -298,9 +460,27 @@ provider's Object Lock implementation. Run an isolated drill and storage accepta
 test with the real release, endpoint and representative data before publishing
 that fleet's measured objectives.
 
+Surviving-fleet tests cover a lost control plane with agents at newer epochs/cursors,
+post-cutoff allocations, an unknown host and an isolated unreachable host. They
+verify lower-position complete checkpoints, preserved unknown resources, accurate
+adoption/quarantine reports, protected ranges and retired authority rejection.
+The deployment drill interrupts restore on an alternative imported host and
+resumes the same generation through exact report approval. Native tests reject an
+occupied restore destination and verify old certificates fail against the replaced
+CA. Two live TLS replicas verify a shared pause overrides stale local files while
+authenticated inspection stays available. Fresh-agent checkpoint admission is also
+exercised.
+
+Run complete loss and fresh-host drills with the actual pinned release and external
+inventory, including an unreachable host and an interrupted restore. Repeat them
+after schema, key-management, backup-format or recovery-protocol changes. Repository
+drills do not replace provider fencing and infrastructure acceptance tests.
+
 ```sh
 go test ./...
 go test -tags=integration ./internal/recovery -count=1
+go test -tags=integration ./internal/controlplane -count=1 \
+  -run 'TestSharedRecoveryPause|TestExplicitInstallation|TestFlatInstallation|TestConversionRequires|TestAgent.*Sync'
 go test -c -o /tmp/platform-recovery-tests ./internal/recovery
 sudo /tmp/platform-recovery-tests -test.run TestFreshNetworkNamespace -test.v
 ```
