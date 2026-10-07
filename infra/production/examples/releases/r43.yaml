@@ -27,6 +27,7 @@ programs:
             - ready
             - agent
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -60,6 +61,7 @@ programs:
             - ready
             - builder
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -91,6 +93,8 @@ programs:
             - start
             - --certs-dir={configDir}/certs
             - --store={stateDir}/data
+            - --external-io-dir={stateDir}/external-io
+            - --http-addr={address}:8080
             - --listen-addr={address}:26257
             - --advertise-addr={address}:26257
             - --join={joins}
@@ -101,6 +105,7 @@ programs:
             - ready
             - cockroachdb
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -134,6 +139,7 @@ programs:
             - ready
             - console
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -167,6 +173,7 @@ programs:
             - ready
             - controlplane
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -202,6 +209,7 @@ programs:
             - ready
             - envoy
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -237,6 +245,7 @@ programs:
             - ready
             - registry
             - '{instance}'
+            - '{configDir}/probe.json'
         drain:
             command:
                 - '{tool.operations}'
@@ -260,6 +269,9 @@ programs:
                 - registry
                 - '{instance}'
 hooks:
+    database-credentials:
+        command: ['{tool.operations}', database-credentials]
+        verify: ['{tool.operations}', verify, database-credentials]
     recovery-database:
         command: ['{tool.operations}', recovery-database]
         verify: ['{tool.operations}', verify, recovery-database]

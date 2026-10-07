@@ -73,6 +73,7 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 			}
 		}
 	}
+	add("hook", managementHost, "database-credentials", nil)
 	for _, pl := range p.Placements {
 		if pl.Role == Database {
 			if p.Automatic {

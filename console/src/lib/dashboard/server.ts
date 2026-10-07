@@ -92,6 +92,7 @@ function getPool(): Pool {
 
 export async function checkDashboardReadiness(): Promise<{
 	status: "ready" | "not_ready";
+ authority?: { installationId: string; generation: string; clusterId: string; paused: boolean };
 	failed?: Array<string>;
 }> {
 	try {
@@ -112,7 +113,8 @@ export async function checkDashboardReadiness(): Promise<{
 	} catch {
 		return { status: "not_ready", failed: ["migrations"] };
 	}
-	return { status: "ready" };
+	const config=getConfig();
+ return { status: "ready", authority: config.installationID && config.recoveryGeneration && config.recoveryClusterID ? {installationId:config.installationID,generation:config.recoveryGeneration,clusterId:config.recoveryClusterID,paused:config.recoveryPaused??false}:undefined };
 }
 
 export function listDevLogins(): Array<DevLoginIdentity> {
@@ -198,6 +200,7 @@ function readConfig(): RuntimeConfig {
 	const loaded = {
 		installationID: admission?.installationId,
 		recoveryGeneration: admission?.generation,
+ recoveryClusterID: admission?.clusterId,
 		recoveryPaused: admission?.paused ?? false,
 		profile,
 		databaseURL,
@@ -333,7 +336,7 @@ function mustEnv(name: string): string {
 
 function readConsoleAuthority(
 	profile: "development" | "production",
-): { installationId: string; generation: string; paused: boolean } | undefined {
+): { installationId: string; generation: string; clusterId: string; paused: boolean } | undefined {
 	const file = process.env.DASHBOARD_AUTHORITY_FILE;
 	if (!file && profile === "development") return undefined;
 	if (!file?.startsWith("/"))
@@ -349,7 +352,8 @@ function readConsoleAuthority(
 		!authority.installationId ||
 		typeof authority.generation !== "string" ||
 		!authority.generation ||
-		typeof authority.paused !== "boolean"
+		typeof authority.clusterId !== "string" || !authority.clusterId ||
+ typeof authority.paused !== "boolean"
 	)
 		throw new Error(
 			"console admission requires installation, generation and pause state",

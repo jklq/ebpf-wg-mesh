@@ -16,6 +16,7 @@ import (
 )
 
 type fakeDriver struct {
+	paused             bool
 	inv                Inventory
 	done               map[string]bool
 	count              map[string]int
@@ -48,7 +49,7 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 	}
 	if restorationPlan(p) {
 		e.Recovery = &RecoveryReceipt{Installation: p.Installation.ID, Generation: p.Generation, Checks: map[string]bool{}, Acknowledgements: map[string]CheckpointAcknowledgement{}}
-		for _, check := range []string{"provider-or-host-fence", "credentials-replaced", "empty-destination", "schemas-not-initialized", "database-restored", "selected-release", "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission", "network-reservations", "quarantine-preserved", "approved-desired-state", "complete-checkpoints", "stale-build-ownership-invalidated", "new-worker-leases", "external-effects-reconciled", "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login", "all-participants-resumed"} {
+		for _, check := range []string{"provider-or-host-fence", "prior-authority-disabled", "empty-destination", "schemas-not-initialized", "database-restored", "selected-release", "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission", "network-reservations", "quarantine-preserved", "approved-desired-state", "complete-checkpoints", "stale-build-ownership-invalidated", "new-worker-leases", "external-effects-reconciled", "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login", "all-participants-resumed"} {
 			e.Recovery.Checks[check] = true
 		}
 		if state.Recovery.Report != nil {
@@ -67,6 +68,12 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 }
 func (d *fakeDriver) Execute(_ context.Context, _ Plan, _ State, op Operation) (Binding, error) {
 	d.count[op.ID]++
+	if op.Hook == "quiesce" {
+		d.paused = true
+	}
+	if op.Hook == "resume" || op.Hook == "recovery-resume" {
+		d.paused = false
+	}
 	if op.Kind == "purchase" {
 		if d.unknownPurchase {
 			return Binding{}, errors.New("connection lost after provider acceptance")
@@ -381,9 +388,15 @@ func TestFailedUpgradeVerificationAndInterruptedResumeRemainPaused(t *testing.T)
 					delete(d.done, op.ID)
 				}
 			}
+			if !d.paused {
+				t.Fatal("failed upgrade or partial resume did not preserve the pause")
+			}
 			d.failHook = "production-verify"
 			if err := e.Apply(context.Background(), p); err == nil {
 				t.Fatal("failed retry resumed")
+			}
+			if !d.paused {
+				t.Fatal("failed retry left automation active")
 			}
 			partial, _ := store.Read()
 			if partial.Progress == nil || partial.LastBackup.Backup == "" || partial.Bundle.ID != "r42" {

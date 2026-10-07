@@ -21,6 +21,9 @@ func durable(path string) bool {
 }
 func hookValid(h Hook) bool { return len(h.Command) > 0 && len(h.Verify) > 0 }
 func (i Installation) Validate(r Release) error {
+	if i.OperationsConfig != "" && !durable(i.OperationsConfig) {
+		return fmt.Errorf("operations configuration requires a durable absolute path")
+	}
 	if i.Version != 1 || r.Version != 1 || !safeID(i.ID) || !safeID(r.ID) || i.Release != r.ID {
 		return fmt.Errorf("installation/release version, identity, or binding is invalid")
 	}
@@ -209,7 +212,7 @@ func (i Installation) Validate(r Release) error {
 			return fmt.Errorf("complete installation requires %s", role)
 		}
 	}
-	for _, name := range []string{"database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
+	for _, name := range []string{"database-credentials", "database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
 		if !hookValid(r.Hooks[name]) {
 			return fmt.Errorf("release requires idempotent %s hook with verification", name)
 		}

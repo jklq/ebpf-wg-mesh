@@ -1,0 +1,424 @@
+package productionops
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/ingressnodes"
+	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/controlplane/xds"
+	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/reconciliation"
+)
+
+func (r *Runner) credentials(ctx context.Context, verify bool) error {
+	db, err := r.db(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	keys, signing, err := r.keys(ctx, db)
+	if err != nil {
+		return err
+	}
+	defer keys.Close()
+	if !verify {
+		if err := r.exportSigning(ctx, signing); err != nil {
+			return err
+		}
+	}
+	ca, err := signing.PublicBundle(ctx, signkeys.ScopeInternalCA)
+	if err != nil {
+		return err
+	}
+	var paused bool
+	var installation, generation string
+	if err := db.QueryRowContext(ctx, `SELECT installation,generation,paused FROM recovery_runtime_authority WHERE singleton=TRUE`).Scan(&installation, &generation, &paused); err != nil {
+		return err
+	}
+	if installation != r.Plan.Installation.ID || generation != r.Plan.Generation {
+		return fmt.Errorf("credentials differ from host-admitted generation")
+	}
+	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
+	if err != nil {
+		return err
+	}
+	clear(s.RecoveryKey)
+	for _, pl := range r.Plan.Placements {
+		if pl.Role == deploy.Database {
+			continue
+		}
+		if r.Plan.Automatic && (pl.Role == deploy.Builder || pl.Role == deploy.Agent) {
+			continue
+		}
+		files := map[string][]byte{"ca.crt": ca}
+		a := reconciliation.Authority{InstallationID: installation, Generation: generation, ClusterID: clusterID(ca), Paused: paused, Checkpoints: paused && r.RecoveryProgress != nil && r.RecoveryProgress.Report != nil && r.RecoveryProgress.ApprovedDigest == r.RecoveryProgress.Report.ApprovalDigest()}
+		files["authority.json"], _ = json.Marshal(a)
+		env := map[string]string{}
+		class, client := map[deploy.Role]identity.CallerClass{deploy.Agent: identity.CallerAgent, deploy.Console: identity.CallerDashboard, deploy.Builder: identity.CallerBuilder, deploy.Envoy: identity.CallerIngress}[pl.Role]
+		if client {
+			material, err := r.clientIdentity(ctx, pl, class, signing, verify)
+			if err != nil {
+				return err
+			}
+			files["client.crt"], files["client.key"] = material.CertPEM, material.KeyPEM
+			if pl.Role == deploy.Agent {
+				if !verify {
+					serial, err := identity.CertificateSerialFromPEM(string(material.CertPEM))
+					if err != nil {
+						return err
+					}
+					if _, err := db.ExecContext(ctx, `INSERT INTO agent_certificates(serial,agent_id,issued_at) VALUES ($1,$2,statement_timestamp()) ON CONFLICT DO NOTHING`, serial, pl.Instance); err != nil {
+						return err
+					}
+				}
+				files["tls/generation"] = []byte(generation)
+				files["tls/ca.crt"], files["tls/client.crt"], files["tls/client.key"] = material.CAPEM, material.CertPEM, material.KeyPEM
+				env["AGENT_DATA_DIR"] = dataDir(r.Plan, pl)
+				env["AGENT_CONTROLPLANE_ADDRESSES"] = r.controlPlaneAddresses("9443")
+				env["AGENT_CA_FILE"] = cfgDir(r.Plan, pl) + "/ca.crt"
+				env["AGENT_SERVER_NAME"] = r.Config.InternalServerName
+			}
+			if pl.Role == deploy.Envoy {
+				if !verify {
+					if err := ingressnodes.New(db).Register(ctx, pl.Instance); err != nil {
+						return err
+					}
+				} else {
+					active, err := ingressnodes.New(db).NodeActive(ctx, pl.Instance)
+					if err != nil || !active {
+						return fmt.Errorf("ingress identity is not active")
+					}
+				}
+				identityDir := cfgDir(r.Plan, pl) + "/ingress"
+				local := filepath.Join(r.Config.StateDirectory, r.Plan.Generation, pl.Instance+"-ingress")
+				current, readErr := os.ReadFile(filepath.Join(local, "current", "client.crt"))
+				if readErr != nil || string(current) != string(material.CertPEM) {
+					if verify {
+						return fmt.Errorf("ingress identity has not been provisioned")
+					}
+					if err := xds.WriteIdentity(local, identityDir, material); err != nil {
+						return err
+					}
+				}
+				link, err := os.Readlink(filepath.Join(local, "current"))
+				if err != nil {
+					return err
+				}
+				err = filepath.WalkDir(local, func(path string, d os.DirEntry, err error) error {
+					if err != nil {
+						return err
+					}
+					if d.IsDir() || d.Type()&os.ModeSymlink != 0 {
+						return nil
+					}
+					rel, err := filepath.Rel(local, path)
+					if err != nil {
+						return err
+					}
+					b, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					files["ingress/"+rel] = b
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+				if verify {
+					if _, err := r.remote(ctx, r.Plan, pl, "test \"$(readlink "+shell(identityDir+"/current")+")\" = "+shell(link)+"\n"); err != nil {
+						return err
+					}
+				} else {
+					// Switch after all generation files have been uploaded below.
+					files[".ingress-current-target"] = []byte(link)
+				}
+				bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{NodeID: pl.Instance, IdentityDir: identityDir, ServerName: r.Config.InternalServerName, XDSAddresses: strings.Split(r.controlPlaneAddresses("18000"), ","), AdminAddress: "127.0.0.1:19000"})
+				if err != nil {
+					return err
+				}
+				files["envoy.yaml"] = []byte(bootstrap)
+			}
+			if pl.Role == deploy.Builder {
+				env["BUILDER_ID"] = pl.Instance
+				env["BUILDER_WORK_DIR"] = dataDir(r.Plan, pl)
+				env["BUILDER_CONTROLPLANE_ADDRESS"] = strings.Split(r.controlPlaneAddresses("9443"), ",")[0]
+				env["BUILDER_CA_FILE"] = cfgDir(r.Plan, pl) + "/ca.crt"
+				env["BUILDER_CERT_FILE"] = cfgDir(r.Plan, pl) + "/client.crt"
+				env["BUILDER_KEY_FILE"] = cfgDir(r.Plan, pl) + "/client.key"
+				env["BUILDER_SERVER_NAME"] = r.Config.InternalServerName
+			}
+		}
+		if pl.Role == deploy.ControlPlane || pl.Role == deploy.Console {
+			files["keyring.json"], err = os.ReadFile(c.KeyringFile)
+			if err != nil {
+				return err
+			}
+			if err := r.databaseClient(ctx, pl, db, files, env, verify); err != nil {
+				return err
+			}
+			if pl.Role == deploy.ControlPlane {
+				env["CONTROLPLANE_DB_URL"] = string(files["database-url"])
+				env["CONTROLPLANE_STATE_DIR"] = dataDir(r.Plan, pl)
+				env["CONTROLPLANE_SECRET_KEYS_KEYRING"] = cfgDir(r.Plan, pl) + "/keyring.json"
+				var consoles []string
+				for _, peer := range r.Plan.Placements {
+					if peer.Role == deploy.Console {
+						consoles = append(consoles, peer.Instance)
+					}
+				}
+				env["CONTROLPLANE_CONSOLE_CALLER_IDS"] = strings.Join(consoles, ",")
+				env["CONTROLPLANE_REPLICA_ADDRESSES"] = r.controlPlaneAddresses("9443")
+				h, _ := r.Plan.Installation.Host(pl.Host)
+				env["CONTROLPLANE_ADVERTISE_ADDR"] = net.JoinHostPort(h.Network.Address, "9443")
+				env["CONTROLPLANE_INTERNAL_SERVER_NAMES"] = r.Config.InternalServerName + "," + h.Network.Address
+				env["CONTROLPLANE_INGRESS_XDS_LISTEN"] = "0.0.0.0:18000"
+				files["wildcard.crt"], err = os.ReadFile(r.Config.WildcardCertificate)
+				if err != nil {
+					return err
+				}
+				files["wildcard.key"], err = os.ReadFile(r.Config.WildcardKey)
+				if err != nil {
+					return err
+				}
+				if err := verifyWildcard(files["wildcard.crt"], files["wildcard.key"], r.Config.PlatformDomain); err != nil {
+					return err
+				}
+				env["CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE"] = cfgDir(r.Plan, pl) + "/wildcard.crt"
+				env["CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE"] = cfgDir(r.Plan, pl) + "/wildcard.key"
+				env["CONTROLPLANE_INGRESS_PUBLIC_ADDR"] = r.Config.PlatformDomain
+				// Protected backend access is provisioned independently on trusted
+				// control planes. Never distribute host-admin SSH/provider credentials.
+				env["PLATFORM_RECOVERY_CONFIG"] = r.Config.RecoveryConfig
+			} else {
+				for key, name := range map[string]string{"DASHBOARD_JWT_SECRET": signkeys.ScopeDashboardSession, "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": signkeys.ScopeUserAssertion} {
+					b, err := signing.ActiveSecret(ctx, name)
+					if err != nil {
+						return err
+					}
+					env[key] = string(b)
+				}
+				b, err := os.ReadFile(r.Config.Console.TokenKeyFile)
+				if err != nil {
+					return err
+				}
+				env["DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY"] = strings.TrimSpace(string(b))
+				env["DASHBOARD_JWT_SECRET_PREVIOUS"] = ""
+				env["DASHBOARD_DATABASE_URL"] = string(files["database-url"])
+				env["DASHBOARD_DATABASE_SCHEMA"] = r.Config.Console.Schema
+				env["DASHBOARD_CONTROLPLANE_ADDRESS"] = strings.Split(r.controlPlaneAddresses("9443"), ",")[0]
+				env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.Config.InternalServerName
+				env["DASHBOARD_CONTROLPLANE_CA_FILE"] = cfgDir(r.Plan, pl) + "/ca.crt"
+				env["DASHBOARD_CONTROLPLANE_CERT_FILE"] = cfgDir(r.Plan, pl) + "/client.crt"
+				env["DASHBOARD_CONTROLPLANE_KEY_FILE"] = cfgDir(r.Plan, pl) + "/client.key"
+			}
+		}
+		if pl.Role == deploy.Registry {
+			trust, err := signing.PublicBundle(ctx, signkeys.ScopeRegistry)
+			if err != nil {
+				return err
+			}
+			files["registry-trust.crt"] = trust
+			b, err := r.registryConfiguration(pl)
+			if err != nil {
+				return err
+			}
+			files["registry.yaml"] = b
+		}
+		probe, ok := r.Config.Probes[pl.Role]
+		if !ok {
+			return fmt.Errorf("missing readiness probe for %s", pl.Role)
+		}
+		probe = r.expandProbe(probe, pl)
+		files["probe.json"], _ = json.Marshal(probe)
+		files["runtime.env"] = environment(env)
+		var script string
+		for _, name := range sortedFiles(files) {
+			if name == ".ingress-current-target" {
+				continue
+			}
+			path := cfgDir(r.Plan, pl) + "/" + name
+			if strings.HasPrefix(name, "tls/") {
+				path = dataDir(r.Plan, pl) + "/" + name
+			}
+			if verify {
+				script += verifyRemoteFile(path, files[name])
+			} else {
+				script += remoteFile(path, files[name])
+			}
+		}
+		if target := files[".ingress-current-target"]; len(target) > 0 {
+			dir := cfgDir(r.Plan, pl) + "/ingress"
+			script += "ln -sfn " + shell(string(target)) + " " + shell(dir+"/current.next") + "\nmv -Tf " + shell(dir+"/current.next") + " " + shell(dir+"/current") + "\n"
+		}
+		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+func sortedFiles(files map[string][]byte) []string {
+	var names []string
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+func environment(env map[string]string) []byte {
+	var keys []string
+	for key := range env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, key := range keys {
+		b.WriteString(key + "=\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n").Replace(env[key]) + "\"\n")
+	}
+	return []byte(b.String())
+}
+func (r *Runner) controlPlaneAddresses(port string) string {
+	var addresses []string
+	for _, pl := range r.Plan.Placements {
+		if pl.Role == deploy.ControlPlane {
+			h, _ := r.Plan.Installation.Host(pl.Host)
+			addresses = append(addresses, net.JoinHostPort(h.Network.Address, port))
+		}
+	}
+	sort.Strings(addresses)
+	return strings.Join(addresses, ",")
+}
+
+func (r *Runner) clientIdentity(ctx context.Context, pl deploy.Placement, class identity.CallerClass, signing *signkeys.Service, verify bool) (identity.ClientIdentityMaterial, error) {
+	path := filepath.Join(r.Config.StateDirectory, r.Plan.Generation, pl.Instance+"-client.json")
+	var material identity.ClientIdentityMaterial
+	if err := privateJSON(path, &material); err == nil {
+		pair, err := tls.X509KeyPair(material.CertPEM, material.KeyPEM)
+		if err != nil {
+			return material, err
+		}
+		leaf, err := x509.ParseCertificate(pair.Certificate[0])
+		if err != nil {
+			return material, err
+		}
+		ca, err := signing.PublicBundle(ctx, signkeys.ScopeInternalCA)
+		if err != nil {
+			return material, err
+		}
+		pool := x509.NewCertPool()
+		pool.AppendCertsFromPEM(ca)
+		_, err = leaf.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+		valid := err == nil && leaf.Subject.CommonName == pl.Instance && len(leaf.Subject.OrganizationalUnit) == 1 && leaf.Subject.OrganizationalUnit[0] == string(class) && time.Until(leaf.NotAfter) > 2*time.Hour
+		if valid {
+			material.CAPEM = ca
+			return material, nil
+		}
+		if verify {
+			return material, fmt.Errorf("component certificate is stale or has an incorrect caller identity")
+		}
+	} else if !os.IsNotExist(err) {
+		return material, err
+	} else if verify {
+		return material, err
+	}
+	material, err := identity.IssueClientCertificate(ctx, signing, class, pl.Instance, 24*time.Hour)
+	if err != nil {
+		return material, err
+	}
+	b, _ := json.Marshal(material)
+	return material, writePrivate(path, b)
+}
+func (r *Runner) databaseClient(ctx context.Context, pl deploy.Placement, db *sql.DB, files map[string][]byte, env map[string]string, verify bool) error {
+	name := "component_" + strings.ReplaceAll(pl.Instance, "-", "_")
+	var ca certificateBundle
+	if err := privateJSON(filepath.Join(r.databasePKI(), "ca.json"), &ca); err != nil {
+		return err
+	}
+	b, err := loadCertificate(filepath.Join(r.databasePKI(), name+".json"), name, &ca, nil, verify)
+	if err != nil {
+		return err
+	}
+	files["db-ca.crt"], files["db-client.crt"], files["db-client.key"] = ca.Certificate, b.Certificate, b.Key
+	if !verify {
+		for _, statement := range []string{"CREATE USER IF NOT EXISTS " + name, "GRANT ALL ON DATABASE " + r.Config.Database.Name + " TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA public TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA " + r.Config.Console.Schema + " TO " + name} {
+			if _, err := db.ExecContext(ctx, statement); err != nil {
+				return err
+			}
+		}
+	}
+	u := url.URL{Scheme: "postgresql", User: url.User(name), Host: r.Config.Database.Address, Path: "/" + r.Config.Database.Name}
+	u.RawQuery = url.Values{"sslmode": {"verify-full"}, "sslrootcert": {cfgDir(r.Plan, pl) + "/db-ca.crt"}, "sslcert": {cfgDir(r.Plan, pl) + "/db-client.crt"}, "sslkey": {cfgDir(r.Plan, pl) + "/db-client.key"}}.Encode()
+	files["database-url"] = []byte(u.String())
+	return nil
+}
+func verifyWildcard(cert, key []byte, domain string) error {
+	pair, err := tls.X509KeyPair(cert, key)
+	if err != nil {
+		return err
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return err
+	}
+	if time.Until(leaf.NotAfter) < 48*time.Hour {
+		return fmt.Errorf("external wildcard certificate needs renewal")
+	}
+	if err := leaf.VerifyHostname("verification." + domain); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *Runner) reservations(ctx context.Context, verify bool) error {
+	db, err := r.db(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	for _, pl := range r.Plan.Placements {
+		if pl.Role != deploy.Agent {
+			continue
+		}
+		h, _ := r.Plan.Installation.Host(pl.Host)
+		reserve := r.Plan.Reservations[pl.Host]
+		hostType := "stable"
+		if h.Reliability == "intermittent" {
+			hostType = "intermittent"
+		}
+		if !verify {
+			err = adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
+				if _, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `INSERT INTO agent_registrations(id,name,region,failure_domain,reserved_cpu_millis,reserved_memory_mebibytes,created_at,updated_at) VALUES ($1,$1,$2,$3,$4,$5,statement_timestamp(),statement_timestamp()) ON CONFLICT(id) DO UPDATE SET reserved_cpu_millis=$4,reserved_memory_mebibytes=$5,region=$2,failure_domain=$3,updated_at=statement_timestamp()`, pl.Instance, h.Region, h.FailureDomain, reserve.CPUMillis, reserve.MemoryMiB); err != nil {
+					return err
+				}
+				_, err := journal.AdministrationRow(pl.Instance).Exec(ctx, tx, `INSERT INTO agent_administration(agent_id,host_type,lifecycle_state,updated_at) VALUES ($1,$2,'enrolling',statement_timestamp()) ON CONFLICT(agent_id) DO UPDATE SET host_type=$2 WHERE agent_administration.lifecycle_state<>'retired'`, pl.Instance, hostType)
+				return err
+			})
+			if err != nil {
+				return err
+			}
+		}
+		var cpu, ram int64
+		var typ, life, domain string
+		if err := db.QueryRowContext(ctx, `SELECT r.reserved_cpu_millis,r.reserved_memory_mebibytes,a.host_type,a.lifecycle_state,r.failure_domain FROM agent_registrations r JOIN agent_administration a ON a.agent_id=r.id WHERE r.id=$1`, pl.Instance).Scan(&cpu, &ram, &typ, &life, &domain); err != nil {
+			return err
+		}
+		if cpu != reserve.CPUMillis || ram != reserve.MemoryMiB || typ != hostType || life == "retired" || domain != h.FailureDomain {
+			return fmt.Errorf("agent reservations or admission differ from the applied plan")
+		}
+	}
+	return nil
+}

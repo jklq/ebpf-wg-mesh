@@ -52,6 +52,9 @@ func (s *Service) ResetForRecovery(ctx context.Context, installation, generation
 		if _, err := tx.ExecContext(ctx, `DELETE FROM agent_bootstrap_tokens`); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM xds_node_observations`); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM control_plane_leases`); err != nil {
 			return err
 		}

@@ -68,7 +68,7 @@ func fixture(n int) (Installation, Release, Inventory) {
 		h := Hook{Command: []string{"/opt/platformops", string(role), "{instance}"}, Verify: []string{"/opt/platformops", "verify", string(role), "{instance}"}}
 		r.Programs[role] = Program{Artifacts: map[string]Artifact{"amd64": {URL: "https://releases.example.com/r42/" + string(role), SHA256: strings.Repeat("0", 64)}}, Args: []string{"--identity={instance}"}, Ready: []string{"/opt/platformops", "ready", "{instance}"}, Drain: h, Retire: h}
 	}
-	for _, name := range []string{"database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
+	for _, name := range []string{"database-credentials", "database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
 		r.Hooks[name] = Hook{Command: []string{"/opt/platformops", name}, Verify: []string{"/opt/platformops", "verify", name}}
 	}
 	for _, role := range []Role{Console, Envoy, Registry} {

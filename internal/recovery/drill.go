@@ -118,7 +118,7 @@ func (s Service) Drill(ctx context.Context, c Config, p Point, declared time.Tim
 			return r, err
 		}
 		path := filepath.Join(dir, name)
-		if d.Kind == "keyring" || d.Kind == "console-key" || d.Kind == "external-secret" {
+		if d.Kind == "keyring" || d.Kind == "console-key" || d.Kind == "external-secret" || d.Kind == "deployment-state" {
 			b, err := os.ReadFile(path)
 			if err != nil {
 				return r, err
