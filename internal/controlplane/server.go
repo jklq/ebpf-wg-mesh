@@ -48,6 +48,7 @@ type publicationFence interface {
 }
 
 type Server struct {
+	recoveryPaused  bool
 	cfg             config.ControlPlaneConfig
 	store           *persistence
 	signKeys        *signkeys.Service
@@ -88,8 +89,12 @@ type Server struct {
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
+	admission, err := runtimeAuthority(cfg)
+	if err != nil {
+		return nil, err
+	}
 	opts := []persistenceOption{withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays) * 24 * time.Hour)}
-	if !cfg.Profile.IsProduction() {
+	if !cfg.Profile.IsProduction() && !admission.Paused {
 		opts = append(opts, withSchemaInitialization())
 	}
 	store, err := openPersistence(cfg.Database, cfg.Mesh, opts...)
@@ -147,12 +152,22 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = store.Close()
 		return nil, fmt.Errorf("configure source archive staging: %w", err)
 	}
-	if err := store.catalog.EnsureBootstrap(ctx, cfg.Bootstrap); err != nil {
+	if err := func() error {
+		if admission.Paused {
+			return nil
+		}
+		return store.catalog.EnsureBootstrap(ctx, cfg.Bootstrap)
+	}(); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
 	store.reserveAgents(cfg.Dashboard.TrustedAgentID)
-	if err := store.fleet.ensureAgentBootstrapTokens(ctx, cfg.InternalGRPC.TLS.BootstrapTokens); err != nil {
+	if err := func() error {
+		if admission.Paused {
+			return nil
+		}
+		return store.fleet.ensureAgentBootstrapTokens(ctx, cfg.InternalGRPC.TLS.BootstrapTokens)
+	}(); err != nil {
 		_ = store.Close()
 		return nil, err
 	}
@@ -296,12 +311,13 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
 	internal := grpc.NewServer(
-		grpc.UnaryInterceptor(internalAuth.UnaryServerInterceptor()),
-		grpc.StreamInterceptor(internalAuth.StreamServerInterceptor()),
+		grpc.ChainUnaryInterceptor(internalAuth.UnaryServerInterceptor(), recoveryUnary(admission.Paused)),
+		grpc.ChainStreamInterceptor(internalAuth.StreamServerInterceptor(), recoveryStreams(admission.Paused)),
 	)
 	agentv1.RegisterAgentControlServer(internal, newAgentService(
 		store.fleet, delivery, logStore, notifier, authority, dashboard,
 		cfg.Dashboard.Enabled, cfg.Dashboard.TrustedAgentID, cfg.Dashboard.ServiceCallerID,
+		withRecoveryAuthority(admission, filepath.Join(cfg.StateDir, "recovery-inventory", admission.Generation)),
 		withAgentRegistry(policy),
 		withReplicaAddresses(cfg.ReplicaAddresses),
 		withLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
@@ -317,7 +333,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, fmt.Errorf("listen internal grpc: %w", err)
 	}
 	internalHTTP := &http.Server{
-		Handler:   dualProtocolHandler(internal, newConnectHandler(internalAuth, connectPlatformService{platformService}, connectOpsService{opsService})),
+		Handler:   dualProtocolHandler(internal, recoveryHTTP(admission.Paused, newConnectHandler(internalAuth, connectPlatformService{platformService}, connectOpsService{opsService}))),
 		TLSConfig: authority.HTTPConfig(),
 	}
 	xdsLn, err := net.Listen("tcp", cfg.Ingress.XDSListen)
@@ -347,6 +363,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		requiredSigningScopes = append(requiredSigningScopes, signkeys.ScopeRegistry)
 	}
 	server := &Server{
+		recoveryPaused:  admission.Paused,
 		cfg:             cfg,
 		store:           store,
 		signKeys:        signKeys,
@@ -497,12 +514,14 @@ func (s *Server) Run(ctx context.Context) error {
 			errCh <- err
 		}()
 	}
-	if s.reconciler != nil {
+	if s.reconciler != nil && !s.recoveryPaused {
 		go func() {
 			errCh <- s.reconciler.Run(runCtx)
 		}()
 	}
-	go func() { s.serverCertificateRefreshLoop(runCtx); errCh <- nil }()
+	if !s.recoveryPaused {
+		go func() { s.serverCertificateRefreshLoop(runCtx); errCh <- nil }()
+	}
 	if s.ingress != nil {
 		go func() { errCh <- s.ingress.Follow(runCtx) }()
 	}
@@ -555,6 +574,9 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 		return err
 	}
 	defer s.delivery.ResignLive()
+	if s.recoveryPaused {
+		return s.delivery.ServeLive(ctx)
+	}
 	if s.reconciler != nil {
 		if err := s.reconciler.Bootstrap(ctx); err != nil {
 			slog.Warn("github bootstrap reconcile failed", "error", err)

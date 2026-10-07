@@ -24,6 +24,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	var controlPlaneAddresses string
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
+	stringFlag(fs, &cfg.AuthorityFile, "authority-file", "AGENT_AUTHORITY_FILE", "", "private host-admin installation and recovery generation admission")
 	stringFlag(fs, &profile, "profile", "AGENT_PROFILE", "", "development or production; empty defaults to production")
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "AGENT_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.Node.ID, "node-id", "AGENT_NODE_ID", "", "")

@@ -240,6 +240,7 @@ type DirectImageConfig struct {
 }
 
 type ControlPlaneConfig struct {
+	AuthorityFile    string
 	RecoveryConfig   string
 	ConsoleCallerIDs []string
 	Profile          Profile
@@ -326,14 +327,15 @@ type MeshConfig struct {
 }
 
 type AgentConfig struct {
-	Profile      Profile
-	Health       HealthConfig
-	Node         NodeConfig
-	ControlPlane ControlPlaneClientConfig
-	Runtime      RuntimeConfig
-	Containerd   ContainerdConfig
-	Mesh         MeshConfig
-	Logs         AgentLogShippingConfig
+	AuthorityFile string
+	Profile       Profile
+	Health        HealthConfig
+	Node          NodeConfig
+	ControlPlane  ControlPlaneClientConfig
+	Runtime       RuntimeConfig
+	Containerd    ContainerdConfig
+	Mesh          MeshConfig
+	Logs          AgentLogShippingConfig
 }
 
 // AgentLogShippingConfig bounds the agent's durable log pipeline. Zero values select documented

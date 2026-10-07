@@ -188,6 +188,7 @@ func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
 		slog.Error("runtime reconciliation returned no observation", "agent_id", s.agentID, "cursor", desired.GetReconciliationCursor(), "source", source)
 		return
 	}
+	stampReportGeneration(report, summary)
 	report.AgentId = s.agentID
 	report.RecoveryMode = !allowCleanup
 	persisted, changed, err := s.store.recordReport(report)

@@ -96,6 +96,9 @@ type replicaDiscoveryState struct {
 }
 
 type localStateSummary struct {
+	InstallationID            string
+	RecoveryGeneration        string
+	CheckpointRequired        bool
 	LocalStoreID              string
 	Allocations               []*agentv1.ServiceCondition
 	Initialization            initializationState
@@ -594,7 +597,7 @@ func (s *localStateStore) acceptDesired(clusterID, sessionID string, incoming *a
 		if sessionID == "" || incoming.GetSessionId() != sessionID {
 			return false, errors.New("desired state belongs to another session")
 		}
-		if err := s.observeAuthorityEpoch(incoming.GetAuthorityEpoch()); err != nil {
+		if err := s.observeAuthorityEpoch(incoming); err != nil {
 			return false, err
 		}
 	}
@@ -713,6 +716,9 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 				}
 			}
 		}
+		if err := meta.Delete(checkpointRequiredKey); err != nil {
+			return err
+		}
 		if err := desired.Delete(stagedDesiredStateKey); err != nil {
 			return err
 		}
@@ -722,6 +728,14 @@ func (s *localStateStore) acceptStagedDesired(clusterID, sessionID string, stage
 }
 
 func (s *localStateStore) acceptAllocationDiff(clusterID, sessionID string, diff *agentv1.AllocationDiff) (bool, error) {
+	if err := s.db.View(func(tx *bbolt.Tx) error {
+		if tx.Bucket(localMetaBucket).Get(checkpointRequiredKey) != nil {
+			return errors.New("complete recovery checkpoint required before incremental updates")
+		}
+		return nil
+	}); err != nil {
+		return false, err
+	}
 	if err := s.requireClusterIdentity(clusterID); err != nil {
 		return false, err
 	}
@@ -740,7 +754,7 @@ func (s *localStateStore) acceptAllocationDiff(clusterID, sessionID string, diff
 		if sessionID == "" || diff.GetSessionId() != sessionID {
 			return false, errors.New("allocation diff belongs to another session")
 		}
-		if err := s.observeAuthorityEpoch(diff.GetAuthorityEpoch()); err != nil {
+		if err := s.observeAuthorityEpoch(diff); err != nil {
 			return false, err
 		}
 	}
@@ -936,7 +950,7 @@ func (s *localStateStore) acceptNodeConfigUpdate(clusterID, sessionID string, up
 	if sessionID == "" || update.GetSessionId() != sessionID {
 		return false, errors.New("node config belongs to another session")
 	}
-	if err := s.observeAuthorityEpoch(update.GetAuthorityEpoch()); err != nil {
+	if err := s.observeAuthorityEpoch(update); err != nil {
 		return false, err
 	}
 	if update.GetNodeConfig() == nil || strings.TrimSpace(update.GetNodeConfigVersion()) == "" {
@@ -1035,7 +1049,7 @@ func (s *localStateStore) acceptPullCredentials(clusterID, sessionID string, cre
 	if sessionID == "" || creds.GetSessionId() != sessionID {
 		return false, errors.New("pull credentials belong to another session")
 	}
-	if err := s.observeAuthorityEpoch(creds.GetAuthorityEpoch()); err != nil {
+	if err := s.observeAuthorityEpoch(creds); err != nil {
 		return false, err
 	}
 	if strings.TrimSpace(creds.GetCredentialsVersion()) == "" {
@@ -1101,7 +1115,7 @@ func (s *localStateStore) acceptReplicaEndpoints(clusterID, sessionID string, re
 	if sessionID == "" || replicas.GetSessionId() != sessionID {
 		return false, errors.New("replica endpoints belong to another session")
 	}
-	if err := s.observeAuthorityEpoch(replicas.GetAuthorityEpoch()); err != nil {
+	if err := s.observeAuthorityEpoch(replicas); err != nil {
 		return false, err
 	}
 	if strings.TrimSpace(replicas.GetReplicasVersion()) == "" {
@@ -1415,6 +1429,9 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 	result := localStateSummary{QuarantinedStore: s.quarantined}
 	err := s.db.View(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)
+		result.InstallationID = string(meta.Get(installationIDKey))
+		result.RecoveryGeneration = string(meta.Get(recoveryGenerationKey))
+		result.CheckpointRequired = meta.Get(checkpointRequiredKey) != nil
 		result.LocalStoreID = string(meta.Get(localStoreIDKey))
 		result.Initialization = initializationState(meta.Get(initStateKey))
 		result.AgentIdentity = string(meta.Get(agentIdentityKey))
@@ -1791,9 +1808,13 @@ func (s *localStateStore) adoptClusterIdentity(clusterID string) error {
 	return errors.Join(err, recoveryErr)
 }
 
-func (s *localStateStore) observeAuthorityEpoch(epoch uint64) error {
+func (s *localStateStore) observeAuthorityEpoch(command generationCommand) error {
+	epoch := command.GetAuthorityEpoch()
 	return s.db.Update(func(tx *bbolt.Tx) error {
 		meta := tx.Bucket(localMetaBucket)
+		if err := validateGeneration(meta, command); err != nil {
+			return err
+		}
 		highest := max(readUint64(meta.Get(highestEpochKey)), readUint64(meta.Get(authorityEpochKey)))
 		if epoch < highest {
 			return fmt.Errorf("stale authority epoch %d follows %d", epoch, highest)

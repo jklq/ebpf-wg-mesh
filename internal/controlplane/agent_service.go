@@ -30,6 +30,8 @@ import (
 )
 
 type agentService struct {
+	recoveryAuthority    reconciliation.Authority
+	recoveryInventoryDir string
 	agentv1.UnimplementedAgentControlServer
 	store                   *fleetPersistence
 	delivery                agentDelivery
@@ -248,6 +250,12 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if caller.ID != hello.GetAgentId() {
 		return status.Error(codes.PermissionDenied, "client certificate does not match hello.agent_id")
 	}
+	if hello.GetInstallationId() != s.recoveryAuthority.InstallationID || hello.GetRecoveryGeneration() != s.recoveryAuthority.Generation {
+		return status.Error(codes.FailedPrecondition, "agent generation differs from host-admin admission")
+	}
+	if s.recoveryAuthority.Paused && !s.recoveryAuthority.Checkpoints {
+		return s.collectRecoveryInventory(stream, hello)
+	}
 	epoch, err := s.store.agentAuthorityEpoch(ctx)
 	if err != nil {
 		return status.Errorf(codes.Internal, "read agent authority: %v", err)
@@ -354,7 +362,7 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		switch payload := msg.Payload.(type) {
 		case *agentv1.AgentClientMessage_Acknowledgement:
 			ack := payload.Acknowledgement
-			if ack.GetAgentId() != hello.GetAgentId() || ack.GetSessionId() != hello.GetSessionId() || ack.GetAuthorityEpoch() != epoch {
+			if ack.GetAgentId() != hello.GetAgentId() || ack.GetSessionId() != hello.GetSessionId() || ack.GetAuthorityEpoch() != epoch || ack.GetInstallationId() != s.recoveryAuthority.InstallationID || ack.GetRecoveryGeneration() != s.recoveryAuthority.Generation {
 				return status.Error(codes.FailedPrecondition, "acknowledgement does not match session authority")
 			}
 			if err := s.store.acknowledgeAgentDesired(ctx, ack); err != nil {
@@ -376,6 +384,9 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			}
 			if payload.StatusReport.GetSessionId() != hello.GetSessionId() {
 				return status.Error(codes.FailedPrecondition, "status report session_id is stale")
+			}
+			if payload.StatusReport.GetInstallationId() != s.recoveryAuthority.InstallationID || payload.StatusReport.GetRecoveryGeneration() != s.recoveryAuthority.Generation {
+				return status.Error(codes.FailedPrecondition, "status generation differs from admitted authority")
 			}
 			if payload.StatusReport.GetAuthorityEpoch() != epoch {
 				return status.Errorf(codes.FailedPrecondition, "status report authority epoch %d does not match %d", payload.StatusReport.GetAuthorityEpoch(), epoch)
@@ -525,6 +536,7 @@ func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			AgentId: agentID, NodeConfigVersion: current.NodeConfig,
 			NodeConfig: plan.NodeConfig, ClusterId: clusterID,
 		}
+		update.InstallationId, update.RecoveryGeneration = s.recoveryAuthority.InstallationID, s.recoveryAuthority.Generation
 		stampNodeConfigUpdate(update, sessionID, epoch, deadline)
 		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update},
@@ -534,6 +546,7 @@ func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	}
 	if needCreds {
 		creds.ClusterId = clusterID
+		creds.InstallationId, creds.RecoveryGeneration = s.recoveryAuthority.InstallationID, s.recoveryAuthority.Generation
 		stampPullCredentials(creds, sessionID, epoch, deadline)
 		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_PullCredentials{PullCredentials: creds},
@@ -542,6 +555,7 @@ func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 		}
 	}
 	if needCheckpoint {
+		state.InstallationId, state.RecoveryGeneration = s.recoveryAuthority.InstallationID, s.recoveryAuthority.Generation
 		stampAgentCommand(state, sessionID, epoch, deadline)
 		state.ClusterId = clusterID
 		slog.Info("sending checkpoint", "agent_id", agentID, "cursor", state.GetReconciliationCursor(), "services", len(state.GetServices()), "volumes", len(state.GetVolumes()))
@@ -554,6 +568,7 @@ func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 	} else {
 		for _, diff := range diffs {
 			diff.ClusterId = clusterID
+			diff.InstallationId, diff.RecoveryGeneration = s.recoveryAuthority.InstallationID, s.recoveryAuthority.Generation
 			stampAllocationDiff(diff, sessionID, epoch, deadline)
 			slog.Info("sending diff", "agent_id", agentID, "base", diff.GetBaseRevision(), "target", diff.GetTargetRevision(), "starts", len(diff.GetStarts()), "updates", len(diff.GetUpdates()), "stops", len(diff.GetStops()))
 			if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
@@ -569,6 +584,7 @@ func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentCo
 			ReplicaAddresses: append([]string(nil), s.replicaAddresses...),
 			ClusterId:        clusterID,
 		}
+		replicas.InstallationId, replicas.RecoveryGeneration = s.recoveryAuthority.InstallationID, s.recoveryAuthority.Generation
 		stampReplicaEndpoints(replicas, sessionID, epoch, deadline)
 		if err := sendLocked(sendMu, stream, &agentv1.AgentServerMessage{
 			Payload: &agentv1.AgentServerMessage_ReplicaEndpoints{ReplicaEndpoints: replicas},
