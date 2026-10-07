@@ -31,7 +31,8 @@ func TestTLSAuthorityRotationKeepsIssuanceAndVerification(t *testing.T) {
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 24,
 		}},
-	}, keys)
+	}, keys, testRevocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -150,7 +151,8 @@ func TestTLSAuthorityHandshakeAcceptsBothGenerationsThroughOverlap(t *testing.T)
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 24,
 		}},
-	}, keys)
+	}, keys, testRevocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -202,7 +204,8 @@ func TestTLSAuthorityHandshakeRejectsRetiredGenerationAfterFinish(t *testing.T) 
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 24,
 		}},
-	}, keys)
+	}, keys, testRevocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

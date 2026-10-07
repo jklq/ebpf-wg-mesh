@@ -508,7 +508,7 @@ func TestGitHubWorkLeaseExpiryAllowsTakeover(t *testing.T) {
 func TestSourceQueueClaimsAreAtomicAndDoNotAdvanceProductJournal(t *testing.T) {
 	store, err := openPersistence(config.DatabaseConfig{
 		URL: createTestDatabase(t), MaxOpenConns: 4, MaxIdleConns: 4,
-	}, testMeshConfig())
+	}, testMeshConfig(), withSchemaInitialization())
 	if err != nil {
 		t.Fatal(err)
 	}

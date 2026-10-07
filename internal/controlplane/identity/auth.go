@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 	"errors"
+	"slices"
 	"strings"
 	"time"
 
@@ -194,7 +195,7 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 		ctx = context.WithValue(ctx, serviceCallerContextKey{}, caller)
 	}
 	if authenticated && caller.Class == CallerDashboard &&
-		(a.dashboardCallerID == "" || caller.ID != a.dashboardCallerID) {
+		!slices.Contains(strings.Split(a.dashboardCallerID, ","), caller.ID) {
 		return nil, status.Error(codes.PermissionDenied, "dashboard client certificate common name is not allowed")
 	}
 

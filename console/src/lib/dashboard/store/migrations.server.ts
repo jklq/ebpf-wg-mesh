@@ -9,7 +9,7 @@ export function dashboardStoreMigrations(
 ): Array<DashboardMigration> {
 	return [
 		{
-			version: 1,
+			version: 3,
 			statements: [
 				`CREATE TABLE ${tableName(runtime, "users")} (
 					id TEXT PRIMARY KEY,
@@ -57,6 +57,7 @@ export function dashboardStoreMigrations(
 					tracked_ref TEXT NOT NULL DEFAULT '',
 					dockerfile_path TEXT NOT NULL DEFAULT '',
 					context_dir TEXT NOT NULL DEFAULT '',
+					builder TEXT NOT NULL DEFAULT '',
 					hostname TEXT NOT NULL DEFAULT '',
 					created_at TIMESTAMPTZ NOT NULL,
 					updated_at TIMESTAMPTZ NOT NULL
@@ -73,12 +74,6 @@ export function dashboardStoreMigrations(
 				)`,
 				`CREATE INDEX ${runtime.databaseSchema}_service_positions_environment_idx
 					ON ${tableName(runtime, "service_positions")} (user_id, environment_id)`,
-			],
-		},
-		{
-			version: 2,
-			statements: [
-				`ALTER TABLE ${tableName(runtime, "onboarding")} ADD COLUMN builder TEXT NOT NULL DEFAULT ''`,
 			],
 		},
 	];

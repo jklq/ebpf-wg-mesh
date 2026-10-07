@@ -199,6 +199,7 @@ func TestAgentSyncPeerOnlyBumpKeepsAllocationCursorInLockstep(t *testing.T) {
 		Dashboard: config.ManagedDashboardConfig{ServiceCallerID: "dashboard-peer-bump"},
 		Mesh:      testMeshConfig(),
 	}
+	cfg.ConsoleCallerIDs = []string{cfg.Dashboard.ServiceCallerID}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		t.Fatalf("FinalizeControlPlane: %v", err)
 	}

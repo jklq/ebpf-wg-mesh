@@ -1,12 +1,13 @@
 package controlplane
 
-const currentSchemaVersion = 41
+const currentSchemaVersion = 42
 
 // currentSchema contains both owned relational references and retained external
 // identifiers. User IDs, GitHub repository links, and certificate enrollment
 // records intentionally have no foreign key: their owning system or lifecycle
 // is outside the referenced control-plane row.
 var currentSchema = []string{
+	`CREATE TABLE certificate_revocations (serial TEXT PRIMARY KEY, revoked_at TIMESTAMPTZ NOT NULL)`,
 	`CREATE TABLE cluster_journal_heads (
 		cluster_id TEXT PRIMARY KEY,
 		log_index INT8 NOT NULL CHECK (log_index >= 0),

@@ -1,0 +1,358 @@
+tools:
+    operations:
+        amd64:
+            url: https://releases.example.com/r42/operations-amd64
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+version: 1
+id: r42
+configuration: 1
+protocol: 1
+schema: 42
+consoleSchema: 3
+dependencies:
+    bun: 1.3.11
+    cockroachdb: 26.1.0
+    containerd: 1.7.30
+images:
+    registry: distribution@sha256:1111111111111111111111111111111111111111111111111111111111111111
+programs:
+    agent:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/agent
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args: []
+        ready:
+            - '{tool.operations}'
+            - ready
+            - agent
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - agent
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - agent
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - agent
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - agent
+                - '{instance}'
+    builder:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/builder
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args: []
+        ready:
+            - '{tool.operations}'
+            - ready
+            - builder
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - builder
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - builder
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - builder
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - builder
+                - '{instance}'
+    cockroachdb:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/cockroachdb
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - start
+            - --certs-dir={configDir}/certs
+            - --store={stateDir}/data
+            - --listen-addr={address}:26257
+            - --advertise-addr={address}:26257
+            - --join={joins}
+            - --cache=128MiB
+            - --max-sql-memory=128MiB
+        ready:
+            - '{tool.operations}'
+            - ready
+            - cockroachdb
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - cockroachdb
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - cockroachdb
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - cockroachdb
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - cockroachdb
+                - '{instance}'
+    console:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/console
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args: []
+        ready:
+            - '{tool.operations}'
+            - ready
+            - console
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - console
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - console
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - console
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - console
+                - '{instance}'
+    controlplane:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/controlplane
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args: []
+        ready:
+            - '{tool.operations}'
+            - ready
+            - controlplane
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - controlplane
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - controlplane
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - controlplane
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - controlplane
+                - '{instance}'
+    envoy:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/envoy
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - --config-path
+            - '{configDir}/envoy.yaml'
+        ready:
+            - '{tool.operations}'
+            - ready
+            - envoy
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - envoy
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - envoy
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - envoy
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - envoy
+                - '{instance}'
+    registry:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r42/registry
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - serve
+            - '{configDir}/registry.yaml'
+        ready:
+            - '{tool.operations}'
+            - ready
+            - registry
+            - '{instance}'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - registry
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - registry
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - registry
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - registry
+                - '{instance}'
+hooks:
+    recovery-fence:
+        command:
+            - '{tool.operations}'
+            - recovery-fence
+        verify:
+            - '{tool.operations}'
+            - verify
+            - recovery-fence
+    backup:
+        command:
+            - '{tool.operations}'
+            - backup
+        verify:
+            - '{tool.operations}'
+            - verify
+            - backup
+    credentials:
+        command:
+            - '{tool.operations}'
+            - credentials
+        verify:
+            - '{tool.operations}'
+            - verify
+            - credentials
+    database-init:
+        command:
+            - '{tool.operations}'
+            - database-init
+        verify:
+            - '{tool.operations}'
+            - verify
+            - database-init
+    database-verify:
+        command:
+            - '{tool.operations}'
+            - database-verify
+        verify:
+            - '{tool.operations}'
+            - verify
+            - database-verify
+    platform-bootstrap:
+        command:
+            - '{tool.operations}'
+            - platform-bootstrap
+        verify:
+            - '{tool.operations}'
+            - verify
+            - platform-bootstrap
+    production-verify:
+        command:
+            - '{tool.operations}'
+            - production-verify
+        verify:
+            - '{tool.operations}'
+            - verify
+            - production-verify
+    quiesce:
+        command:
+            - '{tool.operations}'
+            - quiesce
+        verify:
+            - '{tool.operations}'
+            - verify
+            - quiesce
+    reservations:
+        command:
+            - '{tool.operations}'
+            - reservations
+        verify:
+            - '{tool.operations}'
+            - verify
+            - reservations
+    restore:
+        command:
+            - '{tool.operations}'
+            - restore
+        verify:
+            - '{tool.operations}'
+            - verify
+            - restore
+    resume:
+        command:
+            - '{tool.operations}'
+            - resume
+        verify:
+            - '{tool.operations}'
+            - verify
+            - resume
+    storage-verify:
+        command:
+            - '{tool.operations}'
+            - storage-verify
+        verify:
+            - '{tool.operations}'
+            - verify
+            - storage-verify

@@ -62,21 +62,16 @@ type TLSAuthority struct {
 	serverLeaf *x509.Certificate
 }
 
-func NewTLSAuthority(ctx context.Context, cfg config.ControlPlaneConfig, keys signkeys.Provider) (*TLSAuthority, error) {
+func NewTLSAuthority(ctx context.Context, cfg config.ControlPlaneConfig, keys signkeys.Provider, revocations *CertificateRevocations) (*TLSAuthority, error) {
 	if keys == nil {
 		return nil, errors.New("tls authority requires a signing-key provider")
+	}
+	if revocations == nil {
+		return nil, errors.New("tls authority requires explicit certificate revocation storage")
 	}
 	pkiDir := filepath.Join(cfg.StateDir, pkiDirName)
 	if err := os.MkdirAll(pkiDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir pki dir: %w", err)
-	}
-	revocationFile := strings.TrimSpace(cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile)
-	if revocationFile == "" {
-		revocationFile = filepath.Join(pkiDir, "revoked-client-cert-serials.txt")
-	}
-	revocations, err := NewCertificateRevocations(revocationFile)
-	if err != nil {
-		return nil, err
 	}
 	removeLegacyCAFiles(pkiDir)
 

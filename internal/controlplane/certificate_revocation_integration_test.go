@@ -5,12 +5,11 @@ package controlplane
 import (
 	"context"
 	"math/big"
-	"os"
-	"path/filepath"
 	"testing"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	identitycore "ebof-wg-mesh/internal/controlplane/identity"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -25,24 +24,22 @@ func TestRevokedAgentMustRebootstrapWithFreshBoundToken(t *testing.T) {
 		t.Fatalf("seed fresh bootstrap token: %v", err)
 	}
 	stateDir := t.TempDir()
-	revocationPath := filepath.Join(stateDir, "revoked.txt")
 	authority, err := NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: stateDir,
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
-			ServerNames:                  []string{"controlplane"},
-			ServerCertValidityHours:      24,
-			ClientCertValidityHours:      6,
-			RevokedClientCertSerialsFile: revocationPath,
+			ServerNames:             []string{"controlplane"},
+			ServerCertValidityHours: 24,
+			ClientCertValidityHours: 6,
 		}},
-	}, ensureTestSigningKeys(t, store))
+	}, ensureTestSigningKeys(t, store), identitycore.NewSharedCertificateRevocations(store.db))
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
 	service := newAgentService(store.fleet, nil, nil, nil, authority, nil, false, "", "")
 	csr := string(mustCreateCSR(t, "node-1"))
 
-	if err := os.WriteFile(revocationPath, []byte("63\n"), 0o600); err != nil {
-		t.Fatalf("write revocation file: %v", err)
+	if err := authority.RevokeSerials([]string{"63"}); err != nil {
+		t.Fatalf("revoke certificate in shared state: %v", err)
 	}
 	_, err = service.Enroll(
 		contextWithCertificate(serviceCallerAgent, "node-1", big.NewInt(0x63)),

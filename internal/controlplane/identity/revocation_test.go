@@ -21,6 +21,19 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+func testRevocations(t *testing.T, path ...string) *CertificateRevocations {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "revoked.txt")
+	if len(path) > 0 {
+		name = path[0]
+	}
+	r, err := NewCertificateRevocations(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 func TestCertificateRevocationsReloadsHexSerials(t *testing.T) {
 	t.Parallel()
 
@@ -102,16 +115,19 @@ func TestTLSHandshakeRejectsRevokedCertificateButAllowsCertificateFreeBootstrap(
 	t.Parallel()
 
 	stateDir := t.TempDir()
-	revocationPath := filepath.Join(stateDir, "revoked.txt")
+	revocationPath := filepath.Join(stateDir, "pki", "revoked-client-cert-serials.txt")
 	authority, err := NewTLSAuthority(context.Background(), config.ControlPlaneConfig{
 		StateDir: stateDir,
 		InternalGRPC: config.ListenerConfig{TLS: config.ServerTLSConfig{
-			ServerNames:                  []string{"controlplane"},
-			ServerCertValidityHours:      24,
-			ClientCertValidityHours:      6,
-			RevokedClientCertSerialsFile: revocationPath,
+			ServerNames:             []string{"controlplane"},
+			ServerCertValidityHours: 24,
+			ClientCertValidityHours: 6,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), testRevocations(t,
+
+		revocationPath,
+	),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

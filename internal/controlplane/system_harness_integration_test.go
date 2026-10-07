@@ -83,6 +83,7 @@ func startSystemControlPlane(t *testing.T, opts systemControlPlaneOptions) *syst
 	if opts.ingress != nil {
 		cfg.Ingress = *opts.ingress
 	}
+	cfg.ConsoleCallerIDs = []string{cfg.Dashboard.ServiceCallerID}
 	if err := config.FinalizeControlPlane(&cfg); err != nil {
 		cancel()
 		t.Fatalf("FinalizeControlPlane: %v", err)

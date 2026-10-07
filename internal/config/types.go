@@ -18,11 +18,10 @@ type HealthConfig struct {
 }
 
 type ServerTLSConfig struct {
-	ServerNames                  []string
-	BootstrapTokens              []AgentBootstrapToken
-	ServerCertValidityHours      int
-	ClientCertValidityHours      int
-	RevokedClientCertSerialsFile string
+	ServerNames             []string
+	BootstrapTokens         []AgentBootstrapToken
+	ServerCertValidityHours int
+	ClientCertValidityHours int
 }
 
 type AgentBootstrapToken struct {
@@ -241,6 +240,7 @@ type DirectImageConfig struct {
 }
 
 type ControlPlaneConfig struct {
+	ConsoleCallerIDs []string
 	Profile          Profile
 	Health           HealthConfig
 	InternalGRPC     ListenerConfig

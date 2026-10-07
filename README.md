@@ -5,11 +5,13 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 - `cmd/controlplane`: authoritative control plane (CockroachDB, mTLS gRPC, xDS for Envoy ingress, registry auth)
 - `cmd/agent`: fleet agent that supervises allocations on one node
 - `cmd/builder`: build worker that turns source snapshots into images
+- `cmd/platformctl`: installation planner and encrypted, resumable SSH deployment controller
 - `console`: TanStack Start web app; owns browser auth and calls the control plane
 - `api/proto`: protobuf and generated gRPC bindings
 
 ## Docs
 
+- [Production deployment](docs/production-deployment.md): typed installations, provider adapters, placement, availability and flat release cutovers.
 - [INGRESS.md](INGRESS.md): authenticated xDS, node retirement, and shared wildcard deployment and renewal.
 - [docs/map](docs/map/README.md): architecture map, one block per file. Render it with `go run ./cmd/archmap`.
 - [CONTEXT.md](CONTEXT.md): domain vocabulary.

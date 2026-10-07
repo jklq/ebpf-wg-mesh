@@ -116,7 +116,7 @@ func openTestStore(t *testing.T) *persistence {
 		URL:          dbURL,
 		MaxOpenConns: 4,
 		MaxIdleConns: 4,
-	}, testMeshConfig())
+	}, testMeshConfig(), withSchemaInitialization())
 	if err != nil {
 		t.Fatal(err)
 	}

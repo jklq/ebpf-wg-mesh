@@ -16,6 +16,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 
+	"ebof-wg-mesh/internal/controlplane/identity/identitytest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -48,7 +49,8 @@ func TestManagedDashboardIdentityIsCreatedLocallyAndReused(t *testing.T) {
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 6,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), identitytest.Revocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}
@@ -108,7 +110,8 @@ func TestManagedDashboardIdentityKeepsValidCertificateWhenRenewalFails(t *testin
 			ServerCertValidityHours: 24,
 			ClientCertValidityHours: 1,
 		}},
-	}, signkeystest.New(t))
+	}, signkeystest.New(t), identitytest.Revocations(t),
+	)
 	if err != nil {
 		t.Fatalf("NewTLSAuthority: %v", err)
 	}

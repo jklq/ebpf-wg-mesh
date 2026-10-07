@@ -22,12 +22,14 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var dashboardContainerPort int
 	var githubPrivateKeyFile string
 	var replicaAddresses string
+	var consoleCallerIDs string
 	var advertiseAddr string
 	var directImageAllowedPrivateRegistries string
 	var ingressHTTPListen string
 	var ingressHTTPSListen string
 
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
+	stringFlag(fs, &consoleCallerIDs, "console-caller-ids", "CONTROLPLANE_CONSOLE_CALLER_IDS", "console", "comma-separated individual deployment-owned console mTLS identities")
 	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "CONTROLPLANE_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.InternalGRPC.Listen, "internal-listen", "CONTROLPLANE_INTERNAL_LISTEN", "0.0.0.0:9443", "")
@@ -37,7 +39,6 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &agentBootstrapTokens, "agent-bootstrap-tokens", "CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS", "", "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ServerCertValidityHours, "internal-server-cert-validity-hours", "CONTROLPLANE_INTERNAL_SERVER_CERT_VALIDITY_HOURS", 24*30, "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ClientCertValidityHours, "internal-client-cert-validity-hours", "CONTROLPLANE_INTERNAL_CLIENT_CERT_VALIDITY_HOURS", 24, "")
-	stringFlag(fs, &cfg.InternalGRPC.TLS.RevokedClientCertSerialsFile, "internal-revoked-client-cert-serials-file", "CONTROLPLANE_INTERNAL_REVOKED_CLIENT_CERT_SERIALS_FILE", "", "one hexadecimal client certificate serial per line; defaults under the control-plane state directory")
 	intFlag(fs, &cfg.Database.MaxOpenConns, "db-max-open-conns", "CONTROLPLANE_DB_MAX_OPEN_CONNS", 8, "")
 	intFlag(fs, &cfg.Database.MaxIdleConns, "db-max-idle-conns", "CONTROLPLANE_DB_MAX_IDLE_CONNS", 2, "")
 	intFlag(fs, &cfg.Logs.ClickHouse.MaxOpenConns, "logs-clickhouse-max-open-conns", "CONTROLPLANE_LOGS_CLICKHOUSE_MAX_OPEN_CONNS", 2, "")
@@ -143,6 +144,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	cfg.Profile = normalized
 	cfg.InternalGRPC.TLS.ServerNames = splitCommaList(internalServerNames)
 	cfg.ReplicaAddresses = splitCommaList(replicaAddresses)
+	cfg.ConsoleCallerIDs = splitCommaList(consoleCallerIDs)
 	cfg.DirectImages.AllowedPrivateRegistryHosts = splitCommaList(directImageAllowedPrivateRegistries)
 	cfg.Ingress.HTTPListenAddrs = splitCommaList(ingressHTTPListen)
 	cfg.Ingress.HTTPSListenAddrs = splitCommaList(ingressHTTPSListen)
