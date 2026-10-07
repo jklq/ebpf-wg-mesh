@@ -67,3 +67,43 @@ func TestRecoveryApprovalBindsReportAndRefreshInvalidatesApproval(t *testing.T) 
 		t.Fatal("refresh retained approval or changed generation")
 	}
 }
+
+func TestResumeRequiresCheckpointsFromEveryAdmittedAgentAndANewCompletePoint(t *testing.T) {
+	i, release, inv := fixture(1)
+	now := time.Now().UTC()
+	p, state, err := newRestorePlan(i, release, State{}, inv, Evidence{Backup: "selected", DataLossCutoff: now.Add(-time.Hour)}, now.Add(-time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := recovery.CompareFleet(recovery.FleetInput{CapturedAt: now}, i.ID, p.Generation, release.ID, state.LastRestore.DataLossCutoff, state.Recovery.StartedAt, now, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report.AdmittedAgents = []string{"surviving-agent"}
+	r := state.Recovery
+	r.Fenced, r.Verified, r.Report = true, true, &report
+	r.ApprovedDigest, r.ReservedDigest = report.ApprovalDigest(), report.ApprovalDigest()
+	point := completeEvidence(i.ID, "s3://backups/production/points/production/complete?versionId=protected", now)
+	r.NewRecoveryPoint = &point
+	r.Acknowledgements = map[string]CheckpointAcknowledgement{}
+	for _, pl := range p.Placements {
+		if pl.Role == Agent {
+			r.Acknowledgements[pl.Instance] = CheckpointAcknowledgement{Generation: p.Generation, AuthorityEpoch: 1, Complete: true}
+		}
+	}
+	if err := validateRecoveryResume(p, r, now); err == nil {
+		t.Fatal("resume ignored a surviving agent outside target placements")
+	}
+	r.Acknowledgements["surviving-agent"] = CheckpointAcknowledgement{Generation: "before", AuthorityEpoch: 900, Complete: true}
+	if err := validateRecoveryResume(p, r, now); err == nil {
+		t.Fatal("old-generation checkpoint authorized resume")
+	}
+	r.Acknowledgements["surviving-agent"] = CheckpointAcknowledgement{Generation: p.Generation, AuthorityEpoch: 1, Complete: true}
+	if err := validateRecoveryResume(p, r, now); err != nil {
+		t.Fatal("fully verified operation could not resume", err)
+	}
+	r.NewRecoveryPoint = nil
+	if err := validateRecoveryResume(p, r, now); err == nil {
+		t.Fatal("resume accepted a SQL backup without a new complete point")
+	}
+}

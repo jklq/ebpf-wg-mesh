@@ -55,3 +55,17 @@ func TestRecoveryReportBlocksNetworkConflictAndStaleInventory(t *testing.T) {
 		t.Fatal("older external inventory accepted")
 	}
 }
+
+func TestReportIdentifiesConflictingAddressesOnOneHostAndUnallocatedEnvironment(t *testing.T) {
+	now := time.Now().UTC()
+	input := FleetInput{CapturedAt: now, DesiredNetworks: []NetworkReservation{{Owner: "environment/old", EnvironmentID: "old", Identity: 7}}, Observed: []FleetHost{{ID: "host", Generation: "generation", Reachable: true, AuthorityResolved: true, Reservations: []NetworkReservation{{EnvironmentID: "new", Identity: 7}}, Allocations: []FleetAllocation{{ID: "one", IPv4: "10.0.0.2"}, {ID: "two", IPv4: "10.0.0.2"}}}}}
+	report, err := CompareFleet(input, "installation", "generation", "release", now.Add(-time.Hour), now, now, true)
+	if err != nil || !report.Blocked {
+		t.Fatal("conflicts were accepted", report, err)
+	}
+	for _, resource := range []string{"10.0.0.2", "network-identity/7"} {
+		if !slices.ContainsFunc(report.Differences, func(d FleetDifference) bool { return d.Kind == "network-conflict" && d.Resource == resource }) {
+			t.Fatal("report omitted concrete conflict", resource, report)
+		}
+	}
+}

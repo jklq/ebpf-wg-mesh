@@ -69,6 +69,10 @@ func runFleetRecovery(ctx context.Context, args []string, out io.Writer) error {
 		if err != nil {
 			return err
 		}
+		input.DesiredNetworks, err = recovery.ReadDesiredNetworks(ctx, db)
+		if err != nil {
+			return err
+		}
 		e.Fleet = &input
 	case "reserve-fleet":
 		b, err := os.ReadFile(reportFile)

@@ -43,6 +43,8 @@ func TestRecoveryReplacesTrustWithoutOverlapAndProtectsUnreachableRanges(t *test
 		`INSERT INTO projects(id,name,kind,owner_user_id,created_at) VALUES ('project','project','user','operator',now())`,
 		`INSERT INTO environments(id,project_id,name,kind,auto_deploy,network_identity,created_at,updated_at) VALUES ('environment','project','environment','user',false,1,now(),now())`,
 		`INSERT INTO services(id,environment_id,name,current_spec_revision,created_at,updated_at) VALUES ('service','environment','service',1,now(),now())`,
+		`INSERT INTO service_revisions(service_id,spec_revision,spec_json,created_at) VALUES ('service',1,'{}',now())`,
+		`INSERT INTO deployments(id,service_id,spec_revision,rollout_generation,state,cause_kind,reason_code,created_at,updated_at) VALUES ('deployment','service',1,2,'running','operator','recovery',now(),now())`,
 		`INSERT INTO allocation_assignments(id,service_id,deployment_id,agent_id,desired_spec_revision,desired_rollout_generation,allocation_ipv4,allocation_ipv6,rollout_state,intent,created_at,updated_at) VALUES ('matching','service','deployment','survivor',1,2,'10.0.0.2','fd00:1::2','serving','run',now(),now())`,
 	} {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
@@ -57,8 +59,12 @@ func TestRecoveryReplacesTrustWithoutOverlapAndProtectsUnreachableRanges(t *test
 		t.Fatal("desired inventory lost allocation or WireGuard identity", desired)
 	}
 	resources, err := recovery.ReadDesiredResources(ctx, db)
-	if err != nil || len(resources) != 1 || resources[0].Kind != "service" {
+	if err != nil || len(resources) != 2 || !slices.ContainsFunc(resources, func(r recovery.FleetResource) bool { return r.Kind == "service" && r.ID == "service" }) {
 		t.Fatal("could not read restored desired resources", resources, err)
+	}
+	networks, err := recovery.ReadDesiredNetworks(ctx, db)
+	if err != nil || len(networks) != 1 || networks[0].EnvironmentID != "environment" || networks[0].Identity != 1 {
+		t.Fatal("could not read restored environment network identities", networks, err)
 	}
 	keys, err := secretkeys.Open(ctx, db, config.SecretKeysConfig{KeyringPath: keyring}, secretkeys.Options{})
 	if err != nil {

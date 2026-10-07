@@ -93,17 +93,31 @@ func (a *App) admitRecoveryAuthority() error {
 		return err
 	}
 	a.recoveryAuthority = admission
-	changed, err := a.stateStore.admitAuthority(admission)
+	_, err = a.stateStore.admitAuthority(admission)
 	if err != nil {
 		return err
 	}
-	if changed {
-		// Removing old client material is crash-safe: a generation-pinned startup
-		// also refuses any surviving certificate whose CA differs from admission.
-		for _, name := range []string{agentCertFileName, agentKeyFileName, agentCAFileName} {
-			if err := os.Remove(filepath.Join(a.clientTLSDir(), name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("replace recovery client identity: %w", err)
-			}
+	return a.discardPriorGenerationTLS()
+}
+
+// The host-admin tool can provision new credentials before restarting an agent.
+// Preserve those credentials, but discard an old or interrupted cache even when
+// local generation admission committed before the previous process crashed.
+func (a *App) discardPriorGenerationTLS() error {
+	if a.stateStore == nil {
+		return nil
+	}
+	_, generation := a.stateStore.commandGeneration()
+	if generation == "" {
+		return nil
+	}
+	marker, err := os.ReadFile(filepath.Join(a.clientTLSDir(), "generation"))
+	if err == nil && string(marker) == generation {
+		return nil
+	}
+	for _, name := range []string{agentCertFileName, agentKeyFileName, agentCAFileName} {
+		if err := os.Remove(filepath.Join(a.clientTLSDir(), name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("replace recovery client identity: %w", err)
 		}
 	}
 	return nil

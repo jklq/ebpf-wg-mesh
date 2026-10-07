@@ -94,7 +94,7 @@ func runSigningKeysCommand(command string, args []string) error {
 	if command == "issue-client-cert" {
 		fs.StringVar(&identityDir, "out-dir", "", "atomically install ingress credentials for filesystem SDS")
 		fs.StringVar(&mountedDir, "mounted-dir", "", "identity directory as mounted in Envoy (defaults to out-dir)")
-		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (dashboard, builder, or ingress)")
+		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (agent, dashboard, builder, or ingress)")
 		stringFlag(fs, &callerID, "caller-id", "CONTROLPLANE_SIGNING_KEYS_CALLER_ID", "", "client caller id")
 		stringFlag(fs, &ttlRaw, "ttl", "CONTROLPLANE_SIGNING_KEYS_CLIENT_TTL", "24h", "client certificate lifetime")
 	}
@@ -329,6 +329,8 @@ func signingKeysCheck(ctx context.Context, svc *signkeys.Service) error {
 func signingKeysIssueClientCert(ctx context.Context, db *sql.DB, svc *signkeys.Service, callerClass, callerID, ttlRaw, identityDir, mountedDir string) error {
 	var class identity.CallerClass
 	switch strings.TrimSpace(callerClass) {
+	case string(identity.CallerAgent):
+		class = identity.CallerAgent
 	case string(identity.CallerDashboard):
 		class = identity.CallerDashboard
 	case string(identity.CallerBuilder):
@@ -336,7 +338,7 @@ func signingKeysIssueClientCert(ctx context.Context, db *sql.DB, svc *signkeys.S
 	case string(identity.CallerIngress):
 		class = identity.CallerIngress
 	default:
-		return fmt.Errorf("controlplane signing-keys issue-client-cert: caller class must be dashboard, builder, or ingress")
+		return fmt.Errorf("controlplane signing-keys issue-client-cert: caller class must be agent, dashboard, builder, or ingress")
 	}
 	if strings.TrimSpace(callerID) == "" {
 		return fmt.Errorf("controlplane signing-keys issue-client-cert: --caller-id is required")
@@ -348,6 +350,15 @@ func signingKeysIssueClientCert(ctx context.Context, db *sql.DB, svc *signkeys.S
 	material, err := identity.IssueClientCertificate(ctx, svc, class, strings.TrimSpace(callerID), ttl)
 	if err != nil {
 		return fmt.Errorf("controlplane signing-keys issue-client-cert: %w", err)
+	}
+	if class == identity.CallerAgent {
+		serial, err := identity.CertificateSerialFromPEM(string(material.CertPEM))
+		if err != nil {
+			return err
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO agent_certificates(serial,agent_id,issued_at) VALUES ($1,$2,statement_timestamp())`, serial, strings.TrimSpace(callerID)); err != nil {
+			return fmt.Errorf("record host-admin agent certificate: %w", err)
+		}
 	}
 	if class == identity.CallerIngress {
 		if err := ingressnodes.New(db).Register(ctx, strings.TrimSpace(callerID)); err != nil {

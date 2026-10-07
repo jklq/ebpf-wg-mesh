@@ -147,6 +147,32 @@ func TestFlatInstallationConversionPreservesDataAndImportsRevocations(t *testing
 		t.Fatal("revocation import lost", err)
 	}
 }
+
+func TestFlatInstallationConversionFrom42PreservesSharedRevocations(t *testing.T) {
+	db := installationTestDB(t)
+	ctx := context.Background()
+	if err := BootstrapInstallation(ctx, db, filepath.Join(t.TempDir(), "keys.json")); err != nil {
+		t.Fatal(err)
+	}
+	execInstallation(t, db, `DROP TABLE recovery_runtime_authority; DROP TABLE recovery_network_reservations`)
+	execInstallation(t, db, `UPDATE schema_migrations SET version=42`)
+	execInstallation(t, db, `INSERT INTO certificate_revocations VALUES ('abcd',statement_timestamp())`)
+	execInstallation(t, db, `CREATE SCHEMA dashboard; CREATE TABLE dashboard.schema_migrations(version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL); INSERT INTO dashboard.schema_migrations VALUES (3,statement_timestamp())`)
+	conversion := Conversion{FromSchema: 42, Backup: "s3://verified-complete-backup", DataLossCutoff: time.Now().UTC(), ConsoleSchema: "dashboard"}
+	if err := ConvertInstallationSchema(ctx, db, conversion); err != nil {
+		t.Fatal(err)
+	}
+	if err := ConvertInstallationSchema(ctx, db, conversion); err != nil {
+		t.Fatal("flat conversion cannot resume", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM certificate_revocations WHERE serial='abcd'`).Scan(&count); err != nil || count != 1 {
+		t.Fatal("conversion discarded shared revocations", count, err)
+	}
+	if err := (&database{db: db}).validateSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
 func TestConversionRequiresBackupAndStoppedOldRelease(t *testing.T) {
 	db := installationTestDB(t)
 	ctx := context.Background()

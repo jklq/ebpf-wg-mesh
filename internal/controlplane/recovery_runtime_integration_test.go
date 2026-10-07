@@ -14,11 +14,15 @@ import (
 	"testing"
 	"time"
 
+	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
+	"ebof-wg-mesh/internal/testutil"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -104,8 +108,50 @@ func TestSharedRecoveryPauseFencesEveryReplicaAndBackgroundBootstrap(t *testing.
 		}
 		conn.Close()
 	}
+	waitForSingletonLease(t, servers[0])
+	// Host administration admits an identity absent from the older SQL backup.
+	// Ordinary enrollment is paused, but authenticated inventory must still work.
+	material, err := identity.IssueClientCertificate(ctx, signing, identity.CallerAgent, "post-backup-host", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn := newDashboardPlatformClientConn(t, servers[0].InternalAddr(), material)
+	defer conn.Close()
+	client := agentv1.NewAgentControlClient(conn)
+	prior, err := client.Sync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := prior.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{AgentId: "post-backup-host", InstallationId: "installation", RecoveryGeneration: "before"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prior.Recv(); status.Code(err) != codes.FailedPrecondition {
+		t.Fatal("prior generation reconnected through a new identity", err)
+	}
+	stream, err := client.Sync(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleet := recovery.FleetHost{ID: "post-backup-host", Generation: "generation", Reachable: true, AuthorityResolved: true, Allocations: []recovery.FleetAllocation{{ID: "newer", SpecRevision: 900}}, Resources: []recovery.FleetResource{{Kind: "volume", ID: "unknown"}}}
+	encoded, _ := json.Marshal(fleet)
+	hello := &agentv1.AgentHello{AgentId: fleet.ID, InstallationId: "installation", RecoveryGeneration: fleet.Generation, ClusterId: hex.EncodeToString(hash[:]), RecoveryInventory: encoded}
+	if err := stream.Send(&agentv1.AgentClientMessage{Payload: &agentv1.AgentClientMessage_Hello{Hello: hello}}); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(servers[0].cfg.StateDir, "recovery-inventory", "generation", "post-backup-host-fleet.json")
+	if err := testutil.Poll(ctx, testutil.PollConfig{Timeout: 5 * time.Second}, func(context.Context) (bool, error) {
+		data, err := os.ReadFile(file)
+		return err == nil && string(data) == string(encoded), nil
+	}); err != nil {
+		t.Fatal("paused inventory was not independently recorded", err)
+	}
+	stream.CloseSend()
 	var projects int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM projects`).Scan(&projects); err != nil || projects != 0 {
 		t.Fatal("paused replica ran background/bootstrap mutations", projects, err)
+	}
+	var agents int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM agent_registrations`).Scan(&agents); err != nil || agents != 0 {
+		t.Fatal("inventory reporting changed restored desired state", agents, err)
 	}
 }
