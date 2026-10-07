@@ -21,6 +21,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	int64Flag(fs, &cfg.Capacity.ReserveCPUMillis, "reserve-cpu-millis", "BUILDER_RESERVE_CPU_MILLIS", 0, "CPU capacity reserved for other work")
 	int64Flag(fs, &cfg.Capacity.BuildCPUMillis, "build-cpu-millis", "BUILDER_BUILD_CPU_MILLIS", 1000, "required build CPU capacity")
 	int64Flag(fs, &cfg.Capacity.DaemonMemoryBytes, "daemon-memory-bytes", "BUILDER_DAEMON_MEMORY_BYTES", 512<<20, "headroom for BuildKit outside the build step")
+	stringFlag(fs, &cfg.AuthorityFile, "authority-file", "BUILDER_AUTHORITY_FILE", "", "private host-admin recovery admission and pause state")
 	stringFlag(fs, &profile, "profile", "BUILDER_PROFILE", "", "development or production; empty defaults to production")
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "BUILDER_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.ID, "builder-id", "BUILDER_ID", "", "")

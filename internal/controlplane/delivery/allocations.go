@@ -12,6 +12,8 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/recovery"
+	"net/netip"
 
 	"github.com/google/uuid"
 )
@@ -285,6 +287,17 @@ func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, ser
 	alloc.AllocationIPv6, err = privateIPv6(workloadIPv6Subnet, service.EnvironmentID, alloc.ID)
 	if err != nil {
 		return AllocationRecord{}, allocationMutation{}, err
+	}
+	addr, err := netip.ParseAddr(alloc.AllocationIPv6)
+	if err != nil {
+		return AllocationRecord{}, allocationMutation{}, err
+	}
+	free, err := recovery.RecoveryPrefixAvailable(ctx, tx, netip.PrefixFrom(addr, 128), agentID)
+	if err != nil {
+		return AllocationRecord{}, allocationMutation{}, err
+	}
+	if !free {
+		return AllocationRecord{}, allocationMutation{}, fmt.Errorf("allocation IPv6 is protected by unresolved recovery inventory")
 	}
 	var deploymentID string
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM deployments

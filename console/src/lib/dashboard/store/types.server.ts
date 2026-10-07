@@ -42,6 +42,9 @@ export interface Queryable {
 }
 
 export interface DashboardStoreRuntimeConfig {
+	installationID?: string;
+	recoveryGeneration?: string;
+	recoveryPaused?: boolean;
 	databaseSchema: string;
 	githubTokenCipher: GitHubTokenCipher;
 }

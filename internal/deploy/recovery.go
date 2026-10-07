@@ -25,6 +25,9 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 	if len(args) == 0 {
 		return fmt.Errorf("usage: platformctl recovery <protect|protect-files|verify-files|schedule|finalize|complete|verify|monitor|collect|drill> [flags]")
 	}
+	if contains([]string{"empty-destination", "fleet-inventory", "reserve-fleet", "reset-authority", "initialize-authority", "resume-authority"}, args[0]) {
+		return runFleetRecovery(ctx, args, out)
+	}
 	fs := flag.NewFlagSet("platformctl recovery "+args[0], flag.ContinueOnError)
 	var configPath, file, kind, id, digest, pointPath, backupURL, subdir, timestamp, sourceConfig, declared string
 	var secret, content bool

@@ -12,12 +12,7 @@ import (
 )
 
 func restorationPlan(p Plan) bool {
-	for _, op := range p.Operations {
-		if op.Hook == "restore" {
-			return true
-		}
-	}
-	return false
+	return p.Recovery
 }
 
 func (d *SSHDriver) VerifyRecovery(ctx context.Context, p Plan, state State) error {
@@ -25,7 +20,7 @@ func (d *SSHDriver) VerifyRecovery(ctx context.Context, p Plan, state State) err
 		return fmt.Errorf("restoration has no selected complete recovery point")
 	}
 	selected := state.LastRestore.Backup
-	if d.recoverySelection == selected {
+	if d.recoverySelection == selected+"/"+Digest(p.Release) {
 		return nil
 	}
 	c, s, err := recovery.Load(d.RecoveryConfig)
@@ -54,7 +49,10 @@ func (d *SSHDriver) VerifyRecovery(ctx context.Context, p Plan, state State) err
 	if !e.DataLossCutoff.Equal(state.LastRestore.DataLossCutoff) {
 		return fmt.Errorf("protected staging point has a different requested cutoff")
 	}
-	d.recoverySelection = selected
+	if err := requirePointRelease(ctx, s, point, p.Release); err != nil {
+		return err
+	}
+	d.recoverySelection = selected + "/" + Digest(p.Release)
 	d.recoveryPoint = point
 	d.recoveryService = recovery.Service{Storage: s.Storage, Prefix: s.Prefix}
 	return nil
@@ -127,4 +125,30 @@ func (d *SSHDriver) stageRecovered(ctx context.Context, p Plan, state State, h H
 		}
 	}
 	return fileScript(toolsDir(p)+"/staged", []byte(Digest(p.Release.Tools)), "0600"), nil
+}
+
+func requirePointRelease(ctx context.Context, s recovery.Service, point recovery.Point, release Release) error {
+	for _, dep := range point.Dependencies {
+		if dep.Kind != "release" || dep.ID != release.ID || len(dep.Objects) != 1 {
+			continue
+		}
+		f, err := os.CreateTemp("", "recovery-selected-release-*")
+		if err != nil {
+			return err
+		}
+		f.Close()
+		defer os.Remove(f.Name())
+		if err := s.Storage.Get(ctx, dep.Objects[0], f.Name()); err != nil {
+			return err
+		}
+		bundle, err := Load[Release](f.Name())
+		if err != nil {
+			return err
+		}
+		if Digest(bundle) != Digest(release) {
+			return fmt.Errorf("restore must use the exact release bundle protected by its selected point")
+		}
+		return nil
+	}
+	return fmt.Errorf("selected point does not protect the requested recovery release")
 }

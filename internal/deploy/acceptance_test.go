@@ -7,7 +7,7 @@ import (
 
 func TestReferenceManifestsMatchTypedReleaseContract(t *testing.T) {
 	dir := "../../infra/production/examples"
-	r, err := Load[Release](filepath.Join(dir, "releases/r42.yaml"))
+	r, err := Load[Release](filepath.Join(dir, "releases/r43.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

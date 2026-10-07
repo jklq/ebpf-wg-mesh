@@ -3,6 +3,7 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -71,7 +72,7 @@ func TestRecoveryAfterPermanentHostLossRecordsCutoffAndResumes(t *testing.T) {
 	}
 	partial, err := store.Read()
 	store.Close()
-	if err != nil || partial.Progress == nil || partial.LastBackup.DataLossCutoff != cutoff {
+	if err != nil || partial.Progress == nil || partial.LastRestore.DataLossCutoff != cutoff {
 		t.Fatal("restoration intent was not durably recorded", err)
 	}
 	plan := partial.Progress.Plan
@@ -91,7 +92,22 @@ func TestRecoveryAfterPermanentHostLossRecordsCutoffAndResumes(t *testing.T) {
 		}
 	}
 	driver.failHook = ""
-	if err := Run(context.Background(), []string{"resume", "--key-file", keyFile, "--state", statePath}, &output, driver); err != nil {
+	if err := Run(context.Background(), []string{"resume", "--key-file", keyFile, "--state", statePath}, &output, driver); !errors.Is(err, ErrRecoveryApproval) {
+		t.Fatal("recovery did not stop for concrete report approval", err)
+	}
+	store, err = OpenState(statePath, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending, err := store.Read()
+	store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Recovery.Generation != partial.Recovery.Generation {
+		t.Fatal("interruption changed generation")
+	}
+	if err := Run(context.Background(), []string{"resume", "--key-file", keyFile, "--state", statePath, "--approve-report", pending.Recovery.Report.ApprovalDigest()}, &output, driver); err != nil {
 		t.Fatal(err)
 	}
 	store, err = OpenState(statePath, key)

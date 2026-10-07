@@ -16,6 +16,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/recovery"
 	"ebof-wg-mesh/internal/restartpolicy"
 	"ebof-wg-mesh/internal/runtimeutil"
 	"ebof-wg-mesh/internal/volumestore"
@@ -95,6 +96,14 @@ func NewContainerdRuntime(cfg config.AgentConfig) (*ContainerdRuntime, error) {
 		clock:   restartpolicy.SystemClock{},
 		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 	}, nil
+}
+
+// SetRecoveryPaused suppresses image cleanup even during approved checkpoint
+// application. Normal supervision resumes by restarting with host admission.
+func (r *ContainerdRuntime) SetRecoveryPaused(paused bool) {
+	if engine, ok := r.engine.(interface{ SetRecoveryPaused(bool) }); ok {
+		engine.SetRecoveryPaused(paused)
+	}
 }
 
 func (r *ContainerdRuntime) now() time.Time {
@@ -750,4 +759,20 @@ func cpuCFSForMillis(cpuMillis int64) (int64, uint64) {
 		return 0, defaultCPUCFSPeriod
 	}
 	return cpuMillis * int64(defaultCPUCFSPeriod) / 1000, defaultCPUCFSPeriod
+}
+
+func (r *ContainerdRuntime) RecoveryResources(ctx context.Context) ([]recovery.FleetResource, error) {
+	volumes, err := r.volumeStore()
+	if err != nil {
+		return nil, err
+	}
+	ids, err := volumes.Inventory()
+	if err != nil {
+		return nil, err
+	}
+	var resources []recovery.FleetResource
+	for _, id := range ids {
+		resources = append(resources, recovery.FleetResource{Kind: "volume", ID: id})
+	}
+	return resources, nil
 }

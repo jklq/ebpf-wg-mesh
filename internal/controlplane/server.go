@@ -94,12 +94,25 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, err
 	}
 	opts := []persistenceOption{withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays) * 24 * time.Hour)}
-	if !cfg.Profile.IsProduction() && !admission.Paused {
+	if !cfg.Profile.IsProduction() && admission.Generation == "" {
 		opts = append(opts, withSchemaInitialization())
 	}
 	store, err := openPersistence(cfg.Database, cfg.Mesh, opts...)
 	if err != nil {
 		return nil, err
+	}
+	if admission.Generation != "" {
+		var installation, generation string
+		var paused bool
+		if err := store.db.QueryRowContext(ctx, `SELECT installation,generation,paused FROM recovery_runtime_authority WHERE singleton = TRUE`).Scan(&installation, &generation, &paused); err != nil {
+			store.Close()
+			return nil, fmt.Errorf("read provisioned recovery authority: %w", err)
+		}
+		if installation != admission.InstallationID || generation != admission.Generation {
+			store.Close()
+			return nil, fmt.Errorf("host admission differs from restored authority")
+		}
+		admission.Paused = admission.Paused || paused
 	}
 	secrets, err := secretkeys.Open(ctx, store.db, cfg.SecretKeys, secretkeys.Options{
 		// Production never generates keys: the keyring is explicitly provisioned, Open fails closed.

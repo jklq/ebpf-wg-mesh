@@ -58,18 +58,30 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			return fmt.Errorf("materially stale plan: observed inventory changed")
 		}
 		state.InstallationID = p.Installation.ID
+		state.Generation = p.Generation
 		state.Progress = &Progress{PlanID: p.ID, Plan: &p, Started: map[string]bool{}, Completed: map[string]Evidence{}}
 		if err := e.Store.Write(state); err != nil {
 			return err
 		}
 	}
 	for _, op := range p.Operations {
+		if op.Hook == "recovery-approve" {
+			if err := e.recoveryApproval(ctx, p, &state, op); err != nil {
+				return err
+			}
+			continue
+		}
+		if restorationPlan(p) {
+			if err := requireRecoveryStep(p, state, op); err != nil {
+				return err
+			}
+		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 
 		if _, ok := state.Progress.Completed[op.ID]; ok {
-			critical := op.Kind == "hook" && contains([]string{"recovery-protect", "backup", "backup-schedule", "recovery-verify"}, op.Hook)
+			critical := op.Kind == "hook" && contains([]string{"recovery-protect", "backup", "backup-schedule", "recovery-verify", "recovery-fence"}, op.Hook)
 			if !critical && !contains([]string{"install", "database-join", "stage", "configure", "stage-tools"}, op.Kind) {
 				continue
 			}
@@ -170,6 +182,12 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 				}
 			}
 			state.Retained = out
+		}
+		if restorationPlan(p) {
+			if err := recordRecoveryEvidence(p, &state, op, evidence, time.Now()); err != nil {
+				return fmt.Errorf("%s: %w", op.Hook, err)
+			}
+			state.Recovery.Phase = op.Hook
 		}
 		state.Progress.Completed[op.ID] = evidence
 		if op.Kind == "delete" {

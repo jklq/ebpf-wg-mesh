@@ -44,6 +44,9 @@ func (s *localStateStore) admitAuthority(a reconciliation.Authority) (bool, erro
 		if meta.Get(retiredKey) != nil {
 			return errors.New("recovery generation has already been retired")
 		}
+		if err := retainRecoveryNetwork(tx); err != nil {
+			return err
+		}
 		previous := string(meta.Get(recoveryGenerationKey))
 		if previous != "" {
 			if err := meta.Put([]byte("retired_generation/"+previous), []byte{1}); err != nil {
@@ -89,6 +92,7 @@ func (a *App) admitRecoveryAuthority() error {
 	if err != nil {
 		return err
 	}
+	a.recoveryAuthority = admission
 	changed, err := a.stateStore.admitAuthority(admission)
 	if err != nil {
 		return err

@@ -16,6 +16,9 @@ import (
 // shared layers and live container snapshots remain rooted. imageMu fences pulls
 // through container creation so collection cannot race an allocation starting.
 func (e *containerdEngine) collectUnusedImagesLocked(ctx context.Context) error {
+	if e.recoveryPaused {
+		return nil
+	}
 	containers, err := e.client.Containers(ctx)
 	if err != nil {
 		return err

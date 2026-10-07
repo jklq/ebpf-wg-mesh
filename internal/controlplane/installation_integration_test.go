@@ -116,7 +116,7 @@ func TestFlatInstallationConversionPreservesDataAndImportsRevocations(t *testing
 	if err := BootstrapInstallation(ctx, db, filepath.Join(t.TempDir(), "keys.json")); err != nil {
 		t.Fatal(err)
 	}
-	execInstallation(t, db, `DROP TABLE certificate_revocations`)
+	execInstallation(t, db, `DROP TABLE certificate_revocations; DROP TABLE recovery_runtime_authority; DROP TABLE recovery_network_reservations`)
 	execInstallation(t, db, `UPDATE schema_migrations SET version=41`)
 	execInstallation(t, db, `CREATE TABLE retained_data(value TEXT)`)
 	execInstallation(t, db, `INSERT INTO retained_data VALUES ('persistent application data')`)
@@ -153,7 +153,7 @@ func TestConversionRequiresBackupAndStoppedOldRelease(t *testing.T) {
 	if err := BootstrapInstallation(ctx, db, filepath.Join(t.TempDir(), "keys.json")); err != nil {
 		t.Fatal(err)
 	}
-	execInstallation(t, db, `DROP TABLE certificate_revocations`)
+	execInstallation(t, db, `DROP TABLE certificate_revocations; DROP TABLE recovery_runtime_authority; DROP TABLE recovery_network_reservations`)
 	execInstallation(t, db, `UPDATE schema_migrations SET version=41`)
 	c := Conversion{FromSchema: 41, ConsoleSchema: "dashboard"}
 	if err := ConvertInstallationSchema(ctx, db, c); err == nil {

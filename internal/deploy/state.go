@@ -16,10 +16,12 @@ import (
 )
 
 type Evidence struct {
-	Point          *recovery.Point  `json:"point,omitempty"`
-	Object         *recovery.Object `json:"object,omitempty"`
-	Backup         string           `json:"backup,omitempty"`
-	DataLossCutoff time.Time        `json:"dataLossCutoff,omitempty"`
+	Recovery       *RecoveryReceipt     `json:"recovery,omitempty"`
+	Fleet          *recovery.FleetInput `json:"fleet,omitempty"`
+	Point          *recovery.Point      `json:"point,omitempty"`
+	Object         *recovery.Object     `json:"object,omitempty"`
+	Backup         string               `json:"backup,omitempty"`
+	DataLossCutoff time.Time            `json:"dataLossCutoff,omitempty"`
 }
 type Progress struct {
 	Plan      *Plan               `json:"plan"`
@@ -28,6 +30,8 @@ type Progress struct {
 	Completed map[string]Evidence `json:"completed"`
 }
 type State struct {
+	Generation     string             `json:"generation"`
+	Recovery       *RecoveryProgress  `json:"recovery,omitempty"`
 	Deleted        map[string]bool    `json:"deleted,omitempty"`
 	Version        int                `json:"version"`
 	InstallationID string             `json:"installationId"`

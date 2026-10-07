@@ -1,13 +1,13 @@
 tools:
     operations:
         amd64:
-            url: https://releases.example.com/r42/operations-amd64
+            url: https://releases.example.com/r43/operations-amd64
             sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 version: 1
-id: r42
+id: r43
 configuration: 1
-protocol: 1
-schema: 42
+protocol: 2
+schema: 43
 consoleSchema: 3
 dependencies:
     bun: 1.3.11
@@ -19,7 +19,7 @@ programs:
     agent:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/agent
+                url: https://releases.example.com/r43/agent
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args: []
         ready:
@@ -52,7 +52,7 @@ programs:
     builder:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/builder
+                url: https://releases.example.com/r43/builder
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args: []
         ready:
@@ -85,7 +85,7 @@ programs:
     cockroachdb:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/cockroachdb
+                url: https://releases.example.com/r43/cockroachdb
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args:
             - start
@@ -126,7 +126,7 @@ programs:
     console:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/console
+                url: https://releases.example.com/r43/console
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args: []
         ready:
@@ -159,7 +159,7 @@ programs:
     controlplane:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/controlplane
+                url: https://releases.example.com/r43/controlplane
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args: []
         ready:
@@ -192,7 +192,7 @@ programs:
     envoy:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/envoy
+                url: https://releases.example.com/r43/envoy
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args:
             - --config-path
@@ -227,7 +227,7 @@ programs:
     registry:
         artifacts:
             amd64:
-                url: https://releases.example.com/r42/registry
+                url: https://releases.example.com/r43/registry
                 sha256: "0000000000000000000000000000000000000000000000000000000000000000"
         args:
             - serve
@@ -260,6 +260,30 @@ programs:
                 - registry
                 - '{instance}'
 hooks:
+    recovery-database:
+        command: ['{tool.operations}', recovery-database]
+        verify: ['{tool.operations}', verify, recovery-database]
+    recovery-authority:
+        command: ['{tool.operations}', recovery-authority]
+        verify: ['{tool.operations}', verify, recovery-authority]
+    recovery-inventory:
+        command: ['{tool.operations}', recovery-inventory]
+        verify: ['{tool.operations}', verify, recovery-inventory]
+    recovery-reserve:
+        command: ['{tool.operations}', recovery-reserve]
+        verify: ['{tool.operations}', verify, recovery-reserve]
+    recovery-reconcile:
+        command: ['{tool.operations}', recovery-reconcile]
+        verify: ['{tool.operations}', verify, recovery-reconcile]
+    recovery-checkpoints:
+        command: ['{tool.operations}', recovery-checkpoints]
+        verify: ['{tool.operations}', verify, recovery-checkpoints]
+    recovery-work:
+        command: ['{tool.operations}', recovery-work]
+        verify: ['{tool.operations}', verify, recovery-work]
+    recovery-resume:
+        command: ['{tool.operations}', recovery-resume]
+        verify: ['{tool.operations}', verify, recovery-resume]
     recovery-verify:
         command:
             - '{tool.operations}'

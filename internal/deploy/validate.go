@@ -24,6 +24,9 @@ func (i Installation) Validate(r Release) error {
 	if i.Version != 1 || r.Version != 1 || !safeID(i.ID) || !safeID(r.ID) || i.Release != r.ID {
 		return fmt.Errorf("installation/release version, identity, or binding is invalid")
 	}
+	if !durable(i.Recovery.Inventory) {
+		return fmt.Errorf("recovery requires a durable latest external fleet inventory path")
+	}
 	if r.Configuration <= 0 || r.Protocol <= 0 || r.Schema <= 0 || r.ConsoleSchema <= 0 {
 		return fmt.Errorf("release must pin configuration, protocol and both schema versions")
 	}
@@ -206,7 +209,7 @@ func (i Installation) Validate(r Release) error {
 			return fmt.Errorf("complete installation requires %s", role)
 		}
 	}
-	for _, name := range []string{"database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence"} {
+	for _, name := range []string{"database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
 		if !hookValid(r.Hooks[name]) {
 			return fmt.Errorf("release requires idempotent %s hook with verification", name)
 		}

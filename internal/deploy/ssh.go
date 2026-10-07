@@ -219,6 +219,10 @@ func installScript(p Plan, pl Placement, observed Resources) (string, error) {
 		}
 		env[key] = v
 	}
+	if contains([]Role{Agent, ControlPlane, Console, Builder}, pl.Role) {
+		prefix := map[Role]string{Agent: "AGENT", ControlPlane: "CONTROLPLANE", Console: "DASHBOARD", Builder: "BUILDER"}[pl.Role]
+		env[prefix+"_AUTHORITY_FILE"] = configDir(i, pl) + "/authority.json"
+	}
 	if pl.Role == Agent {
 		env["AGENT_NODE_ID"] = pl.Instance
 		env["AGENT_PROFILE"] = "production"

@@ -132,6 +132,7 @@ type Backup struct {
 	Monitor        string   `json:"monitor" yaml:"monitor"`
 }
 type Recovery struct {
+	Inventory   string   `json:"inventory" yaml:"inventory"`
 	Hosts       []Host   `json:"hosts" yaml:"hosts"`
 	Credentials []string `json:"credentials" yaml:"credentials"`
 }

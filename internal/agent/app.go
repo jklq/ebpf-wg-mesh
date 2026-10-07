@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,12 +17,15 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/mesh"
+	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/credentials"
 )
 
 type App struct {
+	recoveryAuthority    reconciliation.Authority
 	cfg                  config.AgentConfig
 	runtime              Runtime
 	mesh                 MeshHandle
@@ -120,6 +124,11 @@ func (a *App) Run(ctx context.Context) error {
 	// The pinned identity adopted at enrollment, empty before the first
 	// enrollment. It survives CA rotations; the bundle on disk does not.
 	a.supervisor = newWorkloadSupervisor(a.cfg.Node.ID, a.runtime, store, a.applyNodeConfig)
+	a.supervisor.recoveryPaused = a.recoveryAuthority.Paused
+	a.supervisor.recoveryCheckpoints = a.recoveryAuthority.Checkpoints
+	if runtime, ok := a.runtime.(interface{ SetRecoveryPaused(bool) }); ok {
+		runtime.SetRecoveryPaused(a.recoveryAuthority.Paused)
+	}
 	// Install the log sink before supervision restores workloads: restored
 	// containers stream output immediately, and a nil sink would drop boot logs.
 	shipper, err := newLogShipper(a.cfg.Node.ID, logShipConfigFromAgent(a.cfg))
@@ -366,6 +375,22 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	if err := a.stateStore.requireClusterIdentity(clusterID); err != nil {
 		return err
 	}
+	inventory, err := a.stateStore.fleetInventory()
+	if err != nil {
+		return err
+	}
+	if provider, ok := a.runtime.(interface {
+		RecoveryResources(context.Context) ([]recovery.FleetResource, error)
+	}); ok {
+		inventory.Resources, err = provider.RecoveryResources(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	inventoryJSON, err := json.Marshal(inventory)
+	if err != nil {
+		return err
+	}
 	runtimeResources := make([]*agentv1.RuntimeResource, 0, len(summary.RuntimeResources))
 	for _, resource := range summary.RuntimeResources {
 		runtimeResources = append(runtimeResources, &agentv1.RuntimeResource{AllocationId: resource.AllocationID, RuntimeId: resource.RuntimeID})
@@ -376,6 +401,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	if err := send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
 			InstallationId: summary.InstallationID, RecoveryGeneration: summary.RecoveryGeneration,
+			RecoveryInventory:                 inventoryJSON,
 			AgentId:                           a.cfg.Node.ID,
 			Name:                              a.cfg.Node.Name,
 			AdvertiseAddr:                     a.cfg.Node.AdvertiseAddr,
@@ -677,6 +703,9 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 }
 
 func (a *App) refreshManagedDashboardIdentity(ctx context.Context, issuer dashboardCertificateIssuer, state *agentv1.DesiredNodeState) error {
+	if a.recoveryAuthority.Paused {
+		return nil
+	}
 	changed, err := a.ensureManagedDashboardIdentity(ctx, issuer, state)
 	if err != nil {
 		return fmt.Errorf("ensure managed dashboard identity: %w", err)

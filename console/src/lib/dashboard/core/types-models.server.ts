@@ -261,6 +261,9 @@ export interface GitHubAppUserAuthConfig {
 export type DashboardRuntimeProfile = "development" | "production";
 
 export interface DashboardConfig {
+	installationID?: string;
+	recoveryGeneration?: string;
+	recoveryPaused?: boolean;
 	profile: DashboardRuntimeProfile;
 	sessionCookieName: string;
 	refreshCookieName: string;

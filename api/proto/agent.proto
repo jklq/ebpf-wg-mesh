@@ -40,6 +40,8 @@ message AgentHello {
   string accepted_credentials_version = 22;
   string accepted_replicas_version = 23;
   string accepted_observation_overlay_version = 24;
+  // Nonsecret, durable FleetHost JSON for recovery inventory.
+  bytes recovery_inventory = 27;
   string installation_id = 25;
   string recovery_generation = 26;
 }
@@ -144,6 +146,7 @@ message DesiredService {
   google.protobuf.Timestamp drain_deadline = 18;
   string private_ipv4 = 19;
   string deployment_id = 20;
+  google.protobuf.Timestamp created_at = 21;
 }
 
 enum AllocationIntent {

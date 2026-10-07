@@ -128,6 +128,43 @@ export async function migrateDashboardStore(
 	runtime: DashboardStoreRuntimeConfig,
 	db: Pool,
 ): Promise<void> {
+	if (runtime.recoveryGeneration) {
+		const result = await query<{
+			installation: string;
+			generation: string;
+			paused: boolean;
+		}>(
+			db,
+			"recovery.authority",
+			"SELECT installation,generation,paused FROM recovery_runtime_authority WHERE singleton = TRUE",
+		);
+		const authority = rowAt(result.rows, 0, "recovery.authority");
+		if (
+			authority.installation !== runtime.installationID ||
+			authority.generation !== runtime.recoveryGeneration
+		) {
+			throw new Error(
+				"console admission differs from restored recovery authority",
+			);
+		}
+		runtime.recoveryPaused = runtime.recoveryPaused || authority.paused;
+	}
+	if (runtime.recoveryPaused) {
+		const result = await query<{ version: string }>(
+			db,
+			"recovery.schema",
+			`SELECT version FROM ${tableName(runtime, "schema_migrations")}`,
+		);
+		const expected = dashboardStoreMigrations(runtime).map((m) => m.version);
+		const actual = result.rows.map((r) => Number(r.version));
+		if (
+			expected.length !== actual.length ||
+			expected.some((v) => !actual.includes(v))
+		) {
+			throw new Error("restored console schema differs from selected release");
+		}
+		return;
+	}
 	await queryVoid(
 		db,
 		"migrate.createSchema",
@@ -158,7 +195,8 @@ export async function migrateDashboardStore(
 			if (!currentVersions.has(version)) {
 				throw new DatabaseError({
 					operation: "migrateDashboardStore",
-					message: "database schema differs from this release; apply a backed-up conversion or restore",
+					message:
+						"database schema differs from this release; apply a backed-up conversion or restore",
 					cause: version,
 				});
 			}
@@ -175,7 +213,12 @@ export async function migrateDashboardStore(
 				[runtime.databaseSchema],
 			);
 			if (populated.rows[0]?.exists) {
-				throw new DatabaseError({ operation: "migrateDashboardStore", message: "populated console schema has no matching version; refusing initialization", cause: runtime.databaseSchema });
+				throw new DatabaseError({
+					operation: "migrateDashboardStore",
+					message:
+						"populated console schema has no matching version; refusing initialization",
+					cause: runtime.databaseSchema,
+				});
 			}
 			for (const statement of migration.statements) {
 				await queryVoid(

@@ -184,9 +184,20 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 		return nil, err
 	}
 	path := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/plan.json"
-	script := fileScript(path, payload, "0600") + "export PLATFORM_PLAN=" + quote(path) + "\nexport PLATFORM_OPERATION=" + quote(op.ID) + "\n"
+	script := "export PLATFORM_INSTALLATION=" + quote(p.Installation.ID) + "\nexport PLATFORM_RECOVERY_GENERATION=" + quote(p.Generation) + "\n" + fileScript(path, payload, "0600") + "export PLATFORM_PLAN=" + quote(path) + "\nexport PLATFORM_OPERATION=" + quote(op.ID) + "\n"
 	if state.LastBackup.Backup != "" {
 		script += "export PLATFORM_BACKUP=" + quote(state.LastBackup.Backup) + "\nexport PLATFORM_DATA_LOSS_CUTOFF=" + quote(state.LastBackup.DataLossCutoff.Format(time.RFC3339Nano)) + "\n"
+	}
+	if restorationPlan(p) && state.Recovery != nil {
+		data, err := json.Marshal(state.Recovery)
+		if err != nil {
+			return nil, err
+		}
+		recoveryPath := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/recovery.json"
+		script += fileScript(recoveryPath, data, "0600") + "export PLATFORM_RECOVERY_OPERATION=" + quote(recoveryPath) + "\nexport PLATFORM_RECOVERY_GENERATION=" + quote(p.Generation) + "\n"
+		if state.LastRestore != nil {
+			script += "export PLATFORM_BACKUP=" + quote(state.LastRestore.Backup) + "\nexport PLATFORM_DATA_LOSS_CUTOFF=" + quote(state.LastRestore.DataLossCutoff.Format(time.RFC3339Nano)) + "\n"
+		}
 	}
 	return d.Remote.Run(ctx, p.Installation, h, script+command(expandCommand(commandPlan, pl, argv))+"\n")
 }
@@ -208,7 +219,7 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 			return false, Evidence{}, nil
 		}
 		evidence := Evidence{}
-		if op.Hook == "backup" || op.Hook == "recovery-verify" {
+		if op.Hook == "backup" || op.Hook == "recovery-verify" || restorationPlan(p) {
 			if err := json.Unmarshal(out, &evidence); err != nil {
 				return false, evidence, fmt.Errorf("backup verification must return Evidence JSON")
 			}

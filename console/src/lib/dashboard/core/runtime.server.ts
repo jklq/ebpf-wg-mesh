@@ -269,6 +269,17 @@ export async function storeCall<A>(
 ): Promise<A> {
 	try {
 		await ensureStoreInitialized(runtime);
+		if (
+			runtime.config.recoveryPaused &&
+			![
+				"getOnboardingDraft",
+				"getGitHubAccount",
+				"listProjects",
+				"getUser",
+			].includes(operation)
+		) {
+			throw new Error("recovery pauses console mutations");
+		}
 		return await run(runtime.store);
 	} catch (cause) {
 		throw toStrictDatabaseError(operation, cause);

@@ -152,10 +152,12 @@ type AgentHello struct {
 	AcceptedCredentialsVersion        string              `protobuf:"bytes,22,opt,name=accepted_credentials_version,json=acceptedCredentialsVersion,proto3" json:"accepted_credentials_version,omitempty"`
 	AcceptedReplicasVersion           string              `protobuf:"bytes,23,opt,name=accepted_replicas_version,json=acceptedReplicasVersion,proto3" json:"accepted_replicas_version,omitempty"`
 	AcceptedObservationOverlayVersion string              `protobuf:"bytes,24,opt,name=accepted_observation_overlay_version,json=acceptedObservationOverlayVersion,proto3" json:"accepted_observation_overlay_version,omitempty"`
-	InstallationId                    string              `protobuf:"bytes,25,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
-	RecoveryGeneration                string              `protobuf:"bytes,26,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
-	unknownFields                     protoimpl.UnknownFields
-	sizeCache                         protoimpl.SizeCache
+	// Nonsecret, durable FleetHost JSON for recovery inventory.
+	RecoveryInventory  []byte `protobuf:"bytes,27,opt,name=recovery_inventory,json=recoveryInventory,proto3" json:"recovery_inventory,omitempty"`
+	InstallationId     string `protobuf:"bytes,25,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration string `protobuf:"bytes,26,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AgentHello) Reset() {
@@ -354,6 +356,13 @@ func (x *AgentHello) GetAcceptedObservationOverlayVersion() string {
 		return x.AcceptedObservationOverlayVersion
 	}
 	return ""
+}
+
+func (x *AgentHello) GetRecoveryInventory() []byte {
+	if x != nil {
+		return x.RecoveryInventory
+	}
+	return nil
 }
 
 func (x *AgentHello) GetInstallationId() string {
@@ -1044,6 +1053,7 @@ type DesiredService struct {
 	DrainDeadline        *timestamppb.Timestamp         `protobuf:"bytes,18,opt,name=drain_deadline,json=drainDeadline,proto3" json:"drain_deadline,omitempty"`
 	PrivateIpv4          string                         `protobuf:"bytes,19,opt,name=private_ipv4,json=privateIpv4,proto3" json:"private_ipv4,omitempty"`
 	DeploymentId         string                         `protobuf:"bytes,20,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	CreatedAt            *timestamppb.Timestamp         `protobuf:"bytes,21,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1216,6 +1226,13 @@ func (x *DesiredService) GetDeploymentId() string {
 		return x.DeploymentId
 	}
 	return ""
+}
+
+func (x *DesiredService) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
 }
 
 type InternalHost struct {
@@ -3073,7 +3090,7 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\x8d\n" +
+	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xbc\n" +
 	"\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
@@ -3103,7 +3120,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x1caccepted_node_config_version\x18\x15 \x01(\tR\x19acceptedNodeConfigVersion\x12@\n" +
 	"\x1caccepted_credentials_version\x18\x16 \x01(\tR\x1aacceptedCredentialsVersion\x12:\n" +
 	"\x19accepted_replicas_version\x18\x17 \x01(\tR\x17acceptedReplicasVersion\x12O\n" +
-	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\x12'\n" +
+	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\x12-\n" +
+	"\x12recovery_inventory\x18\x1b \x01(\fR\x11recoveryInventory\x12'\n" +
 	"\x0finstallation_id\x18\x19 \x01(\tR\x0einstallationId\x12/\n" +
 	"\x13recovery_generation\x18\x1a \x01(\tR\x12recoveryGeneration\"f\n" +
 	"\x0fRuntimeResource\x12#\n" +
@@ -3159,7 +3177,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x03R\tsizeBytes\x12\x18\n" +
-	"\adestroy\x18\x05 \x01(\bR\adestroy\"\xaf\a\n" +
+	"\adestroy\x18\x05 \x01(\bR\adestroy\"\xea\a\n" +
 	"\x0eDesiredService\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -3182,7 +3200,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x06intent\x18\x11 \x01(\x0e2\x1a.agent.v1.AllocationIntentR\x06intent\x12A\n" +
 	"\x0edrain_deadline\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\rdrainDeadline\x12!\n" +
 	"\fprivate_ipv4\x18\x13 \x01(\tR\vprivateIpv4\x12#\n" +
-	"\rdeployment_id\x18\x14 \x01(\tR\fdeploymentId\"R\n" +
+	"\rdeployment_id\x18\x14 \x01(\tR\fdeploymentId\x129\n" +
+	"\n" +
+	"created_at\x18\x15 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\"R\n" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x12\n" +
@@ -3443,53 +3463,54 @@ var file_agent_proto_depIdxs = []int32{
 	33, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
 	0,  // 8: agent.v1.DesiredService.intent:type_name -> agent.v1.AllocationIntent
 	31, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
-	11, // 10: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
-	12, // 11: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	31, // 12: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
-	8,  // 13: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
-	1,  // 14: agent.v1.DesiredNodeState.scope:type_name -> agent.v1.SnapshotScope
-	31, // 15: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
-	12, // 16: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
-	12, // 17: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
-	11, // 18: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
-	31, // 19: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
-	31, // 20: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
-	16, // 21: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
-	31, // 22: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
-	8,  // 23: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
-	31, // 24: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
-	31, // 25: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
-	33, // 26: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
-	21, // 27: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	22, // 28: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	31, // 29: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	34, // 30: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	30, // 31: agent.v1.LogEntry.attributes:type_name -> agent.v1.LogEntry.AttributesEntry
-	24, // 32: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	35, // 33: agent.v1.LogBatch.drops:type_name -> platform.v1.LogDropSummary
-	2,  // 34: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	10, // 35: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	23, // 36: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	25, // 37: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	20, // 38: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
-	14, // 39: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	15, // 40: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
-	18, // 41: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
-	17, // 42: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
-	19, // 43: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
-	28, // 44: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
-	26, // 45: agent.v1.AgentServerMessage.log_batch_ack:type_name -> agent.v1.LogBatchAck
-	4,  // 46: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	6,  // 47: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	27, // 48: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	5,  // 49: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	5,  // 50: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	29, // 51: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	49, // [49:52] is the sub-list for method output_type
-	46, // [46:49] is the sub-list for method input_type
-	46, // [46:46] is the sub-list for extension type_name
-	46, // [46:46] is the sub-list for extension extendee
-	0,  // [0:46] is the sub-list for field type_name
+	31, // 10: agent.v1.DesiredService.created_at:type_name -> google.protobuf.Timestamp
+	11, // 11: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
+	12, // 12: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
+	31, // 13: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	8,  // 14: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
+	1,  // 15: agent.v1.DesiredNodeState.scope:type_name -> agent.v1.SnapshotScope
+	31, // 16: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
+	12, // 17: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
+	12, // 18: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
+	11, // 19: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
+	31, // 20: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
+	31, // 21: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
+	16, // 22: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
+	31, // 23: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
+	8,  // 24: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
+	31, // 25: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
+	31, // 26: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
+	33, // 27: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	21, // 28: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	22, // 29: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	31, // 30: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	34, // 31: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	30, // 32: agent.v1.LogEntry.attributes:type_name -> agent.v1.LogEntry.AttributesEntry
+	24, // 33: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	35, // 34: agent.v1.LogBatch.drops:type_name -> platform.v1.LogDropSummary
+	2,  // 35: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	10, // 36: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	23, // 37: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	25, // 38: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	20, // 39: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
+	14, // 40: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	15, // 41: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
+	18, // 42: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
+	17, // 43: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
+	19, // 44: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
+	28, // 45: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
+	26, // 46: agent.v1.AgentServerMessage.log_batch_ack:type_name -> agent.v1.LogBatchAck
+	4,  // 47: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	6,  // 48: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	27, // 49: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	5,  // 50: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	5,  // 51: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	29, // 52: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	50, // [50:53] is the sub-list for method output_type
+	47, // [47:50] is the sub-list for method input_type
+	47, // [47:47] is the sub-list for extension type_name
+	47, // [47:47] is the sub-list for extension extendee
+	0,  // [0:47] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
