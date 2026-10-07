@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,11 +14,19 @@ import (
 
 func TestRecoveryExecutableUploadStreamsChecksDigestAndInstallsAtomically(t *testing.T) {
 	dir := t.TempDir()
+	if _, err := exec.LookPath("sha256sum"); err != nil {
+		if _, err := exec.LookPath("shasum"); err != nil {
+			t.Fatal("test requires sha256sum or shasum")
+		}
+		if err := os.WriteFile(filepath.Join(dir, "sha256sum"), []byte("#!/bin/sh\nexec shasum -a 256 \"$@\"\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ssh := filepath.Join(dir, "ssh")
 	if err := os.WriteFile(ssh, []byte("#!/bin/sh\nfor arg; do last=$arg; done\nexec /bin/sh -c \"$last\"\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", dir+":/usr/bin:/bin")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	key := filepath.Join(dir, "private-key")
 	if err := os.WriteFile(key, []byte("key"), 0600); err != nil {
 		t.Fatal(err)

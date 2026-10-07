@@ -32,6 +32,13 @@ func TestRestoreRequiresArchivesAvailableAtTheirOriginalKeys(t *testing.T) {
 	if err := checkRestoredSources(p, directory, workspace); err != nil {
 		t.Fatal(err)
 	}
+	alias := filepath.Join(t.TempDir(), "workspace")
+	if err := os.Symlink(workspace, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkRestoredSources(p, filepath.Join(alias, "source"), alias); err != nil {
+		t.Fatal("workspace symlink rejected", err)
+	}
 	if err := os.WriteFile(path, []byte(strings.Repeat("x", len(b))), 0600); err != nil {
 		t.Fatal(err)
 	}

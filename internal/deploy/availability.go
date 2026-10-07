@@ -103,10 +103,10 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 				add("replicas", string(role), "no reliable replica survives this host/path failure")
 			}
 		}
-		// Every surviving core replica must reach a surviving quorum and its
-		// runtime dependencies. Disconnected replicas cannot count as available.
-		for _, role := range []Role{ControlPlane, Console, Envoy, Registry} {
-			usable := 0
+		// Evaluate dependencies before their consumers. Public paths must end at
+		// a usable replica, including the transitive dependencies of that replica.
+		usable := map[Role][]Placement{Database: byRole[Database], Agent: byRole[Agent]}
+		for _, role := range []Role{Registry, ControlPlane, Console, Envoy} {
 			for _, p := range byRole[role] {
 				reachable := 0
 				for _, q := range byRole[Database] {
@@ -117,7 +117,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 				dependenciesOK := true
 				for _, dep := range dependencies(role) {
 					ok := false
-					for _, q := range byRole[dep] {
+					for _, q := range usable[dep] {
 						if _, connected := reach(i, p.Host, q.Host); connected {
 							ok = true
 						}
@@ -141,10 +141,10 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 					}
 				}
 				if reachable >= quorum && dependenciesOK {
-					usable++
+					usable[role] = append(usable[role], p)
 				}
 			}
-			if len(byRole[role]) > 0 && usable == 0 {
+			if len(byRole[role]) > 0 && len(usable[role]) == 0 {
 				add("network-or-storage", string(role), "surviving replicas cannot reach quorum, component dependencies or durable storage")
 			}
 		}
@@ -156,7 +156,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 				}
 			}
 			available := false
-			for _, p := range byRole[e.Role] {
+			for _, p := range usable[e.Role] {
 				h, _ := i.Host(p.Host)
 				if !contains(e.Hosts, p.Host) {
 					continue

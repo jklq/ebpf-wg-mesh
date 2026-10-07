@@ -142,11 +142,11 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 			add("retire", old.Host, "", &old)
 		}
 	}
+	add("hook", managementHost, "production-verify", nil)
+	add("hook", managementHost, "recovery-finalize", nil)
 	if upgrade {
 		add("hook", managementHost, "resume", nil)
 	}
-	add("hook", managementHost, "production-verify", nil)
-	add("hook", managementHost, "recovery-finalize", nil)
 	for _, id := range p.Installation.RetireHosts {
 		if p.Automatic {
 			continue
