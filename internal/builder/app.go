@@ -163,6 +163,7 @@ func (a *App) Close() error {
 }
 
 func (a *App) readyReport(context.Context) health.Report {
+ if a == nil { return health.Report{Status: health.StatusNotReady, Failed: []string{"control_plane"}} }
 	if a != nil && a.conn != nil && a.conn.GetState() == connectivity.Ready {
 		return health.Report{Status: health.StatusReady, Authority: &a.recoveryAuthority}
 	}

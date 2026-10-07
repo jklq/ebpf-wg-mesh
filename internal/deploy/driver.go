@@ -205,6 +205,24 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 			script += "export PLATFORM_BACKUP=" + quote(state.LastRestore.Backup) + "\nexport PLATFORM_DATA_LOSS_CUTOFF=" + quote(state.LastRestore.DataLossCutoff.Format(time.RFC3339Nano)) + "\n"
 		}
 	}
+	inputs := append([]string{}, p.Installation.OperationsInputs...)
+	if p.Installation.OperationsConfig != "" {
+		for _, provider := range p.Installation.Providers {
+			if provider.Token != "" {
+				inputs = append(inputs, p.Installation.Secrets[provider.Token].File)
+			}
+		}
+		for _, host := range append(append([]Host{}, p.Installation.Hosts...), p.Installation.Recovery.Hosts...) {
+			inputs = append(inputs, host.SSH.KnownHosts, p.Installation.Secrets[host.SSH.Key].File)
+		}
+	}
+	for _, input := range inputs {
+		data, err := readSecretFile("operations-input", input)
+		if err != nil {
+			return nil, err
+		}
+		script += fileScript(input, data, "0600")
+	}
 	return d.Remote.Run(ctx, p.Installation, h, script+command(expandCommand(commandPlan, pl, argv))+"\n")
 }
 func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {

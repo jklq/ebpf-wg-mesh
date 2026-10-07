@@ -45,6 +45,10 @@ func NewMux(ready Probe) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc(LivenessPath, ServeLiveness)
 	mux.HandleFunc("/admissionz", func(w http.ResponseWriter, r *http.Request) {
+		if ready == nil {
+			writeJSON(w, http.StatusServiceUnavailable, Report{Status: StatusNotReady})
+			return
+		}
 		report := ready(r.Context())
 		if report.Authority == nil || report.Authority.Generation == "" {
 			writeJSON(w, http.StatusServiceUnavailable, report)

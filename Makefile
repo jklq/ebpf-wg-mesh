@@ -63,3 +63,10 @@ test-smoke-local:
 cleanup-local:
 	@test -n "$(MANIFEST)" || { echo "MANIFEST is required, e.g. make cleanup-local MANIFEST=artifacts/e2e-vm/<run-id>/local-resources.json"; exit 1; }
 	go run ./cmd/testvm -provider local -local-action destroy -local-manifest "$(MANIFEST)"
+
+# NATIVE_INPUTS selects the pinned native dependency trees; publishing this
+# output uses the operator's artifact service and is separate from deployment.
+.PHONY: package-production
+package-production:
+	@test -n "$(RELEASE_ID)" -a -n "$(ARTIFACT_URL_BASE)" -a -n "$(NATIVE_INPUTS)"
+	python3 scripts/package-production-release.py --id "$(RELEASE_ID)" --url-base "$(ARTIFACT_URL_BASE)" --native-inputs "$(NATIVE_INPUTS)" --output "artifacts/production/$(RELEASE_ID)"

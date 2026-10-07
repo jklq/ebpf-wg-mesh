@@ -197,7 +197,7 @@ func (r *Runner) databaseCredentials(ctx context.Context, verify bool) error {
 			return err
 		}
 	}
-	u := url.URL{Scheme: "postgresql", User: url.User("root"), Host: r.Config.Database.Address, Path: "/" + r.Config.Database.Name}
+	u := url.URL{Scheme: "postgresql", User: url.User("root"), Host: r.databaseAddresses(), Path: "/" + r.Config.Database.Name}
 	q := url.Values{"sslmode": {"verify-full"}, "sslrootcert": {filepath.Join(r.databasePKI(), "ca.crt")}, "sslcert": {filepath.Join(r.databasePKI(), "client.root.crt")}, "sslkey": {filepath.Join(r.databasePKI(), "client.root.key")}}
 	u.RawQuery = q.Encode()
 	if !verify {
@@ -220,7 +220,7 @@ func (r *Runner) initializeDatabase(ctx context.Context, restore bool) error {
 	if err := r.verifyDatabaseInitialized(ctx); err != nil {
 		initCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(initCtx, r.Config.Database.Binary, "init", "--host="+r.Config.Database.Address, "--certs-dir="+r.databasePKI())
+		cmd := exec.CommandContext(initCtx, r.Config.Database.Binary, "init", "--host="+r.reachableDatabase(ctx), "--certs-dir="+r.databasePKI())
 		if output, err := cmd.CombinedOutput(); err != nil {
 			path := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "native-init.log")
 			if len(output) > 64<<10 {
@@ -294,7 +294,7 @@ func (r *Runner) databaseStatus(ctx context.Context) (deploy.DatabaseStatus, err
 		return status, err
 	}
 	var output strings.Builder
-	args := []string{"--plan", file, "--binary", r.Config.Database.Binary, "--host", r.Config.Database.Address, "--certs-dir", r.databasePKI(), "--databases", "system," + r.Config.Database.Name}
+	args := []string{"--plan", file, "--binary", r.Config.Database.Binary, "--host", r.reachableDatabase(ctx), "--certs-dir", r.databasePKI(), "--databases", "system," + r.Config.Database.Name}
 	if !r.Plan.Automatic {
 		args = append(args, "--require-convergence")
 	}
@@ -322,4 +322,31 @@ func (r *Runner) verifyFreshDatabaseReady(ctx context.Context) error {
 		return fmt.Errorf("fresh database was not admitted for this plan")
 	}
 	return nil
+}
+
+// A service may select an external SQL endpoint; otherwise native libpq
+// multi-host failover covers the actual database placements.
+func (r *Runner) databaseAddresses() string {
+	if r.Config.Database.Address != "" {
+		return r.Config.Database.Address
+	}
+	var hosts []string
+	for _, pl := range r.Plan.Placements {
+		if pl.Role == deploy.Database {
+			h, _ := r.Plan.Installation.Host(pl.Host)
+			hosts = append(hosts, net.JoinHostPort(h.Network.Address, "26257"))
+		}
+	}
+	return strings.Join(hosts, ",")
+}
+func (r *Runner) reachableDatabase(ctx context.Context) string {
+	addresses := strings.Split(r.databaseAddresses(), ",")
+	for _, address := range addresses {
+		c, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", address)
+		if err == nil {
+			c.Close()
+			return address
+		}
+	}
+	return addresses[0] // The native TLS command supplies the authoritative error.
 }

@@ -1,6 +1,6 @@
 {
   "storage": {
-    "binary": "/opt/platform/tools/aws",
+    "binary": "/opt/ebpf-wg-mesh/production/r43/tools/aws",
     "endpoint": "https://s3.recovery.example.com",
     "bucket": "independent-recovery",
     "prefix": "production",
@@ -11,7 +11,10 @@
     "account": "independent-recovery-account",
     "primaryAccount": "production-account",
     "failureDomain": "independent-provider/offsite-storage",
-    "primaryDomains": ["primary-provider/site", "primary-provider/storage"],
+    "primaryDomains": [
+      "primary-provider/site",
+      "primary-provider/storage"
+    ],
     "writerPrincipal": "arn:aws:iam::111111111111:role/platform-backup-writer"
   },
   "recoveryKeyFile": "/etc/platform/recovery.key",
@@ -23,57 +26,12 @@
   "backupPrefix": "production/database",
   "keyringFile": "/etc/platform/keyring.json",
   "images": {
-    "binary": "/opt/platform/tools/skopeo",
+    "binary": "/opt/ebpf-wg-mesh/production/r43/tools/skopeo",
     "authFile": "/etc/platform/registry-auth.json"
   },
-  "files": [
-    {
-      "requirement": {"kind": "installation", "id": "production/r43"},
-      "path": "/var/lib/platform/recovery-inputs/production-r43.yaml"
-    },
-    {
-      "requirement": {"kind": "deployment-state", "id": "production/attempt43"},
-      "path": "/var/lib/platform/recovery-inputs/attempt43-state.enc"
-    },
-    {
-      "requirement": {"kind": "release", "id": "r43"},
-      "path": "/var/lib/platform/recovery-inputs/r43.yaml"
-    },
-    {
-      "requirement": {"kind": "keyring", "id": "k1"},
-      "path": "/etc/platform/keyring.json",
-      "secret": true
-    },
-    {
-      "requirement": {"kind": "console-key", "id": "console-token/v1"},
-      "path": "/etc/platform/console-token.key",
-      "secret": true
-    },
-    {
-      "requirement": {"kind": "external-secret", "id": "installation-secrets/v1"},
-      "path": "/var/lib/platform/recovery-inputs/required-secrets.json",
-      "secret": true
-    },
-    {
-      "requirement": {"kind": "external-secret", "id": "deployment-key/v1"},
-      "path": "/etc/platform/deployment.key",
-      "secret": true
-    },
-    {
-      "requirement": {"kind": "tool", "id": "aws/v2", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
-      "path": "/opt/platform/tools/aws"
-    },
-    {
-      "requirement": {"kind": "tool", "id": "skopeo/pinned", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
-      "path": "/opt/platform/tools/skopeo"
-    },
-    {
-      "requirement": {"kind": "tool", "id": "platformctl/r43", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
-      "path": "/opt/platform/platformctl"
-    }
-  ],
-  "drillCommand": ["/opt/platform/releases/r43/operations", "offline-recovery"],
-  "drillCommandDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+  "files": [],
+  "drillCommand": [],
+  "drillCommandDigest": "",
   "fleetSize": 3,
   "capacityAssumptions": "Replace with the tested hosts' CPU, RAM, disks, recovery capacity and link/storage throughput."
 }

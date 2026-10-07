@@ -61,6 +61,18 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		// platform processes consume that capacity, including database joins.
 		add("hook", managementHost, "reservations", nil)
 	}
+	preDrained := map[string]bool{}
+	if upgrade {
+		// Native workload drains need the existing control-plane owner and ingress
+		// acknowledgements. Complete them before pausing or stopping that owner.
+		for _, old := range state.Placements {
+			current, ok := selected[old.Slot()]
+			if (old.Role == Agent || old.Role == Builder) && (!ok || current.Instance != old.Instance) {
+				add("drain", old.Host, "", &old)
+				preDrained[old.Instance] = true
+			}
+		}
+	}
 	if upgrade {
 		add("hook", managementHost, "quiesce", nil)
 		add("hook", managementHost, "backup", nil)
@@ -138,7 +150,9 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 			add("retire", old.Host, "", &old)
 			add("hook", managementHost, "database-verify", nil)
 		} else {
-			add("drain", old.Host, "", &old)
+			if !preDrained[old.Instance] {
+				add("drain", old.Host, "", &old)
+			}
 			add("stop", old.Host, "", &old)
 			add("retire", old.Host, "", &old)
 		}

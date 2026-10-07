@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/deploy"
@@ -80,7 +81,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 		cmd := exec.Command(binary, args...)
 		cmd.Stdout, cmd.Stderr = log, log
 		cmd.Dir = workspace
-		cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C"}
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "PLATFORM_RECOVERY_WORKSPACE=" + workspace}
 		for key, value := range environment {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
@@ -93,7 +94,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	if err != nil {
 		return ready, err
 	}
-	node, err := certificate("node", &ca, []string{"127.0.0.1", "localhost"})
+	node, err := certificate("node", &ca, []string{"127.0.0.1", "localhost", "database.offline.invalid"})
 	if err != nil {
 		return ready, err
 	}
@@ -162,10 +163,14 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	for _, d := range input.Point.Dependencies {
 		if d.Kind == "keyring" {
 			var part struct {
-				Keys map[string]json.RawMessage `json:"keys"`
+				Version int                        `json:"version"`
+				Keys    map[string]json.RawMessage `json:"keys"`
 			}
 			if err := privateJSON(input.Files["keyring/"+d.ID], &part); err != nil {
 				return ready, err
+			}
+			if part.Version != 1 {
+				return ready, fmt.Errorf("unsupported protected keyring version")
 			}
 			key, ok := part.Keys[d.ID]
 			if !ok {
@@ -229,7 +234,8 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	if err != nil {
 		return ready, err
 	}
-	env := map[string]string{"CONTROLPLANE_PROFILE": "production", "CONTROLPLANE_DB_URL": url, "CONTROLPLANE_SECRET_KEYS_KEYRING": ready.KeyringFile, "CONTROLPLANE_AUTHORITY_FILE": authorityFile, "CONTROLPLANE_STATE_DIR": workspace + "/controlplane", "CONTROLPLANE_HEALTH_LISTEN": "127.0.0.1:9090", "CONTROLPLANE_INTERNAL_LISTEN": "127.0.0.1:9443", "CONTROLPLANE_INTERNAL_SERVER_NAMES": "controlplane,127.0.0.1", "CONTROLPLANE_SOURCE_ARCHIVES_DIR": ready.SourceDirectory, "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE": certDir + "/node.crt", "CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE": certDir + "/node.key", "CONTROLPLANE_INGRESS_PUBLIC_ADDR": "localhost"}
+	durable := "/var/lib/platform-offline"
+	env := map[string]string{"CONTROLPLANE_PROFILE": "production", "CONTROLPLANE_DB_URL": strings.Replace(url, "127.0.0.1:26257", "database.offline.invalid:26257", 1), "CONTROLPLANE_SECRET_KEYS_KEYRING": durable + "/keyring.json", "CONTROLPLANE_AUTHORITY_FILE": authorityFile, "CONTROLPLANE_STATE_DIR": durable + "/controlplane", "CONTROLPLANE_HEALTH_LISTEN": "127.0.0.1:9090", "CONTROLPLANE_INTERNAL_LISTEN": "127.0.0.1:9443", "CONTROLPLANE_INTERNAL_SERVER_NAMES": "controlplane.offline.invalid,127.0.0.1", "CONTROLPLANE_CONSOLE_CALLER_IDS": "offline-console", "CONTROLPLANE_DASHBOARD_ENABLED": "false", "CONTROLPLANE_SOURCE_ARCHIVES_DIR": durable + "/sources", "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE": certDir + "/node.crt", "CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE": certDir + "/node.key", "CONTROLPLANE_INGRESS_PUBLIC_ADDR": "platform.offline.invalid"}
 	if err := start("controlplane", cp, nil, env); err != nil {
 		return ready, err
 	}
@@ -273,7 +279,16 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	if err := writePrivate(consoleCA, oldCA); err != nil {
 		return ready, err
 	}
-	env = map[string]string{"DASHBOARD_PROFILE": "production", "DASHBOARD_AUTHORITY_FILE": authorityFile, "DASHBOARD_DATABASE_URL": url, "DASHBOARD_DATABASE_SCHEMA": input.Config.ConsoleSchema, "DASHBOARD_JWT_SECRET": string(session), "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": string(assertion), "DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": strings.TrimSpace(string(token)), "DASHBOARD_PUBLIC_BASE_URL": "https://console.localhost", "DASHBOARD_CONTROLPLANE_ADDRESS": "127.0.0.1:9443", "DASHBOARD_CONTROLPLANE_SERVER_NAME": "controlplane", "DASHBOARD_CONTROLPLANE_CA_FILE": consoleCA, "PORT": "3000", "HOST": "127.0.0.1"}
+	client, err := identity.IssueClientCertificate(ctx, signing, identity.CallerDashboard, "offline-console", time.Hour)
+	if err != nil {
+		return ready, err
+	}
+	for name, data := range map[string][]byte{"console-client.crt": client.CertPEM, "console-client.key": client.KeyPEM} {
+		if err = writePrivate(filepath.Join(workspace, name), data); err != nil {
+			return ready, err
+		}
+	}
+	env = map[string]string{"DASHBOARD_PROFILE": "production", "DASHBOARD_AUTHORITY_FILE": authorityFile, "DASHBOARD_DATABASE_URL": strings.Replace(url, "127.0.0.1:26257", "database.offline.invalid:26257", 1), "DASHBOARD_DATABASE_SCHEMA": input.Config.ConsoleSchema, "DASHBOARD_JWT_SECRET": string(session), "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": string(assertion), "DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": strings.TrimSpace(string(token)), "DASHBOARD_PUBLIC_BASE_URL": "https://console.offline.invalid", "DASHBOARD_INGRESS_TARGET_HOST": "console.offline.invalid", "DASHBOARD_CONTROLPLANE_ADDRESS": "controlplane.offline.invalid:9443", "DASHBOARD_CONTROLPLANE_SERVER_NAME": "controlplane.offline.invalid", "DASHBOARD_CONTROLPLANE_CERT_FILE": workspace + "/console-client.crt", "DASHBOARD_CONTROLPLANE_KEY_FILE": workspace + "/console-client.key", "DASHBOARD_CONTROLPLANE_CA_FILE": consoleCA, "PORT": "3000", "HOST": "127.0.0.1"}
 	if err := start("console", console, nil, env); err != nil {
 		return ready, err
 	}

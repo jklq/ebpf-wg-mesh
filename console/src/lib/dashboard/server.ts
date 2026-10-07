@@ -6,7 +6,8 @@ import {
 	getCookie,
 	setCookie,
 } from "@tanstack/react-start/server";
-import { Pool } from "pg";
+import type { Pool } from "pg";
+import { FailoverPool } from "#/lib/dashboard/store/failover-pool.server";
 import {
 	assertDistinctDashboardSecrets,
 	assertProductionDashboardConfig,
@@ -42,6 +43,7 @@ import {
 
 interface RuntimeConfig extends DashboardConfig {
 	databaseURL: string;
+	databaseURLs: string[];
 	databaseSchema: string;
 	controlPlaneAddress: string;
 	controlPlaneServerName: string;
@@ -82,8 +84,7 @@ function getConfig(): RuntimeConfig {
 
 function getPool(): Pool {
 	const current = getConfig();
-	pool ??= new Pool({
-		connectionString: current.databaseURL,
+	pool ??= new FailoverPool(current.databaseURLs, {
 		max: 2,
 		idleTimeoutMillis: 30_000,
 	});
@@ -92,7 +93,12 @@ function getPool(): Pool {
 
 export async function checkDashboardReadiness(): Promise<{
 	status: "ready" | "not_ready";
- authority?: { installationId: string; generation: string; clusterId: string; paused: boolean };
+	authority?: {
+		installationId: string;
+		generation: string;
+		clusterId: string;
+		paused: boolean;
+	};
 	failed?: Array<string>;
 }> {
 	try {
@@ -113,8 +119,21 @@ export async function checkDashboardReadiness(): Promise<{
 	} catch {
 		return { status: "not_ready", failed: ["migrations"] };
 	}
-	const config=getConfig();
- return { status: "ready", authority: config.installationID && config.recoveryGeneration && config.recoveryClusterID ? {installationId:config.installationID,generation:config.recoveryGeneration,clusterId:config.recoveryClusterID,paused:config.recoveryPaused??false}:undefined };
+	const config = getConfig();
+	return {
+		status: "ready",
+		authority:
+			config.installationID &&
+			config.recoveryGeneration &&
+			config.recoveryClusterID
+				? {
+						installationId: config.installationID,
+						generation: config.recoveryGeneration,
+						clusterId: config.recoveryClusterID,
+						paused: config.recoveryPaused ?? false,
+					}
+				: undefined,
+	};
 }
 
 export function listDevLogins(): Array<DevLoginIdentity> {
@@ -137,6 +156,17 @@ export function forwardGitHubWebhook(
 
 function readConfig(): RuntimeConfig {
 	const databaseURL = mustSecret("DASHBOARD_DATABASE_URL");
+	const databaseURLs: string[] = process.env.DASHBOARD_DATABASE_URLS
+		? JSON.parse(process.env.DASHBOARD_DATABASE_URLS)
+		: [databaseURL];
+	if (
+		!Array.isArray(databaseURLs) ||
+		databaseURLs.length === 0 ||
+		databaseURLs.some((url) => typeof url !== "string")
+	)
+		throw new DashboardConfigError({
+			message: "invalid database endpoint set",
+		});
 	const githubClientSecret = optionalSecret("DASHBOARD_GITHUB_CLIENT_SECRET");
 	const jwtSecret = mustSecret("DASHBOARD_JWT_SECRET");
 	const jwtSecretPrevious = optionalSecret("DASHBOARD_JWT_SECRET_PREVIOUS");
@@ -182,28 +212,30 @@ function readConfig(): RuntimeConfig {
 		process.env.DASHBOARD_CONTROLPLANE_SERVER_NAME ?? "controlplane";
 	const devUsers = parseDevUsers(process.env.DASHBOARD_DEV_USERS ?? "");
 	if (profile === "production") {
-		assertProductionDashboardConfig({
-			devUsers,
-			publicBaseURL,
-			localDomainSuffix: process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim(),
-			localIngressBaseURL,
-			jwtSecret,
-			jwtSecretPrevious,
-			userAssertionSecret,
-			databaseURL,
-			controlPlaneAddress,
-			controlPlaneServerName,
-		});
+		for (const candidate of databaseURLs)
+			assertProductionDashboardConfig({
+				devUsers,
+				publicBaseURL,
+				localDomainSuffix: process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim(),
+				localIngressBaseURL,
+				jwtSecret,
+				jwtSecretPrevious,
+				userAssertionSecret,
+				databaseURL: candidate,
+				controlPlaneAddress,
+				controlPlaneServerName,
+			});
 	}
 
 	const admission = readConsoleAuthority(profile);
 	const loaded = {
 		installationID: admission?.installationId,
 		recoveryGeneration: admission?.generation,
- recoveryClusterID: admission?.clusterId,
+		recoveryClusterID: admission?.clusterId,
 		recoveryPaused: admission?.paused ?? false,
 		profile,
 		databaseURL,
+		databaseURLs,
 		databaseSchema,
 		sessionCookieName,
 		refreshCookieName,
@@ -334,9 +366,14 @@ function mustEnv(name: string): string {
 	return value;
 }
 
-function readConsoleAuthority(
-	profile: "development" | "production",
-): { installationId: string; generation: string; clusterId: string; paused: boolean } | undefined {
+function readConsoleAuthority(profile: "development" | "production"):
+	| {
+			installationId: string;
+			generation: string;
+			clusterId: string;
+			paused: boolean;
+	  }
+	| undefined {
 	const file = process.env.DASHBOARD_AUTHORITY_FILE;
 	if (!file && profile === "development") return undefined;
 	if (!file?.startsWith("/"))
@@ -352,8 +389,9 @@ function readConsoleAuthority(
 		!authority.installationId ||
 		typeof authority.generation !== "string" ||
 		!authority.generation ||
-		typeof authority.clusterId !== "string" || !authority.clusterId ||
- typeof authority.paused !== "boolean"
+		typeof authority.clusterId !== "string" ||
+		!authority.clusterId ||
+		typeof authority.paused !== "boolean"
 	)
 		throw new Error(
 			"console admission requires installation, generation and pause state",

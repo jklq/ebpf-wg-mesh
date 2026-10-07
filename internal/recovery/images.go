@@ -332,7 +332,15 @@ func (s Service) RestoreImage(ctx context.Context, i Images, d Dependency, repos
 // Verify checks authenticated registry access and the digest of the actual
 // manifest. A successful HTTP connection alone does not prove image availability.
 func (i Images) Verify(ctx context.Context, ref string) error {
- if !strings.Contains(ref,"@sha256:") {return fmt.Errorf("image inspection requires a digest")}
- b,err:=i.inspect(ctx,ref);if err!=nil{return err}
- if Digest(b)!=ref[strings.LastIndex(ref,"@")+1:] {return fmt.Errorf("registry manifest differs from pinned image digest")};return nil
+	if !strings.Contains(ref, "@sha256:") {
+		return fmt.Errorf("image inspection requires a digest")
+	}
+	b, err := i.inspect(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if Digest(b) != ref[strings.LastIndex(ref, "@")+1:] {
+		return fmt.Errorf("registry manifest differs from pinned image digest")
+	}
+	return nil
 }

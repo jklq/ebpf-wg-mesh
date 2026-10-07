@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -51,9 +52,18 @@ func probeHTTP(ctx context.Context, p Probe, authorization bool) ([]byte, error)
 			return nil, fmt.Errorf("authorization rejection probe required")
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	method, body := http.MethodGet, ""
+	if authorization && p.AuthorizationMethod != "" {
+		method = p.AuthorizationMethod
+		body = p.AuthorizationBody
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, strings.NewReader(body))
 	if err != nil {
 		return nil, err
+	}
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Connect-Protocol-Version", "1")
 	}
 	response, err := client.Do(req)
 	if err != nil {
@@ -134,37 +144,14 @@ func (r *Runner) storageStatus(ctx context.Context) (map[string]deploy.StorageSt
 		}
 		if c.Kind == "s3" {
 			store := &recovery.S3{Config: c.S3}
-			if err := store.Check(ctx); err != nil {
+			if err := store.VerifyActiveStore(ctx); err != nil {
 				return nil, err
-			}
-			// Versioned retention and exact-content readback are checked, not declarations.
-			f, err := os.CreateTemp(r.Config.StateDirectory, ".storage-probe-")
-			if err != nil {
-				return nil, err
-			}
-			path := f.Name()
-			f.Close()
-			defer os.Remove(path)
-			nonce := make([]byte, 32)
-			if _, err := rand.Read(nonce); err != nil {
-				return nil, err
-			}
-			if err := os.WriteFile(path, nonce, 0600); err != nil {
-				return nil, err
-			}
-			o, err := store.Put(ctx, strings.Trim(c.S3.Prefix, "/")+"/probes/"+hex.EncodeToString(nonce), path, time.Now().Add(recovery.Retention))
-			if err != nil {
-				return nil, err
-			}
-			if err := store.Get(ctx, o, path); err != nil {
-				return nil, err
-			}
-			digest, size, err := recovery.FileDigest(path)
-			if err != nil || digest != o.Digest || size != o.Size {
-				return nil, fmt.Errorf("storage readback mismatch")
 			}
 			result[name] = deploy.StorageStatus{Hosts: append([]string{}, storage.Hosts...), Verified: true}
 			continue
+		}
+		if c.Kind == "directory" && storage.Replicated {
+			return nil, fmt.Errorf("directory readback cannot establish independent storage replicas; select a verified external object store")
 		}
 		if c.Kind != "directory" {
 			return nil, fmt.Errorf("unsupported storage selection %s", c.Kind)
@@ -249,7 +236,7 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 	}
 	for _, endpoint := range r.Plan.Installation.Endpoints {
 		probe, ok := r.Config.EndpointProbes[endpoint.Name]
-		if !ok || !strings.HasPrefix(probe.URL, endpoint.URL) {
+		if !ok || !sameEndpoint(probe.URL, endpoint.URL) {
 			return fmt.Errorf("endpoint %s lacks an exact HTTPS path inspection", endpoint.Name)
 		}
 		if _, err := probeHTTP(ctx, probe, false); err != nil {
@@ -260,6 +247,9 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 				return err
 			}
 		}
+	}
+	if err := r.consoleAdmin(ctx, "check-endpoints"); err != nil {
+		return err
 	}
 	if err := r.verifyIngress(ctx); err != nil {
 		return err
@@ -301,4 +291,13 @@ func (r *Runner) verifyIngress(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// A path probe must stay on the declared HTTPS origin; a hostname prefix is not
+// a service identity (example.com.attacker.invalid must never pass).
+func sameEndpoint(probe, endpoint string) bool {
+	p, pe := url.Parse(probe)
+	e, ee := url.Parse(endpoint)
+	return pe == nil && ee == nil && p.Scheme == "https" && e.Scheme == "https" &&
+		p.User == nil && p.Host == e.Host && strings.HasPrefix(p.Path, e.Path)
 }

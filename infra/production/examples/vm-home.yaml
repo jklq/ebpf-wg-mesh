@@ -1,3 +1,18 @@
+operationsConfig: /etc/platform/operations.json
+operationsInputs:
+    - /etc/platform/operations.json
+    - /etc/platform/recovery.json
+    - /etc/platform/recovery.key
+    - /etc/platform/backup-writer
+    - /etc/platform/database-backup-uri
+    - /etc/platform/wildcard.crt
+    - /etc/platform/wildcard.key
+    - /etc/platform/source-archives.json
+    - /etc/platform/source-s3.json
+    - /etc/platform/active-s3.ini
+    - /etc/platform/monitor-token
+    - /etc/platform/registry-auth.json
+    - /etc/platform/known_hosts
 version: 1
 id: production
 release: r43
@@ -163,8 +178,6 @@ components:
             diskGiB: 1
         distinctDomains: false
     controlplane:
-        secretEnv:
-            CONTROLPLANE_DATABASE_URL: database-url
         replicas: 2
         reliableReplicas: 1
         resources:

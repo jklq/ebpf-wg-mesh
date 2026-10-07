@@ -27,6 +27,7 @@ type Storage interface {
 
 type StorageConfig struct {
 	Binary          string   `json:"binary"`
+	CAFile          string   `json:"caFile,omitempty"`
 	Endpoint        string   `json:"endpoint"`
 	Bucket          string   `json:"bucket"`
 	Prefix          string   `json:"prefix"`
@@ -42,6 +43,9 @@ type StorageConfig struct {
 }
 
 func (c StorageConfig) Validate() error {
+	if c.CAFile != "" && (!filepath.IsAbs(c.CAFile) || filepath.Clean(c.CAFile) != c.CAFile) {
+		return fmt.Errorf("storage TLS CA file must be an absolute clean path")
+	}
 	if !filepath.IsAbs(c.Binary) || c.Bucket == "" || c.Region == "" || c.Owner == "" || !filepath.IsAbs(c.CredentialsFile) || c.Profile == "" || c.Account == "" || c.PrimaryAccount == "" || c.Account == c.PrimaryAccount || c.FailureDomain == "" || c.WriterPrincipal == "" {
 		return fmt.Errorf("recovery storage requires a pinned S3 client, bucket owner, independent account/domain and explicit credentials")
 	}
@@ -71,6 +75,9 @@ func (s *S3) call(ctx context.Context, result any, operation string, args ...str
 	argv := []string{"--no-cli-pager", "--output", "json", "--region", c.Region, "--profile", c.Profile}
 	if c.Endpoint != "" {
 		argv = append(argv, "--endpoint-url", c.Endpoint)
+	}
+	if c.CAFile != "" {
+		argv = append(argv, "--ca-bundle", c.CAFile)
 	}
 	argv = append(argv, "s3api", operation, "--bucket", c.Bucket)
 	argv = append(argv, args...)

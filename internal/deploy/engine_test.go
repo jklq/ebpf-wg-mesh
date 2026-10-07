@@ -16,6 +16,7 @@ import (
 )
 
 type fakeDriver struct {
+	failObserveHook    string
 	paused             bool
 	inv                Inventory
 	done               map[string]bool
@@ -33,6 +34,10 @@ func (d *fakeDriver) Inventory(context.Context, Installation, Release, State) (I
 	return d.inv, nil
 }
 func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
+	if d.failObserveHook != "" && d.failObserveHook == op.Hook && d.done[op.ID] {
+		return false, Evidence{}, errors.New("live observation failed")
+	}
+
 	if op.Kind == "purchase" {
 		return d.purchaseDiscovered, Evidence{}, nil
 	}
@@ -63,6 +68,9 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 			}
 		}
 		e.Fleet = &input
+	}
+	if (op.Hook == "resume" || op.Hook == "recovery-resume") && d.paused {
+		return false, e, nil
 	}
 	return d.done[op.ID], e, nil
 }
@@ -445,5 +453,40 @@ func TestRecoveryEvidenceRejectsAssertionsAndUnprotectedSelection(t *testing.T) 
 		if err := validateRecoveryEvidence(e, "production", "s3://backups/production", time.Now()); err == nil {
 			t.Fatal("incomplete recovery evidence accepted", e)
 		}
+	}
+}
+
+func TestResumeObservationFailureRepausesBeforeRetry(t *testing.T) {
+	i, r, inv := fixture(3)
+	state := applied(build(t, i, r, State{}, inv, false))
+	r.ID = "r43"
+	i.Release = r.ID
+	p := build(t, i, r, state, inv, false)
+	store, _, _ := testStore(t)
+	if err := store.Write(state); err != nil {
+		t.Fatal(err)
+	}
+	driver := fake(inv)
+	driver.failObserveHook = "resume"
+	engine := Engine{Store: store, Driver: driver}
+	if err := engine.Apply(context.Background(), p); err == nil {
+		t.Fatal("unverified resume accepted")
+	}
+	if !driver.paused {
+		t.Fatal("failed live resume observation left automation running")
+	}
+	actual, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual.Progress == nil || actual.LastBackup.Backup == "" || actual.Bundle.ID != "r42" {
+		t.Fatal("failed activation lost recovery options")
+	}
+	driver.failObserveHook = ""
+	if err := engine.Apply(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if driver.paused {
+		t.Fatal("verified retry did not activate")
 	}
 }

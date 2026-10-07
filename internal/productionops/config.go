@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,22 +23,24 @@ import (
 )
 
 type Config struct {
-	Version             int                    `json:"version"`
-	StateDirectory      string                 `json:"stateDirectory"`
-	RecoveryConfig      string                 `json:"recoveryConfig"`
-	Database            DatabaseConfig         `json:"database"`
-	Console             ConsoleConfig          `json:"console"`
-	Probes              map[deploy.Role]Probe  `json:"probes"`
-	EndpointProbes      map[string]Probe       `json:"endpointProbes"`
-	Storage             map[string]StoreConfig `json:"storage"`
-	WildcardCertificate string                 `json:"wildcardCertificate"`
-	WildcardKey         string                 `json:"wildcardKey"`
-	PlatformDomain      string                 `json:"platformDomain"`
-	InternalServerName  string                 `json:"internalServerName"`
-	RegistryRealm       string                 `json:"registryRealm"`
-	RegistryService     string                 `json:"registryService"`
-	SourceConfig        string                 `json:"sourceConfig,omitempty"`
-	MonitorTokenFile    string                 `json:"monitorTokenFile,omitempty"`
+	Fences              map[string]RedfishFence `json:"fences,omitempty"`
+	CompletionHosts     []string                `json:"completionHosts,omitempty"`
+	Version             int                     `json:"version"`
+	StateDirectory      string                  `json:"stateDirectory"`
+	RecoveryConfig      string                  `json:"recoveryConfig"`
+	Database            DatabaseConfig          `json:"database"`
+	Console             ConsoleConfig           `json:"console"`
+	Probes              map[deploy.Role]Probe   `json:"probes"`
+	EndpointProbes      map[string]Probe        `json:"endpointProbes"`
+	Storage             map[string]StoreConfig  `json:"storage"`
+	WildcardCertificate string                  `json:"wildcardCertificate"`
+	WildcardKey         string                  `json:"wildcardKey"`
+	PlatformDomain      string                  `json:"platformDomain"`
+	InternalServerName  string                  `json:"internalServerName"`
+	RegistryRealm       string                  `json:"registryRealm"`
+	RegistryService     string                  `json:"registryService"`
+	SourceConfig        string                  `json:"sourceConfig,omitempty"`
+	MonitorTokenFile    string                  `json:"monitorTokenFile,omitempty"`
 }
 type DatabaseConfig struct {
 	Binary               string `json:"binary"`
@@ -56,15 +59,17 @@ type ConsoleConfig struct {
 // HTTP probes use a TLS trust root and optional client identity. Plain HTTP is
 // allowed only for a health listener on loopback, inspected on its owning host.
 type Probe struct {
-	URL                string `json:"url"`
-	RuntimeURL         string `json:"runtimeURL,omitempty"`
-	CAFile             string `json:"caFile,omitempty"`
-	CertFile           string `json:"certFile,omitempty"`
-	KeyFile            string `json:"keyFile,omitempty"`
-	Status             int    `json:"status"`
-	BodyContains       string `json:"bodyContains,omitempty"`
-	AuthorizationURL   string `json:"authorizationURL,omitempty"`
-	UnauthorizedStatus int    `json:"unauthorizedStatus,omitempty"`
+	URL                 string `json:"url"`
+	RuntimeURL          string `json:"runtimeURL,omitempty"`
+	CAFile              string `json:"caFile,omitempty"`
+	CertFile            string `json:"certFile,omitempty"`
+	KeyFile             string `json:"keyFile,omitempty"`
+	Status              int    `json:"status"`
+	BodyContains        string `json:"bodyContains,omitempty"`
+	AuthorizationMethod string `json:"authorizationMethod,omitempty"`
+	AuthorizationBody   string `json:"authorizationBody,omitempty"`
+	AuthorizationURL    string `json:"authorizationURL,omitempty"`
+	UnauthorizedStatus  int    `json:"unauthorizedStatus,omitempty"`
 }
 type StoreConfig struct {
 	Kind string                 `json:"kind"` // local directory, or versioned object storage
@@ -114,7 +119,7 @@ func (c Config) Validate() error {
 		}
 	}
 	identifier := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	if !identifier.MatchString(c.Database.Name) || !identifier.MatchString(c.Console.Schema) || c.Database.Address == "" || c.InternalServerName == "" || c.PlatformDomain == "" {
+	if !identifier.MatchString(c.Database.Name) || !identifier.MatchString(c.Console.Schema) || c.InternalServerName == "" || c.PlatformDomain == "" {
 		return fmt.Errorf("database, console and TLS service identities are required")
 	}
 	for _, probe := range c.Probes {
@@ -135,11 +140,14 @@ func (p Probe) Validate() error {
 	if err != nil || u.Host == "" || u.User != nil || p.Status < 100 || p.Status > 599 {
 		return fmt.Errorf("invalid HTTP probe")
 	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "::1")) {
+	if u.Scheme != "https" && !(u.Scheme == "http" && net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback()) {
 		return fmt.Errorf("HTTP health probes require literal loopback; service probes require HTTPS")
 	}
 	if (p.CertFile == "") != (p.KeyFile == "") {
 		return fmt.Errorf("probe client certificate and key must be paired")
+	}
+	if p.AuthorizationMethod != "" && p.AuthorizationMethod != http.MethodPost && p.AuthorizationMethod != http.MethodGet {
+		return fmt.Errorf("authorization inspection only supports read-only GET or Connect POST")
 	}
 	if p.AuthorizationURL != "" {
 		a, err := url.Parse(p.AuthorizationURL)

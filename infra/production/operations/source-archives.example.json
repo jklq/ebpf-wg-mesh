@@ -1,0 +1,11 @@
+{
+  "Provider": "s3",
+  "S3": {
+    "Endpoint": "https://s3.active.example.com",
+    "Region": "oslo",
+    "Bucket": "platform-archives",
+    "Prefix": "production",
+    "CredentialsFile": "/etc/platform/source-s3.json",
+    "ServerSideEncryption": "AES256"
+  }
+}
