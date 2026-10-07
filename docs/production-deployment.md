@@ -220,7 +220,7 @@ Release upgrades use a flat cutover: stage artifacts, quiesce mutations/backgrou
 work, verify a complete backup, stop the old release, start the pinned new database
 processes, run one explicit SQL conversion, then start and verify the new platform
 processes. There is no startup migration chain.
-Production control-plane startup only validates schema 42; console schema 3 is
+Production control-plane startup only validates schema 43; console schema 3 is
 flat and refuses a populated unversioned or mismatched schema. Initial bootstrap
 is explicit with `controlplane database bootstrap --db-url ... --keyring ...`.
 
@@ -229,12 +229,16 @@ The supplied `controlplane database convert --from-version 41 --backup ...
 preserves application/authentication data, imports old revoked certificate serials
 into SQL and converts console versions 1/2 directly to flat version 3. It requires
 expired old-release leases. Import the union of the old replicas' revocation files.
-Other source versions require a separately provided explicit conversion.
+Schema 42 converts directly to 43 with the same complete-backup and expired-lease
+gates; it already stores revocations in SQL. Other source versions require a
+separately provided explicit conversion.
 
 Rollback across a schema change uses `platformctl restore --installation ...
 --bundle ... --backup ... --data-loss-cutoff ... --recovery-config ...`. Select the intended recovery
 inventory and externally retained credentials. The command records and reports
-the backup's cutoff before restoration: every mutation after that time is lost.
+the backup's cutoff before restoration. SQL desired state returns to that timestamp;
+surviving newer allocations and unknown resources remain quarantined for explicit
+resolution.
 Independent fencing precedes restoration. Recovery on alternative hosts does not
 require a lost original machine to answer SSH.
 Explicit restoration can supersede an interrupted deployment recorded in the
@@ -244,6 +248,12 @@ must be resolved through provider discovery first.
 backups; resuming an interrupted restoration reports the cutoff again.
 Interrupted restoration resumes from encrypted state. A recovery inventory is
 never silently substituted into an ordinary deployment.
+The latest external fleet inventory is declared by `recovery.inventory` and includes
+machines absent from the backup. Restore creates a host-admitted recovery generation,
+starts every participant paused, reserves observed network ranges and stops for
+approval of the concrete report. `resume --approve-report <digest>` continues approved
+reconciliation; checkpoints, health verification, work reconciliation and a new
+complete point precede resuming public mutations and automation.
 
 The [recovery runbook](recovery.md) defines complete independent points and their
 storage/verification contract. `backup` policy now declares an independent S3
