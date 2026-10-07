@@ -64,6 +64,12 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 	p.Recovery = true
 	p.StateRevision = state.Revision
 	p.Generation = uuid.NewString()
+	// Recovery always uses a new database store; occupied stores remain intact.
+	for n := range p.Placements {
+		if p.Placements[n].Role == Database {
+			p.Placements[n].Instance = fmt.Sprintf("cockroachdb-%d-%s", p.Placements[n].Ordinal, Digest([]any{p.Generation, p.Placements[n].Host})[:12])
+		}
+	}
 	var ops []Operation
 	add := func(kind, host, hook string, pl *Placement) {
 		op := Operation{Kind: kind, Host: host, Hook: hook, Placement: pl}
@@ -72,6 +78,15 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 	}
 	for _, op := range p.Operations {
 		if contains([]string{"stage", "stage-tools", "purchase"}, op.Kind) {
+			if op.Placement != nil {
+				for _, pl := range p.Placements {
+					if pl.Slot() == op.Placement.Slot() {
+						op.Placement = &pl
+						op.ID = Digest([]any{op, len(ops)})[:24]
+						break
+					}
+				}
+			}
 			ops = append(ops, op)
 		}
 	}
@@ -84,6 +99,7 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 			}
 		}
 	}
+	add("hook", p.AdministrationHost, "database-credentials", nil)
 	for _, pl := range p.Placements {
 		if pl.Role == Database {
 			add("configure", pl.Host, "", &pl)
@@ -156,7 +172,7 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 	}
 	switch op.Hook {
 	case "recovery-fence":
-		if err := validateReceipt(e, p, "provider-or-host-fence", "credentials-replaced"); err != nil {
+		if err := validateReceipt(e, p, "provider-or-host-fence", "prior-authority-disabled"); err != nil {
 			return err
 		}
 		r.Fenced = true

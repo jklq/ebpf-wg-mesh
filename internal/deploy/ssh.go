@@ -274,8 +274,8 @@ func installScript(p Plan, pl Placement, observed Resources) (string, error) {
 	for _, arg := range argv {
 		execArgs = append(execArgs, "\""+strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%", "$", "$$").Replace(arg)+"\"")
 	}
-	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"
-	return fileScript(configDir(i, pl)+"/environment", []byte(environment.String()), "0600") + fileScript("/etc/systemd/system/"+unit(i, pl), []byte(service), "0644") + "systemctl daemon-reload\nsystemctl enable " + quote(unit(i, pl)) + "\nsystemctl restart " + quote(unit(i, pl)) + "\n" + fileScript(configDir(i, pl)+"/applied", []byte(fingerprint(p, pl)), "0600"), nil
+	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"
+	return "if test -L " + quote("/etc/systemd/system/"+unit(i, pl)) + "; then rm " + quote("/etc/systemd/system/"+unit(i, pl)) + "; fi\n" + fileScript(configDir(i, pl)+"/environment", []byte(environment.String()), "0600") + fileScript("/etc/systemd/system/"+unit(i, pl), []byte(service), "0644") + "systemctl daemon-reload\nsystemctl enable " + quote(unit(i, pl)) + "\nsystemctl restart " + quote(unit(i, pl)) + "\n" + fileScript(configDir(i, pl)+"/applied", []byte(fingerprint(p, pl)), "0600"), nil
 }
 func fingerprint(p Plan, pl Placement) string {
 	secrets := map[string]string{}

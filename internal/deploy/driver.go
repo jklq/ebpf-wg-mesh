@@ -93,7 +93,7 @@ func (d *SSHDriver) Inventory(ctx context.Context, i Installation, r Release, st
 		inv.Hosts[h.ID] = status
 	}
 	if state.Bundle != nil && len(state.Placements) > 0 {
-		p := Plan{Installation: i, Release: *state.Bundle, Placements: state.Placements, Previous: previousDeployment(state)}
+		p := Plan{Installation: i, Release: *state.Bundle, Placements: state.Placements, Previous: previousDeployment(state), Generation: state.Generation, Automatic: true}
 		h, err := boundHost(i, state, administrationHost(i, inv))
 		if err != nil {
 			return inv, err
@@ -185,6 +185,12 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 	}
 	path := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/plan.json"
 	script := "export PLATFORM_INSTALLATION=" + quote(p.Installation.ID) + "\nexport PLATFORM_RECOVERY_GENERATION=" + quote(p.Generation) + "\n" + fileScript(path, payload, "0600") + "export PLATFORM_PLAN=" + quote(path) + "\nexport PLATFORM_OPERATION=" + quote(op.ID) + "\n"
+	statePayload, err := json.Marshal(state)
+	if err != nil {
+		return nil, err
+	}
+	statePath := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/installer-state.json"
+	script += fileScript(statePath, statePayload, "0600") + "export PLATFORM_DEPLOYMENT_STATE=" + quote(statePath) + "\nexport PLATFORM_OPERATIONS_CONFIG=" + quote(p.Installation.OperationsConfig) + "\n"
 	if state.LastBackup.Backup != "" {
 		script += "export PLATFORM_BACKUP=" + quote(state.LastBackup.Backup) + "\nexport PLATFORM_DATA_LOSS_CUTOFF=" + quote(state.LastBackup.DataLossCutoff.Format(time.RFC3339Nano)) + "\n"
 	}

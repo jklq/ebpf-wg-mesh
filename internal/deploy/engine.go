@@ -64,6 +64,17 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			return err
 		}
 	}
+	// Resume may have changed only some processes before an interruption. Restore
+	// the pause before revisiting any earlier verification or backup gate.
+	for _, op := range p.Operations {
+		if contains([]string{"resume", "recovery-resume"}, op.Hook) && state.Progress.Started[op.ID] {
+			if _, ok := state.Progress.Completed[op.ID]; !ok {
+				if err := e.pauseBeforeRetry(ctx, p, state); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	for _, op := range p.Operations {
 		if op.Hook == "resume" {
 			// A completed verification is historical evidence. Re-observe at the
@@ -132,6 +143,11 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			}
 			binding, err := e.Driver.Execute(ctx, p, state, op)
 			if err != nil {
+				if contains([]string{"resume", "recovery-resume"}, op.Hook) {
+					if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
+						return fmt.Errorf("resume failed: %w; pause verification also failed: %v", err, pauseErr)
+					}
+				}
 				return fmt.Errorf("execute %s/%s: %w", op.Kind, op.ID, err)
 			}
 			if binding.ServerID != "" {
@@ -248,4 +264,24 @@ func validateRecoveryEvidence(e Evidence, installation, target string, now time.
 		return err
 	}
 	return e.Point.ValidateDependencies()
+}
+
+func (e Engine) pauseBeforeRetry(ctx context.Context, p Plan, state State) error {
+	pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	op := Operation{Kind: "hook", Host: p.AdministrationHost, Hook: "quiesce", ID: "pause-interrupted-resume"}
+	for _, candidate := range p.Operations {
+		if candidate.Hook == "quiesce" {
+			op = candidate
+			break
+		}
+	}
+	if _, err := e.Driver.Execute(pauseCtx, p, state, op); err != nil {
+		return fmt.Errorf("interrupted resume requires a verified pause: %w", err)
+	}
+	done, _, err := e.Driver.Observe(pauseCtx, p, state, op)
+	if err != nil || !done {
+		return fmt.Errorf("pause remains unresolved after interrupted resume: %v", err)
+	}
+	return nil
 }

@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/reconciliation"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -24,9 +25,18 @@ type Check struct {
 	Status string `json:"status"`
 }
 
+type Checkpoint struct {
+	Generation     string `json:"generation"`
+	AuthorityEpoch uint64 `json:"authorityEpoch"`
+	Cursor         int64  `json:"cursor"`
+	Complete       bool   `json:"complete"`
+}
 type Report struct {
-	Status string   `json:"status"`
-	Failed []string `json:"failed,omitempty"`
+	Inventory  json.RawMessage           `json:"inventory,omitempty"`
+	Checkpoint *Checkpoint               `json:"checkpoint,omitempty"`
+	Authority  *reconciliation.Authority `json:"authority,omitempty"`
+	Status     string                    `json:"status"`
+	Failed     []string                  `json:"failed,omitempty"`
 }
 
 type Probe func(context.Context) Report
@@ -34,6 +44,14 @@ type Probe func(context.Context) Report
 func NewMux(ready Probe) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc(LivenessPath, ServeLiveness)
+	mux.HandleFunc("/admissionz", func(w http.ResponseWriter, r *http.Request) {
+		report := ready(r.Context())
+		if report.Authority == nil || report.Authority.Generation == "" {
+			writeJSON(w, http.StatusServiceUnavailable, report)
+			return
+		}
+		writeJSON(w, http.StatusOK, report)
+	})
 	mux.HandleFunc(ReadinessPath, ServeReadiness(ready))
 	return mux
 }

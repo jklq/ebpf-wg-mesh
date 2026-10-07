@@ -38,6 +38,7 @@ import (
 	platformv1connect "ebof-wg-mesh/api/proto/platformv1connect"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
+	"ebof-wg-mesh/internal/reconciliation"
 
 	"google.golang.org/grpc"
 )
@@ -48,6 +49,7 @@ type publicationFence interface {
 }
 
 type Server struct {
+	recoveryAuthority   reconciliation.Authority
 	recoveryCheckpoints bool
 	recoveryPaused      bool
 
@@ -378,6 +380,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		requiredSigningScopes = append(requiredSigningScopes, signkeys.ScopeRegistry)
 	}
 	server := &Server{
+		recoveryAuthority:   admission,
 		recoveryPaused:      admission.Paused,
 		recoveryCheckpoints: admission.Checkpoints,
 
@@ -487,9 +490,9 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 		failed = append(failed, "signing_keys")
 	}
 	if len(failed) > 0 {
-		return health.Report{Status: health.StatusNotReady, Failed: failed}
+		return health.Report{Status: health.StatusNotReady, Failed: failed, Authority: &s.recoveryAuthority}
 	}
-	return health.Report{Status: health.StatusReady}
+	return health.Report{Status: health.StatusReady, Authority: &s.recoveryAuthority}
 }
 
 func (s *Server) Run(ctx context.Context) error {

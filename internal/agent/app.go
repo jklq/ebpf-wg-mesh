@@ -229,10 +229,22 @@ func nextReconnectDelay(current time.Duration) time.Duration {
 }
 
 func (a *App) readyReport(context.Context) health.Report {
+	report := health.Report{Status: health.StatusNotReady, Failed: []string{"local_state_recovery"}, Authority: &a.recoveryAuthority}
 	if a.supervisor != nil && a.supervisor.Ready() {
-		return health.Report{Status: health.StatusReady}
+		report.Status = health.StatusReady
+		report.Failed = nil
 	}
-	return health.Report{Status: health.StatusNotReady, Failed: []string{"local_state_recovery"}}
+	if a.stateStore != nil {
+		summary, err := a.stateStore.summary()
+		if err == nil {
+			report.Checkpoint = &health.Checkpoint{Generation: summary.RecoveryGeneration, AuthorityEpoch: summary.AuthorityEpoch, Cursor: summary.ReconciliationCursor, Complete: summary.Initialization == initializationReady && !summary.CheckpointRequired && summary.NodeConfigVersion != "" && summary.CredentialsVersion != "" && summary.ReplicasVersion != ""}
+		}
+		inventory, err := a.stateStore.fleetInventory()
+		if err == nil {
+			report.Inventory, _ = json.Marshal(inventory)
+		}
+	}
+	return report
 }
 
 func (a *App) runSession(ctx context.Context) error {
