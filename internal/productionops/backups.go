@@ -2,6 +2,7 @@ package productionops
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,6 +48,16 @@ func (r *Runner) prepareProtection(ctx context.Context) error {
 		return err
 	}
 	defer clear(s.RecoveryKey)
+	binary, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	digest, _, err := recovery.FileDigest(binary)
+	if err != nil {
+		return err
+	}
+	c.DrillCommand = []string{binary, "offline-recovery"}
+	c.DrillCommandDigest = digest
 	c.Installation, c.Release, c.DatabaseURLFile, c.ConsoleSchema = r.Plan.Installation.ID, r.Plan.Release.ID, r.Config.Database.URLFile, r.Config.Console.Schema
 	dir := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "inputs")
 	var files []recovery.File
@@ -121,29 +132,9 @@ func (r *Runner) prepareProtection(ctx context.Context) error {
 	add("console-key", "console-token/"+recovery.Digest(key), r.Config.Console.TokenKeyFile, true)
 	// Recover file-based external credentials independently of the live vault.
 	// The recovery decryption key is retained out of band and never sealed under itself.
-	bundle := map[string][]byte{}
-	for name, ref := range r.Plan.Installation.Secrets {
-		if name == r.Plan.Installation.Backup.RecoveryKey || ref.File == r.Config.Database.URLFile || ref.File == r.Config.Console.TokenKeyFile || ref.File == c.KeyringFile {
-			continue
-		}
-		if strings.Contains(ref.File, "{") {
-			continue
-		}
-		b, err := os.ReadFile(ref.File)
-		if err != nil {
-			return fmt.Errorf("external credential %s unavailable: %w", name, err)
-		}
-		bundle[ref.File] = b
-	}
-	for _, path := range []string{r.Plan.Installation.OperationsConfig, r.Config.RecoveryConfig, c.Storage.CredentialsFile, r.Config.WildcardCertificate, r.Config.WildcardKey} {
-		if path == "" {
-			continue
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		bundle[path] = b
+	bundle, err := r.externalInputs(c)
+	if err != nil {
+		return err
 	}
 	b, err := json.Marshal(bundle)
 	if err != nil {
@@ -196,6 +187,18 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 			db.Close()
 			return fmt.Errorf("backup requires a named external connection")
 		}
+		if c.Storage.CAFile != "" {
+			ca, readErr := os.ReadFile(c.Storage.CAFile)
+			pool := x509.NewCertPool()
+			if readErr != nil || !pool.AppendCertsFromPEM(ca) {
+				db.Close()
+				return fmt.Errorf("invalid backup storage TLS CA")
+			}
+			if _, err := db.ExecContext(ctx, "SET CLUSTER SETTING cloudstorage.http.custom_ca = $1", string(ca)); err != nil {
+				db.Close()
+				return err
+			}
+		}
 		statement := "CREATE EXTERNAL CONNECTION IF NOT EXISTS " + name + " AS '" + strings.ReplaceAll(strings.TrimSpace(string(uri)), "'", "''") + "'"
 		_, err = db.ExecContext(ctx, statement)
 		db.Close()
@@ -216,6 +219,19 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 		return err
 	}
 	defer clear(s.RecoveryKey)
+	if c.Storage.CAFile != "" {
+		ca, err := os.ReadFile(c.Storage.CAFile)
+		if err != nil {
+			return err
+		}
+		var actual string
+		if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING cloudstorage.http.custom_ca").Scan(&actual); err != nil {
+			return err
+		}
+		if actual != string(ca) {
+			return fmt.Errorf("native backup storage TLS trust differs from selected CA")
+		}
+	}
 	if err := recovery.VerifyBackupDestination(ctx, db, c.BackupConnection, c.Storage, c.BackupPrefix); err != nil {
 		return err
 	}
@@ -230,41 +246,6 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 	return r.monitor(ctx, "installed")
 }
 
-func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
-	name := "platform-" + r.Plan.Installation.ID + "-recovery"
-	binary, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	planPath := filepath.Join(r.Config.StateDirectory, "scheduled-plan.json")
-	if !verify {
-		if err := saveJSON(planPath, r.Plan); err != nil {
-			return err
-		}
-	}
-	// The OS timer owns protection refresh and point completion. Native SQL
-	// schedules own database capture even when every platform process is down.
-	service := "[Unit]\nDescription=Complete independent platform recovery point\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nExecStart=" + binary + " --plan " + planPath + " --config " + r.Plan.Installation.OperationsConfig + " backup-complete\n"
-	timer := "[Unit]\nDescription=Independent platform recovery completion\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
-	if verify {
-		for ext, data := range map[string]string{"service": service, "timer": timer} {
-			b, err := os.ReadFile("/etc/systemd/system/" + name + "." + ext)
-			if err != nil || string(b) != data {
-				return fmt.Errorf("recovery completion unit differs from selected release")
-			}
-		}
-		return systemctl(ctx, "is-active", "--quiet", name+".timer")
-	}
-	for ext, data := range map[string]string{"service": service, "timer": timer} {
-		if err := writePrivate("/etc/systemd/system/"+name+"."+ext, []byte(data)); err != nil {
-			return err
-		}
-	}
-	if err := systemctl(ctx, "daemon-reload"); err != nil {
-		return err
-	}
-	return systemctl(ctx, "enable", "--now", name+".timer")
-}
 func (r *Runner) backup(ctx context.Context) error {
 	if _, err := r.backupEvidence(ctx); err == nil {
 		return nil
@@ -285,6 +266,13 @@ func (r *Runner) backup(ctx context.Context) error {
 	return r.completeBackup(ctx)
 }
 func (r *Runner) completeBackup(ctx context.Context) (returnErr error) {
+	if err := r.captureExternalInventory(ctx); err != nil {
+		return err
+	}
+	if err := r.protect(ctx, false); err != nil {
+		return err
+	}
+
 	defer func() {
 		if returnErr != nil {
 			_ = r.monitor(ctx, "failed")
@@ -330,6 +318,9 @@ func (r *Runner) backupEvidence(ctx context.Context) (deploy.Evidence, error) {
 }
 func (r *Runner) finalize(ctx context.Context, verify bool) error {
 	if !verify {
+		if err := r.admitReservations(ctx); err != nil {
+			return err
+		}
 		_, err := r.nativeRecovery(ctx, "finalize")
 		return err
 	}

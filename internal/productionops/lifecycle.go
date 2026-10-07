@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"ebof-wg-mesh/internal/controlplane/ingressnodes"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
@@ -27,8 +28,12 @@ func (r *Runner) pause(ctx context.Context, paused, checkpoints bool) error {
 		return err
 	}
 	defer db.Close()
-	if _, err := db.ExecContext(ctx, `UPDATE recovery_runtime_authority SET paused=$1 WHERE singleton=TRUE AND installation=$2 AND generation=$3`, paused, r.Plan.Installation.ID, r.Plan.Generation); err != nil {
+	result, err := db.ExecContext(ctx, `UPDATE recovery_runtime_authority SET paused=$1 WHERE singleton=TRUE AND installation=$2 AND generation=$3`, paused, r.Plan.Installation.ID, r.Plan.Generation)
+	if err != nil {
 		return err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		return fmt.Errorf("runtime authority was not admitted for this installation and generation")
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE build_scheduler_control SET paused=$1,updated_at=statement_timestamp() WHERE id=TRUE`, paused); err != nil {
 		return err
@@ -150,12 +155,26 @@ func (r *Runner) verifyPause(ctx context.Context, paused, recovered bool) error 
 	}
 	return nil
 }
-func (r *Runner) resume(ctx context.Context, recovered bool) error {
+func (r *Runner) resume(ctx context.Context, recovered bool) (returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			if err := r.pause(pauseCtx, true, recovered); err != nil {
+				returnErr = fmt.Errorf("%w; pause unresolved: %v", returnErr, err)
+			}
+		}
+	}()
 	if err := r.productionVerify(ctx); err != nil {
-		pauseErr := r.pause(context.WithoutCancel(ctx), true, false)
-		return fmt.Errorf("resume gate: %w (pause: %v)", err, pauseErr)
+		return fmt.Errorf("resume gate: %w", err)
 	}
 	if recovered {
+		if err := r.recoverWork(ctx, true); err != nil {
+			return err
+		}
+		if err := r.admitBuilders(ctx); err != nil {
+			return err
+		}
 		if r.RecoveryProgress == nil {
 			return fmt.Errorf("resume needs recorded recovery progress")
 		}
@@ -167,7 +186,10 @@ func (r *Runner) resume(ctx context.Context, recovered bool) error {
 			return err
 		}
 	}
-	return r.pause(ctx, false, false)
+	if err := r.pause(ctx, false, false); err != nil {
+		return err
+	}
+	return r.verifyPause(ctx, false, recovered)
 }
 func (r *Runner) lifecycle(ctx context.Context, args []string, verify bool) error {
 	if len(args) != 3 {
@@ -194,6 +216,11 @@ func (r *Runner) lifecycle(ctx context.Context, args []string, verify bool) erro
 	defer db.Close()
 	if action == "drain" {
 		if pl.Role == deploy.Agent {
+			if !verify {
+				if err := drainAgent(ctx, db, pl.Instance); err != nil {
+					return err
+				}
+			}
 			var count int
 			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM allocation_assignments WHERE agent_id=$1`, pl.Instance).Scan(&count); err != nil {
 				return err
@@ -203,6 +230,11 @@ func (r *Runner) lifecycle(ctx context.Context, args []string, verify bool) erro
 			}
 		}
 		if pl.Role == deploy.Builder {
+			if !verify {
+				if _, err := db.ExecContext(ctx, `UPDATE builder_workers SET drained=TRUE,updated_at=statement_timestamp() WHERE id=$1`, pl.Instance); err != nil {
+					return err
+				}
+			}
 			var active int
 			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM build_runs WHERE state='running' AND builder_id=$1`, pl.Instance).Scan(&active); err != nil {
 				return err

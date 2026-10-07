@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -195,6 +196,9 @@ func RunIsolated(ctx context.Context, inputPath string) error {
 	if err := prepareIsolation(input.ParentNetworkNS); err != nil {
 		return err
 	}
+	if err := mountOfflineWorkspace(input.Workspace); err != nil {
+		return err
+	}
 	c := input.Config
 	if len(c.DrillCommand) == 0 {
 		return fmt.Errorf("offline recovery executable is missing")
@@ -259,7 +263,12 @@ func RunIsolated(ctx context.Context, inputPath string) error {
 	if err := checkRestoredSources(input.Point, ready.SourceDirectory, input.Workspace); err != nil {
 		return err
 	}
-	imageTool := c.Images.Binary
+	imageTool := ""
+	for _, d := range input.Point.Dependencies {
+		if d.Kind == "tool" && strings.HasSuffix(d.ID, "/tool/skopeo/"+runtime.GOARCH) {
+			imageTool = input.Files[identity(Requirement{Kind: d.Kind, ID: d.ID})]
+		}
+	}
 	for _, d := range input.Point.Dependencies {
 		if d.Kind != "image" {
 			continue

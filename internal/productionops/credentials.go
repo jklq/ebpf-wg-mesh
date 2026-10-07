@@ -68,6 +68,13 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		a := reconciliation.Authority{InstallationID: installation, Generation: generation, ClusterID: clusterID(ca), Paused: paused, Checkpoints: paused && r.RecoveryProgress != nil && r.RecoveryProgress.Report != nil && r.RecoveryProgress.ApprovedDigest == r.RecoveryProgress.Report.ApprovalDigest()}
 		files["authority.json"], _ = json.Marshal(a)
 		env := map[string]string{}
+		if prefix, ok := map[deploy.Role]string{deploy.Agent: "AGENT", deploy.Builder: "BUILDER", deploy.ControlPlane: "CONTROLPLANE"}[pl.Role]; ok {
+			listener := map[deploy.Role]string{deploy.Agent: "127.0.0.1:9091", deploy.Builder: "127.0.0.1:9092", deploy.ControlPlane: "127.0.0.1:9090"}[pl.Role]
+			if configured := r.Plan.Installation.Components[pl.Role].Env[prefix+"_HEALTH_LISTEN"]; configured != "" {
+				listener = configured
+			}
+			env[prefix+"_HEALTH_LISTEN"] = listener
+		}
 		class, client := map[deploy.Role]identity.CallerClass{deploy.Agent: identity.CallerAgent, deploy.Console: identity.CallerDashboard, deploy.Builder: identity.CallerBuilder, deploy.Envoy: identity.CallerIngress}[pl.Role]
 		if client {
 			material, err := r.clientIdentity(ctx, pl, class, signing, verify)
@@ -172,6 +179,29 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				return err
 			}
 			if pl.Role == deploy.ControlPlane {
+				if r.Config.SourceConfig != "" {
+					selection, err := r.sourceSelection()
+					if err != nil {
+						return err
+					}
+					env["CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER"] = selection.Provider
+					env["CONTROLPLANE_SOURCE_ARCHIVES_DIR"] = selection.Directory
+					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_ENDPOINT"] = selection.S3.Endpoint
+					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_REGION"] = selection.S3.Region
+					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_BUCKET"] = selection.S3.Bucket
+					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_PREFIX"] = selection.S3.Prefix
+					if selection.S3.CredentialsFile != "" {
+						b, err := os.ReadFile(selection.S3.CredentialsFile)
+						if err != nil {
+							return err
+						}
+						files["source-credentials"] = b
+						env["CONTROLPLANE_SOURCE_ARCHIVES_S3_CREDENTIALS_FILE"] = cfgDir(r.Plan, pl) + "/source-credentials"
+					}
+				}
+				env["CONTROLPLANE_REGISTRY_HOST"] = r.Config.RegistryService
+				env["CONTROLPLANE_REGISTRY_TOKEN_SERVICE"] = r.Config.RegistryService
+				env["CONTROLPLANE_REGISTRY_AUTH_LISTEN"] = "0.0.0.0:9444"
 				env["CONTROLPLANE_DB_URL"] = string(files["database-url"])
 				env["CONTROLPLANE_STATE_DIR"] = dataDir(r.Plan, pl)
 				env["CONTROLPLANE_SECRET_KEYS_KEYRING"] = cfgDir(r.Plan, pl) + "/keyring.json"
@@ -218,7 +248,28 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				}
 				env["DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY"] = strings.TrimSpace(string(b))
 				env["DASHBOARD_JWT_SECRET_PREVIOUS"] = ""
-				env["DASHBOARD_DATABASE_URL"] = string(files["database-url"])
+				for _, endpoint := range r.Plan.Installation.Endpoints {
+					if endpoint.Role == deploy.Console {
+						env["DASHBOARD_PUBLIC_BASE_URL"] = endpoint.URL
+						hostURL, err := url.Parse(endpoint.URL)
+						if err != nil {
+							return err
+						}
+						env["DASHBOARD_INGRESS_TARGET_HOST"] = hostURL.Hostname()
+					}
+				}
+				parsed, err := url.Parse(string(files["database-url"]))
+				if err != nil {
+					return err
+				}
+				var urls []string
+				for _, address := range strings.Split(r.databaseAddresses(), ",") {
+					parsed.Host = address
+					urls = append(urls, parsed.String())
+				}
+				env["DASHBOARD_DATABASE_URL"] = urls[0]
+				data, _ := json.Marshal(urls)
+				env["DASHBOARD_DATABASE_URLS"] = string(data)
 				env["DASHBOARD_DATABASE_SCHEMA"] = r.Config.Console.Schema
 				env["DASHBOARD_CONTROLPLANE_ADDRESS"] = strings.Split(r.controlPlaneAddresses("9443"), ",")[0]
 				env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.Config.InternalServerName
@@ -264,6 +315,9 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		if target := files[".ingress-current-target"]; len(target) > 0 {
 			dir := cfgDir(r.Plan, pl) + "/ingress"
 			script += "ln -sfn " + shell(string(target)) + " " + shell(dir+"/current.next") + "\nmv -Tf " + shell(dir+"/current.next") + " " + shell(dir+"/current") + "\n"
+		}
+		if verify && (pl.Role == deploy.ControlPlane || pl.Role == deploy.Console) {
+			script += shell(operationsBinary(r.Plan)) + " sql-client " + shell(cfgDir(r.Plan, pl)+"/database-url") + " " + shell(r.Config.Console.Schema) + "\n"
 		}
 		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
 			return err
@@ -360,7 +414,7 @@ func (r *Runner) databaseClient(ctx context.Context, pl deploy.Placement, db *sq
 			}
 		}
 	}
-	u := url.URL{Scheme: "postgresql", User: url.User(name), Host: r.Config.Database.Address, Path: "/" + r.Config.Database.Name}
+	u := url.URL{Scheme: "postgresql", User: url.User(name), Host: r.databaseAddresses(), Path: "/" + r.Config.Database.Name}
 	u.RawQuery = url.Values{"sslmode": {"verify-full"}, "sslrootcert": {cfgDir(r.Plan, pl) + "/db-ca.crt"}, "sslcert": {cfgDir(r.Plan, pl) + "/db-client.crt"}, "sslkey": {cfgDir(r.Plan, pl) + "/db-client.key"}}.Encode()
 	files["database-url"] = []byte(u.String())
 	return nil
@@ -394,12 +448,15 @@ func (r *Runner) reservations(ctx context.Context, verify bool) error {
 			continue
 		}
 		h, _ := r.Plan.Installation.Host(pl.Host)
-		reserve := r.Plan.Reservations[pl.Host]
+		reserve := deploy.Resources{} // Already enforced by the native agent cgroups.
 		hostType := "stable"
 		if h.Reliability == "intermittent" {
 			hostType = "intermittent"
 		}
 		if !verify {
+			if err = r.yieldReservations(ctx, db, pl); err != nil {
+				return err
+			}
 			err = adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
 				if _, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `INSERT INTO agent_registrations(id,name,region,failure_domain,reserved_cpu_millis,reserved_memory_mebibytes,created_at,updated_at) VALUES ($1,$1,$2,$3,$4,$5,statement_timestamp(),statement_timestamp()) ON CONFLICT(id) DO UPDATE SET reserved_cpu_millis=$4,reserved_memory_mebibytes=$5,region=$2,failure_domain=$3,updated_at=statement_timestamp()`, pl.Instance, h.Region, h.FailureDomain, reserve.CPUMillis, reserve.MemoryMiB); err != nil {
 					return err

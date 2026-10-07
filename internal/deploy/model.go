@@ -137,6 +137,9 @@ type Recovery struct {
 	Credentials []string `json:"credentials" yaml:"credentials"`
 }
 type Installation struct {
+	// OperationsInputs are private service-selection files copied from the operator
+	// workspace to the administration host. Generated runtime secrets stay remote.
+	OperationsInputs     []string             `json:"operationsInputs,omitempty" yaml:"operationsInputs,omitempty"`
 	OperationsConfig     string               `json:"operationsConfig,omitempty" yaml:"operationsConfig,omitempty"`
 	RetireHosts          []string             `json:"retireHosts,omitempty" yaml:"retireHosts,omitempty"`
 	Version              int                  `json:"version" yaml:"version"`

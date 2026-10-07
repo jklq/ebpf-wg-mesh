@@ -105,8 +105,8 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 		}
 		// Evaluate dependencies before their consumers. Public paths must end at
 		// a usable replica, including the transitive dependencies of that replica.
-		usable := map[Role][]Placement{Database: byRole[Database], Agent: byRole[Agent]}
-		for _, role := range []Role{Registry, ControlPlane, Console, Envoy} {
+		usable := map[Role][]Placement{Database: byRole[Database]}
+		for _, role := range []Role{Registry, ControlPlane, Console, Agent, Envoy} {
 			for _, p := range byRole[role] {
 				reachable := 0
 				for _, q := range byRole[Database] {
@@ -140,7 +140,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 						dependenciesOK = false
 					}
 				}
-				if reachable >= quorum && dependenciesOK {
+				if (role == Agent || reachable >= quorum) && dependenciesOK {
 					usable[role] = append(usable[role], p)
 				}
 			}
@@ -200,6 +200,8 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 }
 func dependencies(r Role) []Role {
 	switch r {
+	case Agent:
+		return []Role{ControlPlane, Registry}
 	case Console:
 		return []Role{ControlPlane}
 	case Envoy:

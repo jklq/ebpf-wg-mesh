@@ -39,6 +39,9 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 			return nil
 		}
 	}
+	if f, ok := r.Config.Fences[id]; ok && f.off(ctx) == nil {
+		return nil
+	}
 	// Verify each prior service is stopped persistently, or has admitted the new
 	// generation after a clean restart. An unreachable host is never a fence.
 	for _, pl := range p.Placements {
@@ -48,6 +51,15 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 		script := "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then\n"
 		if mutable(pl.Role) {
 			script += "cat " + shell(cfgDir(p, pl)+"/authority.json") + "\n"
+		} else if pl.Role == deploy.Registry || pl.Role == deploy.Envoy {
+			replacement := false
+			for _, candidate := range r.Plan.Placements {
+				replacement = replacement || candidate == pl
+			}
+			if !replacement {
+				return fmt.Errorf("prior stateless instance has no admitted replacement")
+			}
+			script += shell(operationsBinary(r.Plan)) + " process-admission " + shell(unit(p, pl)) + " " + shell(cfgDir(p, pl)+"/authority.json") + " " + shell(r.Plan.Installation.ID) + " " + shell(r.Plan.Generation) + "\n"
 		} else {
 			script += "exit 1\n"
 		}
@@ -123,6 +135,10 @@ func (r *Runner) fence(ctx context.Context, verify bool) error {
 		_, reused := r.Plan.Installation.Host(h.ID)
 		if a.Capabilities().Power && !reused {
 			if err := a.Power(ctx, h.Binding.ServerID, "off"); err != nil {
+				return err
+			}
+		} else if f, ok := r.Config.Fences[h.ID]; ok && !reused {
+			if err = f.powerOff(ctx); err != nil {
 				return err
 			}
 		} else {

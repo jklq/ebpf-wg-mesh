@@ -9,6 +9,7 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as SessionzRouteImport } from './routes/sessionz'
 import { Route as ReadyzRouteImport } from './routes/readyz'
 import { Route as LogoutRouteImport } from './routes/logout'
 import { Route as LoginRouteImport } from './routes/login'
@@ -26,6 +27,11 @@ import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
 
+const SessionzRoute = SessionzRouteImport.update({
+  id: '/sessionz',
+  path: '/sessionz',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReadyzRoute = ReadyzRouteImport.update({
   id: '/readyz',
   path: '/readyz',
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/readyz': typeof ReadyzRoute
+  '/sessionz': typeof SessionzRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
@@ -137,6 +144,7 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/readyz': typeof ReadyzRoute
+  '/sessionz': typeof SessionzRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/logout': typeof LogoutRoute
   '/readyz': typeof ReadyzRoute
+  '/sessionz': typeof SessionzRoute
   '/auth/callback': typeof AuthCallbackRoute
   '/auth/start': typeof AuthStartRoute
   '/environments/$environmentId': typeof EnvironmentsEnvironmentIdRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/logout'
     | '/readyz'
+    | '/sessionz'
     | '/auth/callback'
     | '/auth/start'
     | '/environments/$environmentId'
@@ -194,6 +204,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/logout'
     | '/readyz'
+    | '/sessionz'
     | '/auth/callback'
     | '/auth/start'
     | '/environments/$environmentId'
@@ -212,6 +223,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/logout'
     | '/readyz'
+    | '/sessionz'
     | '/auth/callback'
     | '/auth/start'
     | '/environments/$environmentId'
@@ -231,6 +243,7 @@ export interface RootRouteChildren {
   LoginRoute: typeof LoginRoute
   LogoutRoute: typeof LogoutRoute
   ReadyzRoute: typeof ReadyzRoute
+  SessionzRoute: typeof SessionzRoute
   AuthCallbackRoute: typeof AuthCallbackRoute
   AuthStartRoute: typeof AuthStartRoute
   EnvironmentsEnvironmentIdRoute: typeof EnvironmentsEnvironmentIdRoute
@@ -243,6 +256,13 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/sessionz': {
+      id: '/sessionz'
+      path: '/sessionz'
+      fullPath: '/sessionz'
+      preLoaderRoute: typeof SessionzRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/readyz': {
       id: '/readyz'
       path: '/readyz'
@@ -367,6 +387,7 @@ const rootRouteChildren: RootRouteChildren = {
   LoginRoute: LoginRoute,
   LogoutRoute: LogoutRoute,
   ReadyzRoute: ReadyzRoute,
+  SessionzRoute: SessionzRoute,
   AuthCallbackRoute: AuthCallbackRoute,
   AuthStartRoute: AuthStartRoute,
   EnvironmentsEnvironmentIdRoute: EnvironmentsEnvironmentIdRoute,

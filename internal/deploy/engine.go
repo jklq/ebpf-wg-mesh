@@ -87,12 +87,8 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			}
 			done, _, verifyErr := e.Driver.Observe(ctx, p, state, verification)
 			if verifyErr != nil || !done {
-				for _, candidate := range p.Operations {
-					if candidate.Hook == "quiesce" {
-						if _, err := e.Driver.Execute(ctx, p, state, candidate); err != nil {
-							return fmt.Errorf("verification failed and quiesce failed: %w", err)
-						}
-					}
+				if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
+					return fmt.Errorf("production verification unresolved: %v; pause also unresolved: %w", verifyErr, pauseErr)
 				}
 				return fmt.Errorf("production verification is unresolved; automation remains paused: %v", verifyErr)
 			}
@@ -157,10 +153,15 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 				}
 			}
 			done, evidence, err = e.Driver.Observe(ctx, p, state, op)
-			if err != nil {
-				return fmt.Errorf("verify %s/%s: %w", op.Kind, op.ID, err)
-			}
-			if !done {
+			if err != nil || !done {
+				if contains([]string{"resume", "recovery-resume"}, op.Hook) {
+					if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
+						return fmt.Errorf("resume observation unresolved: %v; pause also unresolved: %w", err, pauseErr)
+					}
+				}
+				if err != nil {
+					return fmt.Errorf("verify %s/%s: %w", op.Kind, op.ID, err)
+				}
 				return fmt.Errorf("%s/%s is pending; resume this plan after native convergence", op.Kind, op.ID)
 			}
 		}

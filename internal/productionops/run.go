@@ -47,6 +47,18 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return json.NewEncoder(out).Encode(ready)
 	}
+	if args[0] == "sql-client" {
+		if len(args) != 3 {
+			return fmt.Errorf("sql-client requires private database URL and console schema")
+		}
+		return inspectSQLClient(ctx, args[1], args[2])
+	}
+	if args[0] == "process-admission" {
+		if len(args) != 5 {
+			return fmt.Errorf("process-admission requires unit, authority file, installation and generation")
+		}
+		return processAdmission(ctx, args[1], args[2], args[3], args[4])
+	}
 	if args[0] == "connect" {
 		if len(args) != 2 {
 			return fmt.Errorf("connect requires an address")
@@ -140,6 +152,13 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	result, err := r.Verify(ctx, args)
 	if err != nil {
+		if !verify && (args[0] == "resume" || args[0] == "recovery-resume") {
+			pauseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			if pauseErr := r.pause(pauseCtx, true, args[0] == "recovery-resume"); pauseErr != nil {
+				return fmt.Errorf("verify %s: %w; pause unresolved: %v", args[0], err, pauseErr)
+			}
+		}
 		return fmt.Errorf("verify %s: %w", args[0], err)
 	}
 	return json.NewEncoder(out).Encode(result)
@@ -148,6 +167,8 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 func (r *Runner) Execute(ctx context.Context, args []string) error {
 	r.defaults()
 	switch args[0] {
+	case "credential-renew":
+		return r.renewCredentials(ctx)
 	case "database-credentials":
 		return r.databaseCredentials(ctx, false)
 	case "database-init":
@@ -215,6 +236,8 @@ func (r *Runner) Verify(ctx context.Context, args []string) (any, error) {
 	}
 	var err error
 	switch args[0] {
+	case "credential-renew":
+		err = r.credentials(ctx, true)
 	case "database-credentials":
 		err = r.databaseCredentials(ctx, true)
 	case "database-init":

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/deploy"
 	"fmt"
 )
 
@@ -86,4 +87,24 @@ func (r *Runner) retireAgent(ctx context.Context, db *sql.DB, id string) error {
 		_, err := journal.AdministrationRow(id).Exec(ctx, tx, `UPDATE agent_administration SET lifecycle_state='retired',operator_intent='cordoned',credential_revoked_at=COALESCE(credential_revoked_at,statement_timestamp()),updated_at=statement_timestamp() WHERE agent_id=$1`, id)
 		return err
 	})
+}
+
+// Restore the selected live builders' operator intent only after stale lease
+// ownership has been invalidated. Unknown/restored workers remain drained.
+func (r *Runner) admitBuilders(ctx context.Context) error {
+	db, err := r.db(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	for _, pl := range r.Plan.Placements {
+		if pl.Role != deploy.Builder {
+			continue
+		}
+		_, err = db.ExecContext(ctx, `UPDATE builder_workers SET drained=COALESCE((SELECT (record->>'drained')::BOOL FROM platform_recovery.public.work_quarantine WHERE generation=$1 AND kind='builder_workers' AND id=$2),FALSE),current_build_id='',updated_at=statement_timestamp() WHERE id=$2`, r.Plan.Generation, pl.Instance)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

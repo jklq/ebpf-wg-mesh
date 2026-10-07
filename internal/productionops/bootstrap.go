@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/deploy"
 )
 
 func (r *Runner) keys(ctx context.Context, db *sql.DB) (*secretkeys.Service, *signkeys.Service, error) {
@@ -117,7 +119,30 @@ func (r *Runner) exportSigning(ctx context.Context, s *signkeys.Service) error {
 	return nil
 }
 func (r *Runner) consoleAdmin(ctx context.Context, action string) error {
-	b, _ := json.Marshal(map[string]string{"databaseURLFile": r.Config.Database.URLFile, "schema": r.Config.Console.Schema, "tokenKeyFile": r.Config.Console.TokenKeyFile, "sessionKeyFile": filepath.Join(r.Config.StateDirectory, signkeys.ScopeDashboardSession+".key"), "installation": r.Plan.Installation.ID, "generation": r.Plan.Generation})
+	data, err := os.ReadFile(r.Config.Database.URLFile)
+	if err != nil {
+		return err
+	}
+	parsed, err := url.Parse(string(data))
+	if err != nil {
+		return err
+	}
+	parsed.Host = r.reachableDatabase(ctx)
+	adminURL := filepath.Join(r.Config.StateDirectory, "console-admin-url")
+	if err = writePrivate(adminURL, []byte(parsed.String())); err != nil {
+		return err
+	}
+	input := map[string]any{"databaseURLFile": adminURL, "schema": r.Config.Console.Schema, "tokenKeyFile": r.Config.Console.TokenKeyFile, "sessionKeyFile": filepath.Join(r.Config.StateDirectory, signkeys.ScopeDashboardSession+".key"), "installation": r.Plan.Installation.ID, "generation": r.Plan.Generation}
+	if action == "check-endpoints" {
+		var endpoints []map[string]string
+		for _, endpoint := range r.Plan.Installation.Endpoints {
+			if endpoint.Role == deploy.Console {
+				endpoints = append(endpoints, map[string]string{"url": endpoint.URL, "caFile": r.Config.EndpointProbes[endpoint.Name].CAFile})
+			}
+		}
+		input["endpoints"] = endpoints
+	}
+	b, _ := json.Marshal(input)
 	cmd := exec.CommandContext(ctx, r.Config.Console.AdminBinary, action)
 	cmd.Stdin = strings.NewReader(string(b))
 	if err := cmd.Run(); err != nil {

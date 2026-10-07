@@ -21,6 +21,12 @@ func durable(path string) bool {
 }
 func hookValid(h Hook) bool { return len(h.Command) > 0 && len(h.Verify) > 0 }
 func (i Installation) Validate(r Release) error {
+	for _, path := range i.OperationsInputs {
+		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+			return fmt.Errorf("operations inputs must be clean absolute paths")
+		}
+	}
+
 	if i.OperationsConfig != "" && !durable(i.OperationsConfig) {
 		return fmt.Errorf("operations configuration requires a durable absolute path")
 	}
