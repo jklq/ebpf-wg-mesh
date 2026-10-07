@@ -167,3 +167,23 @@ func ReadDesiredResources(ctx context.Context, db *sql.DB) ([]FleetResource, err
 	}
 	return resources, rows.Err()
 }
+
+// Include identities of environments without allocations: a rollback must not
+// hide their conflicts with newer observed environments.
+func ReadDesiredNetworks(ctx context.Context, db *sql.DB) ([]NetworkReservation, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id,network_identity FROM environments ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var networks []NetworkReservation
+	for rows.Next() {
+		var r NetworkReservation
+		if err := rows.Scan(&r.EnvironmentID, &r.Identity); err != nil {
+			return nil, err
+		}
+		r.Owner = "environment/" + r.EnvironmentID
+		networks = append(networks, r)
+	}
+	return networks, rows.Err()
+}

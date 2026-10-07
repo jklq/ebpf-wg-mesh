@@ -55,18 +55,8 @@ func (a *App) clientCredentials(ctx context.Context) (credentials.TransportCrede
 }
 
 func (a *App) ensureClientTLSMaterial(ctx context.Context) (*clientTLSMaterial, error) {
-	if a.stateStore != nil {
-		_, generation := a.stateStore.commandGeneration()
-		if generation != "" {
-			marker, err := os.ReadFile(filepath.Join(a.clientTLSDir(), "generation"))
-			if err != nil || string(marker) != generation {
-				for _, name := range []string{agentKeyFileName, agentCertFileName, agentCAFileName} {
-					if err := os.Remove(filepath.Join(a.clientTLSDir(), name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-						return nil, err
-					}
-				}
-			}
-		}
+	if err := a.discardPriorGenerationTLS(); err != nil {
+		return nil, err
 	}
 	material, err := a.loadClientTLSMaterial()
 	switch {

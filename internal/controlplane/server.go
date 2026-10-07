@@ -48,7 +48,9 @@ type publicationFence interface {
 }
 
 type Server struct {
-	recoveryPaused  bool
+	recoveryCheckpoints bool
+	recoveryPaused      bool
+
 	cfg             config.ControlPlaneConfig
 	store           *persistence
 	signKeys        *signkeys.Service
@@ -376,7 +378,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		requiredSigningScopes = append(requiredSigningScopes, signkeys.ScopeRegistry)
 	}
 	server := &Server{
-		recoveryPaused:  admission.Paused,
+		recoveryPaused:      admission.Paused,
+		recoveryCheckpoints: admission.Checkpoints,
+
 		cfg:             cfg,
 		store:           store,
 		signKeys:        signKeys,
@@ -588,7 +592,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	}
 	defer s.delivery.ResignLive()
 	if s.recoveryPaused {
-		return s.delivery.ServeLive(ctx)
+		return s.runRecoveryCheckpoints(ctx)
 	}
 	if s.reconciler != nil {
 		if err := s.reconciler.Bootstrap(ctx); err != nil {

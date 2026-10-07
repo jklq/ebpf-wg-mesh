@@ -137,7 +137,9 @@ export function FleetAgentDialog({
 							}
 						>
 							<option value="stable">Always on</option>
-							<option value="intermittent">Intermittent (stateless capacity)</option>
+							<option value="intermittent">
+								Intermittent (stateless capacity)
+							</option>
 						</select>
 					</label>
 					<FleetField

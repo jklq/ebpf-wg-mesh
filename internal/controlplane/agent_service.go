@@ -496,7 +496,7 @@ func (s *agentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 func (s *agentService) sendSyncBatch(ctx context.Context, stream agentv1.AgentControl_SyncServer, sendMu *sync.Mutex, agentID, sessionID, clusterID string, epoch uint64, sent syncSent, helloInventory []*agentv1.ServiceCondition, helloInit string, helloEpoch uint64, first bool) (syncSent, error) {
 	plan, err := s.delivery.PlanAgentSync(ctx, deliverycore.AgentSyncRequest{
 		AgentID: agentID, BaseRevision: sent.alloc, OverlayVersion: sent.overlay,
-		RequireCheckpoint: first && (helloInit != "ready" || helloEpoch != epoch),
+		RequireCheckpoint: s.recoveryAuthority.Paused || first && (helloInit != "ready" || helloEpoch != epoch),
 		CheckInventory:    first, Inventory: helloInventory,
 	})
 	if errors.Is(err, deliverycore.ErrAgentCursorAhead) {

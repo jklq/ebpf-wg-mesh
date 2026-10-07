@@ -76,6 +76,26 @@ func withRecoveryAuthority(a reconciliation.Authority, inventoryDir string) agen
 	return func(s *agentService) { s.recoveryAuthority, s.recoveryInventoryDir = a, inventoryDir }
 }
 
+// Host administration enables this stage only after report approval. Publishing
+// restored ingress checkpoints is necessary to verify acknowledgments before
+// normal automation resumes; scheduling, cleanup and certificate jobs stay paused.
+func (s *Server) runRecoveryCheckpoints(ctx context.Context) error {
+	if !s.recoveryCheckpoints || s.ingress == nil {
+		return s.delivery.ServeLive(ctx)
+	}
+	checkpointCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errors := make(chan error, 2)
+	go func() { errors <- s.delivery.ServeLive(checkpointCtx) }()
+	go func() { errors <- s.ingress.Run(checkpointCtx) }()
+	select {
+	case <-ctx.Done():
+		return nil
+	case err := <-errors:
+		return err
+	}
+}
+
 // Inventory is persisted outside the restored SQL database. Authenticated agent
 // identity has already been checked by Sync before this function runs.
 func (s *agentService) collectRecoveryInventory(stream agentv1.AgentControl_SyncServer, hello *agentv1.AgentHello) error {

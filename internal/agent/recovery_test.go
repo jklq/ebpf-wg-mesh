@@ -2,11 +2,17 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/recovery"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -143,5 +149,49 @@ func TestRecoveryCheckpointOnFreshAgent(t *testing.T) {
 	summary, _ := store.summary()
 	if summary.Initialization != initializationReady {
 		t.Fatal("fresh agent did not become ready after checkpoint")
+	}
+}
+
+func TestRecoveryPreservesHostProvisionedTLSAndDiscardsInterruptedOldCache(t *testing.T) {
+	store := openTestLocalState(t)
+	if _, err := store.admitAuthority(reconciliation.Authority{InstallationID: "installation", Generation: "before", ClusterID: "old"}); err != nil {
+		t.Fatal(err)
+	}
+	material, err := identity.IssueClientCertificate(context.Background(), signkeystest.New(t), identity.CallerAgent, "node-1", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster, err := activeCAIdentity(material.CAPEM)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "authority.json")
+	authority := reconciliation.Authority{InstallationID: "installation", Generation: "recovery", ClusterID: cluster, Paused: true}
+	encoded, _ := json.Marshal(authority)
+	if err := os.WriteFile(file, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{stateStore: store, cfg: config.AgentConfig{AuthorityFile: file, Runtime: config.RuntimeConfig{DataDir: t.TempDir()}}}
+	if err := app.persistClientTLSMaterial(material.KeyPEM, material.CertPEM, material.CAPEM); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(app.clientTLSDir(), "generation")
+	if err := os.WriteFile(marker, []byte(authority.Generation), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.admitRecoveryAuthority(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.ensureClientTLSMaterial(context.Background()); err != nil {
+		t.Fatal("host-provisioned recovery credentials were deleted before paused startup", err)
+	}
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.admitRecoveryAuthority(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(app.clientTLSDir(), agentCertFileName)); !os.IsNotExist(err) {
+		t.Fatal("interrupted prior-generation cache survived admission", err)
 	}
 }

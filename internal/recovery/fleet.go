@@ -49,11 +49,12 @@ type FleetResource struct {
 // Observed includes the latest external inventory, not just hosts in SQL.
 // Unreachable hosts carry their last externally recorded reservations.
 type FleetInput struct {
-	DesiredResources []FleetResource `json:"desiredResources"`
-	CapturedAt       time.Time       `json:"capturedAt"`
-	Desired          []FleetHost     `json:"desired"`
-	Observed         []FleetHost     `json:"observed"`
-	Resources        []FleetResource `json:"resources"`
+	DesiredNetworks  []NetworkReservation `json:"desiredNetworks"`
+	DesiredResources []FleetResource      `json:"desiredResources"`
+	CapturedAt       time.Time            `json:"capturedAt"`
+	Desired          []FleetHost          `json:"desired"`
+	Observed         []FleetHost          `json:"observed"`
+	Resources        []FleetResource      `json:"resources"`
 }
 
 type FleetDifference struct {
@@ -93,6 +94,7 @@ func CompareFleet(input FleetInput, installation, generation, release string, cu
 	}
 	desired, observed := map[string]FleetHost{}, map[string]FleetHost{}
 	allocationOwner := map[string]string{}
+	addressOwner := map[string]struct{ host, allocation string }{}
 	for _, h := range input.Desired {
 		if h.ID == "" || desired[h.ID].ID != "" {
 			return r, fmt.Errorf("duplicate or empty desired host")
@@ -132,6 +134,11 @@ func CompareFleet(input FleetInput, installation, generation, release string, cu
 				if err != nil {
 					return fmt.Errorf("allocation %s has invalid address", a.ID)
 				}
+				if previous, exists := addressOwner[address.String()]; exists && (previous.host != h.ID || previous.allocation != a.ID) {
+					add("network-conflict", h.ID, address.String(), "resolve address already held by "+previous.host+"/"+previous.allocation)
+					r.Blocked = true
+				}
+				addressOwner[address.String()] = struct{ host, allocation string }{h.ID, a.ID}
 				r.Reservations = append(r.Reservations, NetworkReservation{Owner: h.ID, Prefix: netip.PrefixFrom(address, address.BitLen()).String()})
 			}
 		}
@@ -141,6 +148,12 @@ func CompareFleet(input FleetInput, installation, generation, release string, cu
 		if err := reserve(h); err != nil {
 			return r, err
 		}
+	}
+	for _, reservation := range input.DesiredNetworks {
+		if reservation.Identity == 0 || reservation.EnvironmentID == "" || reservation.Prefix != "" {
+			return r, fmt.Errorf("desired environment network identity is invalid")
+		}
+		r.Reservations = append(r.Reservations, reservation)
 	}
 	seenAllocations := map[string]string{}
 	for _, h := range input.Observed {
@@ -153,6 +166,9 @@ func CompareFleet(input FleetInput, installation, generation, release string, cu
 		}
 		if !h.Reachable {
 			add("unreachable-host", h.ID, "", "keep isolated and protect ranges until inventory or verified decommission")
+			if !h.AuthorityResolved || h.Generation != generation {
+				add("unresolved-authority", h.ID, "", "keep isolated until host administration and inventory resolve authority")
+			}
 			if !h.Isolated && !h.Decommissioned || !h.Decommissioned && len(h.Reservations) == 0 {
 				r.Blocked = true
 			}
@@ -241,19 +257,17 @@ func CompareFleet(input FleetInput, installation, generation, release string, cu
 	}
 	for i, a := range r.Reservations {
 		for _, b := range r.Reservations[:i] {
-			conflict := a.Identity != 0 && a.Identity == b.Identity && a.EnvironmentID != b.EnvironmentID
+			if a.Identity != 0 && a.Identity == b.Identity && a.EnvironmentID != b.EnvironmentID {
+				add("network-conflict", a.Owner, fmt.Sprintf("network-identity/%d", a.Identity), "resolve environment identity conflict with "+b.EnvironmentID)
+				r.Blocked = true
+			}
 			if a.Owner != b.Owner && a.Prefix != "" && b.Prefix != "" {
 				pa, _ := netip.ParsePrefix(a.Prefix)
 				pb, _ := netip.ParsePrefix(b.Prefix)
-				conflict = conflict || pa.Overlaps(pb)
-			}
-			if conflict {
-				resource := a.Prefix
-				if a.Identity != 0 && a.Identity == b.Identity && a.EnvironmentID != b.EnvironmentID {
-					resource = fmt.Sprintf("network-identity/%d", a.Identity)
+				if pa.Overlaps(pb) {
+					add("network-conflict", a.Owner, a.Prefix, "resolve address range conflict with "+b.Owner)
+					r.Blocked = true
 				}
-				add("network-conflict", a.Owner, resource, "resolve conflict with "+b.Owner+" before allocation resumes")
-				r.Blocked = true
 			}
 		}
 	}
