@@ -65,6 +65,27 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 		}
 	}
 	for _, op := range p.Operations {
+		if op.Hook == "resume" {
+			// A completed verification is historical evidence. Re-observe at the
+			// activation boundary, including after an interrupted resume attempt.
+			var verification Operation
+			for _, candidate := range p.Operations {
+				if candidate.Hook == "production-verify" {
+					verification = candidate
+				}
+			}
+			done, _, verifyErr := e.Driver.Observe(ctx, p, state, verification)
+			if verifyErr != nil || !done {
+				for _, candidate := range p.Operations {
+					if candidate.Hook == "quiesce" {
+						if _, err := e.Driver.Execute(ctx, p, state, candidate); err != nil {
+							return fmt.Errorf("verification failed and quiesce failed: %w", err)
+						}
+					}
+				}
+				return fmt.Errorf("production verification is unresolved; automation remains paused: %v", verifyErr)
+			}
+		}
 		if op.Hook == "recovery-approve" {
 			if err := e.recoveryApproval(ctx, p, &state, op); err != nil {
 				return err
@@ -81,7 +102,7 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 		}
 
 		if _, ok := state.Progress.Completed[op.ID]; ok {
-			critical := op.Kind == "hook" && contains([]string{"recovery-protect", "backup", "backup-schedule", "recovery-verify", "recovery-fence"}, op.Hook)
+			critical := op.Kind == "hook" && contains([]string{"production-verify", "recovery-protect", "backup", "backup-schedule", "recovery-verify", "recovery-fence"}, op.Hook)
 			if !critical && !contains([]string{"install", "database-join", "stage", "configure", "stage-tools"}, op.Kind) {
 				continue
 			}

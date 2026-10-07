@@ -199,6 +199,49 @@ func TestReliableHomePCCanHostCore(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildPlanPublicConsoleRequiresUsableDependencies(t *testing.T) {
+	i, r, inv := fixture(5)
+	for _, role := range []Role{Database, ControlPlane, Registry, Envoy} {
+		c := i.Components[role]
+		c.Hosts = []string{"a", "b", "c"}
+		i.Components[role] = c
+	}
+	c := i.Components[Console]
+	c.Hosts = []string{"a", "b", "d", "e"}
+	c.Replicas = 4
+	i.Components[Console] = c
+	for n := range i.Endpoints {
+		if i.Endpoints[n].Role == Console {
+			i.Endpoints[n].Hosts = []string{"d", "e"}
+		}
+	}
+	connected := build(t, i, r, State{}, inv, false)
+	requireComplete(t, connected)
+	if !connected.Availability.OneHostFailure {
+		t.Fatal(connected.Availability)
+	}
+	for _, public := range []int{3, 4} {
+		for core := 0; core < 3; core++ {
+			delete(i.Hosts[public].Network.Peers, i.Hosts[core].ID)
+			delete(i.Hosts[core].Network.Peers, i.Hosts[public].ID)
+		}
+	}
+	p := build(t, i, r, State{}, inv, false)
+	requireComplete(t, p)
+	if p.Availability.OneHostFailure {
+		t.Fatal("publicly reachable consoles without usable dependencies counted as available")
+	}
+	for _, failure := range p.Availability.Failures {
+		found := false
+		for _, unmet := range failure.Unmet {
+			found = found || (unmet.Code == "public-path" && unmet.Subject == "console")
+		}
+		if !found {
+			t.Fatalf("missing unusable public console path for %s: %+v", failure.Host, failure)
+		}
+	}
+}
 func TestDeterminismPreservationAndReservations(t *testing.T) {
 	i, r, inv := fixture(3)
 	p := build(t, i, r, State{}, inv, false)

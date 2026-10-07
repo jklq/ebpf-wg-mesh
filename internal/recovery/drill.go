@@ -225,13 +225,17 @@ func RunIsolated(ctx context.Context, inputPath string) error {
 	if !loopback(ready.Registry) {
 		return fmt.Errorf("isolated registry must use a literal loopback address")
 	}
+	workspace, err := filepath.EvalSymlinks(input.Workspace)
+	if err != nil {
+		return fmt.Errorf("resolve recovery workspace: %w", err)
+	}
 	inside := func(file string) bool {
 		resolved, err := filepath.EvalSymlinks(file)
 		if err != nil {
 			return false
 		}
-		rel, err := filepath.Rel(input.Workspace, resolved)
-		return err == nil && !strings.HasPrefix(rel, "..") && !filepath.IsAbs(rel)
+		rel, err := filepath.Rel(workspace, resolved)
+		return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel)
 	}
 	if !inside(ready.KeyringFile) || !inside(ready.AuthFile) {
 		return fmt.Errorf("isolated recovery credentials must reside in its workspace")
@@ -308,6 +312,10 @@ func RunIsolated(ctx context.Context, inputPath string) error {
 }
 
 func checkRestoredSources(p Point, directory, workspace string) error {
+	workspace, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		return fmt.Errorf("resolve recovery workspace: %w", err)
+	}
 	for _, d := range p.Dependencies {
 		if d.Kind != "source" {
 			continue
@@ -321,7 +329,7 @@ func checkRestoredSources(p Point, directory, workspace string) error {
 			return fmt.Errorf("restored source archive %s is unavailable: %w", d.ID, err)
 		}
 		rel, err := filepath.Rel(workspace, path)
-		if directory == "" || err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		if directory == "" || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 			return fmt.Errorf("restored source archive is outside the isolated workspace")
 		}
 		digest, size, err := FileDigest(path)

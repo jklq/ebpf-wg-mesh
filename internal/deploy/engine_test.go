@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -347,6 +348,52 @@ func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
 	r.Conversions = nil
 	if _, err := BuildPlan(i, r, state, inv, false, testNow); err == nil {
 		t.Fatal("unimplemented conversion accepted")
+	}
+}
+
+func TestFailedUpgradeVerificationAndInterruptedResumeRemainPaused(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(fmt.Sprint(interrupted), func(t *testing.T) {
+			i, r, inv := fixture(3)
+			state := applied(build(t, i, r, State{}, inv, false))
+			r.ID = "r43"
+			i.Release = r.ID
+			p := build(t, i, r, state, inv, false)
+			store, _, _ := testStore(t)
+			if err := store.Write(state); err != nil {
+				t.Fatal(err)
+			}
+			d := fake(inv)
+			e := Engine{Store: store, Driver: d}
+			if interrupted {
+				d.failHook = "resume"
+			} else {
+				d.failHook = "production-verify"
+			}
+			if err := e.Apply(context.Background(), p); err == nil {
+				t.Fatal("failure ignored")
+			}
+			for _, op := range p.Operations {
+				if op.Hook == "resume" && !interrupted && d.count[op.ID] != 0 {
+					t.Fatal("resumed failed upgrade")
+				}
+				if op.Hook == "production-verify" {
+					delete(d.done, op.ID)
+				}
+			}
+			d.failHook = "production-verify"
+			if err := e.Apply(context.Background(), p); err == nil {
+				t.Fatal("failed retry resumed")
+			}
+			partial, _ := store.Read()
+			if partial.Progress == nil || partial.LastBackup.Backup == "" || partial.Bundle.ID != "r42" {
+				t.Fatal("recovery options lost")
+			}
+			d.failHook = ""
+			if err := e.Apply(context.Background(), p); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
