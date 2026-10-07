@@ -11,12 +11,15 @@ import (
 	"path/filepath"
 	"time"
 
+	"ebof-wg-mesh/internal/recovery"
 	"golang.org/x/sys/unix"
 )
 
 type Evidence struct {
-	Backup         string    `json:"backup,omitempty"`
-	DataLossCutoff time.Time `json:"dataLossCutoff,omitempty"`
+	Point          *recovery.Point  `json:"point,omitempty"`
+	Object         *recovery.Object `json:"object,omitempty"`
+	Backup         string           `json:"backup,omitempty"`
+	DataLossCutoff time.Time        `json:"dataLossCutoff,omitempty"`
 }
 type Progress struct {
 	Plan      *Plan               `json:"plan"`

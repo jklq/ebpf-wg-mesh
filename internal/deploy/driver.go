@@ -8,11 +8,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/recovery"
 )
 
 type SSHDriver struct {
-	Remote  Remote
-	Adapter func(Installation, Host) (Adapter, error)
+	Remote            Remote
+	Adapter           func(Installation, Host) (Adapter, error)
+	RecoveryConfig    string
+	recoverySelection string
+	recoveryPoint     recovery.Point
+	recoveryService   recovery.Service
 }
 
 func NewSSHDriver() *SSHDriver { return &SSHDriver{Remote: SSHRemote{}, Adapter: NewAdapter} }
@@ -202,7 +208,7 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 			return false, Evidence{}, nil
 		}
 		evidence := Evidence{}
-		if op.Hook == "backup" {
+		if op.Hook == "backup" || op.Hook == "recovery-verify" {
 			if err := json.Unmarshal(out, &evidence); err != nil {
 				return false, evidence, fmt.Errorf("backup verification must return Evidence JSON")
 			}
@@ -308,7 +314,12 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 		return Binding{}, fmt.Errorf("host %s not discovered", op.Host)
 	}
 	if op.Kind == "stage-tools" {
-		script, err := toolsScript(toolPlan(p, state, op), h)
+		var script string
+		if restorationPlan(p) {
+			script, err = d.stageRecovered(ctx, toolPlan(p, state, op), state, h, nil)
+		} else {
+			script, err = toolsScript(toolPlan(p, state, op), h)
+		}
 		if err != nil {
 			return Binding{}, err
 		}
@@ -322,7 +333,11 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 	var script string
 	switch op.Kind {
 	case "stage":
-		script, err = stageScript(p, pl)
+		if restorationPlan(p) {
+			script, err = d.stageRecovered(ctx, p, state, h, &pl)
+		} else {
+			script, err = stageScript(p, pl)
+		}
 		if err != nil {
 			return Binding{}, err
 		}

@@ -127,6 +127,16 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			return nil, err
 		}
 	}
+	var protectImage func(context.Context, string) error
+	if cfg.Profile.IsProduction() {
+		protectArchive, imageGuard, err := recoveryGuards(cfg.RecoveryConfig, archiveStore)
+		if err != nil {
+			store.Close()
+			return nil, err
+		}
+		archiveStore = protectedArchives{ArchiveStore: archiveStore, protect: protectArchive}
+		protectImage = imageGuard
+	}
 	initializationCtx, releaseInitialization, err := leases.hold(ctx, "control-plane-initialization")
 	if err != nil {
 		_ = store.Close()
@@ -240,7 +250,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	delivery := newDeliveryWithScheduler(store, &scheduler, notifier, ingress, platformEvents, logEmitter)
 	delivery.SetImageResolver(registry.NewHTTPResolver(nil, cfg.DirectImages.AllowedPrivateRegistryHosts))
 	if registryAuth != nil {
-		delivery.SetImageDeleter(registry.NewDeleter(cfg.Registry, registryAuth))
+		deleter := registry.NewDeleter(cfg.Registry, registryAuth)
+		deleter.SetRecoveryProtection(protectImage)
+		delivery.SetImageDeleter(deleter)
 	}
 	var githubClient *source.GitHubClient
 	var githubCatalog *source.GitHubCatalog

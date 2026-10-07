@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -61,6 +62,10 @@ func TestDeleteImageUsesCollectorOnlyCapabilityAndRetries(t *testing.T) {
 	}
 	if calls != 3 {
 		t.Fatalf("delete requests = %d", calls)
+	}
+	d.SetRecoveryProtection(func(context.Context, string) error { return errors.New("protected copy unavailable") })
+	if err := d.DeleteImage(ctx, ref); err == nil || calls != 3 {
+		t.Fatal("active deletion bypassed recovery protection", err, calls)
 	}
 	if _, _, err := auth.MintCredential(ctx, "builder", "mesh/p/e/b/s", []string{"delete"}, nil); err == nil {
 		t.Fatal("ordinary capabilities must not grant delete")

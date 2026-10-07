@@ -123,10 +123,13 @@ type Endpoint struct {
 	Gateways []string `json:"gateways,omitempty" yaml:"gateways,omitempty"`
 }
 type Backup struct {
-	Target      string   `json:"target" yaml:"target"`
-	Credentials []string `json:"credentials" yaml:"credentials"`
-	MaxAgeHours int      `json:"maxAgeHours" yaml:"maxAgeHours"`
-	Includes    []string `json:"includes" yaml:"includes"`
+	Target         string   `json:"target" yaml:"target"`
+	Credentials    []string `json:"credentials" yaml:"credentials"`
+	Account        string   `json:"account" yaml:"account"`
+	PrimaryAccount string   `json:"primaryAccount" yaml:"primaryAccount"`
+	FailureDomain  string   `json:"failureDomain" yaml:"failureDomain"`
+	RecoveryKey    string   `json:"recoveryKey" yaml:"recoveryKey"`
+	Monitor        string   `json:"monitor" yaml:"monitor"`
 }
 type Recovery struct {
 	Hosts       []Host   `json:"hosts" yaml:"hosts"`

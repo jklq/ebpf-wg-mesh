@@ -61,7 +61,7 @@ func TestRecoveryAfterPermanentHostLossRecordsCutoffAndResumes(t *testing.T) {
 	driver := fake(inv)
 	driver.failHook = "restore"
 	var output bytes.Buffer
-	err := Run(context.Background(), []string{"restore", "--installation", manifest, "--bundle", bundle, "--key-file", keyFile, "--state", statePath, "--backup", "s3://backup/verified", "--data-loss-cutoff", cutoff.Format(time.RFC3339)}, &output, driver)
+	err := Run(context.Background(), []string{"restore", "--installation", manifest, "--bundle", bundle, "--key-file", keyFile, "--state", statePath, "--backup", "s3://backups/production/points/production/complete?versionId=protected", "--data-loss-cutoff", cutoff.Format(time.RFC3339)}, &output, driver)
 	if err == nil || !strings.Contains(output.String(), cutoff.Format(time.RFC3339)) {
 		t.Fatal("restoration interruption/cutoff was not reported", err, output.String())
 	}

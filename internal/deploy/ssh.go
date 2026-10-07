@@ -6,7 +6,9 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,10 +16,11 @@ import (
 
 type Remote interface {
 	Run(context.Context, Installation, Host, string) ([]byte, error)
+	Upload(context.Context, Installation, Host, string, string, string) error
 }
 type SSHRemote struct{}
 
-func (SSHRemote) Run(ctx context.Context, i Installation, h Host, script string) ([]byte, error) {
+func sshCommand(ctx context.Context, i Installation, h Host, command string) (*exec.Cmd, error) {
 	if _, err := i.Resolve(h.SSH.Key); err != nil {
 		return nil, err
 	}
@@ -27,12 +30,17 @@ func (SSHRemote) Run(ctx context.Context, i Installation, h Host, script string)
 		address, port = host, p
 	}
 	args := []string{"-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=" + h.SSH.KnownHosts, "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", "-i", i.Secrets[h.SSH.Key].File, "-p", port, "--", h.SSH.User + "@" + address}
-	if h.SSH.User == "root" {
-		args = append(args, "sh -s")
-	} else {
-		args = append(args, "sudo -n sh -s")
+	if h.SSH.User != "root" {
+		command = "sudo -n " + command
 	}
-	cmd := exec.CommandContext(ctx, "ssh", args...)
+	return exec.CommandContext(ctx, "ssh", append(args, command)...), nil
+}
+
+func (SSHRemote) Run(ctx context.Context, i Installation, h Host, script string) ([]byte, error) {
+	cmd, err := sshCommand(ctx, i, h, "sh -s")
+	if err != nil {
+		return nil, err
+	}
 	cmd.Stdin = strings.NewReader("set -eu\numask 077\n" + script)
 	var stdout limitedBuffer
 	cmd.Stdout = &stdout
@@ -42,6 +50,27 @@ func (SSHRemote) Run(ctx context.Context, i Installation, h Host, script string)
 		return nil, fmt.Errorf("SSH host %s: %w", h.ID, err)
 	}
 	return stdout.Bytes(), nil
+}
+
+// Upload streams a protected executable through SSH, checks its release digest
+// on the destination, and atomically installs it without a download service.
+func (SSHRemote) Upload(ctx context.Context, i Installation, h Host, local, target, digest string) error {
+	input, err := os.Open(local)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	next := target + ".next"
+	script := "set -eu\numask 077\nmkdir -p " + quote(filepath.Dir(target)) + "\ntrap " + quote("rm -f "+quote(next)) + " EXIT\ncat > " + quote(next) + "\nprintf %s " + quote(digest+"  "+next+"\n") + " | sha256sum -c - >/dev/null\nchmod 0755 " + quote(next) + "\nmv -f " + quote(next) + " " + quote(target) + "\n"
+	cmd, err := sshCommand(ctx, i, h, "sh -c "+quote(script))
+	if err != nil {
+		return err
+	}
+	cmd.Stdin = input
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("SSH protected artifact upload to host %s failed: %w", h.ID, err)
+	}
+	return nil
 }
 
 type limitedBuffer struct{ bytes.Buffer }

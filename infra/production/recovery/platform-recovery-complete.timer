@@ -1,0 +1,11 @@
+[Unit]
+Description=Complete native platform backups independently of workload scheduling
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=60s
+AccuracySec=1s
+Unit=platform-recovery-complete.service
+
+[Install]
+WantedBy=timers.target

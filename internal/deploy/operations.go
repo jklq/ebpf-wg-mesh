@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"fmt"
-	"time"
 )
 
 func (p *Plan) buildOperations(state State, inv Inventory) error {
@@ -56,6 +55,7 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		}
 		add("stage-tools", managementHost, "previous", nil)
 	}
+	add("hook", managementHost, "recovery-protect", nil)
 	if state.Bundle != nil {
 		// Existing workloads must yield their reservations before additional
 		// platform processes consume that capacity, including database joins.
@@ -96,6 +96,7 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		add("hook", managementHost, "database-init", nil)
 		add("hook", managementHost, "platform-bootstrap", nil)
 	}
+	add("hook", managementHost, "backup-schedule", nil)
 	// Credential distribution/renewal runs independently of platform login.
 	add("hook", managementHost, "credentials", nil)
 	if state.Bundle == nil {
@@ -145,13 +146,14 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		add("hook", managementHost, "resume", nil)
 	}
 	add("hook", managementHost, "production-verify", nil)
+	add("hook", managementHost, "recovery-finalize", nil)
 	for _, id := range p.Installation.RetireHosts {
 		if p.Automatic {
 			continue
 		}
 		add("delete", id, "", nil)
 	}
-	if !upgrade && (state.LastBackup.DataLossCutoff.IsZero() || p.CreatedAt.Sub(state.LastBackup.DataLossCutoff) >= time.Duration(p.Installation.Backup.MaxAgeHours)*time.Hour) {
+	if !upgrade && state.Bundle == nil {
 		add("hook", managementHost, "backup", nil)
 	}
 	return nil

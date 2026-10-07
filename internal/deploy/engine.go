@@ -3,7 +3,11 @@ package deploy
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/recovery"
 )
 
 type Driver interface {
@@ -33,6 +37,15 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 	if state.Progress != nil && state.Progress.PlanID != p.ID {
 		return fmt.Errorf("operation %s is interrupted; resume its original plan before applying another", state.Progress.PlanID)
 	}
+	if restorationPlan(p) {
+		if verifier, ok := e.Driver.(interface {
+			VerifyRecovery(context.Context, Plan, State) error
+		}); ok {
+			if err := verifier.VerifyRecovery(ctx, p, state); err != nil {
+				return err
+			}
+		}
+	}
 	if state.Progress == nil {
 		if state.Revision != p.StateRevision || Digest(state) != p.StateDigest {
 			return fmt.Errorf("materially stale plan: deployment state changed")
@@ -54,19 +67,24 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+
 		if _, ok := state.Progress.Completed[op.ID]; ok {
-			if !contains([]string{"install", "database-join", "stage", "configure", "stage-tools"}, op.Kind) {
+			critical := op.Kind == "hook" && contains([]string{"recovery-protect", "backup", "backup-schedule", "recovery-verify"}, op.Hook)
+			if !critical && !contains([]string{"install", "database-join", "stage", "configure", "stage-tools"}, op.Kind) {
 				continue
 			}
-			done, _, err := e.Driver.Observe(ctx, p, state, op)
-			if err != nil {
-				return err
-			}
-			if done {
-				continue
+			if !critical {
+				done, _, err := e.Driver.Observe(ctx, p, state, op)
+				if err != nil {
+					return err
+				}
+				if done {
+					continue
+				}
 			}
 			delete(state.Progress.Completed, op.ID)
 		}
+
 		done, evidence, err := e.Driver.Observe(ctx, p, state, op)
 		if err != nil {
 			return fmt.Errorf("observe %s/%s: %w", op.Kind, op.ID, err)
@@ -109,15 +127,30 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			}
 			state.Bindings[op.Host] = Binding{Provider: h.Binding.Provider, ServerID: id}
 		}
+
 		if op.Hook == "backup" {
-			if evidence.Backup == "" || evidence.DataLossCutoff.IsZero() {
-				return fmt.Errorf("complete backup must report its location and data-loss cutoff")
+			if err := validateRecoveryEvidence(evidence, p.Installation.ID, p.Installation.Backup.Target, time.Now()); err != nil {
+				return err
 			}
-			if time.Since(evidence.DataLossCutoff) > time.Duration(p.Installation.Backup.MaxAgeHours)*time.Hour {
-				return fmt.Errorf("verified backup is older than the applied backup policy")
+			if time.Since(evidence.DataLossCutoff) > recovery.Objective {
+				return fmt.Errorf("latest complete recovery point exceeds the 15-minute objective")
 			}
 			state.LastBackup = evidence
 		}
+
+		if op.Hook == "recovery-verify" {
+			if err := validateRecoveryEvidence(evidence, p.Installation.ID, p.Installation.Backup.Target, time.Now()); err != nil {
+				return err
+			}
+			if state.LastRestore == nil || !evidence.DataLossCutoff.Equal(state.LastRestore.DataLossCutoff) || evidence.Backup != state.LastRestore.Backup {
+				return fmt.Errorf("selected restore cutoff or protected recovery point differs from verified evidence")
+			}
+			if evidence.Point.Snapshot.Schema != p.Release.Schema || evidence.Point.Snapshot.ConsoleSchema != p.Release.ConsoleSchema {
+				return fmt.Errorf("selected recovery point requires its corresponding platform and console release schemas")
+			}
+			state.LastRestore = &evidence
+		}
+
 		if op.Kind == "retain" && op.Placement != nil {
 			found := false
 			for _, pl := range state.Retained {
@@ -161,4 +194,19 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 	state.Progress = nil
 	state.Revision++
 	return e.Store.Write(state)
+}
+
+func validateRecoveryEvidence(e Evidence, installation, target string, now time.Time) error {
+	if e.Backup == "" || e.Point == nil || e.Object == nil || e.Object.Version == "" || e.Object.Version == "null" || e.Object.Digest != e.Point.ManifestDigest() || e.Object.RetainUntil.Before(e.Point.ExpiresAt) || !e.DataLossCutoff.Equal(e.Point.Snapshot.Timestamp) || e.Point.Installation != installation {
+		return fmt.Errorf("backup verification requires a complete version-pinned recovery point at its reported cutoff")
+	}
+	u, err := url.Parse(e.Backup)
+	destination, parseErr := url.Parse(target)
+	if err != nil || parseErr != nil || u.Scheme != "s3" || u.Host != destination.Host || u.User != nil || u.Fragment != "" || len(u.Query()) != 1 || len(u.Query()["versionId"]) != 1 || u.Query().Get("versionId") != e.Object.Version || strings.TrimPrefix(u.Path, "/") != e.Object.Key || !strings.HasPrefix(e.Object.Key, strings.Trim(destination.Path, "/")+"/points/"+installation+"/") {
+		return fmt.Errorf("backup URL must pin the verified catalog object in the declared independent recovery storage")
+	}
+	if err := e.Point.Validate(now); err != nil {
+		return err
+	}
+	return e.Point.ValidateDependencies()
 }
