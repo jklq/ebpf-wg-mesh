@@ -40,6 +40,8 @@ message AgentHello {
   string accepted_credentials_version = 22;
   string accepted_replicas_version = 23;
   string accepted_observation_overlay_version = 24;
+  string installation_id = 25;
+  string recovery_generation = 26;
 }
 
 message RuntimeResource {
@@ -173,6 +175,8 @@ message DesiredNodeState {
   google.protobuf.Timestamp authority_not_after = 11;
   string cluster_id = 12;
   string node_config_version = 14;
+  string installation_id = 17;
+  string recovery_generation = 18;
 }
 
 // Bounded incremental change from base_revision to target_revision.
@@ -192,6 +196,8 @@ message AllocationDiff {
   string session_id = 11;
   google.protobuf.Timestamp authority_not_after = 12;
   string cluster_id = 13;
+  string installation_id = 14;
+  string recovery_generation = 15;
 }
 
 message AllocationCredential {
@@ -210,6 +216,8 @@ message PullCredentialSet {
   string session_id = 5;
   google.protobuf.Timestamp authority_not_after = 6;
   string cluster_id = 7;
+  string installation_id = 9;
+  string recovery_generation = 10;
 }
 
 // Independently versioned node config (peers, identities, subnets).
@@ -222,6 +230,8 @@ message NodeConfigUpdate {
   string session_id = 5;
   google.protobuf.Timestamp authority_not_after = 6;
   string cluster_id = 7;
+  string installation_id = 9;
+  string recovery_generation = 10;
 }
 
 // Independently versioned control-plane replica discovery.
@@ -233,6 +243,8 @@ message ReplicaEndpoints {
   string session_id = 5;
   google.protobuf.Timestamp authority_not_after = 6;
   string cluster_id = 7;
+  string installation_id = 8;
+  string recovery_generation = 9;
 }
 
 enum SnapshotScope {
@@ -251,6 +263,8 @@ message DesiredStateAcknowledgement {
   string node_config_version = 5;
   string credentials_version = 6;
   string replicas_version = 7;
+  string installation_id = 8;
+  string recovery_generation = 9;
 }
 
 // VolumeCondition phases: Ready, Full, Error, Destroyed (a destroy
@@ -289,6 +303,8 @@ message StatusReport {
   uint64 authority_epoch = 6;
   int64 reconciliation_cursor = 7;
   bool recovery_mode = 8;
+  string installation_id = 10;
+  string recovery_generation = 11;
 }
 
 message LogEntry {

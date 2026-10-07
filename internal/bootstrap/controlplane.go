@@ -31,6 +31,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	fs := flag.NewFlagSet("controlplane", flag.ContinueOnError)
 	stringFlag(fs, &cfg.RecoveryConfig, "recovery-config", "PLATFORM_RECOVERY_CONFIG", "", "private independent artifact recovery configuration; production deletion fails closed without it")
 	stringFlag(fs, &consoleCallerIDs, "console-caller-ids", "CONTROLPLANE_CONSOLE_CALLER_IDS", "console", "comma-separated individual deployment-owned console mTLS identities")
+	stringFlag(fs, &cfg.AuthorityFile, "authority-file", "CONTROLPLANE_AUTHORITY_FILE", "", "private host-admin installation and recovery generation admission")
 	stringFlag(fs, &profile, "profile", "CONTROLPLANE_PROFILE", "", "development or production; empty defaults to production")
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "CONTROLPLANE_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.InternalGRPC.Listen, "internal-listen", "CONTROLPLANE_INTERNAL_LISTEN", "0.0.0.0:9443", "")

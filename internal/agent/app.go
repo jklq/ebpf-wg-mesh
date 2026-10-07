@@ -109,6 +109,9 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("open local state: %w", err)
 	}
 	a.stateStore = store
+	if err := a.admitRecoveryAuthority(); err != nil {
+		return err
+	}
 	if err := store.setReplicaSeeds(a.cfg.ControlPlane.Addresses); err != nil {
 		_ = store.Close()
 		a.stateStore = nil
@@ -267,6 +270,7 @@ func (a *App) runSession(ctx context.Context) error {
 func cumulativeAck(agentID, sessionID string, summary localStateSummary, confirmedEpoch uint64) *agentv1.DesiredStateAcknowledgement {
 	return &agentv1.DesiredStateAcknowledgement{
 		AgentId: agentID, SessionId: sessionID,
+		InstallationId: summary.InstallationID, RecoveryGeneration: summary.RecoveryGeneration,
 		AuthorityEpoch: confirmedEpoch, ReconciliationCursor: summary.ReconciliationCursor,
 		NodeConfigVersion: summary.NodeConfigVersion, CredentialsVersion: summary.CredentialsVersion, ReplicasVersion: summary.ReplicasVersion,
 	}
@@ -371,6 +375,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	defer handshakeTimer.Stop()
 	if err := send(&agentv1.AgentClientMessage{
 		Payload: &agentv1.AgentClientMessage_Hello{Hello: &agentv1.AgentHello{
+			InstallationId: summary.InstallationID, RecoveryGeneration: summary.RecoveryGeneration,
 			AgentId:                           a.cfg.Node.ID,
 			Name:                              a.cfg.Node.Name,
 			AdvertiseAddr:                     a.cfg.Node.AdvertiseAddr,

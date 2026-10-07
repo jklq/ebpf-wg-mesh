@@ -152,6 +152,8 @@ type AgentHello struct {
 	AcceptedCredentialsVersion        string              `protobuf:"bytes,22,opt,name=accepted_credentials_version,json=acceptedCredentialsVersion,proto3" json:"accepted_credentials_version,omitempty"`
 	AcceptedReplicasVersion           string              `protobuf:"bytes,23,opt,name=accepted_replicas_version,json=acceptedReplicasVersion,proto3" json:"accepted_replicas_version,omitempty"`
 	AcceptedObservationOverlayVersion string              `protobuf:"bytes,24,opt,name=accepted_observation_overlay_version,json=acceptedObservationOverlayVersion,proto3" json:"accepted_observation_overlay_version,omitempty"`
+	InstallationId                    string              `protobuf:"bytes,25,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration                string              `protobuf:"bytes,26,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
 	unknownFields                     protoimpl.UnknownFields
 	sizeCache                         protoimpl.SizeCache
 }
@@ -350,6 +352,20 @@ func (x *AgentHello) GetAcceptedReplicasVersion() string {
 func (x *AgentHello) GetAcceptedObservationOverlayVersion() string {
 	if x != nil {
 		return x.AcceptedObservationOverlayVersion
+	}
+	return ""
+}
+
+func (x *AgentHello) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *AgentHello) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
 	}
 	return ""
 }
@@ -1280,6 +1296,8 @@ type DesiredNodeState struct {
 	AuthorityNotAfter    *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
 	ClusterId            string                 `protobuf:"bytes,12,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
 	NodeConfigVersion    string                 `protobuf:"bytes,14,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
+	InstallationId       string                 `protobuf:"bytes,17,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration   string                 `protobuf:"bytes,18,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1405,26 +1423,42 @@ func (x *DesiredNodeState) GetNodeConfigVersion() string {
 	return ""
 }
 
+func (x *DesiredNodeState) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *DesiredNodeState) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return ""
+}
+
 // Bounded incremental change from base_revision to target_revision.
 // Omission is not removal; only explicit stops remove. Agent-scoped:
 // agent_id/cluster must match, and authority fields fence acceptance.
 type AllocationDiff struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	AgentId           string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	BaseRevision      int64                  `protobuf:"varint,2,opt,name=base_revision,json=baseRevision,proto3" json:"base_revision,omitempty"`
-	TargetRevision    int64                  `protobuf:"varint,3,opt,name=target_revision,json=targetRevision,proto3" json:"target_revision,omitempty"`
-	Starts            []*DesiredService      `protobuf:"bytes,4,rep,name=starts,proto3" json:"starts,omitempty"`
-	Updates           []*DesiredService      `protobuf:"bytes,5,rep,name=updates,proto3" json:"updates,omitempty"`
-	Stops             []string               `protobuf:"bytes,6,rep,name=stops,proto3" json:"stops,omitempty"`
-	VolumeStarts      []*DesiredVolume       `protobuf:"bytes,7,rep,name=volume_starts,json=volumeStarts,proto3" json:"volume_starts,omitempty"`
-	VolumeStops       []string               `protobuf:"bytes,8,rep,name=volume_stops,json=volumeStops,proto3" json:"volume_stops,omitempty"`
-	GeneratedAt       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
-	AuthorityEpoch    uint64                 `protobuf:"varint,10,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
-	SessionId         string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
-	ClusterId         string                 `protobuf:"bytes,13,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AgentId            string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	BaseRevision       int64                  `protobuf:"varint,2,opt,name=base_revision,json=baseRevision,proto3" json:"base_revision,omitempty"`
+	TargetRevision     int64                  `protobuf:"varint,3,opt,name=target_revision,json=targetRevision,proto3" json:"target_revision,omitempty"`
+	Starts             []*DesiredService      `protobuf:"bytes,4,rep,name=starts,proto3" json:"starts,omitempty"`
+	Updates            []*DesiredService      `protobuf:"bytes,5,rep,name=updates,proto3" json:"updates,omitempty"`
+	Stops              []string               `protobuf:"bytes,6,rep,name=stops,proto3" json:"stops,omitempty"`
+	VolumeStarts       []*DesiredVolume       `protobuf:"bytes,7,rep,name=volume_starts,json=volumeStarts,proto3" json:"volume_starts,omitempty"`
+	VolumeStops        []string               `protobuf:"bytes,8,rep,name=volume_stops,json=volumeStops,proto3" json:"volume_stops,omitempty"`
+	GeneratedAt        *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=generated_at,json=generatedAt,proto3" json:"generated_at,omitempty"`
+	AuthorityEpoch     uint64                 `protobuf:"varint,10,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId          string                 `protobuf:"bytes,11,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter  *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId          string                 `protobuf:"bytes,13,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	InstallationId     string                 `protobuf:"bytes,14,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration string                 `protobuf:"bytes,15,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AllocationDiff) Reset() {
@@ -1548,6 +1582,20 @@ func (x *AllocationDiff) GetClusterId() string {
 	return ""
 }
 
+func (x *AllocationDiff) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *AllocationDiff) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return ""
+}
+
 type AllocationCredential struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AllocationId  string                 `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
@@ -1619,6 +1667,8 @@ type PullCredentialSet struct {
 	SessionId          string                  `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
 	AuthorityNotAfter  *timestamppb.Timestamp  `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
 	ClusterId          string                  `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	InstallationId     string                  `protobuf:"bytes,9,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration string                  `protobuf:"bytes,10,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1702,19 +1752,35 @@ func (x *PullCredentialSet) GetClusterId() string {
 	return ""
 }
 
+func (x *PullCredentialSet) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *PullCredentialSet) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return ""
+}
+
 // Independently versioned node config (peers, identities, subnets).
 // 2.11/2.12 will split this further; 2.10 provides the versioned seam.
 type NodeConfigUpdate struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	AgentId           string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	NodeConfigVersion string                 `protobuf:"bytes,2,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
-	NodeConfig        *AssignedNodeConfig    `protobuf:"bytes,3,opt,name=node_config,json=nodeConfig,proto3" json:"node_config,omitempty"`
-	AuthorityEpoch    uint64                 `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
-	SessionId         string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
-	ClusterId         string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AgentId            string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	NodeConfigVersion  string                 `protobuf:"bytes,2,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
+	NodeConfig         *AssignedNodeConfig    `protobuf:"bytes,3,opt,name=node_config,json=nodeConfig,proto3" json:"node_config,omitempty"`
+	AuthorityEpoch     uint64                 `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId          string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter  *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId          string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	InstallationId     string                 `protobuf:"bytes,9,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration string                 `protobuf:"bytes,10,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *NodeConfigUpdate) Reset() {
@@ -1796,18 +1862,34 @@ func (x *NodeConfigUpdate) GetClusterId() string {
 	return ""
 }
 
+func (x *NodeConfigUpdate) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *NodeConfigUpdate) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return ""
+}
+
 // Independently versioned control-plane replica discovery.
 type ReplicaEndpoints struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	AgentId           string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
-	ReplicasVersion   string                 `protobuf:"bytes,2,opt,name=replicas_version,json=replicasVersion,proto3" json:"replicas_version,omitempty"`
-	ReplicaAddresses  []string               `protobuf:"bytes,3,rep,name=replica_addresses,json=replicaAddresses,proto3" json:"replica_addresses,omitempty"`
-	AuthorityEpoch    uint64                 `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
-	SessionId         string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	AuthorityNotAfter *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
-	ClusterId         string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	AgentId            string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	ReplicasVersion    string                 `protobuf:"bytes,2,opt,name=replicas_version,json=replicasVersion,proto3" json:"replicas_version,omitempty"`
+	ReplicaAddresses   []string               `protobuf:"bytes,3,rep,name=replica_addresses,json=replicaAddresses,proto3" json:"replica_addresses,omitempty"`
+	AuthorityEpoch     uint64                 `protobuf:"varint,4,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
+	SessionId          string                 `protobuf:"bytes,5,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	AuthorityNotAfter  *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=authority_not_after,json=authorityNotAfter,proto3" json:"authority_not_after,omitempty"`
+	ClusterId          string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`
+	InstallationId     string                 `protobuf:"bytes,8,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration string                 `protobuf:"bytes,9,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ReplicaEndpoints) Reset() {
@@ -1889,6 +1971,20 @@ func (x *ReplicaEndpoints) GetClusterId() string {
 	return ""
 }
 
+func (x *ReplicaEndpoints) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *ReplicaEndpoints) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return ""
+}
+
 // Sent only after the referenced state and its cursor/versions are durably
 // committed. Does not imply runtime success or release of any allocation
 // or volume. Carries the cumulative accepted position across all streams.
@@ -1901,6 +1997,8 @@ type DesiredStateAcknowledgement struct {
 	NodeConfigVersion    string                 `protobuf:"bytes,5,opt,name=node_config_version,json=nodeConfigVersion,proto3" json:"node_config_version,omitempty"`
 	CredentialsVersion   string                 `protobuf:"bytes,6,opt,name=credentials_version,json=credentialsVersion,proto3" json:"credentials_version,omitempty"`
 	ReplicasVersion      string                 `protobuf:"bytes,7,opt,name=replicas_version,json=replicasVersion,proto3" json:"replicas_version,omitempty"`
+	InstallationId       string                 `protobuf:"bytes,8,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration   string                 `protobuf:"bytes,9,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -1980,6 +2078,20 @@ func (x *DesiredStateAcknowledgement) GetCredentialsVersion() string {
 func (x *DesiredStateAcknowledgement) GetReplicasVersion() string {
 	if x != nil {
 		return x.ReplicasVersion
+	}
+	return ""
+}
+
+func (x *DesiredStateAcknowledgement) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *DesiredStateAcknowledgement) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
 	}
 	return ""
 }
@@ -2220,6 +2332,8 @@ type StatusReport struct {
 	AuthorityEpoch       uint64                 `protobuf:"varint,6,opt,name=authority_epoch,json=authorityEpoch,proto3" json:"authority_epoch,omitempty"`
 	ReconciliationCursor int64                  `protobuf:"varint,7,opt,name=reconciliation_cursor,json=reconciliationCursor,proto3" json:"reconciliation_cursor,omitempty"`
 	RecoveryMode         bool                   `protobuf:"varint,8,opt,name=recovery_mode,json=recoveryMode,proto3" json:"recovery_mode,omitempty"`
+	InstallationId       string                 `protobuf:"bytes,10,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	RecoveryGeneration   string                 `protobuf:"bytes,11,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
@@ -2308,6 +2422,20 @@ func (x *StatusReport) GetRecoveryMode() bool {
 		return x.RecoveryMode
 	}
 	return false
+}
+
+func (x *StatusReport) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *StatusReport) GetRecoveryGeneration() string {
+	if x != nil {
+		return x.RecoveryGeneration
+	}
+	return ""
 }
 
 type LogEntry struct {
@@ -2945,7 +3073,8 @@ var File_agent_proto protoreflect.FileDescriptor
 
 const file_agent_proto_rawDesc = "" +
 	"\n" +
-	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\xb3\t\n" +
+	"\vagent.proto\x12\bagent.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x0eplatform.proto\"\x8d\n" +
+	"\n" +
 	"\n" +
 	"AgentHello\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x12\n" +
@@ -2974,7 +3103,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x1caccepted_node_config_version\x18\x15 \x01(\tR\x19acceptedNodeConfigVersion\x12@\n" +
 	"\x1caccepted_credentials_version\x18\x16 \x01(\tR\x1aacceptedCredentialsVersion\x12:\n" +
 	"\x19accepted_replicas_version\x18\x17 \x01(\tR\x17acceptedReplicasVersion\x12O\n" +
-	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\"f\n" +
+	"$accepted_observation_overlay_version\x18\x18 \x01(\tR!acceptedObservationOverlayVersion\x12'\n" +
+	"\x0finstallation_id\x18\x19 \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\x1a \x01(\tR\x12recoveryGeneration\"f\n" +
 	"\x0fRuntimeResource\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1d\n" +
 	"\n" +
@@ -3055,7 +3186,7 @@ const file_agent_proto_rawDesc = "" +
 	"\fInternalHost\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x12\n" +
 	"\x04ipv6\x18\x02 \x01(\tR\x04ipv6\x12\x12\n" +
-	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xf7\x04\n" +
+	"\x04ipv4\x18\x03 \x01(\tR\x04ipv4\"\xd1\x05\n" +
 	"\x10DesiredNodeState\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\x15reconciliation_cursor\x18\x02 \x01(\x03R\x14reconciliationCursor\x121\n" +
@@ -3073,7 +3204,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x13authority_not_after\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\f \x01(\tR\tclusterId\x12.\n" +
-	"\x13node_config_version\x18\x0e \x01(\tR\x11nodeConfigVersion\"\xc8\x04\n" +
+	"\x13node_config_version\x18\x0e \x01(\tR\x11nodeConfigVersion\x12'\n" +
+	"\x0finstallation_id\x18\x11 \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\x12 \x01(\tR\x12recoveryGeneration\"\xa2\x05\n" +
 	"\x0eAllocationDiff\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12#\n" +
 	"\rbase_revision\x18\x02 \x01(\x03R\fbaseRevision\x12'\n" +
@@ -3090,11 +3223,13 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\v \x01(\tR\tsessionId\x12J\n" +
 	"\x13authority_not_after\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
-	"cluster_id\x18\r \x01(\tR\tclusterId\"s\n" +
+	"cluster_id\x18\r \x01(\tR\tclusterId\x12'\n" +
+	"\x0finstallation_id\x18\x0e \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\x0f \x01(\tR\x12recoveryGeneration\"s\n" +
 	"\x14AllocationCredential\x12#\n" +
 	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x1a\n" +
-	"\bpassword\x18\x03 \x01(\tR\bpassword\"\xd4\x02\n" +
+	"\bpassword\x18\x03 \x01(\tR\bpassword\"\xae\x03\n" +
 	"\x11PullCredentialSet\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12/\n" +
 	"\x13credentials_version\x18\x02 \x01(\tR\x12credentialsVersion\x12@\n" +
@@ -3104,7 +3239,10 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\x12J\n" +
 	"\x13authority_not_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
-	"cluster_id\x18\a \x01(\tR\tclusterId\"\xcf\x02\n" +
+	"cluster_id\x18\a \x01(\tR\tclusterId\x12'\n" +
+	"\x0finstallation_id\x18\t \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\n" +
+	" \x01(\tR\x12recoveryGeneration\"\xa9\x03\n" +
 	"\x10NodeConfigUpdate\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12.\n" +
 	"\x13node_config_version\x18\x02 \x01(\tR\x11nodeConfigVersion\x12=\n" +
@@ -3115,7 +3253,10 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\x12J\n" +
 	"\x13authority_not_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
-	"cluster_id\x18\a \x01(\tR\tclusterId\"\xb8\x02\n" +
+	"cluster_id\x18\a \x01(\tR\tclusterId\x12'\n" +
+	"\x0finstallation_id\x18\t \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\n" +
+	" \x01(\tR\x12recoveryGeneration\"\x92\x03\n" +
 	"\x10ReplicaEndpoints\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12)\n" +
 	"\x10replicas_version\x18\x02 \x01(\tR\x0freplicasVersion\x12+\n" +
@@ -3125,7 +3266,9 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x05 \x01(\tR\tsessionId\x12J\n" +
 	"\x13authority_not_after\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x11authorityNotAfter\x12\x1d\n" +
 	"\n" +
-	"cluster_id\x18\a \x01(\tR\tclusterId\"\xc1\x02\n" +
+	"cluster_id\x18\a \x01(\tR\tclusterId\x12'\n" +
+	"\x0finstallation_id\x18\b \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\t \x01(\tR\x12recoveryGeneration\"\x9b\x03\n" +
 	"\x1bDesiredStateAcknowledgement\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
 	"\n" +
@@ -3134,7 +3277,9 @@ const file_agent_proto_rawDesc = "" +
 	"\x15reconciliation_cursor\x18\x04 \x01(\x03R\x14reconciliationCursor\x12.\n" +
 	"\x13node_config_version\x18\x05 \x01(\tR\x11nodeConfigVersion\x12/\n" +
 	"\x13credentials_version\x18\x06 \x01(\tR\x12credentialsVersion\x12)\n" +
-	"\x10replicas_version\x18\a \x01(\tR\x0freplicasVersion\"\xa4\x01\n" +
+	"\x10replicas_version\x18\a \x01(\tR\x0freplicasVersion\x12'\n" +
+	"\x0finstallation_id\x18\b \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\t \x01(\tR\x12recoveryGeneration\"\xa4\x01\n" +
 	"\x0fVolumeCondition\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12\x14\n" +
 	"\x05phase\x18\x02 \x01(\tR\x05phase\x12\x18\n" +
@@ -3158,7 +3303,7 @@ const file_agent_proto_rawDesc = "" +
 	"\x12healthy_ipv4_ports\x18\v \x03(\x05R\x10healthyIpv4Ports\x129\n" +
 	"\arestart\x18\f \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\x12'\n" +
 	"\x0fallocation_ipv6\x18\r \x01(\tR\x0eallocationIpv6\x12,\n" +
-	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\xeb\x02\n" +
+	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\xc5\x03\n" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
@@ -3168,7 +3313,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x14observation_sequence\x18\x05 \x01(\x04R\x13observationSequence\x12'\n" +
 	"\x0fauthority_epoch\x18\x06 \x01(\x04R\x0eauthorityEpoch\x123\n" +
 	"\x15reconciliation_cursor\x18\a \x01(\x03R\x14reconciliationCursor\x12#\n" +
-	"\rrecovery_mode\x18\b \x01(\bR\frecoveryMode\"\xe2\x04\n" +
+	"\rrecovery_mode\x18\b \x01(\bR\frecoveryMode\x12'\n" +
+	"\x0finstallation_id\x18\n" +
+	" \x01(\tR\x0einstallationId\x12/\n" +
+	"\x13recovery_generation\x18\v \x01(\tR\x12recoveryGeneration\"\xe2\x04\n" +
 	"\bLogEntry\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12%\n" +

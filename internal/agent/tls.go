@@ -55,6 +55,19 @@ func (a *App) clientCredentials(ctx context.Context) (credentials.TransportCrede
 }
 
 func (a *App) ensureClientTLSMaterial(ctx context.Context) (*clientTLSMaterial, error) {
+	if a.stateStore != nil {
+		_, generation := a.stateStore.commandGeneration()
+		if generation != "" {
+			marker, err := os.ReadFile(filepath.Join(a.clientTLSDir(), "generation"))
+			if err != nil || string(marker) != generation {
+				for _, name := range []string{agentKeyFileName, agentCertFileName, agentCAFileName} {
+					if err := os.Remove(filepath.Join(a.clientTLSDir(), name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+						return nil, err
+					}
+				}
+			}
+		}
+	}
 	material, err := a.loadClientTLSMaterial()
 	switch {
 	case err == nil:
@@ -168,6 +181,14 @@ func (a *App) enrollClientCertificate(ctx context.Context, current *clientTLSMat
 		slog.Info("client certificate enrolled", "agent_id", a.cfg.Node.ID, "address", address)
 		if err := a.persistClientTLSMaterial(keyPEM, []byte(resp.GetCertPem()), []byte(resp.GetCaPem())); err != nil {
 			return nil, err
+		}
+		if a.stateStore != nil {
+			_, generation := a.stateStore.commandGeneration()
+			if generation != "" {
+				if err := writeFileAtomic(filepath.Join(a.clientTLSDir(), "generation"), []byte(generation), 0600); err != nil {
+					return nil, err
+				}
+			}
 		}
 		return a.loadClientTLSMaterial()
 	}
