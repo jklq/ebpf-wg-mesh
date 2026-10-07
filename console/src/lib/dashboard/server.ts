@@ -1,6 +1,6 @@
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import {
 	deleteCookie,
 	getCookie,
@@ -194,7 +194,11 @@ function readConfig(): RuntimeConfig {
 		});
 	}
 
+	const admission = readConsoleAuthority(profile);
 	const loaded = {
+		installationID: admission?.installationId,
+		recoveryGeneration: admission?.generation,
+		recoveryPaused: admission?.paused ?? false,
 		profile,
 		databaseURL,
 		databaseSchema,
@@ -325,4 +329,30 @@ function mustEnv(name: string): string {
 		});
 	}
 	return value;
+}
+
+function readConsoleAuthority(
+	profile: "development" | "production",
+): { installationId: string; generation: string; paused: boolean } | undefined {
+	const file = process.env.DASHBOARD_AUTHORITY_FILE;
+	if (!file && profile === "development") return undefined;
+	if (!file?.startsWith("/"))
+		throw new Error(
+			"production console requires an absolute host-admin authority file",
+		);
+	const info = statSync(file);
+	if (!info.isFile() || (info.mode & 0o077) !== 0)
+		throw new Error("console authority file must be private");
+	const authority = JSON.parse(readFileSync(file, "utf8"));
+	if (
+		typeof authority.installationId !== "string" ||
+		!authority.installationId ||
+		typeof authority.generation !== "string" ||
+		!authority.generation ||
+		typeof authority.paused !== "boolean"
+	)
+		throw new Error(
+			"console admission requires installation, generation and pause state",
+		);
+	return authority;
 }

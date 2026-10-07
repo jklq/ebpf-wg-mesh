@@ -45,6 +45,7 @@ const (
 )
 
 type containerdEngine struct {
+	recoveryPaused          bool
 	cfg                     config.AgentConfig
 	client                  *containerd.Client
 	imageMu                 sync.Mutex
@@ -59,6 +60,8 @@ type containerdEngine struct {
 	ephemeralDiskLimitBytes int64
 	volumes                 *volumestore.Store
 }
+
+func (e *containerdEngine) SetRecoveryPaused(paused bool) { e.recoveryPaused = paused }
 
 func newContainerdEngine(cfg config.AgentConfig, volumes *volumestore.Store) (serviceEngine, error) {
 	workloadCgroupParent, err := prepareWorkloadSandboxHost(cfg)
@@ -115,9 +118,7 @@ func (e *containerdEngine) SetLogSink(sink LogSink) {
 func (e *containerdEngine) DiscoverServices(ctx context.Context) ([]RuntimeResource, error) {
 	e.imageMu.Lock()
 	defer e.imageMu.Unlock()
-	if err := e.collectUnusedImagesLocked(e.namespaced(ctx)); err != nil {
-		return nil, err
-	}
+
 	containers, err := e.client.Containers(e.namespaced(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("list containerd resources: %w", err)
@@ -138,7 +139,17 @@ func (e *containerdEngine) DiscoverServices(ctx context.Context) ([]RuntimeResou
 		if container.ID() != containerName(allocationID) {
 			return nil, fmt.Errorf("managed runtime resource %s does not match stable allocation identity %s", container.ID(), allocationID)
 		}
-		resources = append(resources, RuntimeResource{AllocationID: allocationID, RuntimeID: container.ID()})
+		network, err := e.cfg.Containerd.LabelKeys().Decode(info.Labels)
+		if err != nil {
+			return nil, fmt.Errorf("inspect recovered network identity: %w", err)
+		}
+		specRevision, _ := strconv.ParseInt(info.Labels[meshlabels.DesiredSpecRevision], 10, 64)
+		rolloutGeneration, _ := strconv.ParseInt(info.Labels[meshlabels.DesiredRolloutGeneration], 10, 64)
+		created, err := time.Parse(time.RFC3339Nano, info.Labels[meshlabels.AllocationCreatedAt])
+		if err != nil {
+			created = info.CreatedAt
+		}
+		resources = append(resources, RuntimeResource{AllocationID: allocationID, RuntimeID: container.ID(), ServiceID: info.Labels[meshlabels.ServiceID], EnvironmentID: info.Labels[meshlabels.EnvironmentID], DeploymentID: info.Labels[meshlabels.DeploymentID], SpecRevision: specRevision, RolloutGeneration: rolloutGeneration, IPv4: network.IPv4.String(), IPv6: network.IPv6.String(), NetworkIdentity: network.NetworkIdentity, CreatedAt: created})
 	}
 	sort.Slice(resources, func(i, j int) bool { return resources[i].AllocationID < resources[j].AllocationID })
 	return resources, nil

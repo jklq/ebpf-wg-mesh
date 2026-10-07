@@ -253,9 +253,6 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	if hello.GetInstallationId() != s.recoveryAuthority.InstallationID || hello.GetRecoveryGeneration() != s.recoveryAuthority.Generation {
 		return status.Error(codes.FailedPrecondition, "agent generation differs from host-admin admission")
 	}
-	if s.recoveryAuthority.Paused && !s.recoveryAuthority.Checkpoints {
-		return s.collectRecoveryInventory(stream, hello)
-	}
 	epoch, err := s.store.agentAuthorityEpoch(ctx)
 	if err != nil {
 		return status.Errorf(codes.Internal, "read agent authority: %v", err)
@@ -267,6 +264,9 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	}
 	if !trustedCluster {
 		return status.Error(codes.FailedPrecondition, "identity recovery required: cluster differs from authenticated authority")
+	}
+	if s.recoveryAuthority.Paused && !s.recoveryAuthority.Checkpoints {
+		return s.collectRecoveryInventory(stream, hello)
 	}
 	switch hello.GetInitializationState() {
 	case "uninitialized", "ready", "recovery":

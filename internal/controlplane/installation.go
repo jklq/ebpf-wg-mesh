@@ -37,7 +37,7 @@ func BootstrapInstallation(ctx context.Context, db *sql.DB, keyring string) erro
 	return err
 }
 
-// ConvertInstallationSchema is a direct v41 -> v42 conversion preserving all
+// ConvertInstallationSchema is a direct v41/v42 -> v43 conversion preserving all
 // application tables. It is never called by startup. The controller has already
 // quiesced, backed up and stopped every old component before invoking it.
 type Conversion struct {
@@ -49,8 +49,8 @@ type Conversion struct {
 }
 
 func ConvertInstallationSchema(ctx context.Context, db *sql.DB, conversion Conversion) error {
-	if conversion.FromSchema != 41 || conversion.Backup == "" || conversion.DataLossCutoff.IsZero() || !regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(conversion.ConsoleSchema) {
-		return fmt.Errorf("conversion requires source schema 41 and a complete backup with data-loss cutoff")
+	if (conversion.FromSchema != 41 && conversion.FromSchema != 42) || conversion.Backup == "" || conversion.DataLossCutoff.IsZero() || !regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(conversion.ConsoleSchema) {
+		return fmt.Errorf("conversion requires source schema 41 or 42 and a complete backup with data-loss cutoff")
 	}
 	serials := make([]string, len(conversion.RevokedSerials))
 	for n, value := range conversion.RevokedSerials {
@@ -77,8 +77,15 @@ func ConvertInstallationSchema(ctx context.Context, db *sql.DB, conversion Conve
 			return errors.New("old release still owns live leases; stop all replicas and wait for their leases to expire")
 		}
 		if version != currentSchemaVersion {
-			if _, err := tx.ExecContext(ctx, `CREATE TABLE certificate_revocations (serial TEXT PRIMARY KEY, revoked_at TIMESTAMPTZ NOT NULL)`); err != nil {
-				return err
+			if conversion.FromSchema == 41 {
+				if _, err := tx.ExecContext(ctx, `CREATE TABLE certificate_revocations (serial TEXT PRIMARY KEY, revoked_at TIMESTAMPTZ NOT NULL)`); err != nil {
+					return err
+				}
+			}
+			for _, statement := range []string{recoveryAuthoritySchema, recoveryReservationsSchema} {
+				if _, err := tx.ExecContext(ctx, statement); err != nil {
+					return err
+				}
 			}
 		}
 		for _, serial := range serials {

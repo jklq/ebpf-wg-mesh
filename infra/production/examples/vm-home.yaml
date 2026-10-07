@@ -1,6 +1,6 @@
 version: 1
 id: production
-release: r42
+release: r43
 managementHost: a
 providers:
     gigahost:
@@ -246,6 +246,7 @@ backup:
     recoveryKey: recovery-key
     monitor: https://monitor.example.com/recovery/production
 recovery:
+    inventory: /var/lib/ebpf-wg-mesh/recovery/fleet-inventory.json
     hosts:
         - id: recovery
           binding:

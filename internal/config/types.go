@@ -368,6 +368,7 @@ type BuilderCapacityConfig struct {
 }
 
 type BuilderConfig struct {
+	AuthorityFile            string
 	HostType                 HostType
 	Capacity                 BuilderCapacityConfig
 	Profile                  Profile

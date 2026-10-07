@@ -12,11 +12,11 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/protojson"
-	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
 func runtimeAuthority(cfg config.ControlPlaneConfig) (reconciliation.Authority, error) {
@@ -82,11 +82,7 @@ func (s *agentService) collectRecoveryInventory(stream agentv1.AgentControl_Sync
 	if err := os.MkdirAll(s.recoveryInventoryDir, 0700); err != nil {
 		return err
 	}
-	write := func(suffix string, message interface{ ProtoReflect() protoreflect.Message }) error {
-		b, err := protojson.Marshal(message)
-		if err != nil {
-			return err
-		}
+	write := func(suffix string, b []byte) error {
 		file, err := os.CreateTemp(s.recoveryInventoryDir, ".inventory-")
 		if err != nil {
 			return err
@@ -108,7 +104,21 @@ func (s *agentService) collectRecoveryInventory(stream agentv1.AgentControl_Sync
 	if strings.ContainsAny(hello.GetAgentId(), "/\\") || hello.GetAgentId() == "." || hello.GetAgentId() == ".." {
 		return status.Error(codes.InvalidArgument, "invalid inventory agent identity")
 	}
-	if err := write("", hello); err != nil {
+	var inventory recovery.FleetHost
+	if err := json.Unmarshal(hello.GetRecoveryInventory(), &inventory); err != nil {
+		return status.Error(codes.InvalidArgument, "complete nonsecret recovery inventory required")
+	}
+	if inventory.ID != hello.GetAgentId() || inventory.Generation != s.recoveryAuthority.Generation {
+		return status.Error(codes.PermissionDenied, "inventory differs from authenticated host admission")
+	}
+	if err := write("-fleet", hello.GetRecoveryInventory()); err != nil {
+		return err
+	}
+	helloJSON, err := protojson.Marshal(hello)
+	if err != nil {
+		return err
+	}
+	if err := write("", helloJSON); err != nil {
 		return err
 	}
 	for {
@@ -120,7 +130,11 @@ func (s *agentService) collectRecoveryInventory(stream agentv1.AgentControl_Sync
 			if report.GetAgentId() != hello.GetAgentId() || report.GetSessionId() != hello.GetSessionId() || report.GetInstallationId() != s.recoveryAuthority.InstallationID || report.GetRecoveryGeneration() != s.recoveryAuthority.Generation {
 				return status.Error(codes.PermissionDenied, "inventory does not match admitted authority")
 			}
-			if err := write("-status", report); err != nil {
+			data, err := protojson.Marshal(report)
+			if err != nil {
+				return err
+			}
+			if err := write("-status", data); err != nil {
 				return err
 			}
 		}

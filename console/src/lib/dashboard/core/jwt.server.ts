@@ -14,6 +14,8 @@ const DashboardJWTIssuer = "managed-dashboard";
 const DashboardJWTAudience = "managed-dashboard";
 
 export interface DashboardJWTConfig {
+	installationID?: string;
+	recoveryGeneration?: string;
 	/** Signs every new token and is tried first on verification. */
 	jwtSecret: string;
 	/** Verifies pre-rotation tokens until they expire. Never signs. */
@@ -21,6 +23,8 @@ export interface DashboardJWTConfig {
 }
 
 interface DashboardTokenPayload {
+	installation?: string;
+	generation?: string;
 	iss: string;
 	aud: string;
 	typ: "access" | "refresh";
@@ -138,6 +142,8 @@ function signToken(
 ): string {
 	const header = encodeJSON(DashboardJWTHeader);
 	const payload = encodeJSON({
+		installation: config.installationID,
+		generation: config.recoveryGeneration,
 		iss: DashboardJWTIssuer,
 		aud: DashboardJWTAudience,
 		typ: input.typ,
@@ -195,6 +201,12 @@ function verifyToken(
 		payload.aud !== DashboardJWTAudience
 	) {
 		throw new Error("invalid token issuer or audience");
+	}
+	if (
+		payload.installation !== config.installationID ||
+		payload.generation !== config.recoveryGeneration
+	) {
+		throw new Error("token recovery generation mismatch");
 	}
 	if (verifyExpiry && payload.exp <= toUnixTime(now)) {
 		throw new Error("token expired");

@@ -208,7 +208,7 @@ func (v *agentView) services(assignmentIDs []string) ([]*agentv1.DesiredService,
 		if err != nil {
 			return nil, err
 		}
-		svc := &agentv1.DesiredService{AllocationId: a.ID, ServiceId: a.ServiceID, EnvironmentId: service.EnvironmentID, Name: service.Name, DeploymentId: a.DeploymentID,
+		svc := &agentv1.DesiredService{AllocationId: a.ID, ServiceId: a.ServiceID, EnvironmentId: service.EnvironmentID, Name: service.Name, DeploymentId: a.DeploymentID, CreatedAt: ts(a.CreatedAt),
 			DesiredSpecRevision: a.DesiredSpecRevision, DesiredRolloutGeneration: a.DesiredRolloutGeneration, OperatorRestartNonce: a.OperatorRestartNonce,
 			PrivateIpv4: a.AllocationIPv4, PrivateIpv6: a.AllocationIPv6, NetworkIdentity: uint32(environment.NetworkIdentity), Intent: agentv1.AllocationIntent_ALLOCATION_INTENT_RUN}
 		if a.Intent == allocationIntentDrain {

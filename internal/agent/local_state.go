@@ -71,18 +71,34 @@ const (
 // RuntimeResource is a prunable runtime object owned by an allocation. Volumes
 // are durable data and are never inventoried for cleanup.
 type RuntimeResource struct {
-	AllocationID string `json:"allocation_id"`
-	RuntimeID    string `json:"runtime_id"`
+	ServiceID         string    `json:"serviceId"`
+	EnvironmentID     string    `json:"environmentId"`
+	DeploymentID      string    `json:"deploymentId"`
+	SpecRevision      int64     `json:"specRevision"`
+	RolloutGeneration int64     `json:"rolloutGeneration"`
+	IPv4              string    `json:"ipv4"`
+	IPv6              string    `json:"ipv6"`
+	NetworkIdentity   uint32    `json:"networkIdentity"`
+	CreatedAt         time.Time `json:"createdAt"`
+	AllocationID      string    `json:"allocation_id"`
+	RuntimeID         string    `json:"runtime_id"`
 }
 
 type localAllocationState struct {
-	AllocationID        string `json:"allocation_id"`
-	RuntimeID           string `json:"runtime_id"`
-	DesiredSpecRevision int64  `json:"desired_spec_revision"`
-	AppliedSpecRevision int64  `json:"applied_spec_revision"`
-	DesiredGeneration   int64  `json:"desired_generation"`
-	AppliedGeneration   int64  `json:"applied_generation"`
-	Phase               string `json:"phase,omitempty"`
+	ServiceID           string    `json:"service_id"`
+	EnvironmentID       string    `json:"environment_id"`
+	DeploymentID        string    `json:"deployment_id"`
+	IPv4                string    `json:"ipv4"`
+	IPv6                string    `json:"ipv6"`
+	NetworkIdentity     uint32    `json:"network_identity"`
+	CreatedAt           time.Time `json:"created_at"`
+	AllocationID        string    `json:"allocation_id"`
+	RuntimeID           string    `json:"runtime_id"`
+	DesiredSpecRevision int64     `json:"desired_spec_revision"`
+	AppliedSpecRevision int64     `json:"applied_spec_revision"`
+	DesiredGeneration   int64     `json:"desired_generation"`
+	AppliedGeneration   int64     `json:"applied_generation"`
+	Phase               string    `json:"phase,omitempty"`
 }
 
 type pullCredential struct {
@@ -1564,6 +1580,11 @@ func updateDesiredAllocations(bucket *bbolt.Bucket, state *agentv1.DesiredNodeSt
 		allocation, err := readAllocation(bucket, service.GetAllocationId())
 		if err != nil {
 			return err
+		}
+		allocation.ServiceID, allocation.EnvironmentID, allocation.DeploymentID = service.GetServiceId(), service.GetEnvironmentId(), service.GetDeploymentId()
+		allocation.IPv4, allocation.IPv6, allocation.NetworkIdentity = service.GetPrivateIpv4(), service.GetPrivateIpv6(), service.GetNetworkIdentity()
+		if service.GetCreatedAt() != nil {
+			allocation.CreatedAt = service.GetCreatedAt().AsTime()
 		}
 		allocation.AllocationID = service.GetAllocationId()
 		allocation.DesiredSpecRevision = service.GetDesiredSpecRevision()

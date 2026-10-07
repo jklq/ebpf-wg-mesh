@@ -16,6 +16,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
 	"ebof-wg-mesh/internal/restartpolicy"
 )
 
@@ -504,7 +505,25 @@ func (s *persistence) allocateWorkloadSubnetTx(ctx context.Context, tx *sql.Tx, 
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	return nextSubnetFromPool(s.mesh.WorkloadPoolCIDR, 64, used, agentID)
+	for range 65536 {
+		candidate, err := nextSubnetFromPool(s.mesh.WorkloadPoolCIDR, 64, used, agentID)
+		if err != nil {
+			return "", err
+		}
+		prefix, err := netip.ParsePrefix(candidate)
+		if err != nil {
+			return "", err
+		}
+		ok, err := recovery.RecoveryPrefixAvailable(ctx, tx, prefix, "")
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return candidate, nil
+		}
+		used[candidate] = struct{}{}
+	}
+	return "", fmt.Errorf("IPv6 workload pool is protected by unresolved recovery reservations")
 }
 
 func (s *persistence) allocateWorkloadIPv4SubnetTx(ctx context.Context, tx *sql.Tx) (string, error) {
@@ -561,7 +580,22 @@ func (s *persistence) allocateWorkloadIPv4SubnetTx(ctx context.Context, tx *sql.
 	if err := rows.Close(); err != nil {
 		return "", err
 	}
-	candidateRaw, err := IPv4SubnetAt(pool, prefixBits, uint64(nextOrdinal))
+	var candidateRaw string
+	for {
+		candidateRaw, err = IPv4SubnetAt(pool, prefixBits, uint64(nextOrdinal))
+		if err != nil {
+			return "", err
+		}
+		prefix, _ := netip.ParsePrefix(candidateRaw)
+		ok, e := recovery.RecoveryPrefixAvailable(ctx, tx, prefix, "")
+		if e != nil {
+			return "", e
+		}
+		if ok {
+			break
+		}
+		nextOrdinal++
+	}
 	if err != nil {
 		return "", err
 	}
@@ -602,7 +636,28 @@ func (s *persistence) allocateWorkloadIPv4AddressTx(ctx context.Context, tx *sql
 	if err := rows.Close(); err != nil {
 		return "", err
 	}
-	return nextIPv4AddressFromSubnet(subnet, used)
+	return nextAvailableRecoveryIPv4(ctx, tx, subnet, used, agentID)
+}
+
+func nextAvailableRecoveryIPv4(ctx context.Context, tx *sql.Tx, subnet string, used map[string]struct{}, agentID string) (string, error) {
+	for {
+		candidate, err := nextIPv4AddressFromSubnet(subnet, used)
+		if err != nil {
+			return "", err
+		}
+		addr, err := netip.ParseAddr(candidate)
+		if err != nil {
+			return "", err
+		}
+		ok, err := recovery.RecoveryPrefixAvailable(ctx, tx, netip.PrefixFrom(addr, 32), agentID)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return candidate, nil
+		}
+		used[candidate] = struct{}{}
+	}
 }
 
 func (d *Delivery) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.Tx, agentID, subnet string, now time.Time) (bool, error) {
@@ -631,7 +686,7 @@ func (d *Delivery) backfillWorkloadIPv4AddressesTx(ctx context.Context, tx *sql.
 	}
 	mutations := make([]allocationMutation, 0, len(missing))
 	for _, allocationID := range missing {
-		address, err := nextIPv4AddressFromSubnet(subnet, used)
+		address, err := nextAvailableRecoveryIPv4(ctx, tx, subnet, used, agentID)
 		if err != nil {
 			return false, err
 		}
@@ -662,7 +717,25 @@ func (s *persistence) allocateWireGuardIPv6Tx(ctx context.Context, tx *sql.Tx, a
 	if err := rows.Err(); err != nil {
 		return "", err
 	}
-	return nextAddressFromPool(s.mesh.NetworkCIDR, used, 0x10, agentID)
+	for range 65536 {
+		candidate, err := nextAddressFromPool(s.mesh.NetworkCIDR, used, 0x10, agentID)
+		if err != nil {
+			return "", err
+		}
+		prefix, err := netip.ParsePrefix(candidate)
+		if err != nil {
+			return "", err
+		}
+		ok, err := recovery.RecoveryPrefixAvailable(ctx, tx, netip.PrefixFrom(prefix.Addr(), 128), "")
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return candidate, nil
+		}
+		used[candidate] = struct{}{}
+	}
+	return "", fmt.Errorf("WireGuard pool is protected by unresolved recovery reservations")
 }
 
 func (s *persistence) listAgentsQuerier(ctx context.Context, q ServiceQueryer) ([]AgentRecord, error) {

@@ -16,6 +16,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
+	"ebof-wg-mesh/internal/reconciliation"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -82,14 +83,25 @@ func (e *buildFailureError) Unwrap() error {
 }
 
 type App struct {
-	cfg        config.BuilderConfig
-	conn       *grpc.ClientConn
-	client     platformv1.BuilderServiceClient
-	executor   BuildExecutor
-	healthStop func(context.Context) error
+	recoveryPaused bool
+	cfg            config.BuilderConfig
+	conn           *grpc.ClientConn
+	client         platformv1.BuilderServiceClient
+	executor       BuildExecutor
+	healthStop     func(context.Context) error
 }
 
 func New(cfg config.BuilderConfig) (*App, error) {
+	paused := false
+	if cfg.AuthorityFile != "" {
+		admission, err := reconciliation.ReadAuthority(cfg.AuthorityFile)
+		if err != nil {
+			return nil, err
+		}
+		paused = admission.Paused
+	} else if cfg.Profile.IsProduction() {
+		return nil, fmt.Errorf("production builder requires --authority-file from host administration")
+	}
 	if err := os.MkdirAll(cfg.WorkDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir builder work dir: %w", err)
 	}
@@ -113,10 +125,11 @@ func New(cfg config.BuilderConfig) (*App, error) {
 		return nil, fmt.Errorf("dial control plane: %w", err)
 	}
 	return &App{
-		cfg:      cfg,
-		conn:     conn,
-		client:   platformv1.NewBuilderServiceClient(conn),
-		executor: executor,
+		recoveryPaused: paused,
+		cfg:            cfg,
+		conn:           conn,
+		client:         platformv1.NewBuilderServiceClient(conn),
+		executor:       executor,
 	}, nil
 }
 
@@ -153,6 +166,10 @@ func (a *App) readyReport(context.Context) health.Report {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if a.recoveryPaused {
+		<-ctx.Done()
+		return nil
+	}
 	if reclaimed, err := a.executor.RecoverStaleWorkspaces(ctx); err != nil {
 		return fmt.Errorf("recover stale build workspaces: %w", err)
 	} else if reclaimed > 0 {

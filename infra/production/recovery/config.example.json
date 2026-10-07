@@ -16,7 +16,7 @@
   },
   "recoveryKeyFile": "/etc/platform/recovery.key",
   "installation": "production",
-  "release": "r42",
+  "release": "r43",
   "databaseURLFile": "/etc/platform/database-url",
   "consoleSchema": "dashboard",
   "backupConnection": "external://platform_recovery",
@@ -28,16 +28,16 @@
   },
   "files": [
     {
-      "requirement": {"kind": "installation", "id": "production/r42"},
-      "path": "/var/lib/platform/recovery-inputs/production-r42.yaml"
+      "requirement": {"kind": "installation", "id": "production/r43"},
+      "path": "/var/lib/platform/recovery-inputs/production-r43.yaml"
     },
     {
-      "requirement": {"kind": "deployment-state", "id": "production/attempt42"},
-      "path": "/var/lib/platform/recovery-inputs/attempt42-state.enc"
+      "requirement": {"kind": "deployment-state", "id": "production/attempt43"},
+      "path": "/var/lib/platform/recovery-inputs/attempt43-state.enc"
     },
     {
-      "requirement": {"kind": "release", "id": "r42"},
-      "path": "/var/lib/platform/recovery-inputs/r42.yaml"
+      "requirement": {"kind": "release", "id": "r43"},
+      "path": "/var/lib/platform/recovery-inputs/r43.yaml"
     },
     {
       "requirement": {"kind": "keyring", "id": "k1"},
@@ -68,11 +68,11 @@
       "path": "/opt/platform/tools/skopeo"
     },
     {
-      "requirement": {"kind": "tool", "id": "platformctl/r42", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+      "requirement": {"kind": "tool", "id": "platformctl/r43", "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
       "path": "/opt/platform/platformctl"
     }
   ],
-  "drillCommand": ["/opt/platform/releases/r42/operations", "offline-recovery"],
+  "drillCommand": ["/opt/platform/releases/r43/operations", "offline-recovery"],
   "drillCommandDigest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
   "fleetSize": 3,
   "capacityAssumptions": "Replace with the tested hosts' CPU, RAM, disks, recovery capacity and link/storage throughput."

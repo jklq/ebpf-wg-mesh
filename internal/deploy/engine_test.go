@@ -36,10 +36,31 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 	}
 	e := Evidence{}
 	if op.Hook == "backup" {
-		e = completeEvidence(p.Installation.ID, "s3://backups/production/points/production/complete?versionId=protected", testNow)
+		timestamp := testNow
+		if restorationPlan(p) {
+			timestamp = time.Now().UTC()
+		}
+		e = completeEvidence(p.Installation.ID, "s3://backups/production/points/production/complete?versionId=protected", timestamp)
 	}
 	if op.Hook == "recovery-verify" && state.LastRestore != nil {
 		e = completeEvidence(p.Installation.ID, state.LastRestore.Backup, state.LastRestore.DataLossCutoff)
+	}
+	if restorationPlan(p) {
+		e.Recovery = &RecoveryReceipt{Installation: p.Installation.ID, Generation: p.Generation, Checks: map[string]bool{}, Acknowledgements: map[string]CheckpointAcknowledgement{}}
+		for _, check := range []string{"provider-or-host-fence", "credentials-replaced", "empty-destination", "schemas-not-initialized", "database-restored", "selected-release", "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission", "network-reservations", "quarantine-preserved", "approved-desired-state", "complete-checkpoints", "stale-build-ownership-invalidated", "new-worker-leases", "external-effects-reconciled", "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login", "all-participants-resumed"} {
+			e.Recovery.Checks[check] = true
+		}
+		if state.Recovery.Report != nil {
+			e.Recovery.ReportDigest = state.Recovery.Report.ApprovalDigest()
+		}
+		input := recovery.FleetInput{CapturedAt: time.Now().UTC()}
+		for _, pl := range p.Placements {
+			if pl.Role == Agent {
+				input.Observed = append(input.Observed, recovery.FleetHost{ID: pl.Instance, Reachable: true, AuthorityResolved: true, Generation: p.Generation})
+				e.Recovery.Acknowledgements[pl.Instance] = CheckpointAcknowledgement{Generation: p.Generation, AuthorityEpoch: 1, Cursor: 0, Complete: true}
+			}
+		}
+		e.Fleet = &input
 	}
 	return d.done[op.ID], e, nil
 }
@@ -273,7 +294,7 @@ func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
 	p := build(t, i, r, State{}, inv, false)
 	state := applied(p)
 	r.ID = "r43"
-	r.Schema = 43
+	r.Schema = 44
 	i.Release = r.ID
 	r.Conversions = map[string]Hook{"r42": {Command: []string{"/opt/convert"}, Verify: []string{"/opt/verify-conversion"}}}
 	p = build(t, i, r, state, inv, false)
@@ -332,7 +353,7 @@ func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
 func completeEvidence(installation, location string, t time.Time) Evidence {
 	until := t.Add(recovery.Retention)
 	object := recovery.Object{Key: "objects/test", Version: "protected", Digest: recovery.Digest([]byte("test")), Size: 4, RetainUntil: until}
-	point := recovery.Point{Version: 1, Installation: installation, Snapshot: recovery.Snapshot{Timestamp: t, Schema: 42, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: recovery.Database{Collection: "external://recovery", Subdirectory: "full", Layers: []recovery.Layer{{End: t}}, Objects: []recovery.Object{object}}, CompletedAt: t, ExpiresAt: until}
+	point := recovery.Point{Version: 1, Installation: installation, Snapshot: recovery.Snapshot{Timestamp: t, Schema: 43, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: recovery.Database{Collection: "external://recovery", Subdirectory: "full", Layers: []recovery.Layer{{End: t}}, Objects: []recovery.Object{object}}, CompletedAt: t, ExpiresAt: until}
 	for _, kind := range []string{"keyring", "console-key", "external-secret", "installation", "deployment-state", "release", "tool"} {
 		point.Snapshot.Requirements = append(point.Snapshot.Requirements, recovery.Requirement{Kind: kind, ID: "required"})
 		point.Dependencies = append(point.Dependencies, recovery.Dependency{Kind: kind, ID: "required", Objects: []recovery.Object{object}})

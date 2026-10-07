@@ -74,6 +74,9 @@ func TestRestoredPlatformIntegrityIdentitiesAndDecryption(t *testing.T) {
 	}
 	restored, stopRestored := restoreTestDB(t, dir)
 	defer stopRestored()
+	if err := recovery.CheckEmptyDestination(ctx, restored); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := restored.ExecContext(ctx, `RESTORE FROM LATEST IN 'nodelocal://1/platform'`); err != nil {
 		t.Fatal(err)
 	}

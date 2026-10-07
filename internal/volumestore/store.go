@@ -235,3 +235,6 @@ func roundUsage(used int64) int64 {
 	}
 	return (used + usageGranularity - 1) / usageGranularity * usageGranularity
 }
+
+// Inventory lists durable volumes without ensuring, mounting, resizing or deleting them.
+func (s *Store) Inventory() ([]string, error) { return s.onDisk() }

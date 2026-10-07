@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -243,10 +244,15 @@ func withoutCgroups(_ context.Context, _ oci.Client, _ *containers.Container, s 
 func (e *containerdEngine) serviceLabels(svc *agentv1.DesiredService) map[string]string {
 	labels := map[string]string{
 		meshlabels.Managed:                  "true",
+		meshlabels.EnvironmentID:            svc.GetEnvironmentId(),
+		meshlabels.DeploymentID:             svc.GetDeploymentId(),
 		meshlabels.AllocationID:             svc.GetAllocationId(),
 		meshlabels.ServiceID:                svc.GetServiceId(),
 		meshlabels.DesiredSpecRevision:      strconv.FormatInt(svc.GetDesiredSpecRevision(), 10),
 		meshlabels.DesiredRolloutGeneration: strconv.FormatInt(svc.GetDesiredRolloutGeneration(), 10),
+	}
+	if created := svc.GetCreatedAt(); created != nil {
+		labels[meshlabels.AllocationCreatedAt] = created.AsTime().UTC().Format(time.RFC3339Nano)
 	}
 	ipv4, _ := netip.ParseAddr(svc.GetPrivateIpv4())
 	ipv6, _ := netip.ParseAddr(svc.GetPrivateIpv6())

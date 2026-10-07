@@ -8,7 +8,10 @@ import (
 
 const (
 	Managed                  = "platform.managed"
+	EnvironmentID            = "platform.environment_id"
+	DeploymentID             = "platform.deployment_id"
 	AllocationID             = "platform.allocation_id"
+	AllocationCreatedAt      = "platform.allocation_created_at"
 	ServiceID                = "platform.service_id"
 	DesiredSpecRevision      = "platform.desired_spec_revision"
 	DesiredRolloutGeneration = "platform.desired_rollout_generation"

@@ -1,10 +1,15 @@
 package agent
 
 import (
+	"context"
+	"slices"
 	"testing"
+	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestRecoveryGenerationPreservesNewerInventoryAndFencesOldCommands(t *testing.T) {
@@ -14,6 +19,13 @@ func TestRecoveryGenerationPreservesNewerInventoryAndFencesOldCommands(t *testin
 		t.Fatal(err)
 	}
 	checkpoint := testDesiredState(900, 1000, "matching", "newer")
+	checkpoint.NodeConfig.WireguardAddresses = []string{"fd00:44::11/64"}
+	checkpoint.NodeConfig.WorkloadIpv6Subnet = "fd00:8::/64"
+	created := time.Now().Add(-time.Hour).UTC()
+	checkpoint.Services[0].CreatedAt = timestamppb.New(created)
+	checkpoint.Services[0].PrivateIpv4 = "10.0.0.2"
+	checkpoint.Services[0].NetworkIdentity = 700
+	checkpoint.NodeConfigVersion = reconciliation.HashNodeConfig(checkpoint.NodeConfig)
 	checkpoint.InstallationId, checkpoint.RecoveryGeneration = old.InstallationID, old.Generation
 	if _, err := store.acceptDesired("cluster-a", "test-session", checkpoint); err != nil {
 		t.Fatal(err)
@@ -28,6 +40,19 @@ func TestRecoveryGenerationPreservesNewerInventoryAndFencesOldCommands(t *testin
 	summary, err := store.summary()
 	if err != nil || len(summary.RuntimeResources) != 2 || len(summary.Allocations) != 2 || !summary.CheckpointRequired || summary.AuthorityEpoch != 0 {
 		t.Fatalf("lost recovery inventory: %+v %v", summary, err)
+	}
+	inventory, err := store.fleetInventory()
+	if err != nil || len(inventory.Allocations) != 2 || inventory.Generation != current.Generation {
+		t.Fatal("recovery lost external inventory", inventory, err)
+	}
+	allocation := inventory.Allocations[slices.IndexFunc(inventory.Allocations, func(a recovery.FleetAllocation) bool { return a.ID == "matching" })]
+	if allocation.ServiceID != "service-matching" || allocation.EnvironmentID != "env-1" || allocation.IPv4 != "10.0.0.2" || !allocation.CreatedAt.Equal(created) {
+		t.Fatal("recovery lost allocation identity or original creation time", allocation)
+	}
+	for _, prefix := range []string{"10.0.0.0/24", "fd00:8::/64", "fd00:44::11/128"} {
+		if !slices.ContainsFunc(inventory.Reservations, func(r recovery.NetworkReservation) bool { return r.Prefix == prefix }) {
+			t.Fatal("recovery lost a protected network range", prefix)
+		}
 	}
 	checkpoint.ClusterId = current.ClusterID
 	if _, err := store.acceptDesired(current.ClusterID, "test-session", checkpoint); err == nil {
@@ -58,6 +83,49 @@ func TestRecoveryGenerationPreservesNewerInventoryAndFencesOldCommands(t *testin
 	}
 	if err := store.validateRecords(); err != nil {
 		t.Fatal("interrupted recovery cannot reopen its local store", err)
+	}
+}
+
+func TestPausedAgentInventoriesWithoutAutomationAndAppliesOnlyApprovedCheckpoint(t *testing.T) {
+	store := openTestLocalState(t)
+	a := reconciliation.Authority{InstallationID: "installation", Generation: "generation", ClusterID: "cluster-a"}
+	if _, err := store.admitAuthority(a); err != nil {
+		t.Fatal(err)
+	}
+	state := testDesiredState(1, 1, "matching")
+	state.InstallationId, state.RecoveryGeneration = a.InstallationID, a.Generation
+	if _, err := store.acceptDesired(a.ClusterID, "test-session", state); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &supervisorTestRuntime{inventory: []RuntimeResource{{AllocationID: "matching", RuntimeID: "matching-runtime"}, {AllocationID: "unknown", RuntimeID: "unknown-runtime"}}}
+	s := newWorkloadSupervisor("node-1", runtime, store, func(context.Context, *agentv1.AssignedNodeConfig) error { return nil })
+	s.recoveryPaused = true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := s.Start(ctx, a.ClusterID); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.calls != 0 {
+		t.Fatal("paused restart applied cached desired state")
+	}
+	if _, err := s.AcceptDesired(a.ClusterID, "test-session", state); err == nil {
+		t.Fatal("ordinary command authorized recovery reconciliation")
+	}
+	// Host administration enables checkpoints after approval, with cleanup still paused.
+	cancel()
+	s = newWorkloadSupervisor("node-1", runtime, store, func(context.Context, *agentv1.AssignedNodeConfig) error { return nil })
+	s.recoveryPaused, s.recoveryCheckpoints = true, true
+	if _, err := s.AcceptDesired(a.ClusterID, "test-session", state); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcile(context.Background(), "desired-state")
+	s.reconcile(context.Background(), "safety-resync")
+	s.reconcile(context.Background(), "disk-enforcement")
+	if runtime.calls != 1 || runtime.cleanup[0] {
+		t.Fatal("approved checkpoint enabled background cleanup", runtime.calls, runtime.cleanup)
+	}
+	if _, err := s.AcceptDiff(a.ClusterID, "test-session", &agentv1.AllocationDiff{}); err == nil {
+		t.Fatal("incremental updates resumed before verification")
 	}
 }
 

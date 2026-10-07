@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type HostStatus struct {
@@ -88,6 +90,8 @@ func previousDeployment(state State) *AppliedDeployment {
 }
 
 type Plan struct {
+	Recovery           bool                 `json:"recovery"`
+	Generation         string               `json:"generation"`
 	Previous           *AppliedDeployment   `json:"previous,omitempty"`
 	AdministrationHost string               `json:"administrationHost"`
 	Version            int                  `json:"version"`
@@ -123,8 +127,15 @@ func BuildPlan(i Installation, r Release, state State, inv Inventory, automatic 
 	r = snapshot(r)
 	p := Plan{Version: 1, CreatedAt: now.UTC(), Installation: i, Release: r, StateRevision: state.Revision, StateDigest: Digest(state), InventoryDigest: Digest(inv), Reservations: map[string]Resources{}, Automatic: automatic}
 	p.Previous = previousDeployment(state)
+	p.Generation = state.Generation
+	if p.Generation == "" {
+		p.Generation = uuid.NewSHA1(uuid.NameSpaceOID, []byte(i.ID+"/"+p.StateDigest+"/"+now.UTC().Format(time.RFC3339Nano))).String()
+	}
 	if err := i.Validate(r); err != nil {
 		return p, err
+	}
+	if automatic && state.Recovery != nil && state.Recovery.CompletedAt.IsZero() {
+		return p, fmt.Errorf("recovery pauses automatic placement and retirement")
 	}
 	if state.InstallationID != "" && state.InstallationID != i.ID {
 		return p, fmt.Errorf("state belongs to installation %s", state.InstallationID)

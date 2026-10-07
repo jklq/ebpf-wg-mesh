@@ -13,10 +13,12 @@ import (
 )
 
 type workloadSupervisor struct {
-	agentID         string
-	runtime         Runtime
-	store           *localStateStore
-	applyNodeConfig func(context.Context, *agentv1.AssignedNodeConfig) error
+	recoveryPaused      bool
+	recoveryCheckpoints bool
+	agentID             string
+	runtime             Runtime
+	store               *localStateStore
+	applyNodeConfig     func(context.Context, *agentv1.AssignedNodeConfig) error
 
 	reconcileMu sync.Mutex
 	trigger     chan struct{}
@@ -59,7 +61,7 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 	}
 
 	go s.run(ctx)
-	if source, ok := s.runtime.(RuntimeEventSource); ok {
+	if source, ok := s.runtime.(RuntimeEventSource); ok && !s.recoveryPaused {
 		events, eventErrors := source.ReconcileEvents(ctx)
 		go runtimeEventReconcileLoop(ctx, events, eventErrors, func() {
 			s.requestReconcile()
@@ -90,6 +92,9 @@ func (s *workloadSupervisor) run(ctx context.Context) {
 }
 
 func (s *workloadSupervisor) AcceptDesired(clusterID, sessionID string, state *agentv1.DesiredNodeState) (bool, error) {
+	if s.recoveryPaused && !s.recoveryCheckpoints {
+		return false, errors.New("host administration has not authorized recovery checkpoints")
+	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	changed, err := s.store.acceptDesired(clusterID, sessionID, state)
@@ -105,6 +110,9 @@ func (s *workloadSupervisor) AcceptDesired(clusterID, sessionID string, state *a
 }
 
 func (s *workloadSupervisor) AcceptDiff(clusterID, sessionID string, diff *agentv1.AllocationDiff) (bool, error) {
+	if s.recoveryPaused {
+		return false, errors.New("incremental updates remain paused during recovery")
+	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	changed, err := s.store.acceptAllocationDiff(clusterID, sessionID, diff)
@@ -120,6 +128,9 @@ func (s *workloadSupervisor) AcceptDiff(clusterID, sessionID string, diff *agent
 }
 
 func (s *workloadSupervisor) AcceptNodeConfig(clusterID, sessionID string, update *agentv1.NodeConfigUpdate) (bool, error) {
+	if s.recoveryPaused && !s.recoveryCheckpoints {
+		return false, errors.New("host administration has not authorized recovery checkpoints")
+	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	changed, err := s.store.acceptNodeConfigUpdate(clusterID, sessionID, update)
@@ -135,12 +146,18 @@ func (s *workloadSupervisor) AcceptNodeConfig(clusterID, sessionID string, updat
 }
 
 func (s *workloadSupervisor) AcceptCredentials(clusterID, sessionID string, creds *agentv1.PullCredentialSet) (bool, error) {
+	if s.recoveryPaused && !s.recoveryCheckpoints {
+		return false, errors.New("host administration has not authorized recovery checkpoints")
+	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	return s.store.acceptPullCredentials(clusterID, sessionID, creds)
 }
 
 func (s *workloadSupervisor) AcceptReplicas(clusterID, sessionID string, replicas *agentv1.ReplicaEndpoints) (bool, error) {
+	if s.recoveryPaused && !s.recoveryCheckpoints {
+		return false, errors.New("host administration has not authorized recovery checkpoints")
+	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	return s.store.acceptReplicaEndpoints(clusterID, sessionID, replicas)
@@ -159,6 +176,9 @@ func (s *workloadSupervisor) RestartManagedDashboard(ctx context.Context, state 
 }
 
 func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
+	if s.recoveryPaused && (!s.recoveryCheckpoints || source != "desired-state" && source != "startup-restore") {
+		return
+	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
 	desired, err := s.store.desiredState()
@@ -178,7 +198,7 @@ func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
 		slog.Error("read local state before reconciliation", "agent_id", s.agentID, "error", err)
 		return
 	}
-	allowCleanup := summary.Initialization == initializationReady
+	allowCleanup := summary.Initialization == initializationReady && !s.recoveryPaused
 	report, err := s.runtime.ReconcileWithCleanup(ctx, desired, allowCleanup)
 	if err != nil {
 		slog.Error("runtime reconciliation failed", "agent_id", s.agentID, "cursor", desired.GetReconciliationCursor(), "source", source, "error", err)
