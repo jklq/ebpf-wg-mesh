@@ -57,8 +57,29 @@ func (r *Runner) prepareInitialKeys(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := keyring.EnsureBootstrapKey(ctx); err != nil {
-		return err
+	if r.Plan.Previous == nil {
+		if _, err := keyring.EnsureBootstrapKey(ctx); err != nil {
+			return err
+		}
+	} else {
+		// Existing installations may hold rotated master-key versions. Verify
+		// their actual SQL coverage; fresh key generation is never an upgrade.
+		db, err := r.db(ctx, false)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		keys, _, err := r.keys(ctx, db)
+		if err != nil {
+			return err
+		}
+		defer keys.Close()
+		if err := keys.Registry().VerifyLocalCoverage(ctx); err != nil {
+			return err
+		}
+		if _, err := keys.DEKs().VerifyAll(ctx); err != nil {
+			return err
+		}
 	}
 	if _, err := os.Stat(r.Config.Console.TokenKeyFile); os.IsNotExist(err) {
 		b := make([]byte, 32)
