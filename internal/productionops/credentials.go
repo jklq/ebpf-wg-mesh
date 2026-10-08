@@ -61,6 +61,10 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		return err
 	}
 	clear(s.RecoveryKey)
+	bootstrapTokens, err := r.agentBootstrapTokens(ctx, signing)
+	if err != nil {
+		return err
+	}
 	for _, pl := range r.Plan.Placements {
 		if pl.Role == deploy.Database {
 			continue
@@ -96,12 +100,16 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 						return err
 					}
 				}
+				if err := recordAgentEnrollment(ctx, db, pl.Instance, bootstrapTokens[pl.Instance], material.CertPEM, verify); err != nil {
+					return err
+				}
 				files["tls/generation"] = []byte(generation)
 				files["tls/ca.crt"], files["tls/client.crt"], files["tls/client.key"] = material.CAPEM, material.CertPEM, material.KeyPEM
 				env["AGENT_DATA_DIR"] = dataDir(r.Plan, pl)
 				env["AGENT_CONTROLPLANE_ADDRESSES"] = r.controlPlaneAddresses("9443")
 				env["AGENT_CA_FILE"] = cfgDir(r.Plan, pl) + "/ca.crt"
 				env["AGENT_SERVER_NAME"] = r.Config.InternalServerName
+				env["AGENT_BOOTSTRAP_TOKEN"] = bootstrapTokens[pl.Instance]
 			}
 			if pl.Role == deploy.Envoy {
 				if !verify {
@@ -200,6 +208,12 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				return err
 			}
 			if pl.Role == deploy.ControlPlane {
+				var bindings []string
+				for id, token := range bootstrapTokens {
+					bindings = append(bindings, id+"="+token)
+				}
+				sort.Strings(bindings)
+				env["CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS"] = strings.Join(bindings, ",")
 				if r.Config.SourceConfig != "" {
 					selection, err := r.sourceSelection()
 					if err != nil {
@@ -270,7 +284,8 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				env["PLATFORM_RECOVERY_CONFIG"] = cfgDir(r.Plan, pl) + "/recovery.json"
 				env["CONTROLPLANE_REGISTRY_HOST"] = r.Config.RegistryService
 				env["CONTROLPLANE_REGISTRY_TOKEN_SERVICE"] = r.Config.RegistryService
-				env["CONTROLPLANE_REGISTRY_AUTH_LISTEN"] = "0.0.0.0:9444"
+				env["CONTROLPLANE_INTERNAL_LISTEN"] = ":9443"
+				env["CONTROLPLANE_REGISTRY_AUTH_LISTEN"] = ":9444"
 				env["CONTROLPLANE_DB_URL"] = string(files["database-url"])
 				env["CONTROLPLANE_STATE_DIR"] = dataDir(r.Plan, pl)
 				env["CONTROLPLANE_SECRET_KEYS_KEYRING"] = cfgDir(r.Plan, pl) + "/keyring.json"
@@ -285,7 +300,9 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				h, _ := r.Plan.Installation.Host(pl.Host)
 				env["CONTROLPLANE_ADVERTISE_ADDR"] = net.JoinHostPort(h.Network.Address, "9443")
 				env["CONTROLPLANE_INTERNAL_SERVER_NAMES"] = r.Config.InternalServerName + "," + h.Network.Address
-				env["CONTROLPLANE_INGRESS_XDS_LISTEN"] = "0.0.0.0:18000"
+				env["CONTROLPLANE_INGRESS_XDS_LISTEN"] = ":18000"
+				env["CONTROLPLANE_INGRESS_HTTP_LISTEN"] = "0.0.0.0:80,[::]:80"
+				env["CONTROLPLANE_INGRESS_HTTPS_LISTEN"] = "0.0.0.0:443,[::]:443"
 				files["wildcard.crt"], err = os.ReadFile(r.Config.WildcardCertificate)
 				if err != nil {
 					return err

@@ -149,7 +149,10 @@ export async function migrateDashboardStore(
 		}
 		runtime.recoveryPaused = runtime.recoveryPaused || authority.paused;
 	}
-	if (runtime.recoveryPaused) {
+	// A deployment-owned generation is provisioned by the release's native
+	// bootstrap/conversion tool. Runtime startup only verifies that schema,
+	// including during a normal unpaused restart.
+	if (runtime.recoveryGeneration || runtime.recoveryPaused) {
 		const result = await query<{ version: string }>(
 			db,
 			"recovery.schema",

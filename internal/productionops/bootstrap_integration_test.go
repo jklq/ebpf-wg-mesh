@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane"
+	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/recovery"
 )
@@ -187,6 +188,30 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	if err := inspectSQLClient(ctx, clientURL, r.Config.Console.Schema); err != nil {
 		t.Fatal("repaired component permissions", err)
 	}
+	r.Plan.Placements = []deploy.Placement{{Role: deploy.Agent, Instance: "enrolled-a", Host: "a"}, {Role: deploy.Agent, Instance: "enrolled-b", Host: "a"}}
+	tokens, err := r.agentBootstrapTokens(ctx, signing)
+	if err != nil || tokens["enrolled-a"] == tokens["enrolled-b"] {
+		t.Fatal("agent tokens are not individually bound", err)
+	}
+	material, err := identity.IssueClientCertificate(ctx, signing, identity.CallerAgent, "enrolled-a", 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, verify := range []bool{false, true, false, true} {
+		if err := recordAgentEnrollment(ctx, db, "enrolled-a", tokens["enrolled-a"], material.CertPEM, verify); err != nil {
+			t.Fatal("native consumed enrollment and retry", err)
+		}
+	}
+	if err := recordAgentEnrollment(ctx, db, "enrolled-b", tokens["enrolled-a"], material.CertPEM, true); err == nil {
+		t.Fatal("another agent was accepted under the consumed enrollment token")
+	}
+	r.Plan.Generation = "replacement-authority"
+	newTokens, err := r.agentBootstrapTokens(ctx, signing)
+	if err != nil || tokens["enrolled-a"] == newTokens["enrolled-a"] {
+		t.Fatal("new authority retained the old bootstrap token", err)
+	}
+	r.Plan.Generation = "initial"
+	r.Plan.Placements = nil
 	if node, err := databaseNodeID(ctx, db, host.Network.Address); err != nil || node <= 0 {
 		t.Fatal("actual native node with a custom advertised port", node, err)
 	}
