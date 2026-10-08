@@ -3,6 +3,7 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"net"
@@ -41,13 +42,17 @@ func (SSHRemote) Run(ctx context.Context, i Installation, h Host, script string)
 	if err != nil {
 		return nil, err
 	}
-	cmd.Stdin = strings.NewReader("set -eu\numask 077\n" + script)
+	// Preserve native errors on the host without returning secret-bearing stderr
+	// to the installer. The script digest also separates nested lifecycle calls.
+	digest := sha256.Sum256([]byte(script))
+	diagnostic := fmt.Sprintf("/var/log/ebpf-wg-mesh/%s/ssh-%x.stderr", i.ID, digest[:12])
+	cmd.Stdin = strings.NewReader("set -eu\numask 077\nmkdir -p " + quote(filepath.Dir(diagnostic)) + "\nexec 2>" + quote(diagnostic) + "\n" + script)
 	var stdout limitedBuffer
 	cmd.Stdout = &stdout
 	// Remote stderr can contain command arguments or secret values. The error
 	// identifies the host and exit status; journal inspection stays operator-owned.
 	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("SSH host %s: %w", h.ID, err)
+		return nil, fmt.Errorf("SSH host %s: %w; private diagnostic: %s", h.ID, err, diagnostic)
 	}
 	return stdout.Bytes(), nil
 }

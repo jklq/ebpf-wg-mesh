@@ -321,6 +321,11 @@ func (r *Runner) backup(ctx context.Context) error {
 	return r.completeBackup(ctx)
 }
 func (r *Runner) completeBackup(ctx context.Context) (returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			_ = r.monitor(ctx, "failed")
+		}
+	}()
 	if err := r.captureExternalInventory(ctx); err != nil {
 		return err
 	}
@@ -328,11 +333,6 @@ func (r *Runner) completeBackup(ctx context.Context) (returnErr error) {
 		return err
 	}
 
-	defer func() {
-		if returnErr != nil {
-			_ = r.monitor(ctx, "failed")
-		}
-	}()
 	args := []string{}
 	if r.Config.SourceConfig != "" {
 		args = append(args, "--source-config", r.Config.SourceConfig)
