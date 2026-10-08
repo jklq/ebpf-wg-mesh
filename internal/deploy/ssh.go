@@ -281,7 +281,14 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	for _, arg := range argv {
 		execArgs = append(execArgs, "\""+strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%", "$", "$$").Replace(arg)+"\"")
 	}
-	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nEnvironmentFile=" + configDir(i, pl) + "/launch.env\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"
+	resources := ""
+	if pl.Role == Agent {
+		// systemd reapplies resource properties during daemon-reload. Persist
+		// the runtime's protections in the unit so installing another component
+		// cannot reset the live agent's cgroup to unprotected defaults.
+		resources = fmt.Sprintf("MemoryMin=%dM\nMemoryLow=%dM\nCPUWeight=10000\n", reserve.MemoryMiB, reserve.MemoryMiB)
+	}
+	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nEnvironmentFile=" + configDir(i, pl) + "/launch.env\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n" + resources + "[Install]\nWantedBy=multi-user.target\n"
 	return environment.String(), service, nil
 }
 

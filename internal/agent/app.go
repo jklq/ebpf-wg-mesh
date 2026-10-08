@@ -230,6 +230,7 @@ func nextReconnectDelay(current time.Duration) time.Duration {
 
 func (a *App) readyReport(context.Context) health.Report {
 	report := health.Report{Status: health.StatusNotReady, Failed: []string{"local_state_recovery"}, Authority: &a.recoveryAuthority}
+	report.Capacity = &health.Capacity{CPUMillis: a.cfg.Node.Resources.AdvertisedCPUMillis(), MemoryMiB: a.cfg.Node.Resources.AdvertisedMemoryMebibytes()}
 	if a.supervisor != nil && a.supervisor.Ready() {
 		report.Status = health.StatusReady
 		report.Failed = nil

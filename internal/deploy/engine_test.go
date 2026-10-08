@@ -52,10 +52,33 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 	if op.Hook == "recovery-verify" && state.LastRestore != nil {
 		e = completeEvidence(p.Installation.ID, state.LastRestore.Backup, state.LastRestore.DataLossCutoff)
 	}
+	if contract, ok := ContractForHook(op.Hook); ok {
+		if contract.Kind == DatabaseVerification {
+			db := DatabaseStatus{Replicated: true}
+			for _, placement := range p.Placements {
+				if placement.Role == Database {
+					db.Members = append(db.Members, placement.Host)
+					db.Live = append(db.Live, placement.Host)
+				}
+			}
+			e.Database = &db
+		}
+		if contract.Kind == StorageVerification {
+			e.Storage = snapshot(d.inv.Storage)
+			for _, name := range p.Installation.Components[Database].Storage {
+				e.Storage[name] = StorageStatus{Hosts: p.Installation.Storage[name].Hosts, Verified: true}
+			}
+		}
+		e.Recovery = &RecoveryReceipt{Installation: p.Installation.ID, Generation: p.Generation, Checks: map[string]bool{}}
+		for _, name := range contract.Checks {
+			e.Recovery.Checks[name] = true
+		}
+	}
 	if restorationPlan(p) {
 		e.Recovery = &RecoveryReceipt{Installation: p.Installation.ID, Generation: p.Generation, Checks: map[string]bool{}, Acknowledgements: map[string]CheckpointAcknowledgement{}}
-		for _, check := range []string{"provider-or-host-fence", "prior-authority-disabled", "empty-destination", "schemas-not-initialized", "database-restored", "selected-release", "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission", "network-reservations", "quarantine-preserved", "approved-desired-state", "complete-checkpoints", "stale-build-ownership-invalidated", "new-worker-authority", "external-effects-reconciled", "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login", "all-participants-resumed"} {
-			e.Recovery.Checks[check] = true
+		contract, _ := ContractForHook(op.Hook)
+		for _, name := range contract.Checks {
+			e.Recovery.Checks[name] = true
 		}
 		if state.Recovery.Report != nil {
 			e.Recovery.ReportDigest = state.Recovery.Report.ApprovalDigest()

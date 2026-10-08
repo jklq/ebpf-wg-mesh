@@ -44,6 +44,8 @@ type Placement struct {
 func (p Placement) Slot() string { return fmt.Sprintf("%s/%d", p.Role, p.Ordinal) }
 
 type Operation struct {
+	Phase     string     `json:"phase"`
+	Requires  []string   `json:"requires,omitempty"`
 	ID        string     `json:"id"`
 	Kind      string     `json:"kind"`
 	Host      string     `json:"host,omitempty"`
@@ -118,7 +120,10 @@ func (p Plan) Validate() error {
 	if p.Version != 1 || p.ID != p.digest() {
 		return fmt.Errorf("plan integrity mismatch")
 	}
-	return p.Installation.Validate(p.Release)
+	if err := p.Installation.Validate(p.Release); err != nil {
+		return err
+	}
+	return p.validateWorkflow()
 }
 
 // BuildPlan preserves all eligible placements before considering new ones. It

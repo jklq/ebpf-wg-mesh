@@ -313,106 +313,71 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 }
 func (r *Runner) Verify(ctx context.Context, args []string) (any, error) {
 	r.defaults()
+	if len(args) == 0 {
+		return nil, fmt.Errorf("verification requires a lifecycle operation")
+	}
+	name := args[0]
+	contract, declared := deploy.ContractForHook(name)
+	if !declared {
+		switch name {
+		case "credential-renew":
+			return nil, r.credentials(ctx, true)
+		case "backup-complete":
+			return r.backupEvidence(ctx)
+		case "drain", "retire", "verify-drain", "verify-retirement":
+			return nil, r.lifecycle(ctx, args, true)
+		default:
+			return nil, fmt.Errorf("unknown lifecycle %s", name)
+		}
+	}
 	e := deploy.Evidence{Recovery: &deploy.RecoveryReceipt{Installation: r.Plan.Installation.ID, Generation: r.Plan.Generation, Checks: map[string]bool{}}}
-	check := func(names ...string) {
-		for _, name := range names {
-			e.Recovery.Checks[name] = true
-		}
-	}
-	var err error
-	switch args[0] {
-	case "credential-renew":
-		err = r.credentials(ctx, true)
-	case "database-credentials":
-		err = r.databaseCredentials(ctx, true)
-	case "database-init":
-		err = r.verifyFreshDatabaseReady(ctx)
-	case "platform-bootstrap":
-		err = r.verifyBootstrap(ctx)
-	case "credentials":
-		err = r.credentials(ctx, true)
-	case "reservations":
-		err = r.reservations(ctx, true)
-	case "quiesce":
-		err = r.verifyPause(ctx, true, false)
-		if err == nil {
-			err = r.priorMaintenance(ctx, false)
-		}
-	case "resume":
-		err = r.verifyPause(ctx, false, false)
-	case "recovery-protect":
-		err = r.protect(ctx, true)
-	case "backup-schedule":
-		err = r.backupSchedule(ctx, true)
-	case "backup", "backup-complete":
-		return r.backupEvidence(ctx)
-	case "recovery-finalize":
-		err = r.finalize(ctx, true)
-	case "database-verify":
+	switch contract.Kind {
+	case deploy.DatabaseVerification:
 		return r.databaseStatus(ctx)
-	case "storage-verify":
+	case deploy.StorageVerification:
 		return r.storageStatus(ctx)
-	case "production-verify":
-		err = r.productionVerify(ctx)
-		if err == nil {
-			check("database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login")
+	case deploy.PointVerification:
+		if name == "recovery-verify" {
+			return r.selectedPoint(ctx)
 		}
-	case "recovery-verify":
-		return r.selectedPoint(ctx)
-	case "recovery-fence":
-		err = r.fence(ctx, true)
-		if err == nil {
-			check("provider-or-host-fence", "prior-authority-disabled")
-		}
-	case "recovery-database":
-		err = r.verifyEmptyDatabase(ctx)
-		if err == nil {
-			check("empty-destination", "schemas-not-initialized")
-		}
-	case "restore":
-		err = r.verifyRestore(ctx)
-		if err == nil {
-			check("database-restored", "selected-release")
-		}
-	case "recovery-authority":
-		err = r.authority(ctx, true)
-		if err == nil {
-			check("new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission")
-		}
-	case "recovery-inventory":
+		return r.backupEvidence(ctx)
+	case deploy.FleetVerification:
+		var err error
 		e.Fleet, err = r.readFleet(ctx)
-	case "recovery-reserve":
-		err = r.reserveFleet(ctx, true)
-		if err == nil {
-			check("network-reservations")
+		if err != nil {
+			return nil, err
 		}
-	case "recovery-reconcile":
-		err = r.reconcileFleet(ctx, true)
-		if err == nil {
-			check("quarantine-preserved", "approved-desired-state")
+	case deploy.ReceiptVerification:
+		if len(contract.Checks) == 0 {
+			return nil, fmt.Errorf("%s has no native proof obligations", name)
 		}
-	case "recovery-checkpoints":
-		e.Recovery.Acknowledgements, err = r.verifyCheckpoints(ctx)
-		if err == nil {
-			check("complete-checkpoints")
+		bindings := map[string]string{}
+		for _, proof := range contract.Checks {
+			inspection, err := proofInspection(proof, name)
+			if err != nil {
+				return nil, err
+			}
+			bindings[proof] = inspection
 		}
-	case "recovery-work":
-		err = r.recoverWork(ctx, true)
-		if err == nil {
-			check("stale-build-ownership-invalidated", "new-worker-authority", "external-effects-reconciled")
+		inspected := map[string]bool{}
+		for _, proof := range contract.Checks {
+			inspection := bindings[proof]
+			if !inspected[inspection] {
+				if inspection == "recovery-checkpoints" {
+					var err error
+					e.Recovery.Acknowledgements, err = r.verifyCheckpoints(ctx)
+					if err != nil {
+						return nil, err
+					}
+				} else if err := r.inspectProof(ctx, inspection); err != nil {
+					return nil, err
+				}
+				inspected[inspection] = true
+			}
+			e.Recovery.Checks[proof] = true
 		}
-	case "recovery-resume":
-		err = r.verifyPause(ctx, false, true)
-		if err == nil {
-			check("all-participants-resumed")
-		}
-	case "drain", "retire", "verify-drain", "verify-retirement":
-		err = r.lifecycle(ctx, args, true)
 	default:
-		return nil, fmt.Errorf("unknown lifecycle %s", args[0])
-	}
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("unsupported native verification contract for %s", name)
 	}
 	if r.RecoveryProgress != nil && r.RecoveryProgress.Report != nil {
 		e.Recovery.ReportDigest = r.RecoveryProgress.Report.ApprovalDigest()
