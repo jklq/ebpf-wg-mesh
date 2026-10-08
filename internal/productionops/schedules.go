@@ -82,9 +82,10 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 	if err != nil {
 		return err
 	}
-	planPath := filepath.Join(r.Config.StateDirectory, "scheduled-plan.json")
+	scheduleDirectory := r.completionDirectory()
+	planPath := filepath.Join(scheduleDirectory, "plan.json")
 	stateSource := "/etc/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/installer-state.json"
-	statePath := filepath.Join(r.Config.StateDirectory, "scheduled-installer-state.json")
+	statePath := filepath.Join(scheduleDirectory, "installer-state.json")
 	if data, err := os.ReadFile(stateSource); err == nil {
 		var state deploy.State
 		if err := json.Unmarshal(data, &state); err != nil {
@@ -107,17 +108,12 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 	}
 	for _, id := range hosts {
 		name := "platform-" + r.Plan.Installation.ID + "-recovery"
-		binary := operationsBinary(r.Plan)
-		config := filepath.Join(r.Config.StateDirectory, "scheduled-operations.json")
-		baseConfig := filepath.Join(r.Config.StateDirectory, "scheduled-base-recovery.json")
+		config := filepath.Join(scheduleDirectory, "operations.json")
+		baseConfig := filepath.Join(scheduleDirectory, "base-recovery.json")
 		if r.Plan.Installation.OperationsConfig == "" {
 			return fmt.Errorf("reference schedules require operationsConfig")
 		}
-		service := "[Unit]\nDescription=Complete independent platform recovery point\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=12min\nEnvironment=PLATFORM_DEPLOYMENT_STATE=" + statePath + "\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " backup-complete\n"
-		timer := "[Unit]\nDescription=Independent platform recovery completion\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
-		renewal := "[Unit]\nDescription=Renew native platform credentials\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=10min\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " credential-renew\n"
-		renewalTimer := "[Timer]\nOnBootSec=10min\nOnUnitActiveSec=1h\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
-		units := map[string]string{name + ".service": service, name + ".timer": timer, name + "-credentials.service": renewal, name + "-credentials.timer": renewalTimer}
+		units := r.completionUnits()
 		var script strings.Builder
 		// Native executables are already staged by the applied plan. Rewrite the
 		// selected config to those pinned executables on every independent completer.
@@ -168,6 +164,69 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		script.WriteString("systemctl is-active --quiet " + shell(name+".timer") + "\nsystemctl is-active --quiet " + shell(name+"-credentials.timer") + "\n")
 		if _, err = r.remote(ctx, r.Plan, deploy.Placement{Host: id}, script.String()); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (r *Runner) completionDirectory() string {
+	return filepath.Join(r.Config.StateDirectory, r.Plan.ID, "schedule")
+}
+
+func (r *Runner) completionUnits() map[string]string {
+	name := "platform-" + r.Plan.Installation.ID + "-recovery"
+	binary := operationsBinary(r.Plan)
+	directory := r.completionDirectory()
+	planPath, statePath := filepath.Join(directory, "plan.json"), filepath.Join(directory, "installer-state.json")
+	config := filepath.Join(directory, "operations.json")
+	service := "[Unit]\nDescription=Complete independent platform recovery point\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=12min\nEnvironment=PLATFORM_DEPLOYMENT_STATE=" + statePath + "\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " backup-complete\n"
+	timer := "[Unit]\nDescription=Independent platform recovery completion\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
+	renewal := "[Unit]\nDescription=Renew native platform credentials\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=10min\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " credential-renew\n"
+	renewalTimer := "[Timer]\nOnBootSec=10min\nOnUnitActiveSec=1h\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
+	units := map[string]string{name + ".service": service, name + ".timer": timer, name + "-credentials.service": renewal, name + "-credentials.timer": renewalTimer}
+	return units
+}
+
+// Stop queued old maintenance jobs before replacing their units. Plan-specific
+// immutable inputs prevent a queued process from pairing new inventory with an
+// old executable or service configuration.
+func (r *Runner) stopPriorMaintenance(ctx context.Context) error {
+	return r.priorMaintenance(ctx, true)
+}
+
+func (r *Runner) priorMaintenance(ctx context.Context, stop bool) error {
+	if r.Plan.Previous == nil || r.Plan.Automatic || r.Plan.Recovery {
+		return nil
+	}
+	currentHosts, err := r.completionHosts()
+	if err != nil {
+		return err
+	}
+	currentUnits := r.completionUnits()
+	old := r.Plan.Previous
+	prior := deploy.Plan{Installation: old.Installation, Release: old.Release, Placements: old.Placements, Previous: old, Generation: r.Plan.Generation}
+	for _, host := range prior.Installation.Hosts {
+		name := "platform-" + prior.Installation.ID + "-recovery"
+		var script strings.Builder
+		for _, service := range []string{name, name + "-credentials"} {
+			timer, job := shell(service+".timer"), shell(service+".service")
+			// A retry after partial resume pauses the current authority while
+			// retaining the already verified replacement schedules.
+			current := slices.Contains(currentHosts, host.ID)
+			if current {
+				script.WriteString("if (\n" + verifyRemoteFile("/etc/systemd/system/"+service+".timer", []byte(currentUnits[service+".timer"])) + verifyRemoteFile("/etc/systemd/system/"+service+".service", []byte(currentUnits[service+".service"])) + ") 2>/dev/null; then :; else\n")
+			}
+			script.WriteString("case \"$(systemctl show --value -p LoadState " + timer + ")\" in\nnot-found) ;;\nloaded)\n")
+			if stop {
+				script.WriteString("systemctl disable --now " + timer + "\nsystemctl stop " + job + "\n")
+			}
+			script.WriteString("test \"$(systemctl show --value -p ActiveState " + timer + ")\" = inactive\ncase \"$(systemctl show --value -p ActiveState " + job + ")\" in inactive|failed) ;; *) exit 1;; esac\ntest \"$(systemctl show --value -p MainPID " + job + ")\" = 0\ncase \"$(systemctl is-enabled " + timer + " 2>/dev/null || true)\" in disabled|masked) ;; *) exit 1;; esac\n;;\n*) exit 1;;\nesac\n")
+			if current {
+				script.WriteString("fi\n")
+			}
+		}
+		if _, err := r.remote(ctx, prior, deploy.Placement{Host: host.ID}, script.String()); err != nil {
+			return fmt.Errorf("prior maintenance shutdown is unresolved: %w", err)
 		}
 	}
 	return nil

@@ -123,6 +123,10 @@ func (r *Runner) prepareProtection(ctx context.Context, selected *deploy.Release
 	}
 	c.DrillCommand = []string{"/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + snapshot.Bundle.ID + "/tools/operations", "offline-recovery"}
 	c.DrillCommandDigest = "sha256:" + tool.SHA256
+	// An independent completer may have selected a prior release's storage
+	// helpers. The applied protection snapshot owns the executable selection,
+	// including the old release for a pre-conversion recovery point.
+	c.Images.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + snapshot.Bundle.ID + "/tools/skopeo"
 	policy := r.Plan.Installation
 	policy.Release = snapshot.Bundle.ID
 	snapshot.Policy = &policy
@@ -216,6 +220,9 @@ func (r *Runner) protect(ctx context.Context, verify bool) error {
 }
 func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 	if !verify {
+		if err := r.stopPriorMaintenance(ctx); err != nil {
+			return err
+		}
 		if err := r.prepareProtection(ctx, &r.Plan.Release); err != nil {
 			return err
 		}

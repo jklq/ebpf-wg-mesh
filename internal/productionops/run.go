@@ -250,7 +250,10 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 	case "reservations":
 		return r.reservations(ctx, false)
 	case "quiesce":
-		return r.pause(ctx, true, r.Plan.Recovery && r.RecoveryProgress != nil && r.RecoveryProgress.ApprovedDigest != "")
+		if err := r.pause(ctx, true, r.Plan.Recovery && r.RecoveryProgress != nil && r.RecoveryProgress.ApprovedDigest != ""); err != nil {
+			return err
+		}
+		return r.stopPriorMaintenance(ctx)
 	case "resume":
 		return r.resume(ctx, false)
 	case "recovery-protect":
@@ -320,6 +323,9 @@ func (r *Runner) Verify(ctx context.Context, args []string) (any, error) {
 		err = r.reservations(ctx, true)
 	case "quiesce":
 		err = r.verifyPause(ctx, true, false)
+		if err == nil {
+			err = r.priorMaintenance(ctx, false)
+		}
 	case "resume":
 		err = r.verifyPause(ctx, false, false)
 	case "recovery-protect":
