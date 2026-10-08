@@ -22,6 +22,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
 )
 
 func (r *Runner) credentials(ctx context.Context, verify bool) error {
@@ -161,9 +162,26 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				files["envoy.yaml"] = []byte(bootstrap)
 			}
 			if pl.Role == deploy.Builder {
+				cfg, err := r.builderConfiguration(pl)
+				if err != nil {
+					return err
+				}
+				env["BUILDER_EXECUTOR"] = "hardened"
+				env["BUILDER_SANDBOX_IMAGE"] = cfg.Sandbox.Image
+				env["BUILDER_SANDBOX_SOCKET"] = cfg.Sandbox.Socket
+				env["BUILDER_SANDBOX_NAMESPACE"] = cfg.Sandbox.Namespace
+				env["BUILDER_SANDBOX_RUNTIME"] = cfg.Sandbox.Runtime
+				env["BUILDER_SANDBOX_SNAPSHOTTER"] = cfg.Sandbox.Snapshotter
+				env["BUILDER_SANDBOX_CNI_PLUGIN_DIR"] = cfg.Sandbox.CNIPluginDir
+				env["BUILDER_SANDBOX_CNI_CONF_DIR"] = cfg.Sandbox.CNIConfDir
+				env["BUILDER_SANDBOX_CNI_NETWORK"] = cfg.Sandbox.CNINetwork
+				env["BUILDER_SANDBOX_NAMESERVERS"] = strings.Join(cfg.Sandbox.Nameservers, ",")
+				env["BUILDER_SANDBOX_BUILDKITD_BINARY"] = cfg.Sandbox.BuildkitdBinary
+				env["BUILDER_RAILPACK_FRONTEND_IMAGE"] = cfg.RailpackFrontendImage
+				env["BUILDER_RAILPACK_FRONTEND_DIRECTORY"] = cfg.RailpackFrontendDirectory
 				env["BUILDER_ID"] = pl.Instance
 				env["BUILDER_WORK_DIR"] = dataDir(r.Plan, pl)
-				env["BUILDER_CONTROLPLANE_ADDRESS"] = strings.Split(r.controlPlaneAddresses("9443"), ",")[0]
+				env["BUILDER_CONTROLPLANE_ADDRESSES"] = r.controlPlaneAddresses("9443")
 				env["BUILDER_CA_FILE"] = cfgDir(r.Plan, pl) + "/ca.crt"
 				env["BUILDER_CERT_FILE"] = cfgDir(r.Plan, pl) + "/client.crt"
 				env["BUILDER_KEY_FILE"] = cfgDir(r.Plan, pl) + "/client.key"
@@ -199,6 +217,54 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 						env["CONTROLPLANE_SOURCE_ARCHIVES_S3_CREDENTIALS_FILE"] = cfgDir(r.Plan, pl) + "/source-credentials"
 					}
 				}
+				// The native deletion gate protects active archives/images using its own
+				// selected storage credentials; it never requires the operator's paths.
+				gate := recovery.Config{Storage: c.Storage, Images: c.Images, RecoveryKeyFile: cfgDir(r.Plan, pl) + "/recovery.key", KeyringFile: cfgDir(r.Plan, pl) + "/keyring.json"}
+				gate.Images.RegistryService = r.Config.RegistryService
+				gate.Images.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/skopeo"
+				gate.Images.AuthFile = cfgDir(r.Plan, pl) + "/external-registry-auth.json"
+				files["external-registry-auth.json"], err = os.ReadFile(c.Images.AuthFile)
+				if err != nil {
+					return err
+				}
+				if c.Images.CertificateDirectory != "" {
+					gate.Images.CertificateDirectory = cfgDir(r.Plan, pl) + "/external-registry-tls"
+					if err := filepath.WalkDir(c.Images.CertificateDirectory, func(path string, d os.DirEntry, err error) error {
+						if err != nil || d.IsDir() {
+							return err
+						}
+						if !d.Type().IsRegular() {
+							return fmt.Errorf("registry TLS closure contains a nonregular file")
+						}
+						rel, err := filepath.Rel(c.Images.CertificateDirectory, path)
+						if err != nil {
+							return err
+						}
+						files["external-registry-tls/"+rel], err = os.ReadFile(path)
+						return err
+					}); err != nil {
+						return err
+					}
+				}
+				gate.Storage.CredentialsFile = cfgDir(r.Plan, pl) + "/recovery-storage-credentials"
+				for source, target := range map[string]string{c.RecoveryKeyFile: "recovery.key", c.Storage.CredentialsFile: "recovery-storage-credentials"} {
+					files[target], err = os.ReadFile(source)
+					if err != nil {
+						return err
+					}
+				}
+				if c.Storage.CAFile != "" {
+					files["recovery-storage-ca.crt"], err = os.ReadFile(c.Storage.CAFile)
+					if err != nil {
+						return err
+					}
+					gate.Storage.CAFile = cfgDir(r.Plan, pl) + "/recovery-storage-ca.crt"
+				}
+				files["recovery.json"], err = json.Marshal(gate)
+				if err != nil {
+					return err
+				}
+				env["PLATFORM_RECOVERY_CONFIG"] = cfgDir(r.Plan, pl) + "/recovery.json"
 				env["CONTROLPLANE_REGISTRY_HOST"] = r.Config.RegistryService
 				env["CONTROLPLANE_REGISTRY_TOKEN_SERVICE"] = r.Config.RegistryService
 				env["CONTROLPLANE_REGISTRY_AUTH_LISTEN"] = "0.0.0.0:9444"
@@ -231,9 +297,6 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				env["CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE"] = cfgDir(r.Plan, pl) + "/wildcard.crt"
 				env["CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE"] = cfgDir(r.Plan, pl) + "/wildcard.key"
 				env["CONTROLPLANE_INGRESS_PUBLIC_ADDR"] = r.Config.PlatformDomain
-				// Protected backend access is provisioned independently on trusted
-				// control planes. Never distribute host-admin SSH/provider credentials.
-				env["PLATFORM_RECOVERY_CONFIG"] = r.Config.RecoveryConfig
 			} else {
 				for key, name := range map[string]string{"DASHBOARD_JWT_SECRET": signkeys.ScopeDashboardSession, "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": signkeys.ScopeUserAssertion} {
 					b, err := signing.ActiveSecret(ctx, name)
@@ -271,7 +334,7 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				data, _ := json.Marshal(urls)
 				env["DASHBOARD_DATABASE_URLS"] = string(data)
 				env["DASHBOARD_DATABASE_SCHEMA"] = r.Config.Console.Schema
-				env["DASHBOARD_CONTROLPLANE_ADDRESS"] = strings.Split(r.controlPlaneAddresses("9443"), ",")[0]
+				env["DASHBOARD_CONTROLPLANE_ADDRESSES"] = r.controlPlaneAddresses("9443")
 				env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.Config.InternalServerName
 				env["DASHBOARD_CONTROLPLANE_CA_FILE"] = cfgDir(r.Plan, pl) + "/ca.crt"
 				env["DASHBOARD_CONTROLPLANE_CERT_FILE"] = cfgDir(r.Plan, pl) + "/client.crt"
@@ -307,6 +370,9 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				path = dataDir(r.Plan, pl) + "/" + name
 			}
 			if verify {
+				if pl.Role == deploy.Agent && (name == "tls/client.crt" || name == "tls/client.key") {
+					continue
+				}
 				script += verifyRemoteFile(path, files[name])
 			} else {
 				script += remoteFile(path, files[name])
@@ -322,6 +388,27 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
 			return err
 		}
+		if pl.Role == deploy.Builder {
+			if err := r.builderImages(ctx, pl, verify); err != nil {
+				return err
+			}
+		}
+		if verify && pl.Role == deploy.Agent {
+			root := dataDir(r.Plan, pl) + "/tls/"
+			proof, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" client-identity "+shell(cfgDir(r.Plan, pl)+"/ca.crt")+" "+shell(root+"client.crt")+" "+shell(root+"client.key")+" "+shell(pl.Instance)+" "+shell(string(identity.CallerAgent))+"\n")
+			if err != nil {
+				return err
+			}
+			serial := strings.TrimSpace(string(proof))
+			var enrolled int
+			if err := db.QueryRowContext(ctx, `SELECT count(*) FROM agent_certificates c JOIN agent_administration a ON a.agent_id=c.agent_id WHERE c.serial=$1 AND c.agent_id=$2 AND a.credential_revoked_at IS NULL AND NOT EXISTS(SELECT 1 FROM certificate_revocations r WHERE r.serial=c.serial)`, serial, pl.Instance).Scan(&enrolled); err != nil {
+				return err
+			}
+			if enrolled != 1 {
+				return fmt.Errorf("running agent certificate is not enrolled or was revoked")
+			}
+		}
+
 	}
 	return nil
 }
@@ -375,8 +462,13 @@ func (r *Runner) clientIdentity(ctx context.Context, pl deploy.Placement, class 
 		}
 		pool := x509.NewCertPool()
 		pool.AppendCertsFromPEM(ca)
-		_, err = leaf.Verify(x509.VerifyOptions{Roots: pool, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
-		valid := err == nil && leaf.Subject.CommonName == pl.Instance && len(leaf.Subject.OrganizationalUnit) == 1 && leaf.Subject.OrganizationalUnit[0] == string(class) && time.Until(leaf.NotAfter) > 2*time.Hour
+		_, err = leaf.Verify(x509.VerifyOptions{Roots: pool, CurrentTime: func() time.Time {
+			if verify && pl.Role == deploy.Agent {
+				return leaf.NotBefore.Add(time.Minute)
+			}
+			return time.Now()
+		}(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
+		valid := err == nil && leaf.Subject.CommonName == pl.Instance && len(leaf.Subject.OrganizationalUnit) == 1 && leaf.Subject.OrganizationalUnit[0] == string(class) && (time.Until(leaf.NotAfter) > 2*time.Hour || verify && pl.Role == deploy.Agent)
 		if valid {
 			material.CAPEM = ca
 			return material, nil

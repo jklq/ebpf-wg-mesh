@@ -1,4 +1,5 @@
 import { ConnectError, type Transport } from "@connectrpc/connect";
+import { connect as connectTLS } from "node:tls";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
 import type { DashboardUser } from "#/lib/dashboard/core/types.server";
@@ -7,7 +8,7 @@ import { formatError } from "#/lib/dashboard/core/utils.server";
 import { createPlatformUserAssertion } from "#/lib/platform-grpc/user-assertion.server";
 
 export interface PlatformRuntimeConfig {
-	controlPlaneAddress: string;
+	controlPlaneAddresses: string[];
 	controlPlaneServerName: string;
 	controlPlaneCA: Buffer;
 	controlPlaneCert: Buffer;
@@ -15,21 +16,90 @@ export interface PlatformRuntimeConfig {
 	userAssertionSecret: string;
 }
 
-let transportInstance: Transport | undefined;
+const transports = new WeakMap<PlatformRuntimeConfig, Transport>();
+
+// Choose a verified reachable replica before submitting the RPC. Never replay a
+// submitted mutation: a transport error after sending may have external effects.
+export async function selectControlPlane(
+	runtime: PlatformRuntimeConfig,
+	signal?: AbortSignal,
+): Promise<string> {
+	let failure: unknown;
+	for (const address of runtime.controlPlaneAddresses) {
+		if (signal?.aborted) throw signal.reason;
+		try {
+			const target = new URL(`https://${address}`);
+			await new Promise<void>((resolve, reject) => {
+				const socket = connectTLS({
+					host: target.hostname.replace(/^\[|\]$/g, ""),
+					port: Number(target.port || 443),
+					servername: runtime.controlPlaneServerName,
+					ca: runtime.controlPlaneCA,
+					cert: runtime.controlPlaneCert,
+					key: runtime.controlPlaneKey,
+					ALPNProtocols: ["h2"],
+				});
+				const abort = () =>
+					socket.destroy(new Error("control-plane selection aborted"));
+				signal?.addEventListener("abort", abort, { once: true });
+				if (signal?.aborted) abort();
+				socket.setTimeout(2000, () =>
+					socket.destroy(new Error("control-plane TLS probe timed out")),
+				);
+				socket.once("error", (error) => {
+					signal?.removeEventListener("abort", abort);
+					reject(error);
+				});
+				socket.once("secureConnect", () => {
+					signal?.removeEventListener("abort", abort);
+					if (socket.alpnProtocol !== "h2") {
+						socket.destroy();
+						reject(new Error("control-plane endpoint does not support HTTP/2"));
+						return;
+					}
+					socket.destroy();
+					resolve();
+				});
+			});
+			return address;
+		} catch (error) {
+			failure = error;
+		}
+	}
+	throw failure ?? new Error("control-plane endpoints required");
+}
 
 export function getTransport(runtime: PlatformRuntimeConfig): Transport {
-	transportInstance ??= createConnectTransport({
-		baseUrl: `https://${runtime.controlPlaneAddress}`,
-		httpVersion: "2",
-		useBinaryFormat: true,
-		nodeOptions: {
-			ca: runtime.controlPlaneCA,
-			cert: runtime.controlPlaneCert,
-			key: runtime.controlPlaneKey,
-			servername: runtime.controlPlaneServerName,
+	const existing = transports.get(runtime);
+	if (existing) return existing;
+	const candidates = new Map(
+		runtime.controlPlaneAddresses.map((address) => [
+			address,
+			createConnectTransport({
+				baseUrl: `https://${address}`,
+				httpVersion: "2",
+				useBinaryFormat: true,
+				nodeOptions: {
+					ca: runtime.controlPlaneCA,
+					cert: runtime.controlPlaneCert,
+					key: runtime.controlPlaneKey,
+					servername: runtime.controlPlaneServerName,
+				},
+			}),
+		]),
+	);
+	const transport: Transport = {
+		async unary(...args) {
+			const address = await selectControlPlane(runtime, args[1]);
+			return candidates.get(address)!.unary(...args);
 		},
-	});
-	return transportInstance;
+		async stream(...args) {
+			const address = await selectControlPlane(runtime, args[1]);
+			return candidates.get(address)!.stream(...args);
+		},
+	};
+	transports.set(runtime, transport);
+	return transport;
 }
 
 export function userAssertionMetadata(

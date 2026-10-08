@@ -366,8 +366,8 @@ func validateBuilder(cfg BuilderConfig) error {
 	if cfg.Name == "" {
 		return errors.New("builder.name is required")
 	}
-	if cfg.ControlPlane.Address == "" {
-		return errors.New("builder.controlPlane.address is required")
+	if len(cfg.ControlPlane.Addresses) == 0 {
+		return errors.New("builder.controlPlane.addresses is required")
 	}
 	if cfg.ControlPlane.TLS.CAFile == "" {
 		return errors.New("builder.controlPlane.tls.caFile is required")

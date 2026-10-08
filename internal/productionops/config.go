@@ -17,30 +17,32 @@ import (
 	"strings"
 	"time"
 
+	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/recovery"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type Config struct {
-	Fences              map[string]RedfishFence `json:"fences,omitempty"`
-	CompletionHosts     []string                `json:"completionHosts,omitempty"`
-	Version             int                     `json:"version"`
-	StateDirectory      string                  `json:"stateDirectory"`
-	RecoveryConfig      string                  `json:"recoveryConfig"`
-	Database            DatabaseConfig          `json:"database"`
-	Console             ConsoleConfig           `json:"console"`
-	Probes              map[deploy.Role]Probe   `json:"probes"`
-	EndpointProbes      map[string]Probe        `json:"endpointProbes"`
-	Storage             map[string]StoreConfig  `json:"storage"`
-	WildcardCertificate string                  `json:"wildcardCertificate"`
-	WildcardKey         string                  `json:"wildcardKey"`
-	PlatformDomain      string                  `json:"platformDomain"`
-	InternalServerName  string                  `json:"internalServerName"`
-	RegistryRealm       string                  `json:"registryRealm"`
-	RegistryService     string                  `json:"registryService"`
-	SourceConfig        string                  `json:"sourceConfig,omitempty"`
-	MonitorTokenFile    string                  `json:"monitorTokenFile,omitempty"`
+	BuilderSandbox      config.BuilderSandboxConfig `json:"builderSandbox,omitempty"`
+	Fences              map[string]RedfishFence     `json:"fences,omitempty"`
+	CompletionHosts     []string                    `json:"completionHosts,omitempty"`
+	Version             int                         `json:"version"`
+	StateDirectory      string                      `json:"stateDirectory"`
+	RecoveryConfig      string                      `json:"recoveryConfig"`
+	Database            DatabaseConfig              `json:"database"`
+	Console             ConsoleConfig               `json:"console"`
+	Probes              map[deploy.Role]Probe       `json:"probes"`
+	EndpointProbes      map[string]Probe            `json:"endpointProbes"`
+	Storage             map[string]StoreConfig      `json:"storage"`
+	WildcardCertificate string                      `json:"wildcardCertificate"`
+	WildcardKey         string                      `json:"wildcardKey"`
+	PlatformDomain      string                      `json:"platformDomain"`
+	InternalServerName  string                      `json:"internalServerName"`
+	RegistryRealm       string                      `json:"registryRealm"`
+	RegistryService     string                      `json:"registryService"`
+	SourceConfig        string                      `json:"sourceConfig,omitempty"`
+	MonitorTokenFile    string                      `json:"monitorTokenFile,omitempty"`
 }
 type DatabaseConfig struct {
 	Binary               string `json:"binary"`

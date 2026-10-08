@@ -533,7 +533,7 @@ func TestFinalizeBuilderAppliesDefaults(t *testing.T) {
 		ID:      "builder-1",
 		Name:    "builder-1",
 		ControlPlane: BuilderControlPlaneConfig{
-			Address: "127.0.0.1:9443",
+			Addresses: []string{"127.0.0.1:9443"},
 			TLS: InternalClientTLSConfig{
 				CAFile:     "ca.crt",
 				CertFile:   "client.crt",
@@ -579,7 +579,7 @@ func validBuilderConfigForTest() BuilderConfig {
 		ID:      "builder-1",
 		Name:    "builder-1",
 		ControlPlane: BuilderControlPlaneConfig{
-			Address: "127.0.0.1:9443",
+			Addresses: []string{"127.0.0.1:9443"},
 			TLS: InternalClientTLSConfig{
 				CAFile:     "ca.crt",
 				CertFile:   "client.crt",
@@ -683,7 +683,7 @@ func TestFinalizeBuilderDefaultsExecutorByProfile(t *testing.T) {
 	prod := validBuilderConfigForTest()
 	prod.Profile = ProfileProduction
 	prod.Health.Listen = "127.0.0.1:18082"
-	prod.ControlPlane.Address = "controlplane.example.test:9443"
+	prod.ControlPlane.Addresses = []string{"controlplane.example.test:9443"}
 	prod.ControlPlane.TLS.ServerName = "controlplane.example.test"
 	prod.Sandbox.Image = "registry.example.test/platform/build-sandbox:1"
 	if err := FinalizeBuilder(&prod); err != nil {
@@ -700,7 +700,7 @@ func TestFinalizeBuilderProductionRefusesDevelopmentExecutor(t *testing.T) {
 	cfg := validBuilderConfigForTest()
 	cfg.Profile = ProfileProduction
 	cfg.Health.Listen = "127.0.0.1:18082"
-	cfg.ControlPlane.Address = "controlplane.example.test:9443"
+	cfg.ControlPlane.Addresses = []string{"controlplane.example.test:9443"}
 	cfg.ControlPlane.TLS.ServerName = "controlplane.example.test"
 	cfg.Executor = "development"
 	if err := FinalizeBuilder(&cfg); err == nil || !strings.Contains(err.Error(), "must not be development") {

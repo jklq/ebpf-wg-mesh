@@ -37,11 +37,32 @@ func (r *Runner) restoreArtifacts(ctx context.Context, verify bool) error {
 		return err
 	}
 	defer clear(s.RecoveryKey)
+	db, err := r.db(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	c.Images.RegistryService = r.Config.RegistryService
 	for _, d := range e.Point.Dependencies {
 		switch d.Kind {
 		case "image":
+			if d.ID == r.Plan.Release.Images["builder-sandbox"] || d.ID == r.Plan.Release.Images["railpack-frontend"] {
+				for _, pl := range r.Plan.Placements {
+					if pl.Role == deploy.Builder {
+						if err := r.builderImages(ctx, pl, verify); err != nil {
+							return err
+						}
+					}
+				}
+				continue
+			}
+			images, releaseAccess, err := recovery.ImageAccess(ctx, db, c.KeyringFile, c.Images, d.ID, !verify)
+			if err != nil {
+				return err
+			}
+			defer releaseAccess()
 			if verify {
-				if err = c.Images.Verify(ctx, d.ID); err != nil {
+				if err = images.Verify(ctx, d.ID); err != nil {
 					return err
 				}
 				continue
@@ -50,10 +71,10 @@ func (r *Runner) restoreArtifacts(ctx context.Context, verify bool) error {
 			if strings.Split(repository, "/")[0] != r.Config.RegistryService {
 				// User-selected external images are verified in place; recovery never
 				// writes to an unrelated registry owned by somebody else.
-				if err = c.Images.Verify(ctx, d.ID); err != nil {
+				if err = images.Verify(ctx, d.ID); err != nil {
 					return err
 				}
-			} else if err = s.RestoreImage(ctx, c.Images, d, repository); err != nil {
+			} else if err = s.RestoreImage(ctx, images, d, repository); err != nil {
 				return err
 			}
 		case "source":

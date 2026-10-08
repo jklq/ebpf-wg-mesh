@@ -24,6 +24,14 @@ func ScheduleSQL(installation, connection string) (string, error) {
 }
 
 func VerifySchedules(ctx context.Context, db *sql.DB, installation, connection string) error {
+	var enabled bool
+	if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING jobs.scheduler.enabled").Scan(&enabled); err != nil {
+		return err
+	}
+	if !enabled {
+		return fmt.Errorf("native backup scheduler is disabled")
+	}
+
 	rows, err := db.QueryContext(ctx, `SELECT recurrence,command,schedule_status,COALESCE(state,'') FROM [SHOW SCHEDULES] WHERE label=$1`, "recovery-"+installation)
 	if err != nil {
 		return err

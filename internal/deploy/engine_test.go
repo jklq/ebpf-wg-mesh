@@ -54,7 +54,7 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 	}
 	if restorationPlan(p) {
 		e.Recovery = &RecoveryReceipt{Installation: p.Installation.ID, Generation: p.Generation, Checks: map[string]bool{}, Acknowledgements: map[string]CheckpointAcknowledgement{}}
-		for _, check := range []string{"provider-or-host-fence", "prior-authority-disabled", "empty-destination", "schemas-not-initialized", "database-restored", "selected-release", "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission", "network-reservations", "quarantine-preserved", "approved-desired-state", "complete-checkpoints", "stale-build-ownership-invalidated", "new-worker-leases", "external-effects-reconciled", "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login", "all-participants-resumed"} {
+		for _, check := range []string{"provider-or-host-fence", "prior-authority-disabled", "empty-destination", "schemas-not-initialized", "database-restored", "selected-release", "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission", "network-reservations", "quarantine-preserved", "approved-desired-state", "complete-checkpoints", "stale-build-ownership-invalidated", "new-worker-authority", "external-effects-reconciled", "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login", "all-participants-resumed"} {
 			e.Recovery.Checks[check] = true
 		}
 		if state.Recovery.Report != nil {
@@ -426,6 +426,7 @@ func completeEvidence(installation, location string, t time.Time) Evidence {
 		point.Snapshot.Requirements = append(point.Snapshot.Requirements, recovery.Requirement{Kind: kind, ID: "required"})
 		point.Dependencies = append(point.Dependencies, recovery.Dependency{Kind: kind, ID: "required", Objects: []recovery.Object{object}})
 	}
+	point.Installer = append([]recovery.Requirement{}, point.Snapshot.Requirements...)
 	manifest := object
 	u, _ := url.Parse(location)
 	manifest.Key = strings.TrimPrefix(u.Path, "/")

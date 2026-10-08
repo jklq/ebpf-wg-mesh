@@ -2,6 +2,9 @@ package productionops
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/builder"
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/recovery"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -27,6 +30,41 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: operations [--plan FILE] [--config FILE] <lifecycle|verify lifecycle|ready role instance probe-file>")
 	}
+	if args[0] == "image-layout" {
+		if len(args) != 4 {
+			return fmt.Errorf("image-layout requires archive, digest and local destination")
+		}
+		return recovery.InstallOCIArchive(args[1], args[2], args[3])
+	}
+	if args[0] == "image-layout-verify" {
+		if len(args) != 3 {
+			return fmt.Errorf("image-layout-verify requires local destination and digest")
+		}
+		_, err := recovery.InspectOCI(args[1], args[2])
+		return err
+	}
+	if args[0] == "builder-runtime" || args[0] == "builder-image-import" || args[0] == "builder-image-verify" {
+		if len(args) < 2 {
+			return fmt.Errorf("builder runtime inspection requires its private configuration")
+		}
+		var cfg config.BuilderConfig
+		if err := privateJSON(args[1], &cfg); err != nil {
+			return err
+		}
+		if err := config.FinalizeBuilder(&cfg); err != nil {
+			return err
+		}
+		switch {
+		case args[0] == "builder-runtime" && len(args) == 2:
+			return builder.InspectRuntime(ctx, cfg)
+		case args[0] == "builder-image-import" && len(args) == 4:
+			return builder.ImportRuntimeImage(ctx, cfg, args[2], args[3])
+		case args[0] == "builder-image-verify" && len(args) == 3:
+			return builder.VerifyRuntimeImage(ctx, cfg, args[2])
+		default:
+			return fmt.Errorf("invalid builder runtime inspection arguments")
+		}
+	}
 	if args[0] == "recover-files" {
 		if len(args) != 4 {
 			return fmt.Errorf("recover-files requires independent recovery config, pinned point URL, and destination")
@@ -46,6 +84,17 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 			return err
 		}
 		return json.NewEncoder(out).Encode(ready)
+	}
+	if args[0] == "client-identity" {
+		if len(args) != 6 {
+			return fmt.Errorf("client-identity requires CA, certificate, key, identity and class")
+		}
+		serial, err := inspectClientIdentity(args[1], args[2], args[3], args[4], args[5])
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(out, serial)
+		return err
 	}
 	if args[0] == "sql-client" {
 		if len(args) != 3 {
@@ -311,7 +360,7 @@ func (r *Runner) Verify(ctx context.Context, args []string) (any, error) {
 	case "recovery-work":
 		err = r.recoverWork(ctx, true)
 		if err == nil {
-			check("stale-build-ownership-invalidated", "new-worker-leases", "external-effects-reconciled")
+			check("stale-build-ownership-invalidated", "new-worker-authority", "external-effects-reconciled")
 		}
 	case "recovery-resume":
 		err = r.verifyPause(ctx, false, true)

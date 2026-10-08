@@ -356,8 +356,8 @@ type AgentLogShippingConfig struct {
 }
 
 type BuilderControlPlaneConfig struct {
-	Address string
-	TLS     InternalClientTLSConfig
+	Addresses []string
+	TLS       InternalClientTLSConfig
 }
 
 type BuilderCapacityConfig struct {
@@ -368,28 +368,29 @@ type BuilderCapacityConfig struct {
 }
 
 type BuilderConfig struct {
-	AuthorityFile            string
-	HostType                 HostType
-	Capacity                 BuilderCapacityConfig
-	Profile                  Profile
-	Health                   HealthConfig
-	ID                       string
-	Name                     string
-	ControlPlane             BuilderControlPlaneConfig
-	WorkDir                  string
-	PollIntervalSeconds      int
-	HeartbeatIntervalSeconds int
-	Logs                     BuilderLogShippingConfig
-	Executor                 string
-	BuildctlBinary           string
-	BuildkitAddress          string
-	RailpackBinary           string
-	RailpackFrontendImage    string
-	Limits                   BuilderLimitsConfig
-	Network                  BuilderNetworkConfig
-	Cache                    BuilderCacheConfig
-	Sandbox                  BuilderSandboxConfig
-	CleanupWorkDir           bool
+	AuthorityFile             string
+	HostType                  HostType
+	Capacity                  BuilderCapacityConfig
+	Profile                   Profile
+	Health                    HealthConfig
+	ID                        string
+	Name                      string
+	ControlPlane              BuilderControlPlaneConfig
+	WorkDir                   string
+	PollIntervalSeconds       int
+	HeartbeatIntervalSeconds  int
+	Logs                      BuilderLogShippingConfig
+	Executor                  string
+	BuildctlBinary            string
+	BuildkitAddress           string
+	RailpackBinary            string
+	RailpackFrontendImage     string
+	RailpackFrontendDirectory string
+	Limits                    BuilderLimitsConfig
+	Network                   BuilderNetworkConfig
+	Cache                     BuilderCacheConfig
+	Sandbox                   BuilderSandboxConfig
+	CleanupWorkDir            bool
 }
 
 // BuilderLogShippingConfig bounds the builder's durable build-log pipeline. Zero values select

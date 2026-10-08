@@ -65,22 +65,32 @@ func (r *Runner) recoverWork(ctx context.Context, verify bool) error {
 	if unsafe != 0 {
 		return fmt.Errorf("stale work ownership or uncertain external effects remain active")
 	}
-	// Compare every quarantine record to a surviving row. A missing source or
-	// idempotency key is a failed recovery, even when its queue happens to be empty.
-	var missing int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM platform_recovery.public.work_quarantine q LEFT JOIN durable_work_items w ON w.id=q.id WHERE q.generation=$1 AND q.kind='durable_work_items' AND (w.id IS NULL OR w.dedup_key<>q.record->>'dedup_key' OR w.payload<>q.record->'payload')`, r.Plan.Generation).Scan(&missing); err != nil {
-		return err
+	// Preserve every field not deliberately changed to invalidate ownership.
+	// This includes source snapshots, external request payloads and idempotency
+	// identities; an empty queue alone is not successful work recovery.
+	for table, changed := range map[string][]string{
+		"build_runs":                {"state", "builder_id", "owner_epoch", "lease_expires_at", "failure_reason", "finished_at"},
+		"build_attempts":            {"outcome", "detail", "finished_at"},
+		"builder_workers":           {"current_build_id", "drained", "updated_at"},
+		"durable_work_items":        {"state", "owner_id", "owner_epoch", "lease_expires_at", "last_error", "updated_at"},
+		"github_work_items":         {"state", "processor_id", "last_error", "updated_at"},
+		"github_webhook_deliveries": {"state", "processor_id", "last_error", "updated_at"},
+	} {
+		left, right := "to_jsonb(w)", "q.record"
+		for _, column := range changed {
+			left += "-'" + column + "'"
+			right += "-'" + column + "'"
+		}
+		var missing int
+		statement := `SELECT count(*) FROM platform_recovery.public.work_quarantine q LEFT JOIN ` + table + ` w ON w.id=q.id WHERE q.generation=$1 AND q.kind=$2 AND (w.id IS NULL OR (` + left + `) <> (` + right + `))`
+		if err := db.QueryRowContext(ctx, statement, r.Plan.Generation, table).Scan(&missing); err != nil {
+			return err
+		}
+		if missing != 0 {
+			return fmt.Errorf("quarantined %s dependencies were lost or changed", table)
+		}
 	}
-	if missing != 0 {
-		return fmt.Errorf("quarantined work dependencies were lost")
-	}
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM platform_recovery.public.work_quarantine q LEFT JOIN github_work_items w ON w.id=q.id WHERE q.generation=$1 AND q.kind='github_work_items' AND (w.id IS NULL OR w.idempotency_key<>q.record->>'idempotency_key')`, r.Plan.Generation).Scan(&missing); err != nil {
-		return err
-	}
-	if missing != 0 {
-		return fmt.Errorf("external idempotency identities were lost")
-	}
-	return nil
+	return r.verifyPause(ctx, true, true)
 }
 func (r *Runner) retireAgent(ctx context.Context, db *sql.DB, id string) error {
 	return adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {

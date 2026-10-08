@@ -45,7 +45,7 @@ interface RuntimeConfig extends DashboardConfig {
 	databaseURL: string;
 	databaseURLs: string[];
 	databaseSchema: string;
-	controlPlaneAddress: string;
+	controlPlaneAddresses: string[];
 	controlPlaneServerName: string;
 	controlPlaneCA: Buffer;
 	controlPlaneCert: Buffer;
@@ -84,10 +84,13 @@ function getConfig(): RuntimeConfig {
 
 function getPool(): Pool {
 	const current = getConfig();
-	pool ??= new FailoverPool(current.databaseURLs, {
-		max: 2,
-		idleTimeoutMillis: 30_000,
-	});
+	if (!pool) {
+		pool = new FailoverPool(current.databaseURLs, {
+			max: 2,
+			idleTimeoutMillis: 30_000,
+		});
+		pool.on("error", () => console.warn("console database idle connection closed"));
+	}
 	return pool;
 }
 
@@ -207,12 +210,14 @@ function readConfig(): RuntimeConfig {
 		(profile === "development" ? "http://localhost:3000" : "");
 	const localIngressBaseURL =
 		process.env.DASHBOARD_LOCAL_INGRESS_BASE_URL?.trim() || undefined;
-	const controlPlaneAddress = mustEnv("DASHBOARD_CONTROLPLANE_ADDRESS");
+	const controlPlaneAddresses = mustEnv("DASHBOARD_CONTROLPLANE_ADDRESSES").split(",").map(address=>address.trim()).filter(Boolean);
+	if (!controlPlaneAddresses.length) throw new Error("control-plane endpoints required");
 	const controlPlaneServerName =
 		process.env.DASHBOARD_CONTROLPLANE_SERVER_NAME ?? "controlplane";
 	const devUsers = parseDevUsers(process.env.DASHBOARD_DEV_USERS ?? "");
 	if (profile === "production") {
 		for (const candidate of databaseURLs)
+		for (const controlPlaneAddress of controlPlaneAddresses)
 			assertProductionDashboardConfig({
 				devUsers,
 				publicBaseURL,
@@ -251,7 +256,7 @@ function readConfig(): RuntimeConfig {
 		ingressTargetHost: mustEnv("DASHBOARD_INGRESS_TARGET_HOST"),
 		localDomainSuffix:
 			process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim() || undefined,
-		controlPlaneAddress,
+		controlPlaneAddresses,
 		controlPlaneServerName,
 		jwtSecret,
 		jwtSecretPrevious,
@@ -294,7 +299,7 @@ function readConfig(): RuntimeConfig {
 			githubEnabled: Boolean(loaded.github),
 			secureCookies: usesSecureCookies(loaded.publicBaseURL),
 			databaseURL: loaded.databaseURL,
-			controlPlaneAddress: loaded.controlPlaneAddress,
+			controlPlaneAddress: loaded.controlPlaneAddresses.join(","),
 		}),
 	);
 	return loaded;

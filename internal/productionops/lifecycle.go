@@ -2,9 +2,12 @@ package productionops
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -279,6 +282,30 @@ func (r *Runner) lifecycle(ctx context.Context, args []string, verify bool) erro
 			return fmt.Errorf("ingress remains an active member")
 		}
 	}
+	if action == "retire" {
+		if _, err := r.remote(ctx, p, pl, "test \"$(readlink "+shell("/etc/systemd/system/"+unit(p, pl))+")\" = /dev/null\n"); err != nil {
+			return err
+		}
+		if pl.Role == deploy.Agent {
+			var retired bool
+			if err := db.QueryRowContext(ctx, `SELECT lifecycle_state='retired' AND operator_intent='cordoned' AND credential_revoked_at IS NOT NULL FROM agent_administration WHERE agent_id=$1`, pl.Instance).Scan(&retired); err != nil {
+				return err
+			}
+			if !retired {
+				return fmt.Errorf("agent retirement and credential revocation are unresolved")
+			}
+		}
+		if pl.Role == deploy.Builder {
+			var drained bool
+			if err := db.QueryRowContext(ctx, `SELECT drained AND current_build_id='' FROM builder_workers WHERE id=$1`, pl.Instance).Scan(&drained); err != nil {
+				return err
+			}
+			if !drained {
+				return fmt.Errorf("builder retirement leaves active ownership")
+			}
+		}
+	}
+
 	return nil
 }
 func (r *Runner) findPlacement(role deploy.Role, id string) (deploy.Placement, deploy.Plan, error) {
@@ -304,25 +331,66 @@ func (r *Runner) databaseRetirement(ctx context.Context, p deploy.Plan, pl deplo
 		return err
 	}
 	defer db.Close()
-	var id int
-	if err := db.QueryRowContext(ctx, `SELECT node_id FROM crdb_internal.gossip_nodes WHERE split_part(address,':',1)=$1`, h.Network.Address).Scan(&id); err != nil {
-		return err
+	identityPath := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "retired-node-"+pl.Instance+".json")
+	var identity struct {
+		Node    int64
+		Address string
+	}
+	id, resolveErr := databaseNodeID(ctx, db, h.Network.Address)
+	if err := privateJSON(identityPath, &identity); err == nil {
+		if identity.Address != h.Network.Address || identity.Node <= 0 || (resolveErr == nil && id != identity.Node) {
+			return fmt.Errorf("retained native node identity differs")
+		}
+		if resolveErr != nil && resolveErr != sql.ErrNoRows {
+			return resolveErr
+		}
+		id = identity.Node
+	} else {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		if resolveErr != nil {
+			return resolveErr
+		}
+		identity.Node, identity.Address = id, h.Network.Address
+		if err := saveJSON(identityPath, identity); err != nil {
+			return err
+		}
 	}
 	if !verify {
-		cmd := exec.CommandContext(ctx, r.Config.Database.Binary, "node", "decommission", fmt.Sprint(id), "--wait=all", "--host="+r.Config.Database.Address, "--certs-dir="+r.databasePKI())
+		cmd := exec.CommandContext(ctx, r.Config.Database.Binary, "node", "decommission", fmt.Sprint(id), "--wait=all", "--host="+r.reachableDatabase(ctx), "--certs-dir="+r.databasePKI())
 		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("native database decommission incomplete: %w", err)
 		}
 	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, `SET allow_unsafe_internals = true`); err != nil {
+		return err
+	}
 	var replicas int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM crdb_internal.ranges WHERE $1=ANY(replicas)`, id).Scan(&replicas); err != nil {
+	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM crdb_internal.ranges WHERE $1=ANY(replicas)`, id).Scan(&replicas); err != nil {
 		return err
 	}
 	if replicas != 0 {
 		return fmt.Errorf("database node still holds replicas")
 	}
+	var membership string
+	if err := conn.QueryRowContext(ctx, `SELECT membership FROM crdb_internal.kv_node_liveness WHERE node_id=$1`, id).Scan(&membership); err != nil {
+		return err
+	}
+	if membership != "decommissioned" {
+		return fmt.Errorf("native database membership retirement is unresolved")
+	}
 	if action == "retire" && !verify {
-		_, err = r.remote(ctx, p, pl, "systemctl disable --now "+shell(unit(p, pl))+"\n")
+		_, err = r.remote(ctx, p, pl, maskScript(p, pl))
+		return err
+	}
+	if action == "retire" {
+		_, err = r.remote(ctx, p, pl, "! systemctl is-active --quiet "+shell(unit(p, pl))+"\ntest \"$(readlink "+shell("/etc/systemd/system/"+unit(p, pl))+")\" = /dev/null\n")
 		return err
 	}
 	return nil

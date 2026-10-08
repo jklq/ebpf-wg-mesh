@@ -23,6 +23,13 @@ func TestNativeDatabaseVerificationCountsVotersAndKeepsUnavailableMembers(t *tes
 	if err != nil || healthy || len(status.Members) != 3 {
 		t.Fatal("temporary outage reduced membership", status, err)
 	}
+	if len(status.Live) != 2 {
+		t.Fatal("unavailable member counted as live", status)
+	}
+	noQuorum := strings.Replace(offline, "2,10.0.0.2:26257,true,true", "2,10.0.0.2:26257,false,false", 1)
+	if _, _, err := parseDatabaseStatus(i, []byte(noQuorum), []byte(ranges)); err == nil {
+		t.Fatal("lost voting quorum accepted during automatic reconciliation")
+	}
 	if _, _, err := parseDatabaseStatus(i, []byte("invalid output"), []byte(ranges)); err == nil {
 		t.Fatal("unsupported native output accepted")
 	}

@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
 
 // Storage pins reads and retention updates to exact object versions. Deletion is
@@ -25,205 +30,85 @@ type Storage interface {
 	Delete(context.Context, Object) error
 }
 
-type StorageConfig struct {
-	Binary          string   `json:"binary"`
-	CAFile          string   `json:"caFile,omitempty"`
-	Endpoint        string   `json:"endpoint"`
-	Bucket          string   `json:"bucket"`
-	Prefix          string   `json:"prefix"`
-	Region          string   `json:"region"`
-	Owner           string   `json:"owner"` // canonical owner returned by GetBucketAcl
-	CredentialsFile string   `json:"credentialsFile"`
-	Profile         string   `json:"profile"`
-	Account         string   `json:"account"`
-	PrimaryAccount  string   `json:"primaryAccount"`
-	FailureDomain   string   `json:"failureDomain"`
-	PrimaryDomains  []string `json:"primaryDomains"`
-	WriterPrincipal string   `json:"writerPrincipal"`
+// S3 uses a native, connection-reusing client. Configuration is immutable for its
+// lifetime; renewed credentials create a new client at the next operations run.
+type S3 struct {
+	Config  StorageConfig
+	once    sync.Once
+	api     *s3.Client
+	initErr error
 }
 
-func (c StorageConfig) Validate() error {
-	if c.CAFile != "" && (!filepath.IsAbs(c.CAFile) || filepath.Clean(c.CAFile) != c.CAFile) {
-		return fmt.Errorf("storage TLS CA file must be an absolute clean path")
-	}
-	if !filepath.IsAbs(c.Binary) || c.Bucket == "" || c.Region == "" || c.Owner == "" || !filepath.IsAbs(c.CredentialsFile) || c.Profile == "" || c.Account == "" || c.PrimaryAccount == "" || c.Account == c.PrimaryAccount || c.FailureDomain == "" || c.WriterPrincipal == "" {
-		return fmt.Errorf("recovery storage requires a pinned S3 client, bucket owner, independent account/domain and explicit credentials")
-	}
-	if c.Endpoint != "" && !strings.HasPrefix(c.Endpoint, "https://") {
-		return fmt.Errorf("recovery S3 endpoint requires HTTPS")
-	}
-	if strings.Trim(c.Prefix, "/") != c.Prefix || c.Prefix == "" || strings.Contains(c.Prefix, "..") {
-		return fmt.Errorf("invalid recovery storage prefix")
-	}
-	for _, d := range c.PrimaryDomains {
-		if d == c.FailureDomain {
-			return fmt.Errorf("recovery storage shares primary failure domain %s", d)
-		}
-	}
-	if len(c.PrimaryDomains) == 0 {
-		return fmt.Errorf("primary site and storage failure domains must be declared")
-	}
-	return nil
+func (s *S3) client() (*s3.Client, error) {
+	s.once.Do(func() { s.api, s.initErr = storageClient(s.Config) })
+	return s.api, s.initErr
 }
 
-// S3 uses the supported S3 operations in a release-pinned AWS CLI v2 executable.
-// It works with compatible endpoints and never invokes a shell.
-type S3 struct{ Config StorageConfig }
-
-func (s *S3) call(ctx context.Context, result any, operation string, args ...string) error {
-	c := s.Config
-	argv := []string{"--no-cli-pager", "--output", "json", "--region", c.Region, "--profile", c.Profile}
-	if c.Endpoint != "" {
-		argv = append(argv, "--endpoint-url", c.Endpoint)
+// SDK errors may include credential-bearing request URLs and response bodies.
+// Only the service error identifier and context cancellation leave this boundary.
+func storageError(operation string, err error) error {
+	if err == nil {
+		return nil
 	}
-	if c.CAFile != "" {
-		argv = append(argv, "--ca-bundle", c.CAFile)
+	if errors.Is(err, context.Canceled) {
+		return fmt.Errorf("recovery S3 %s: %w", operation, context.Canceled)
 	}
-	argv = append(argv, "s3api", operation, "--bucket", c.Bucket)
-	argv = append(argv, args...)
-	cmd := exec.CommandContext(ctx, c.Binary, argv...)
-	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, "AWS_") {
-			cmd.Env = append(cmd.Env, e)
-		}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("recovery S3 %s: %w", operation, context.DeadlineExceeded)
 	}
-	cmd.Env = append(cmd.Env, "AWS_SHARED_CREDENTIALS_FILE="+c.CredentialsFile, "AWS_CONFIG_FILE=/dev/null", "AWS_EC2_METADATA_DISABLED=true")
-	// Do not expose command stderr: SDK diagnostics may contain credential URLs.
-	b, err := cmd.Output()
-	if err != nil {
-		return fmt.Errorf("recovery S3 %s failed: %w", operation, err)
+	var api smithy.APIError
+	if errors.As(err, &api) {
+		return fmt.Errorf("recovery S3 %s failed (%s)", operation, api.ErrorCode())
 	}
-	if result != nil && len(b) != 0 {
-		if err := json.Unmarshal(b, result); err != nil {
-			return fmt.Errorf("decode S3 %s response: %w", operation, err)
-		}
-	}
-	return nil
+	return fmt.Errorf("recovery S3 %s failed", operation)
 }
 
 func (s *S3) Check(ctx context.Context) error {
 	if err := s.Config.Validate(); err != nil {
 		return err
 	}
-	var owner struct{ Owner struct{ ID string } }
-	if err := s.call(ctx, &owner, "get-bucket-acl"); err != nil {
+	c, err := s.client()
+	if err != nil {
 		return err
 	}
-	if owner.Owner.ID != s.Config.Owner {
+	bucket := aws.String(s.Config.Bucket)
+	owner, err := c.GetBucketAcl(ctx, &s3.GetBucketAclInput{Bucket: bucket})
+	if err != nil {
+		return storageError("bucket owner", err)
+	}
+	if s.Config.Owner != "" && (owner.Owner == nil || aws.ToString(owner.Owner.ID) != s.Config.Owner) {
 		return fmt.Errorf("recovery bucket owner differs from the declared independent owner")
 	}
-	var versioning struct{ Status string }
-	if err := s.call(ctx, &versioning, "get-bucket-versioning"); err != nil {
-		return err
+	versioning, err := c.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: bucket})
+	if err != nil {
+		return storageError("bucket versioning", err)
 	}
-	if versioning.Status != "Enabled" {
+	if versioning.Status != types.BucketVersioningStatusEnabled {
 		return fmt.Errorf("recovery bucket versioning must be enabled")
 	}
-	var encryption struct {
-		ServerSideEncryptionConfiguration struct {
-			Rules []struct{ ApplyServerSideEncryptionByDefault struct{ SSEAlgorithm string } }
-		}
+	encryption, err := c.GetBucketEncryption(ctx, &s3.GetBucketEncryptionInput{Bucket: bucket})
+	if err != nil {
+		return storageError("bucket encryption", err)
 	}
-	if err := s.call(ctx, &encryption, "get-bucket-encryption"); err != nil {
-		return err
-	}
-	if len(encryption.ServerSideEncryptionConfiguration.Rules) == 0 || encryption.ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm == "" {
+	if encryption.ServerSideEncryptionConfiguration == nil || len(encryption.ServerSideEncryptionConfiguration.Rules) == 0 || encryption.ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault == nil || encryption.ServerSideEncryptionConfiguration.Rules[0].ApplyServerSideEncryptionByDefault.SSEAlgorithm == "" {
 		return fmt.Errorf("native database backup writes require bucket encryption at rest")
 	}
-	var lock struct {
-		ObjectLockConfiguration struct {
-			ObjectLockEnabled string
-			Rule              struct {
-				DefaultRetention struct {
-					Mode  string
-					Days  int
-					Years int
-				}
-			}
-		}
+	lock, err := c.GetObjectLockConfiguration(ctx, &s3.GetObjectLockConfigurationInput{Bucket: bucket})
+	if err != nil {
+		return storageError("bucket retention", err)
 	}
-	if err := s.call(ctx, &lock, "get-object-lock-configuration"); err != nil {
-		return err
+	if lock.ObjectLockConfiguration == nil || lock.ObjectLockConfiguration.ObjectLockEnabled != types.ObjectLockEnabledEnabled || lock.ObjectLockConfiguration.Rule == nil || lock.ObjectLockConfiguration.Rule.DefaultRetention == nil {
+		return fmt.Errorf("recovery bucket needs default compliance retention")
 	}
 	d := lock.ObjectLockConfiguration.Rule.DefaultRetention
-	if lock.ObjectLockConfiguration.ObjectLockEnabled != "Enabled" || d.Mode != "COMPLIANCE" || (d.Days < 31 && d.Years < 1) {
+	if d.Mode != types.ObjectLockRetentionModeCompliance || (aws.ToInt32(d.Days) < 31 && aws.ToInt32(d.Years) < 1) {
 		return fmt.Errorf("recovery bucket needs Object Lock COMPLIANCE default retention of at least 31 days for native backup writes")
 	}
-	var policy struct{ Policy string }
-	if err := s.call(ctx, &policy, "get-bucket-policy"); err != nil {
-		return err
+	policy, err := c.GetBucketPolicy(ctx, &s3.GetBucketPolicyInput{Bucket: bucket})
+	if err != nil {
+		return storageError("bucket policy", err)
 	}
-	return checkWriterPolicy(policy.Policy, s.Config.WriterPrincipal, s.Config.Bucket)
-}
-
-// Require unconditional resource-policy denies, rather than inferring credential
-// scope from the fact that a harmless read succeeded. IAM grants cannot override
-// these explicit denies on the production writer principal.
-func checkWriterPolicy(raw, writer, bucket string) error {
-	var p struct {
-		Statement []struct {
-			Effect    string
-			Principal any
-			Action    any
-			Resource  any
-			Condition map[string]any
-		}
-	}
-	if err := json.Unmarshal([]byte(raw), &p); err != nil {
-		return fmt.Errorf("invalid recovery bucket policy")
-	}
-	values := func(v any) []string {
-		switch x := v.(type) {
-		case string:
-			return []string{x}
-		case []any:
-			var out []string
-			for _, v := range x {
-				if s, ok := v.(string); ok {
-					out = append(out, s)
-				}
-			}
-			return out
-		}
-		return nil
-	}
-	denied := map[string]bool{}
-	for _, statement := range p.Statement {
-		if statement.Effect != "Deny" || len(statement.Condition) > 0 {
-			continue
-		}
-		principal := statement.Principal
-		if m, ok := principal.(map[string]any); ok {
-			principal = m["AWS"]
-		}
-		applies := false
-		for _, v := range values(principal) {
-			if v == writer || v == "*" {
-				applies = true
-			}
-		}
-		if !applies {
-			continue
-		}
-		for _, resource := range values(statement.Resource) {
-			if resource != "*" && resource != "arn:aws:s3:::"+bucket && resource != "arn:aws:s3:::"+bucket+"/*" {
-				continue
-			}
-			for _, action := range values(statement.Action) {
-				denied[action+"/"+resource] = true
-			}
-		}
-	}
-	for _, action := range []string{"s3:DeleteObjectVersion", "s3:PutBucketVersioning", "s3:PutBucketObjectLockConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy", "s3:BypassGovernanceRetention", "s3:DeleteBucket"} {
-		resource := "arn:aws:s3:::" + bucket
-		if action == "s3:DeleteObjectVersion" || action == "s3:BypassGovernanceRetention" {
-			resource += "/*"
-		}
-		if !denied[action+"/"+resource] && !denied[action+"/*"] && !denied["s3:*/"+resource] && !denied["*/*"] && !denied["s3:*/*"] {
-			return fmt.Errorf("recovery bucket must explicitly deny production writer %s", action)
-		}
-	}
-	return nil
+	return checkWriterPolicy(aws.ToString(policy.Policy), s.Config.WriterPrincipal, s.Config.Bucket)
 }
 
 func (s *S3) Put(ctx context.Context, key, file string, until time.Time) (Object, error) {
@@ -232,42 +117,82 @@ func (s *S3) Put(ctx context.Context, key, file string, until time.Time) (Object
 	if err != nil {
 		return Object{}, err
 	}
-	var result struct{ VersionId string }
-	rawDigest, _ := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+	c, err := s.client()
+	if err != nil {
+		return Object{}, err
+	}
+	var version string
 	if size > 5<<30 {
-		result.VersionId, err = s.multipart(ctx, key, file, digest, size, until)
+		version, err = s.multipart(ctx, key, file, digest, size, until)
 	} else {
-		err = s.call(ctx, &result, "put-object", "--key", key, "--body", file, "--checksum-algorithm", "SHA256", "--checksum-sha256", base64.StdEncoding.EncodeToString(rawDigest), "--server-side-encryption", "AES256", "--metadata", "digest="+digest, "--object-lock-mode", "COMPLIANCE", "--object-lock-retain-until-date", until.UTC().Format(time.RFC3339Nano))
+		f, openErr := os.Open(file)
+		if openErr != nil {
+			return Object{}, openErr
+		}
+		defer f.Close()
+		raw, _ := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
+		result, callErr := c.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(key), Body: f, ContentLength: aws.Int64(size), ChecksumAlgorithm: types.ChecksumAlgorithmSha256, ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(raw)), ServerSideEncryption: types.ServerSideEncryptionAes256, Metadata: map[string]string{"digest": digest}, ObjectLockMode: types.ObjectLockModeCompliance, ObjectLockRetainUntilDate: &until})
+		err = storageError("put object", callErr)
+		if err == nil {
+			version = aws.ToString(result.VersionId)
+		}
 	}
 	if err != nil {
 		return Object{}, err
 	}
-	o := Object{Key: key, Version: result.VersionId, Digest: digest, Size: size, RetainUntil: until}
-	if o.Version == "" || o.Version == "null" {
+	if version == "" || version == "null" {
 		return Object{}, fmt.Errorf("S3 upload did not return a protected object version")
 	}
-	return o, nil
+	return Object{Key: key, Version: version, Digest: digest, Size: size, RetainUntil: until}, nil
 }
 
 func (s *S3) Get(ctx context.Context, o Object, file string) error {
-	return s.call(ctx, nil, "get-object", "--key", o.Key, "--version-id", o.Version, file)
+	c, err := s.client()
+	if err != nil {
+		return err
+	}
+	input := &s3.GetObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(o.Key)}
+	if o.Version != "" && o.Version != "null" {
+		input.VersionId = aws.String(o.Version)
+	}
+	result, err := c.GetObject(ctx, input)
+	if err != nil {
+		return storageError("get object", err)
+	}
+	defer result.Body.Close()
+	if input.VersionId != nil && aws.ToString(result.VersionId) != o.Version {
+		return fmt.Errorf("S3 download returned a different version")
+	}
+	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	n, err := io.Copy(f, result.Body)
+	if err == nil && result.ContentLength != nil && n != *result.ContentLength {
+		err = fmt.Errorf("S3 download is incomplete")
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err != nil {
+		return storageError("download content", err)
+	}
+	return closeErr
 }
 func (s *S3) Inspect(ctx context.Context, o Object) (Object, error) {
-	var r struct {
-		VersionId                 string
-		ContentLength             int64
-		Metadata                  map[string]string
-		ObjectLockMode            string
-		ObjectLockRetainUntilDate time.Time
-		ServerSideEncryption      string
-	}
-	if err := s.call(ctx, &r, "head-object", "--key", o.Key, "--version-id", o.Version); err != nil {
+	c, err := s.client()
+	if err != nil {
 		return Object{}, err
 	}
-	if r.VersionId != o.Version || r.ObjectLockMode != "COMPLIANCE" || r.ServerSideEncryption == "" {
+	r, err := c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(o.Key), VersionId: aws.String(o.Version)})
+	if err != nil {
+		return Object{}, storageError("inspect object", err)
+	}
+	if aws.ToString(r.VersionId) != o.Version || r.ObjectLockMode != types.ObjectLockModeCompliance || r.ServerSideEncryption == "" || r.ObjectLockRetainUntilDate == nil {
 		return Object{}, fmt.Errorf("object %s lacks version-pinned compliance retention or encryption", o.Key)
 	}
-	return Object{Key: o.Key, Version: o.Version, Digest: r.Metadata["digest"], Size: r.ContentLength, RetainUntil: r.ObjectLockRetainUntilDate}, nil
+	return Object{Key: o.Key, Version: o.Version, Digest: r.Metadata["digest"], Size: aws.ToInt64(r.ContentLength), RetainUntil: *r.ObjectLockRetainUntilDate}, nil
 }
 func (s *S3) Retain(ctx context.Context, o Object, until time.Time) error {
 	until = s3RetentionTime(until)
@@ -278,12 +203,13 @@ func (s *S3) Retain(ctx context.Context, o Object, until time.Time) error {
 	if !current.RetainUntil.Before(until) {
 		return nil
 	}
-	retention := string(jsonBytes(map[string]any{"Mode": "COMPLIANCE", "RetainUntilDate": until.UTC().Format(time.RFC3339Nano)}))
-	return s.call(ctx, nil, "put-object-retention", "--key", o.Key, "--version-id", o.Version, "--retention", retention)
+	c, err := s.client()
+	if err != nil {
+		return err
+	}
+	_, err = c.PutObjectRetention(ctx, &s3.PutObjectRetentionInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(o.Key), VersionId: aws.String(o.Version), Retention: &types.ObjectLockRetention{Mode: types.ObjectLockRetentionModeCompliance, RetainUntilDate: &until}})
+	return storageError("extend retention", err)
 }
-
-// S3-compatible services may persist retention with second precision. Round up
-// so serialization can never shorten the database timestamp's required horizon.
 func s3RetentionTime(until time.Time) time.Time {
 	second := until.UTC().Truncate(time.Second)
 	if second.Before(until) {
@@ -292,23 +218,32 @@ func s3RetentionTime(until time.Time) time.Time {
 	return second
 }
 func (s *S3) Versions(ctx context.Context, prefix string) ([]Object, error) {
-	var r struct {
-		Versions []struct {
-			Key       string
-			VersionId string
-			Size      int64
-		}
-	}
-	// CLI pagination stays enabled; every page participates in the inventory.
-	if err := s.call(ctx, &r, "list-object-versions", "--prefix", prefix); err != nil {
+	c, err := s.client()
+	if err != nil {
 		return nil, err
 	}
+	pages := s3.NewListObjectVersionsPaginator(c, &s3.ListObjectVersionsInput{Bucket: aws.String(s.Config.Bucket), Prefix: aws.String(prefix)})
 	var out []Object
-	for _, v := range r.Versions {
-		out = append(out, Object{Key: v.Key, Version: v.VersionId, Size: v.Size})
+	for pages.HasMorePages() {
+		page, err := pages.NextPage(ctx)
+		if err != nil {
+			return nil, storageError("list versions", err)
+		}
+		for _, v := range page.Versions {
+			out = append(out, Object{Key: aws.ToString(v.Key), Version: aws.ToString(v.VersionId), Size: aws.ToInt64(v.Size)})
+		}
 	}
 	return out, nil
 }
 func (s *S3) Delete(ctx context.Context, o Object) error {
-	return s.call(ctx, nil, "delete-object", "--key", o.Key, "--version-id", o.Version)
+	c, err := s.client()
+	if err != nil {
+		return err
+	}
+	input := &s3.DeleteObjectInput{Bucket: aws.String(s.Config.Bucket), Key: aws.String(o.Key)}
+	if o.Version != "" && o.Version != "null" {
+		input.VersionId = aws.String(o.Version)
+	}
+	_, err = c.DeleteObject(ctx, input)
+	return storageError("delete object", err)
 }

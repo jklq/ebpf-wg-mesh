@@ -15,6 +15,7 @@ import (
 )
 
 type Images struct {
+	RegistryService      string `json:"registryService,omitempty"`
 	Binary               string `json:"binary"`
 	AuthFile             string `json:"authFile"`
 	CertificateDirectory string `json:"certificateDirectory,omitempty"`
@@ -35,7 +36,9 @@ func (i Images) copy(ctx context.Context, source, target string) error {
 	if !filepath.IsAbs(i.Binary) || !filepath.IsAbs(i.AuthFile) {
 		return fmt.Errorf("registry recovery requires a pinned skopeo binary and external auth file")
 	}
-	args := []string{"copy", "--all", "--preserve-digests", "--authfile", i.AuthFile}
+	// Image authority is the selected SHA256 and the fully inspected OCI closure.
+	// Do not require an unspecified host-wide signature policy; TLS stays enabled.
+	args := []string{"--insecure-policy", "copy", "--all", "--preserve-digests", "--authfile", i.AuthFile}
 	if i.CertificateDirectory != "" {
 		args = append(args, "--src-cert-dir", i.CertificateDirectory, "--dest-cert-dir", i.CertificateDirectory)
 	}
@@ -284,6 +287,36 @@ func extractOCI(file, dir string) error {
 			return closeErr
 		}
 	}
+}
+
+// InstallOCIArchive validates all manifests and blobs before publishing a local
+// layout. Only this release-owned directory is replaced; workload contents are
+// never read, overwritten or deleted here.
+func InstallOCIArchive(file, digest, target string) error {
+	if !filepath.IsAbs(target) || filepath.Clean(target) != target || !digestPattern.MatchString(digest) {
+		return fmt.Errorf("local OCI destination and pinned digest required")
+	}
+	if _, err := InspectOCI(target, digest); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0700); err != nil {
+		return err
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(target), ".oci-layout-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if err := extractOCI(file, dir); err != nil {
+		return err
+	}
+	if _, err := InspectOCI(dir, digest); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(target); err != nil {
+		return err
+	}
+	return os.Rename(dir, target)
 }
 
 func (s Service) RestoreImage(ctx context.Context, i Images, d Dependency, repository string) error {

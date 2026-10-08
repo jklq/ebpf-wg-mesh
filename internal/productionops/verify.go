@@ -182,7 +182,8 @@ func (r *Runner) storageStatus(ctx context.Context) (map[string]deploy.StorageSt
 	return result, nil
 }
 func (r *Runner) productionVerify(ctx context.Context) error {
-	if _, err := r.databaseStatus(ctx); err != nil {
+	database, err := r.databaseStatus(ctx)
+	if err != nil {
 		return err
 	}
 	if _, err := r.storageStatus(ctx); err != nil {
@@ -195,6 +196,11 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 		return err
 	}
 	for _, pl := range r.Plan.Placements {
+		if r.Plan.Automatic && pl.Role == deploy.Database && !slices.Contains(database.Live, pl.Host) {
+			// Membership remains unchanged. Native range inspection above must
+			// establish a live voting quorum even while a member is unavailable.
+			continue
+		}
 		if r.Plan.Automatic && (pl.Role == deploy.Agent || pl.Role == deploy.Builder) {
 			continue
 		}
@@ -209,25 +215,36 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 		if _, err := r.hostProbe(ctx, r.Plan, pl, p, false); err != nil {
 			return err
 		}
+		if pl.Role == deploy.Builder {
+			if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" builder-runtime "+shell(cfgDir(r.Plan, pl)+"/builder-runtime.json")+"\n"); err != nil {
+				return fmt.Errorf("builder runtime inspection: %w", err)
+			}
+		}
 		if pl.Role == deploy.ControlPlane || pl.Role == deploy.Console || pl.Role == deploy.Registry {
 			if _, err := r.hostProbe(ctx, r.Plan, pl, p, true); err != nil {
 				return err
 			}
 		}
-		// Observe reciprocal TCP reachability to every runtime dependency; declarative
-		// RTT matrices are placement input, never proof of a working overlay.
+		// Inspect from each actual component host. Replica clients select a live
+		// peer before submitting work; loss of a retained member is permitted only
+		// when another dependency is reachable and native readiness passed.
 		ports := map[deploy.Role]string{deploy.Database: "26257", deploy.ControlPlane: "9443", deploy.Registry: "5000"}
 		dependencies := map[deploy.Role][]deploy.Role{deploy.ControlPlane: {deploy.Database, deploy.ControlPlane}, deploy.Console: {deploy.Database, deploy.ControlPlane}, deploy.Builder: {deploy.ControlPlane, deploy.Registry}, deploy.Agent: {deploy.ControlPlane, deploy.Registry}, deploy.Envoy: {deploy.ControlPlane}}
 		for _, role := range dependencies[pl.Role] {
+			reachable := false
 			for _, target := range r.Plan.Placements {
-				if target.Role != role || target.Host == pl.Host {
+				if target.Role != role {
 					continue
 				}
 				h, _ := r.Plan.Installation.Host(target.Host)
 				address := net.JoinHostPort(h.Network.Address, ports[role])
-				if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" connect "+shell(address)+"\n"); err != nil {
-					return fmt.Errorf("runtime dependency %s -> %s unavailable: %w", pl.Instance, target.Instance, err)
+				if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" connect "+shell(address)+"\n"); err == nil {
+					reachable = true
+					break
 				}
+			}
+			if !reachable {
+				return fmt.Errorf("runtime dependency %s -> %s has no reachable replica", pl.Instance, role)
 			}
 		}
 	}
@@ -260,7 +277,10 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 	}
 	defer clear(s.RecoveryKey)
 	// Inspect actual pinned manifests through authenticated registry access.
-	for _, ref := range r.Plan.Release.Images {
+	for name, ref := range r.Plan.Release.Images {
+		if name == "builder-sandbox" || name == "railpack-frontend" {
+			continue // Inspected from each builder's actual protected local contents.
+		}
 		if err := c.Images.Verify(ctx, ref); err != nil {
 			return err
 		}

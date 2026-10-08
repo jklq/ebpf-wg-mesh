@@ -26,6 +26,15 @@ func (r *Runner) captureFleet(ctx context.Context) error {
 	}
 	defer db.Close()
 	input := recovery.FleetInput{CapturedAt: time.Now().UTC()}
+	var latest recovery.FleetInput
+	if err := privateJSON(r.Plan.Installation.Recovery.Inventory, &latest); err != nil {
+		for _, pl := range r.Plan.Previous.Placements {
+			if pl.Role == deploy.Agent {
+				return fmt.Errorf("latest independent host inventory is required: %w", err)
+			}
+		}
+	}
+	input.Resources = append(input.Resources, latest.Resources...)
 	input.Desired, err = recovery.ReadDesiredFleet(ctx, db)
 	if err != nil {
 		return err
@@ -52,6 +61,7 @@ func (r *Runner) captureFleet(ctx context.Context) error {
 			// fenced machine cannot report. No allocation is scheduled onto that machine.
 			for _, h := range input.Desired {
 				if h.ID == pl.Instance {
+					h = retainOfflineHost(h, latest)
 					h.Reachable = false
 					h.Isolated = true
 					input.Observed = append(input.Observed, h)
@@ -90,6 +100,7 @@ func (r *Runner) captureFleet(ctx context.Context) error {
 				if err := r.verifyHostFenced(ctx, prior, pl.Host); err != nil {
 					return err
 				}
+				h = retainOfflineHost(h, latest)
 				h.Isolated = true
 				h.Reachable = false
 				input.Observed = append(input.Observed, h)
@@ -100,6 +111,28 @@ func (r *Runner) captureFleet(ctx context.Context) error {
 		if !found {
 			return fmt.Errorf("registered agent %s has no applied external host binding; add its Linux host before recovery", h.ID)
 		}
+	}
+	for _, h := range latest.Observed {
+		if slices.ContainsFunc(input.Observed, func(v recovery.FleetHost) bool { return v.ID == h.ID }) {
+			continue
+		}
+		var binding *deploy.Placement
+		for _, pl := range prior.Placements {
+			if pl.Role == deploy.Agent && pl.Instance == h.ID {
+				copy := pl
+				binding = &copy
+				break
+			}
+		}
+		if binding == nil {
+			return fmt.Errorf("latest observed host %s has no applied external binding", h.ID)
+		}
+		if err := r.verifyHostFenced(ctx, prior, binding.Host); err != nil {
+			return err
+		}
+		h.Reachable = false
+		h.Isolated = true
+		input.Observed = append(input.Observed, h)
 	}
 	return saveJSON(r.fleetPath(), input)
 }
@@ -261,9 +294,12 @@ func (r *Runner) verifyCheckpoints(ctx context.Context) (map[string]deploy.Check
 	}
 	result := map[string]deploy.CheckpointAcknowledgement{}
 	expected := append([]string{}, report.AdmittedAgents...)
-	for _, pl := range r.Plan.Placements {
-		if pl.Role == deploy.Agent {
-			expected = append(expected, pl.Instance)
+	// Every planned online agent must acknowledge, including newly enrolled hosts
+	// with no allocations at the selected cutoff. Fenced offline hosts are retained
+	// in external inventory rather than admitted runtime placements.
+	for _, placement := range r.Plan.Placements {
+		if placement.Role == deploy.Agent {
+			expected = append(expected, placement.Instance)
 		}
 	}
 	slices.Sort(expected)
@@ -307,4 +343,26 @@ func (r *Runner) verifyCheckpoints(ctx context.Context) (map[string]deploy.Check
 		return nil, err
 	}
 	return result, nil
+}
+
+// retainOfflineHost preserves the latest actual resource identities and adds
+// restored reservations. SQL at the cutoff cannot erase later external holds.
+func retainOfflineHost(desired recovery.FleetHost, latest recovery.FleetInput) recovery.FleetHost {
+	for _, actual := range latest.Observed {
+		if actual.ID != desired.ID {
+			continue
+		}
+		for _, r := range desired.Reservations {
+			if !slices.Contains(actual.Reservations, r) {
+				actual.Reservations = append(actual.Reservations, r)
+			}
+		}
+		for _, a := range desired.Allocations {
+			if !slices.ContainsFunc(actual.Allocations, func(v recovery.FleetAllocation) bool { return v.ID == a.ID }) {
+				actual.Allocations = append(actual.Allocations, a)
+			}
+		}
+		return actual
+	}
+	return desired
 }

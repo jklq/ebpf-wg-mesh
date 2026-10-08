@@ -138,3 +138,41 @@ func TestCompleteImagePointAndUnsafeArchive(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallOCIArchiveRepairsInterruptedClosureAndPreservesOtherResources(t *testing.T) {
+	source, root, config := ociFixture(t)
+	archive := archiveOCI(t, source)
+	parent := t.TempDir()
+	destination, quarantine := filepath.Join(parent, "frontend"), filepath.Join(parent, "quarantined-workload")
+	if err := os.WriteFile(quarantine, []byte("preserve me"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallOCIArchive(archive, root, destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallOCIArchive(archive, root, destination); err != nil {
+		t.Fatal("retry", err)
+	}
+	rel, _ := filepath.Rel(source, config)
+	if err := os.Remove(filepath.Join(destination, rel)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := InspectOCI(destination, root); err == nil {
+		t.Fatal("partial installed closure was accepted")
+	}
+	if err := InstallOCIArchive(archive, root, destination); err != nil {
+		t.Fatal("repair", err)
+	}
+	if _, err := InspectOCI(destination, root); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallOCIArchive(archive, "sha256:"+strings.Repeat("a", 64), destination); err == nil {
+		t.Fatal("archive accepted the wrong selected root")
+	}
+	if _, err := InspectOCI(destination, root); err != nil {
+		t.Fatal("failed import damaged usable closure", err)
+	}
+	if b, err := os.ReadFile(quarantine); err != nil || string(b) != "preserve me" {
+		t.Fatal("quarantine changed", err)
+	}
+}

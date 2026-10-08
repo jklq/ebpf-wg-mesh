@@ -2,6 +2,7 @@ package controlplane
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"io"
 
@@ -23,7 +24,7 @@ func (a protectedArchives) Delete(ctx context.Context, key string) error {
 	return a.ArchiveStore.Delete(ctx, key)
 }
 
-func recoveryGuards(path string, archives source.ArchiveStore) (func(context.Context, string) error, func(context.Context, string) error, error) {
+func recoveryGuards(path string, archives source.ArchiveStore, db *sql.DB) (func(context.Context, string) error, func(context.Context, string) error, error) {
 	if path == "" {
 		deny := func(context.Context, string) error {
 			return fmt.Errorf("production artifact deletion requires independent recovery configuration")
@@ -61,6 +62,14 @@ func recoveryGuards(path string, archives source.ArchiveStore) (func(context.Con
 			return nil
 		})
 	}
-	image := func(ctx context.Context, ref string) error { _, err := s.ProtectImage(ctx, c.Images, ref); return err }
+	image := func(ctx context.Context, ref string) error {
+		images, releaseAccess, err := recovery.ImageAccess(ctx, db, c.KeyringFile, c.Images, ref, false)
+		if err != nil {
+			return err
+		}
+		defer releaseAccess()
+		_, err = s.ProtectImage(ctx, images, ref)
+		return err
+	}
 	return archive, image, nil
 }
