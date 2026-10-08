@@ -3,6 +3,7 @@ package productionops
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"ebof-wg-mesh/internal/deploy"
 )
 
 func TestFenceListenerChild(t *testing.T) {
@@ -98,11 +101,22 @@ func TestRedfishFenceRequiresObservedPowerAndRetriesAfterInterruption(t *testing
 		t.Fatal(err)
 	}
 	fence := RedfishFence{SystemURL: service.URL + "/redfish/v1/Systems/owned", CredentialsFile: credentials, CAFile: ca}
+	r := testRunner(t)
+	r.Plan.Previous = &deploy.AppliedDeployment{Installation: r.Plan.Installation, Release: r.Plan.Release, Placements: r.Plan.Placements}
+	r.Plan.Recovery = true
+	r.Plan.Installation.Hosts = nil // The lost host is not a reused destination.
+	r.Config.Fences = map[string]RedfishFence{"a": fence}
+	r.Adapter = func(deploy.Installation, deploy.Host) (deploy.Adapter, error) {
+		return nil, fmt.Errorf("provider API unavailable")
+	}
 	if err := fence.off(context.Background()); err == nil {
 		t.Fatal("live target reported fenced")
 	}
+	if err := r.fence(context.Background(), true); err == nil {
+		t.Fatal("unavailable provider and live external target reported fenced")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	err := fence.powerOff(ctx)
+	err := r.fence(ctx, false)
 	cancel()
 	if err == nil {
 		t.Fatal("accepted action without shutdown was counted as fencing")
@@ -113,13 +127,13 @@ func TestRedfishFenceRequiresObservedPowerAndRetriesAfterInterruption(t *testing
 	mu.Lock()
 	stop = true
 	mu.Unlock()
-	if err := fence.powerOff(context.Background()); err != nil {
+	if err := r.fence(context.Background(), false); err != nil {
 		t.Fatal("retry", err)
 	}
-	if err := fence.off(context.Background()); err != nil {
+	if err := r.fence(context.Background(), true); err != nil {
 		t.Fatal("actual shutdown", err)
 	}
-	if err := fence.powerOff(context.Background()); err != nil {
+	if err := r.fence(context.Background(), false); err != nil {
 		t.Fatal("idempotent fence", err)
 	}
 	mu.Lock()
