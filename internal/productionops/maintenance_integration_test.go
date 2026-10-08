@@ -177,4 +177,22 @@ func TestNativePriorMaintenanceStopsOldJobsAndPreservesReplacementOnRetry(t *tes
 			}
 		}
 	})
+	t.Run("retired-stateless-units", func(t *testing.T) {
+		for _, role := range []deploy.Role{deploy.Registry, deploy.Envoy} {
+			prior := r.Plan
+			pl := deploy.Placement{Role: role, Host: "a", Instance: "old-" + string(role)}
+			prior.Placements = []deploy.Placement{pl}
+			r.Plan.Placements = []deploy.Placement{{Role: role, Host: "a", Instance: "replacement-" + string(role)}}
+			name := unit(prior, pl)
+			job := "[Service]\nType=simple\nExecStart=/usr/bin/sleep 600\n"
+			run(remoteFile("/etc/systemd/system/"+name, []byte(job)) + "systemctl daemon-reload\nsystemctl start " + shell(name) + "\n")
+			if r.verifyHostFenced(ctx, prior, "a") == nil {
+				t.Fatal("old live stateless process passed fencing", role)
+			}
+			run(maskScript(prior, pl))
+			if err := r.verifyHostFenced(ctx, prior, "a"); err != nil {
+				t.Fatal("native stopped and masked stateless process was rejected", role, err)
+			}
+		}
+	})
 }

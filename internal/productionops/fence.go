@@ -65,9 +65,10 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 				replacement = replacement || candidate == pl
 			}
 			if !replacement {
-				return fmt.Errorf("prior stateless instance has no admitted replacement")
+				script += "exit 1\n"
+			} else {
+				script += shell(operationsBinary(r.Plan)) + " process-admission " + shell(unit(p, pl)) + " " + shell(cfgDir(p, pl)+"/authority.json") + " " + shell(r.Plan.Installation.ID) + " " + shell(r.Plan.Generation) + "\n"
 			}
-			script += shell(operationsBinary(r.Plan)) + " process-admission " + shell(unit(p, pl)) + " " + shell(cfgDir(p, pl)+"/authority.json") + " " + shell(r.Plan.Installation.ID) + " " + shell(r.Plan.Generation) + "\n"
 		} else {
 			script += "exit 1\n"
 		}
@@ -163,11 +164,15 @@ func (r *Runner) fenceUnrecordedUnits(ctx context.Context, p deploy.Plan, host s
 	for _, name := range names {
 		// New independent jobs have immutable plan-specific launch inputs. A
 		// replaced unit file alone cannot admit an older still-running process.
-		if content, ok := r.completionUnits()[name]; ok {
+		units := r.completionUnits()
+		if content, ok := units[name]; ok {
 			script := verifyRemoteFile("/etc/systemd/system/"+name, []byte(content))
-			if strings.HasSuffix(name, ".service") {
-				script += "pid=$(systemctl show --value -p MainPID " + shell(name) + ")\nif test \"$pid\" != 0; then\ntest \"$(readlink /proc/\"$pid\"/exe)\" = " + shell(operationsBinary(r.Plan)) + "\ntr '\\000' '\\n' </proc/\"$pid\"/cmdline | grep -Fx -- " + shell(r.completionDirectory()+"/plan.json") + " >/dev/null\nfi\n"
+			service := name
+			if strings.HasSuffix(name, ".timer") {
+				service = strings.TrimSuffix(name, ".timer") + ".service"
+				script += verifyRemoteFile("/etc/systemd/system/"+service, []byte(units[service]))
 			}
+			script += "pid=$(systemctl show --value -p MainPID " + shell(service) + ")\nif test \"$pid\" != 0; then\ntest \"$(readlink /proc/\"$pid\"/exe)\" = " + shell(operationsBinary(r.Plan)) + "\ntr '\\000' '\\n' </proc/\"$pid\"/cmdline | grep -Fx -- " + shell(r.completionDirectory()+"/plan.json") + " >/dev/null\nfi\n"
 			if _, err := r.remote(ctx, p, pl, script); err == nil {
 				continue
 			}
