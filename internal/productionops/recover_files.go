@@ -206,6 +206,20 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 	config.WildcardKey = relocated(config.WildcardKey)
 	config.SourceConfig = relocated(config.SourceConfig)
 	config.MonitorTokenFile = relocated(config.MonitorTokenFile)
+	relocateProbe := func(probe Probe) Probe {
+		for _, path := range []*string{&probe.CAFile, &probe.CertFile, &probe.KeyFile} {
+			if *path != "" && !strings.Contains(*path, "{") {
+				*path = relocated(*path)
+			}
+		}
+		return probe
+	}
+	for role, probe := range config.Probes {
+		config.Probes[role] = relocateProbe(probe)
+	}
+	for name, probe := range config.EndpointProbes {
+		config.EndpointProbes[name] = relocateProbe(probe)
+	}
 	for id, f := range config.Fences {
 		f.CredentialsFile = relocated(f.CredentialsFile)
 		f.CAFile = relocated(f.CAFile)
