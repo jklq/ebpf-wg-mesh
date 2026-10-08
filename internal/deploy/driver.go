@@ -311,8 +311,19 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 		return err == nil, Evidence{}, nil
 	}
 	if op.Kind == "install" || op.Kind == "database-join" {
-		script := "test \"$(cat " + quote(configDir(p.Installation, pl)+"/applied") + ")\" = " + quote(fingerprint(p, pl)) + "\nsystemctl is-active --quiet " + quote(unit(p.Installation, pl)) + "\n" + command(expandCommand(p, pl, p.Release.Programs[pl.Role].Ready)) + "\n"
-		_, err := d.Remote.Run(ctx, p.Installation, h, script)
+		out, err := d.Remote.Run(ctx, p.Installation, h, hostProbe)
+		if err != nil {
+			return false, Evidence{}, nil
+		}
+		observed, err := parseHostObservation(out, h.ID, h.Binding.ServerID)
+		if err != nil {
+			return false, Evidence{}, err
+		}
+		script, err := installedScript(p, pl, observed.Capacity)
+		if err != nil {
+			return false, Evidence{}, err
+		}
+		_, err = d.Remote.Run(ctx, p.Installation, h, script)
 		return err == nil, Evidence{}, nil
 	}
 	return false, Evidence{}, fmt.Errorf("unknown operation %s", op.Kind)

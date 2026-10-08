@@ -207,7 +207,7 @@ func configurationScript(p Plan, pl Placement) (string, error) {
 	}
 	return script, nil
 }
-func installScript(p Plan, pl Placement, observed Resources) (string, error) {
+func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string, error) {
 	i := p.Installation
 	h, _ := i.Host(pl.Host)
 	reserve := p.Reservations[pl.Host]
@@ -218,11 +218,11 @@ func installScript(p Plan, pl Placement, observed Resources) (string, error) {
 	for key, ref := range i.Components[pl.Role].SecretEnv {
 		value, err := p.resolveSecret(pl, ref)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		v := strings.TrimSpace(string(value))
 		if strings.ContainsAny(v, "\n\r") {
-			return "", fmt.Errorf("secret environment reference %s must be a single line", ref)
+			return "", "", fmt.Errorf("secret environment reference %s must be a single line", ref)
 		}
 		env[key] = v
 	}
@@ -281,9 +281,48 @@ func installScript(p Plan, pl Placement, observed Resources) (string, error) {
 	for _, arg := range argv {
 		execArgs = append(execArgs, "\""+strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%", "$", "$$").Replace(arg)+"\"")
 	}
-	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"
-	return "if test -L " + quote("/etc/systemd/system/"+unit(i, pl)) + "; then rm " + quote("/etc/systemd/system/"+unit(i, pl)) + "; fi\n" + fileScript(configDir(i, pl)+"/environment", []byte(environment.String()), "0600") + fileScript("/etc/systemd/system/"+unit(i, pl), []byte(service), "0644") + "systemctl daemon-reload\nsystemctl enable " + quote(unit(i, pl)) + "\nsystemctl restart " + quote(unit(i, pl)) + "\n" + fileScript(configDir(i, pl)+"/applied", []byte(fingerprint(p, pl)), "0600"), nil
+	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nEnvironmentFile=" + configDir(i, pl) + "/launch.env\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"
+	return environment.String(), service, nil
 }
+
+func launchDigestScript(p Plan, pl Placement) string {
+	cfg := configDir(p.Installation, pl)
+	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
+	return "launch_digest=$( { sha256sum " + quote(cfg+"/environment") + " " + quote(unitPath) + "; if test -f " + quote(cfg+"/runtime.env") + "; then sha256sum " + quote(cfg+"/runtime.env") + "; fi; printf %s " + quote(fingerprint(p, pl)) + "; } | sha256sum | cut -d ' ' -f1)\n"
+}
+func runningLaunchScript(p Plan, pl Placement) string {
+	name := quote(unit(p.Installation, pl))
+	return "systemctl is-active --quiet " + name + " && launch_pid=$(systemctl show --property=MainPID --value " + name + ") && test \"$launch_pid\" -gt 1 && tr '\\000' '\\n' < \"/proc/$launch_pid/environ\" | grep -Fxq -- \"PLATFORM_LAUNCH_DIGEST=$launch_digest\""
+}
+func installScript(p Plan, pl Placement, observed Resources) (string, error) {
+	env, service, err := unitConfiguration(p, pl, observed)
+	if err != nil {
+		return "", err
+	}
+	cfg := configDir(p.Installation, pl)
+	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
+	script := "if test -L " + quote(unitPath) + "; then rm " + quote(unitPath) + "; fi\n"
+	script += fileScript(cfg+"/environment", []byte(env), "0600") + fileScript(unitPath, []byte(service), "0644")
+	script += launchDigestScript(p, pl)
+	script += "printf 'PLATFORM_LAUNCH_DIGEST=\"%s\"\\n' \"$launch_digest\" > " + quote(cfg+"/launch.env.next") + "\nchmod 0600 " + quote(cfg+"/launch.env.next") + "\nmv -f " + quote(cfg+"/launch.env.next") + " " + quote(cfg+"/launch.env") + "\nsystemctl daemon-reload\nsystemctl enable " + quote(unit(p.Installation, pl)) + "\n"
+	// A slow or interrupted startup must be allowed to converge. Only a process
+	// launched with the actual desired inputs can avoid a restart; readiness is
+	// still checked independently by observation and production verification.
+	script += "if ! ( " + runningLaunchScript(p, pl) + " ); then systemctl restart " + quote(unit(p.Installation, pl)) + "; fi\n"
+	return script, nil
+}
+func installedScript(p Plan, pl Placement, observed Resources) (string, error) {
+	env, service, err := unitConfiguration(p, pl, observed)
+	if err != nil {
+		return "", err
+	}
+	cfg := configDir(p.Installation, pl)
+	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
+	h, _ := p.Installation.Host(pl.Host)
+	checks := fmt.Sprintf("%x  %s\n%x  %s\n%s  %s\n", sha256.Sum256([]byte(env)), cfg+"/environment", sha256.Sum256([]byte(service)), unitPath, p.Release.Programs[pl.Role].Artifacts[h.Architecture].SHA256, releaseDir(p, pl)+"/program")
+	return "printf %s " + quote(checks) + " | sha256sum -c - >/dev/null\n" + launchDigestScript(p, pl) + runningLaunchScript(p, pl) + "\n" + command(expandCommand(p, pl, p.Release.Programs[pl.Role].Ready)) + "\n", nil
+}
+
 func fingerprint(p Plan, pl Placement) string {
 	secrets := map[string]string{}
 	for key, ref := range p.Installation.Components[pl.Role].SecretEnv {
