@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strings"
 
@@ -80,6 +81,16 @@ type Network struct {
 	Gateways []string       `json:"gateways,omitempty" yaml:"gateways,omitempty"`
 	Peers    map[string]int `json:"peers,omitempty" yaml:"peers,omitempty"` // round-trip milliseconds
 }
+
+// SocketHost formats a host for a URL authority or a host:port argument while
+// Address remains the bare IP/DNS identity used in certificates and the mesh.
+func (n Network) SocketHost() string {
+	if ip := net.ParseIP(n.Address); ip != nil && ip.To4() == nil {
+		return "[" + n.Address + "]"
+	}
+	return n.Address
+}
+
 type Host struct {
 	ID            string    `json:"id" yaml:"id"`
 	Binding       Binding   `json:"binding" yaml:"binding"`

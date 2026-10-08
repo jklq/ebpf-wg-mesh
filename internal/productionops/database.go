@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,9 +196,10 @@ func (r *Runner) databaseCredentials(ctx context.Context, verify bool) error {
 			return err
 		}
 	}
-	u := url.URL{Scheme: "postgresql", User: url.User("root"), Host: r.databaseAddresses(), Path: "/" + r.Config.Database.Name}
-	q := url.Values{"sslmode": {"verify-full"}, "sslrootcert": {filepath.Join(r.databasePKI(), "ca.crt")}, "sslcert": {filepath.Join(r.databasePKI(), "client.root.crt")}, "sslkey": {filepath.Join(r.databasePKI(), "client.root.key")}}
-	u.RawQuery = q.Encode()
+	u, err := verifiedDatabaseURL("root", r.databaseAddresses(), r.Config.Database.Name, filepath.Join(r.databasePKI(), "ca.crt"), filepath.Join(r.databasePKI(), "client.root.crt"), filepath.Join(r.databasePKI(), "client.root.key"))
+	if err != nil {
+		return err
+	}
 	if !verify {
 		return writePrivate(r.Config.Database.URLFile, []byte(u.String()))
 	}

@@ -2,9 +2,12 @@ package productionops
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -325,6 +328,7 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				if err != nil {
 					return err
 				}
+				selectDatabaseHost(parsed, parsed.Host)
 				var urls []string
 				for _, address := range strings.Split(r.databaseAddresses(), ",") {
 					parsed.Host = address
@@ -347,7 +351,17 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				return err
 			}
 			files["registry-trust.crt"] = trust
-			b, err := r.registryConfiguration(pl)
+			material, err := signing.Active(ctx, signkeys.ScopeRegistry)
+			if err != nil {
+				return err
+			}
+			// One upload authority across all registry replicas, derived from the
+			// encrypted signing material already in the complete recovery closure.
+			// A new recovery generation invalidates interrupted old uploads.
+			mac := hmac.New(sha256.New, material.Private)
+			mac.Write([]byte("ebpf-wg-mesh/registry-upload/v1/" + installation + "/" + generation))
+			clear(material.Private)
+			b, err := r.registryConfiguration(pl, hex.EncodeToString(mac.Sum(nil)))
 			if err != nil {
 				return err
 			}
@@ -506,8 +520,10 @@ func (r *Runner) databaseClient(ctx context.Context, pl deploy.Placement, db *sq
 			}
 		}
 	}
-	u := url.URL{Scheme: "postgresql", User: url.User(name), Host: r.databaseAddresses(), Path: "/" + r.Config.Database.Name}
-	u.RawQuery = url.Values{"sslmode": {"verify-full"}, "sslrootcert": {cfgDir(r.Plan, pl) + "/db-ca.crt"}, "sslcert": {cfgDir(r.Plan, pl) + "/db-client.crt"}, "sslkey": {cfgDir(r.Plan, pl) + "/db-client.key"}}.Encode()
+	u, err := verifiedDatabaseURL(name, r.databaseAddresses(), r.Config.Database.Name, cfgDir(r.Plan, pl)+"/db-ca.crt", cfgDir(r.Plan, pl)+"/db-client.crt", cfgDir(r.Plan, pl)+"/db-client.key")
+	if err != nil {
+		return err
+	}
 	files["database-url"] = []byte(u.String())
 	return nil
 }

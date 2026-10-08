@@ -157,8 +157,8 @@ identity, key agreement and remaining lifetime; their DNS-01 renewal service is 
 
 Hooks are release-owned commands, with separate idempotent verification commands.
 Commands receive a private `PLATFORM_PLAN` JSON file and `PLATFORM_OPERATION` ID.
-Lifecycle commands receive `{host}`, `{instance}`, `{address}`, `{stateDir}`,
-`{configDir}`, `{releaseDir}` and `{joins}` substitutions. Management hooks run on
+Lifecycle commands receive `{host}`, `{instance}`, `{address}`, `{socketHost}`, `{stateDir}`,
+`{configDir}`, `{releaseDir}` and `{joins}` substitutions. Use `{socketHost}:PORT` in URLs and listen arguments: it brackets IPv6; `{address}` is the bare IP or DNS identity. Management hooks run on
 a trusted reliable host; an available trusted host can replace the preferred
 management host. Drain/retirement hooks run there against the target instance.
 Hooks must verify native state, not merely the existence of a previous attempt's

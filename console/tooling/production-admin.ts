@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { request } from "node:https";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
+import { poolConfigFromURL } from "../src/lib/dashboard/store/pool-config.server";
 import { migrateDashboardStore } from "../src/lib/dashboard/store/helpers.server";
 import {
 	createGitHubTokenCipher,
@@ -27,7 +28,7 @@ const input = JSON.parse(readFileSync(0, "utf8")) as {
 if (!/^[a-z][a-z0-9_]*$/.test(input.schema))
 	throw new Error("invalid console schema");
 const db = new Pool({
-	connectionString: readFileSync(input.databaseURLFile, "utf8").trim(),
+	...poolConfigFromURL(readFileSync(input.databaseURLFile, "utf8").trim()),
 	max: 2,
 });
 const cipher = createGitHubTokenCipher(

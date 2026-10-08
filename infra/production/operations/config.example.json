@@ -23,13 +23,13 @@
   "sourceConfig": "/etc/platform/source-archives.json",
   "monitorTokenFile": "/etc/platform/monitor-token",
   "probes": {
-    "cockroachdb": {"url": "https://{address}:8080/health", "caFile": "{configDir}/certs/ca.crt", "status": 200},
+    "cockroachdb": {"url": "https://{socketHost}:8080/health", "caFile": "{configDir}/certs/ca.crt", "status": 200},
     "controlplane": {
       "url": "http://127.0.0.1:9090/admissionz",
       "runtimeURL": "http://127.0.0.1:9090/readyz",
       "status": 200,
       "caFile": "{configDir}/ca.crt",
-      "authorizationURL": "https://{address}:9443/platform.v1.PlatformService/ListProjects",
+      "authorizationURL": "https://{socketHost}:9443/platform.v1.PlatformService/ListProjects",
       "authorizationMethod": "POST",
       "authorizationBody": "{}",
       "unauthorizedStatus": 401

@@ -116,7 +116,7 @@ func expand(p Plan, pl Placement, s string) string {
 	for name := range p.Release.Tools {
 		s = strings.ReplaceAll(s, "{tool."+name+"}", toolsDir(p)+"/"+name)
 	}
-	return strings.NewReplacer("{installation}", p.Installation.ID, "{release}", p.Release.ID, "{host}", pl.Host, "{instance}", pl.Instance, "{address}", h.Network.Address, "{stateDir}", stateDir(p.Installation, pl), "{configDir}", configDir(p.Installation, pl), "{releaseDir}", releaseDir(p, pl), "{joins}", strings.Join(joins, ","), "{backup}", p.Installation.Backup.Target).Replace(s)
+	return strings.NewReplacer("{installation}", p.Installation.ID, "{release}", p.Release.ID, "{host}", pl.Host, "{instance}", pl.Instance, "{address}", h.Network.Address, "{socketHost}", h.Network.SocketHost(), "{stateDir}", stateDir(p.Installation, pl), "{configDir}", configDir(p.Installation, pl), "{releaseDir}", releaseDir(p, pl), "{joins}", strings.Join(joins, ","), "{backup}", p.Installation.Backup.Target).Replace(s)
 }
 func expandCommand(p Plan, pl Placement, args []string) []string {
 	out := make([]string, len(args))
@@ -150,7 +150,9 @@ func toolsScript(p Plan, h Host) (string, error) {
 		if !ok {
 			return "", fmt.Errorf("management tool %s unavailable for %s", name, h.Architecture)
 		}
+		script += "if ! test -f " + quote(dir+"/"+name) + " || ! printf %s " + quote(artifact.SHA256+"  "+dir+"/"+name+"\n") + " | sha256sum -c - >/dev/null 2>&1; then\n"
 		script += "curl --fail --silent --location --proto '=https' --proto-redir '=https' --output " + quote(dir+"/"+name+".next") + " -- " + quote(artifact.URL) + "\nprintf %s " + quote(artifact.SHA256+"  "+dir+"/"+name+".next\n") + " | sha256sum -c - >/dev/null\nchmod 0755 " + quote(dir+"/"+name+".next") + "\nmv -f " + quote(dir+"/"+name+".next") + " " + quote(dir+"/"+name) + "\n"
+		script += "fi\n"
 	}
 	return script + fileScript(dir+"/staged", []byte(Digest(p.Release.Tools)), "0600"), nil
 }

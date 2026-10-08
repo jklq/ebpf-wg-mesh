@@ -95,7 +95,7 @@ func Ready(ctx context.Context, role deploy.Role, instance, path string) error {
 }
 func (r *Runner) expandProbe(p Probe, pl deploy.Placement) Probe {
 	h, _ := r.Plan.Installation.Host(pl.Host)
-	replace := strings.NewReplacer("{configDir}", cfgDir(r.Plan, pl), "{stateDir}", dataDir(r.Plan, pl), "{address}", h.Network.Address, "{instance}", pl.Instance)
+	replace := strings.NewReplacer("{configDir}", cfgDir(r.Plan, pl), "{stateDir}", dataDir(r.Plan, pl), "{address}", h.Network.Address, "{socketHost}", h.Network.SocketHost(), "{instance}", pl.Instance)
 	p.URL = replace.Replace(p.URL)
 	p.RuntimeURL = replace.Replace(p.RuntimeURL)
 	p.CAFile = replace.Replace(p.CAFile)

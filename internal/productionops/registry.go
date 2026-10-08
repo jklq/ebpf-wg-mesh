@@ -10,7 +10,7 @@ import (
 	"gopkg.in/ini.v1"
 )
 
-func (r *Runner) registryConfiguration(pl deploy.Placement) ([]byte, error) {
+func (r *Runner) registryConfiguration(pl deploy.Placement, uploadSecret string) ([]byte, error) {
 	if r.Config.RegistryRealm == "" || r.Config.RegistryService == "" {
 		return nil, fmt.Errorf("registry token realm and service must be selected")
 	}
@@ -54,5 +54,5 @@ func (r *Runner) registryConfiguration(pl deploy.Placement) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("registry storage needs directory or S3 selection")
 	}
-	return yaml.Marshal(map[string]any{"version": 0.1, "storage": storage, "http": map[string]any{"addr": ":5000"}, "auth": map[string]any{"token": map[string]any{"realm": r.Config.RegistryRealm, "service": r.Config.RegistryService, "issuer": "ebpf-wg-mesh", "rootcertbundle": cfgDir(r.Plan, pl) + "/registry-trust.crt"}}})
+	return yaml.Marshal(map[string]any{"version": 0.1, "storage": storage, "http": map[string]any{"addr": ":5000", "secret": uploadSecret}, "auth": map[string]any{"token": map[string]any{"realm": r.Config.RegistryRealm, "service": r.Config.RegistryService, "issuer": "ebpf-wg-mesh", "rootcertbundle": cfgDir(r.Plan, pl) + "/registry-trust.crt"}}})
 }

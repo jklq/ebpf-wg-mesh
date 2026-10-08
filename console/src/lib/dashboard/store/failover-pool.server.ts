@@ -1,5 +1,7 @@
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
+import { poolConfigFromURL } from "./pool-config.server";
+
 type ConnectCallback = (
 	err: Error | undefined,
 	client: PoolClient,
@@ -18,7 +20,7 @@ export class FailoverPool extends Pool {
 			(connectionString) =>
 				new Pool({
 					...options,
-					connectionString,
+					...poolConfigFromURL(connectionString),
 					connectionTimeoutMillis: 3000,
 				}),
 		);
