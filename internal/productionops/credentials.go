@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -225,6 +226,22 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_REGION"] = selection.S3.Region
 					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_BUCKET"] = selection.S3.Bucket
 					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_PREFIX"] = selection.S3.Prefix
+					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_SSE"] = selection.S3.ServerSideEncryption
+					env["CONTROLPLANE_SOURCE_ARCHIVES_S3_KMS_KEY_ID"] = selection.S3.SSEKMSKeyID
+					if selection.S3.RequestTimeoutSeconds > 0 {
+						env["CONTROLPLANE_SOURCE_ARCHIVES_S3_REQUEST_TIMEOUT_SECONDS"] = strconv.Itoa(selection.S3.RequestTimeoutSeconds)
+					}
+					if selection.S3.MaxRetries > 0 {
+						env["CONTROLPLANE_SOURCE_ARCHIVES_S3_MAX_RETRIES"] = strconv.Itoa(selection.S3.MaxRetries)
+					}
+					if selection.S3.CAFile != "" {
+						b, err := os.ReadFile(selection.S3.CAFile)
+						if err != nil {
+							return err
+						}
+						files["source-ca.crt"] = b
+						env["CONTROLPLANE_SOURCE_ARCHIVES_S3_CA_FILE"] = cfgDir(r.Plan, pl) + "/source-ca.crt"
+					}
 					if selection.S3.CredentialsFile != "" {
 						b, err := os.ReadFile(selection.S3.CredentialsFile)
 						if err != nil {

@@ -103,6 +103,7 @@ func TestControlPlaneBootstrapParsesSourceArchiveS3Flags(t *testing.T) {
 		"-source-archives-s3-sse", "aws:kms",
 		"-source-archives-s3-kms-key-id", "key-1",
 		"-source-archives-s3-credentials-file", "/etc/ebpf-wg-mesh/s3-credentials.json",
+		"-source-archives-s3-ca-file", "/etc/ebpf-wg-mesh/source-ca.crt",
 		"-source-archives-s3-request-timeout-seconds", "45",
 		"-source-archives-s3-max-retries", "5",
 	})
@@ -113,7 +114,7 @@ func TestControlPlaneBootstrapParsesSourceArchiveS3Flags(t *testing.T) {
 	if cfg.SourceArchives.Provider != "s3" || s3.Endpoint != "https://s3.us-east-1.amazonaws.com" ||
 		s3.Region != "us-east-1" || s3.Bucket != "platform-source-archives" || s3.Prefix != "snapshots" ||
 		s3.ServerSideEncryption != "aws:kms" || s3.SSEKMSKeyID != "key-1" ||
-		s3.CredentialsFile != "/etc/ebpf-wg-mesh/s3-credentials.json" ||
+		s3.CredentialsFile != "/etc/ebpf-wg-mesh/s3-credentials.json" || s3.CAFile != "/etc/ebpf-wg-mesh/source-ca.crt" ||
 		s3.RequestTimeoutSeconds != 45 || s3.MaxRetries != 5 {
 		t.Fatalf("unexpected source archive config: %+v", cfg.SourceArchives)
 	}

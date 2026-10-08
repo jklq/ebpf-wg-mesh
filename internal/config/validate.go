@@ -721,7 +721,7 @@ func validateSourceArchives(cfg SourceArchiveConfig) error {
 		if strings.TrimSpace(cfg.S3.Endpoint) != "" || strings.TrimSpace(cfg.S3.Region) != "" ||
 			strings.TrimSpace(cfg.S3.Bucket) != "" || strings.TrimSpace(cfg.S3.Prefix) != "" ||
 			strings.TrimSpace(cfg.S3.ServerSideEncryption) != "" || strings.TrimSpace(cfg.S3.SSEKMSKeyID) != "" ||
-			strings.TrimSpace(cfg.S3.CredentialsFile) != "" {
+			strings.TrimSpace(cfg.S3.CredentialsFile) != "" || strings.TrimSpace(cfg.S3.CAFile) != "" {
 			return errors.New("controlplane.sourceArchives.s3 fields require provider s3")
 		}
 		return nil
