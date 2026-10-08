@@ -34,7 +34,9 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 	if err != nil {
 		return err
 	}
-	if !found || s.Status == "off" {
+	// Absence from a scoped provider response can mean lost visibility. Require
+	// an observed power state, or independently inspect the host/external fence.
+	if found && s.Status == "off" {
 		if a.Capabilities().Power {
 			return nil
 		}
