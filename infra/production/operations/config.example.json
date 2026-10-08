@@ -32,7 +32,7 @@
       "authorizationURL": "https://{socketHost}:9443/platform.v1.PlatformService/ListProjects",
       "authorizationMethod": "POST",
       "authorizationBody": "{}",
-      "unauthorizedStatus": 401
+      "unauthorizedStatus": 403
     },
     "console": {
       "url": "http://127.0.0.1:3000/readyz", "status": 200, "bodyContains": "\"ready\"",
