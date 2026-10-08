@@ -137,7 +137,7 @@ func remoteFile(path string, b []byte) string {
 }
 func verifyRemoteFile(path string, b []byte) string {
 	digest := sha256.Sum256(b)
-	return "printf %s " + shell(hex.EncodeToString(digest[:])+"  "+path+"\n") + " | sha256sum -c - >/dev/null\n"
+	return "if ! printf %s " + shell(hex.EncodeToString(digest[:])+"  "+path+"\n") + " | sha256sum -c - >/dev/null; then printf '%s\\n' " + shell("private input verification failed: "+path) + " >&2; exit 1; fi\n"
 }
 
 func (r *Runner) databaseCredentials(ctx context.Context, verify bool) error {
