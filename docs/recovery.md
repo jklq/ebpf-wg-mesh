@@ -187,6 +187,20 @@ retention and only then publishes the protected point. A racing backup completio
 causes a retry rather than publication. Allow enough SQL revision-history/GC
 retention to read the metadata at the selected timestamp.
 
+Capture truncates native backup endpoints to microsecond precision in SQL before
+recording them. This keeps timestamp encoding inside the manifest's coverage.
+Historical metadata reads and native restore use that exact recorded cutoff;
+restoration never rounds or adjusts a published point's selected timestamp.
+
+Interrupted restore discovers the complete native job description, matching the
+protected collection and exact cutoff, before considering an empty destination.
+Administrative queries use `system`, which remains available while full-cluster
+restore replaces `defaultdb`. Ambiguous, unsuccessful or expired native job
+records preserve the destination and fail closed. Keep native job records for
+the recovery window; CockroachDB's default completed-job retention is 14 days.
+The abbreviated default job listing is insufficient for recovery identity.
+See the [native job inspection documentation](https://docs.cockroachlabs.com/docs/v26.1/show-jobs).
+
 Run `recovery monitor` from outside the primary site/account at least every minute.
 It needs only independent storage, the recovery key and the installation identity;
 it does not open the primary database or require active artifacts. Forward a

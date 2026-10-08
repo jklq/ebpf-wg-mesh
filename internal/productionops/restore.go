@@ -125,10 +125,7 @@ func (r *Runner) restore(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
-	description := "%/" + r.Plan.ID + "/database%"
-	var job int64
-	var status string
-	err = db.QueryRowContext(ctx, `SELECT job_id,status FROM [SHOW JOBS] WHERE job_type='RESTORE' AND description LIKE $1 ORDER BY created DESC LIMIT 1`, description).Scan(&job, &status)
+	job, status, err := nativeRestoreJob(ctx, db, r.Plan.ID, e.Point.Database.Subdirectory, e.DataLossCutoff)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -195,9 +192,14 @@ func (r *Runner) restore(ctx context.Context) error {
 	}
 	// Native job identity and effects, rather than an attempt file, drive retry.
 	for {
-		if err := db.QueryRowContext(ctx, `SELECT status FROM [SHOW JOBS] WHERE job_id=$1`, job).Scan(&status); err != nil {
+		observed, state, err := nativeRestoreJob(ctx, db, r.Plan.ID, e.Point.Database.Subdirectory, e.DataLossCutoff)
+		if err != nil {
 			return err
 		}
+		if observed != job {
+			return fmt.Errorf("native restore job identity changed; destination is preserved")
+		}
+		status = state
 		if status == "succeeded" {
 			return r.verifyRestore(ctx)
 		}
@@ -221,11 +223,11 @@ func (r *Runner) verifyRestore(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
-	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM [SHOW JOBS] WHERE job_type='RESTORE' AND status='succeeded' AND description LIKE $1 AND description LIKE $2`, "%/"+r.Plan.ID+"/database%", "%"+e.DataLossCutoff.UTC().Format(time.RFC3339Nano)+"%").Scan(&count); err != nil {
+	_, status, err := nativeRestoreJob(ctx, db, r.Plan.ID, e.Point.Database.Subdirectory, e.DataLossCutoff)
+	if err != nil {
 		return err
 	}
-	if count != 1 {
+	if status != "succeeded" {
 		return fmt.Errorf("exact-timestamp native restore has not completed")
 	}
 	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
