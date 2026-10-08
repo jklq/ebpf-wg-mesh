@@ -67,7 +67,9 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 		} else {
 			script += "exit 1\n"
 		}
-		script += "else\n test \"$(systemctl is-enabled " + shell(unit(p, pl)) + " 2>/dev/null || true)\" = masked\nfi\n"
+		script += "else\n test \"$(systemctl is-enabled " + shell(unit(p, pl)) + " 2>/dev/null || true)\" = masked\n"
+		script += "test \"$(systemctl show --value -p MainPID " + shell(unit(p, pl)) + ")\" = 0\n"
+		script += "case \"$(systemctl show --value -p ActiveState " + shell(unit(p, pl)) + ")\" in inactive|failed) ;; *) exit 1;; esac\nfi\n"
 		b, err := r.remote(ctx, p, pl, script)
 		if err != nil {
 			return fmt.Errorf("unresolved fencing of %s/%s: %w", id, pl.Instance, err)
@@ -108,7 +110,7 @@ func maskScript(p deploy.Plan, pl deploy.Placement) string {
 	// the persistent systemd mask; systemctl mask cannot replace a regular unit.
 	path := "/etc/systemd/system/" + unit(p, pl)
 	saved := "/var/lib/ebpf-wg-mesh/" + p.Installation.ID + "/quarantine/units/" + unit(p, pl)
-	return "systemctl disable --now " + shell(unit(p, pl)) + "\nmkdir -p " + shell(strings.TrimSuffix(saved, "/"+unit(p, pl))) + "\nif test -f " + shell(path) + " && ! test -L " + shell(path) + "; then mv " + shell(path) + " " + shell(saved) + "; fi\nln -sfn /dev/null " + shell(path) + "\nsystemctl daemon-reload\n! systemctl is-active --quiet " + shell(unit(p, pl)) + "\n"
+	return "systemctl stop " + shell(unit(p, pl)) + "\nif test \"$(systemctl is-enabled " + shell(unit(p, pl)) + " 2>/dev/null || true)\" != masked; then systemctl disable " + shell(unit(p, pl)) + "; fi\nmkdir -p " + shell(strings.TrimSuffix(saved, "/"+unit(p, pl))) + "\nif test -f " + shell(path) + " && ! test -L " + shell(path) + "; then mv " + shell(path) + " " + shell(saved) + "; fi\nln -sfn /dev/null " + shell(path) + "\nsystemctl daemon-reload\n! systemctl is-active --quiet " + shell(unit(p, pl)) + "\n"
 }
 func (r *Runner) fence(ctx context.Context, verify bool) error {
 	p, err := r.priorPlan()

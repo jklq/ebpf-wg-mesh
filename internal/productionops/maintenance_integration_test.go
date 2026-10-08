@@ -99,4 +99,34 @@ func TestNativePriorMaintenanceStopsOldJobsAndPreservesReplacementOnRetry(t *tes
 	if err := r.stopPriorMaintenance(ctx); err != nil {
 		t.Fatal("altered maintenance could not be stopped", err)
 	}
+	t.Run("masked-starting-process-is-not-fenced", func(t *testing.T) {
+		pl := deploy.Placement{Role: deploy.Database, Host: "a", Instance: "starting"}
+		r.Plan.Placements = []deploy.Placement{pl}
+		name := unit(r.Plan, pl)
+		path := "/etc/systemd/system/" + name
+		job := "[Service]\nType=notify\nExecStart=/usr/bin/sleep 600\nTimeoutStartSec=10min\n"
+		run(remoteFile(path, []byte(job)) + "systemctl daemon-reload\nsystemctl start --no-block " + shell(name) + "\n")
+		for attempts := 0; ; attempts++ {
+			state := run("systemctl show --value -p ActiveState -p MainPID " + shell(name) + "\n")
+			if strings.Contains(string(state), "activating") && !strings.Contains("\n"+strings.TrimSpace(string(state))+"\n", "\n0\n") {
+				break
+			}
+			if attempts == 50 {
+				t.Fatal("native process did not start", string(state))
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		// A persistent mask does not stop a launch already in progress. The
+		// real process is still alive even though is-active returns false.
+		run("mv " + shell(path) + " " + shell(path+".original") + "\nln -s /dev/null " + shell(path) + "\nsystemctl daemon-reload\ntest \"$(systemctl show --value -p ActiveState " + shell(name) + ")\" = activating\n! systemctl is-active --quiet " + shell(name) + "\n")
+		if r.verifyHostFenced(ctx, r.Plan, "a") == nil {
+			t.Fatal("masked starting process was accepted as fenced")
+		}
+		for attempts := 0; attempts < 2; attempts++ {
+			run(maskScript(r.Plan, pl))
+			if err := r.verifyHostFenced(ctx, r.Plan, "a"); err != nil {
+				t.Fatal("native masked process did not stop safely on retry", err)
+			}
+		}
+	})
 }
