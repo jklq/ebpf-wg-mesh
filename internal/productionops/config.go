@@ -171,7 +171,9 @@ func (r *Runner) db(ctx context.Context, system bool) (*sql.DB, error) {
 		return nil, fmt.Errorf("operator database connection must use verify-full TLS")
 	}
 	if system {
-		u.Path = "/defaultdb"
+		// Full-cluster restore replaces defaultdb. Administrative recovery queries
+		// must stay connected to the system database throughout that transition.
+		u.Path = "/system"
 	} else {
 		u.Path = "/" + r.Config.Database.Name
 	}
