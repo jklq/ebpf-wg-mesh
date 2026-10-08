@@ -406,6 +406,13 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 			return fmt.Errorf("missing readiness probe for %s", pl.Role)
 		}
 		probe = r.expandProbe(probe, pl)
+		probe, material, err := localizeProbe(probe, cfgDir(r.Plan, pl))
+		if err != nil {
+			return err
+		}
+		for name, data := range material {
+			files[name] = data
+		}
 		files["probe.json"], _ = json.Marshal(probe)
 		files["runtime.env"] = environment(env)
 		var script string
