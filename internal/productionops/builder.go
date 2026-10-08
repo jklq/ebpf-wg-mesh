@@ -48,7 +48,11 @@ func (r *Runner) builderImages(ctx context.Context, pl deploy.Placement, verify 
 	if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
 		return err
 	}
-	_, service, err := recoveryConfig(r.effectiveConfig())
+	// Runtime provisioning precedes registration of the restored installer's
+	// backup dependencies. The selected service configuration is available at
+	// both fresh bootstrap and recovery; image versions still come from the
+	// exact selected point below.
+	_, service, err := recoveryConfig(r.Config.RecoveryConfig)
 	if err != nil {
 		return err
 	}

@@ -246,7 +246,7 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 	if err := r.verifyIngress(ctx); err != nil {
 		return err
 	}
-	c, s, err := recoveryConfig(r.effectiveConfig())
+	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
 	if err != nil {
 		return err
 	}
