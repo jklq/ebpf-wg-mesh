@@ -119,6 +119,18 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	if err := r.verifyBootstrap(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// An upgrade verifies the provisioned native keyring, without calling the
+	// fresh bootstrap generator or replacing any encryption material.
+	keyringBefore := mustRead(t, rec.KeyringFile)
+	consoleBefore := mustRead(t, r.Config.Console.TokenKeyFile)
+	r.Plan.Previous = &deploy.AppliedDeployment{Installation: r.Plan.Installation, Release: r.Plan.Release, Placements: r.Plan.Placements}
+	if err := r.prepareInitialKeys(ctx); err != nil {
+		t.Fatal("native upgrade key admission", err)
+	}
+	if string(mustRead(t, rec.KeyringFile)) != string(keyringBefore) || string(mustRead(t, r.Config.Console.TokenKeyFile)) != string(consoleBefore) {
+		t.Fatal("upgrade changed existing encryption or console keys")
+	}
+	r.Plan.Previous = nil
 	first, err := r.acquireRenewal(ctx, db)
 	if err != nil {
 		t.Fatal("native renewal ownership", err)
