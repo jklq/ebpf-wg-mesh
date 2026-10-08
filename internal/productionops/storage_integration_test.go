@@ -78,7 +78,7 @@ func nativeObjectStoreAt(t *testing.T, ctx context.Context, host string, immutab
 	}
 	random := make([]byte, 32)
 	rand.Read(random)
-	secret := base64.RawURLEncoding.EncodeToString(random)
+	secret := "private-" + base64.RawURLEncoding.EncodeToString(random)
 	rand.Read(random)
 	kms := "isolated:" + base64.StdEncoding.EncodeToString(random)
 	address := freeAddress(t, host)
@@ -108,11 +108,16 @@ func nativeObjectStoreAt(t *testing.T, ctx context.Context, host string, immutab
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	privateValues := []string{secret}
 	command := func(args ...string) {
 		t.Helper()
 		cmd := exec.CommandContext(ctx, mc, append([]string{"--config-dir", filepath.Join(dir, "mc")}, args...)...)
-		if err := cmd.Run(); err != nil {
-			t.Fatalf("native storage administration %s: %v", args[0], err)
+		if body, err := cmd.CombinedOutput(); err != nil {
+			message := string(body)
+			for _, private := range privateValues {
+				message = strings.ReplaceAll(message, private, "[redacted]")
+			}
+			t.Fatalf("native storage administration %s: %v: %s", strings.Join(args[:min(3, len(args))], " "), err, message)
 		}
 	}
 	command("alias", "set", "isolated", endpoint, "isolated-admin", secret)
@@ -127,7 +132,8 @@ func nativeObjectStoreAt(t *testing.T, ctx context.Context, host string, immutab
 		command("retention", "set", "--default", "COMPLIANCE", "31d", "isolated/recovery")
 	}
 	rand.Read(random)
-	writer := base64.RawURLEncoding.EncodeToString(random)
+	writer := "private-" + base64.RawURLEncoding.EncodeToString(random)
+	privateValues = append(privateValues, writer)
 	command("admin", "user", "add", "isolated", "isolated-writer", writer)
 	policy := map[string]any{"Version": "2012-10-17", "Statement": []any{
 		map[string]any{"Effect": "Allow", "Action": []string{"s3:*"}, "Resource": []string{"arn:aws:s3:::recovery", "arn:aws:s3:::recovery/*"}},
