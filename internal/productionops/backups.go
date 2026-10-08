@@ -68,7 +68,10 @@ func (r *Runner) prepareProtection(ctx context.Context, selected *deploy.Release
 		add(kind, id, path, false)
 	}
 	statePath := filepath.Join(dir, "deployment-state.json")
-	snapshot := deploy.State{Version: 1, InstallationID: r.Plan.Installation.ID, Generation: r.Plan.Generation, Policy: &r.Plan.Installation, Bundle: &r.Plan.Release, Placements: r.Plan.Placements}
+	// Decode into independent storage. json.Unmarshal reuses nonnil pointers;
+	// initializing Policy/Bundle with plan pointers would overwrite the applied
+	// installation and release with the prior deployment during an upgrade.
+	var snapshot deploy.State
 	stateSource := os.Getenv("PLATFORM_DEPLOYMENT_STATE")
 	if stateSource == "" {
 		stateSource = "/etc/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/installer-state.json"
@@ -276,7 +279,7 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 		return err
 	}
 	defer db.Close()
-	c, s, err := recoveryConfig(r.effectiveConfig())
+	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
 	if err != nil {
 		return err
 	}
@@ -297,7 +300,7 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 	if err := recovery.VerifyBackupDestination(ctx, db, c.BackupConnection, c.Storage, c.BackupPrefix); err != nil {
 		return err
 	}
-	if err := recovery.VerifySchedules(ctx, db, c.Installation, c.BackupConnection); err != nil {
+	if err := recovery.VerifySchedules(ctx, db, r.Plan.Installation.ID, c.BackupConnection); err != nil {
 		return err
 	}
 	if err := r.completionTimer(ctx, verify); err != nil {
