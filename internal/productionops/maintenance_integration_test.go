@@ -99,6 +99,54 @@ func TestNativePriorMaintenanceStopsOldJobsAndPreservesReplacementOnRetry(t *tes
 	if err := r.stopPriorMaintenance(ctx); err != nil {
 		t.Fatal("altered maintenance could not be stopped", err)
 	}
+	t.Run("post-inventory-units-and-timers", func(t *testing.T) {
+		placements := r.Plan.Placements
+		r.Plan.Placements = nil
+		defer func() { r.Plan.Placements = placements }()
+		name := "platform-" + id + "-post-inventory"
+		service := "[Service]\nType=simple\nExecStart=/usr/bin/sleep 600\n"
+		timer := "[Timer]\nOnUnitActiveSec=1h\n[Install]\nWantedBy=timers.target\n"
+		for suffix, content := range map[string]string{".service": service, ".timer": timer} {
+			run(remoteFile("/etc/systemd/system/"+name+suffix, []byte(content)))
+		}
+		run("systemctl daemon-reload\nsystemctl enable --now " + shell(name+".timer") + "\nsystemctl start " + shell(name+".service") + "\n")
+		if r.verifyHostFenced(ctx, r.Plan, "a") == nil {
+			t.Fatal("actual unrecorded service and timer passed fencing")
+		}
+		for attempt := 0; attempt < 2; attempt++ {
+			if err := r.fenceUnrecordedUnits(ctx, r.Plan, "a", false); err != nil {
+				t.Fatal("actual unrecorded unit fence", err)
+			}
+			if err := r.verifyHostFenced(ctx, r.Plan, "a"); err != nil {
+				t.Fatal("native unrecorded unit fence did not converge", err)
+			}
+		}
+		for suffix, content := range map[string]string{".service": service, ".timer": timer} {
+			path := "/var/lib/ebpf-wg-mesh/" + id + "/quarantine/units/" + name + suffix
+			run(verifyRemoteFile(path, []byte(content)))
+		}
+		// A later cutover must preserve the earlier quarantined definition too.
+		path := "/etc/systemd/system/" + name + ".service"
+		replacement := service + "# later native definition\n"
+		run(remoteFile(path, []byte(replacement)) + "systemctl daemon-reload\n")
+		if err := r.fenceUnrecordedUnits(ctx, r.Plan, "a", false); err != nil {
+			t.Fatal(err)
+		}
+		run(verifyRemoteFile("/var/lib/ebpf-wg-mesh/"+id+"/quarantine/units/"+name+".service", []byte(service)))
+		run("test \"$(find " + shell("/var/lib/ebpf-wg-mesh/"+id+"/quarantine/units") + " -name " + shell(name+".service.*") + " -type f | wc -l)\" = 1\n")
+		transient := "platform-" + id + "-transient.service"
+		run("systemd-run --unit=" + shell(transient) + " /usr/bin/sleep 600\n")
+		if r.verifyHostFenced(ctx, r.Plan, "a") == nil {
+			t.Fatal("unrecorded running transient process passed fencing")
+		}
+		if err := r.fenceUnrecordedUnits(ctx, r.Plan, "a", false); err != nil {
+			t.Fatal("transient process fence", err)
+		}
+		if err := r.verifyHostFenced(ctx, r.Plan, "a"); err != nil {
+			t.Fatal("transient process fence did not converge", err)
+		}
+		run("test -s " + shell("/var/lib/ebpf-wg-mesh/"+id+"/quarantine/units/"+transient) + "\n")
+	})
 	t.Run("masked-starting-process-is-not-fenced", func(t *testing.T) {
 		pl := deploy.Placement{Role: deploy.Database, Host: "a", Instance: "starting"}
 		r.Plan.Placements = []deploy.Placement{pl}

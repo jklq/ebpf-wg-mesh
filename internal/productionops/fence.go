@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"ebof-wg-mesh/internal/deploy"
@@ -45,6 +46,9 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 		if a.Capabilities().Power {
 			return nil
 		}
+	}
+	if err := r.fenceUnrecordedUnits(ctx, p, id, true); err != nil {
+		return err
 	}
 	// Verify each prior service is stopped persistently, or has admitted the new
 	// generation after a clean restart. An unreachable host is never a fence.
@@ -106,11 +110,83 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 	return nil
 }
 func maskScript(p deploy.Plan, pl deploy.Placement) string {
+	return maskUnitScript(p, unit(p, pl))
+}
+func maskUnitScript(p deploy.Plan, name string) string {
 	// Preserve the actual unit under the quarantine directory before installing
 	// the persistent systemd mask; systemctl mask cannot replace a regular unit.
-	path := "/etc/systemd/system/" + unit(p, pl)
-	saved := "/var/lib/ebpf-wg-mesh/" + p.Installation.ID + "/quarantine/units/" + unit(p, pl)
-	return "systemctl stop " + shell(unit(p, pl)) + "\nif test \"$(systemctl is-enabled " + shell(unit(p, pl)) + " 2>/dev/null || true)\" != masked; then systemctl disable " + shell(unit(p, pl)) + "; fi\nmkdir -p " + shell(strings.TrimSuffix(saved, "/"+unit(p, pl))) + "\nif test -f " + shell(path) + " && ! test -L " + shell(path) + "; then mv " + shell(path) + " " + shell(saved) + "; fi\nln -sfn /dev/null " + shell(path) + "\nsystemctl daemon-reload\n! systemctl is-active --quiet " + shell(unit(p, pl)) + "\n"
+	path := "/etc/systemd/system/" + name
+	directory := "/var/lib/ebpf-wg-mesh/" + p.Installation.ID + "/quarantine/units"
+	saved := directory + "/" + name
+	return "fragment=$(systemctl show --value -p FragmentPath " + shell(name) + ")\nmkdir -p " + shell(directory) + "\nchmod 0700 " + shell(directory) + "\nif test -n \"$fragment\" && test \"$fragment\" != /dev/null && test -f \"$fragment\"; then\nsaved=" + shell(saved) + "\nif test -e \"$saved\" && ! cmp -s \"$fragment\" \"$saved\"; then saved=$(mktemp " + shell(saved+".XXXXXX") + "); fi\ncp -- \"$fragment\" \"$saved\"\nchmod 0600 \"$saved\"\ncmp -s \"$fragment\" \"$saved\"\nsync -f \"$saved\"\nfi\nsystemctl stop " + shell(name) + "\ncase \"$(systemctl is-enabled " + shell(name) + " 2>/dev/null || true)\" in enabled|enabled-runtime|linked|linked-runtime|alias|indirect) systemctl disable " + shell(name) + ";; masked|masked-runtime|disabled|static|transient|generated|not-found|'') ;; *) exit 1;; esac\nln -sfn /dev/null " + shell(path) + "\nsystemctl daemon-reload\n! systemctl is-active --quiet " + shell(name) + "\n"
+}
+
+// Independent inventory can predate the latest cutover. Inspect the actual
+// installation namespace, including loaded transient units and old timers,
+// before treating a reachable host as fenced. Unknown resources are preserved.
+func (r *Runner) fenceUnrecordedUnits(ctx context.Context, p deploy.Plan, host string, verify bool) error {
+	pl := deploy.Placement{Host: host}
+	prefix := "platform-" + p.Installation.ID + "-"
+	pattern := shell(prefix + "*")
+	b, err := r.remote(ctx, p, pl, "systemctl list-unit-files --no-legend --no-pager "+pattern+"\nsystemctl list-units --all --plain --no-legend --no-pager "+pattern+"\n")
+	if err != nil {
+		return fmt.Errorf("actual host fencing inventory unavailable: %w", err)
+	}
+	known := map[string]bool{}
+	for _, plan := range []deploy.Plan{p, r.Plan} {
+		for _, placement := range plan.Placements {
+			if placement.Host == host {
+				known[unit(plan, placement)] = true
+			}
+		}
+	}
+	unknown := map[string]bool{}
+	for _, line := range strings.Split(string(b), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		name := fields[0]
+		if !strings.HasPrefix(name, prefix) || known[name] {
+			continue
+		}
+		if (!strings.HasSuffix(name, ".service") && !strings.HasSuffix(name, ".timer")) || strings.ContainsAny(name, "/\\ \t\r\n") {
+			return fmt.Errorf("unknown installation unit cannot be fenced: %q", name)
+		}
+		unknown[name] = true
+	}
+	names := make([]string, 0, len(unknown))
+	for name := range unknown {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		// New independent jobs have immutable plan-specific launch inputs. A
+		// replaced unit file alone cannot admit an older still-running process.
+		if content, ok := r.completionUnits()[name]; ok {
+			script := verifyRemoteFile("/etc/systemd/system/"+name, []byte(content))
+			if strings.HasSuffix(name, ".service") {
+				script += "pid=$(systemctl show --value -p MainPID " + shell(name) + ")\nif test \"$pid\" != 0; then\ntest \"$(readlink /proc/\"$pid\"/exe)\" = " + shell(operationsBinary(r.Plan)) + "\ntr '\\000' '\\n' </proc/\"$pid\"/cmdline | grep -Fx -- " + shell(r.completionDirectory()+"/plan.json") + " >/dev/null\nfi\n"
+			}
+			if _, err := r.remote(ctx, p, pl, script); err == nil {
+				continue
+			}
+		}
+		if !verify {
+			if _, err := r.remote(ctx, p, pl, maskUnitScript(p, name)); err != nil {
+				return err
+			}
+		}
+		script := "test \"$(systemctl is-enabled " + shell(name) + " 2>/dev/null || true)\" = masked\n"
+		if strings.HasSuffix(name, ".service") {
+			script += "test \"$(systemctl show --value -p MainPID " + shell(name) + ")\" = 0\n"
+		}
+		script += "case \"$(systemctl show --value -p ActiveState " + shell(name) + ")\" in inactive|failed) ;; *) exit 1;; esac\n"
+		if _, err := r.remote(ctx, p, pl, script); err != nil {
+			return fmt.Errorf("unrecorded installation unit is not fenced: %s/%s: %w", host, name, err)
+		}
+	}
+	return nil
 }
 func (r *Runner) fence(ctx context.Context, verify bool) error {
 	p, err := r.priorPlan()
@@ -149,6 +225,9 @@ func (r *Runner) fence(ctx context.Context, verify bool) error {
 					return err
 				}
 			} else {
+				if err := r.fenceUnrecordedUnits(ctx, p, h.ID, false); err != nil {
+					return err
+				}
 				for _, pl := range p.Placements {
 					if pl.Host == h.ID {
 						if _, err := r.remote(ctx, p, pl, maskScript(p, pl)); err != nil {
