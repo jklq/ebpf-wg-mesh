@@ -26,6 +26,11 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 			h.Binding = b
 		}
 	}
+	// The explicitly selected out-of-band authority remains usable during a
+	// provider API outage. Only its observed power state establishes the fence.
+	if f, ok := r.Config.Fences[id]; ok && f.off(ctx) == nil {
+		return nil
+	}
 	a, err := r.Adapter(p.Installation, h)
 	if err != nil {
 		return err
@@ -40,9 +45,6 @@ func (r *Runner) verifyHostFenced(ctx context.Context, p deploy.Plan, id string)
 		if a.Capabilities().Power {
 			return nil
 		}
-	}
-	if f, ok := r.Config.Fences[id]; ok && f.off(ctx) == nil {
-		return nil
 	}
 	// Verify each prior service is stopped persistently, or has admitted the new
 	// generation after a clean restart. An unreachable host is never a fence.
@@ -130,24 +132,26 @@ func (r *Runner) fence(ctx context.Context, verify bool) error {
 		if b := p.Previous.Bindings[h.ID]; b.ServerID != "" {
 			h.Binding = b
 		}
-		a, err := r.Adapter(p.Installation, h)
-		if err != nil {
-			return err
-		}
 		_, reused := r.Plan.Installation.Host(h.ID)
-		if a.Capabilities().Power && !reused {
-			if err := a.Power(ctx, h.Binding.ServerID, "off"); err != nil {
-				return err
-			}
-		} else if f, ok := r.Config.Fences[h.ID]; ok && !reused {
+		if f, ok := r.Config.Fences[h.ID]; ok && !reused {
 			if err = f.powerOff(ctx); err != nil {
 				return err
 			}
 		} else {
-			for _, pl := range p.Placements {
-				if pl.Host == h.ID {
-					if _, err := r.remote(ctx, p, pl, maskScript(p, pl)); err != nil {
-						return fmt.Errorf("host fencing requires reachable SSH or independently verifiable provider power: %w", err)
+			a, err := r.Adapter(p.Installation, h)
+			if err != nil {
+				return err
+			}
+			if a.Capabilities().Power && !reused {
+				if err := a.Power(ctx, h.Binding.ServerID, "off"); err != nil {
+					return err
+				}
+			} else {
+				for _, pl := range p.Placements {
+					if pl.Host == h.ID {
+						if _, err := r.remote(ctx, p, pl, maskScript(p, pl)); err != nil {
+							return fmt.Errorf("host fencing requires reachable SSH or independently verifiable provider power: %w", err)
+						}
 					}
 				}
 			}
