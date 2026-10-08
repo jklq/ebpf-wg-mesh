@@ -47,7 +47,10 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 	if err != nil {
 		return err
 	}
-	c, s, err := recoveryConfig(r.effectiveConfig())
+	// Protection snapshots are local, mutable output of each completer. They
+	// must not be distributed or frozen as schedule inputs: pre-cutover backup
+	// and independently running completers may regenerate different closures.
+	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
 	if err != nil {
 		return err
 	}
@@ -57,7 +60,7 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		return err
 	}
 	inputs[c.RecoveryKeyFile] = s.RecoveryKey
-	for _, path := range []string{c.KeyringFile, r.Config.Console.TokenKeyFile, r.Config.Database.URLFile, r.effectiveConfig()} {
+	for _, path := range []string{c.KeyringFile, r.Config.Console.TokenKeyFile, r.Config.Database.URLFile} {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -121,20 +124,17 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		selected.RecoveryConfig = baseConfig
 		selected.Database.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/cockroachdb"
 		selected.Console.AdminBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/console-admin"
-		effective := c
-		effective.Images.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/skopeo"
 		files := map[string][]byte{}
 		for path, b := range inputs {
 			files[path] = b
 		}
 		files[config], _ = json.Marshal(selected)
-		files[r.effectiveConfig()], _ = json.Marshal(effective)
 		base, baseService, err := recoveryConfig(r.Config.RecoveryConfig)
 		if err != nil {
 			return err
 		}
 		clear(baseService.RecoveryKey)
-		base.Images.Binary = effective.Images.Binary
+		base.Images.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/skopeo"
 		// Service-specific paths live in generated files. Operator inputs keep
 		// their exact original bytes, including harmless JSON formatting.
 		files[baseConfig], _ = json.Marshal(base)
