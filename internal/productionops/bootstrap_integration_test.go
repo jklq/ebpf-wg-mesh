@@ -119,6 +119,26 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	if err := r.verifyBootstrap(ctx); err != nil {
 		t.Fatal(err)
 	}
+	first, err := r.acquireRenewal(ctx, db)
+	if err != nil {
+		t.Fatal("native renewal ownership", err)
+	}
+	if _, err := r.acquireRenewal(ctx, db); err == nil {
+		t.Fatal("concurrent native issuer acquired active ownership")
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE platform_recovery.public.credential_renewal SET expires_at=statement_timestamp()-INTERVAL '1 minute'`); err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.acquireRenewal(ctx, db)
+	if err != nil {
+		t.Fatal("native renewal interruption ownership recovery", err)
+	}
+	first()
+	var owners int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM platform_recovery.public.credential_renewal`).Scan(&owners); err != nil || owners != 1 {
+		t.Fatal("old issuer released replacement ownership", err)
+	}
+	second()
 	// No service process is fabricated here: only DB/bootstrap roles are declared.
 	// Pause and failed resume must leave actual SQL authority and scheduling paused.
 	r.Plan.Placements = nil
@@ -137,6 +157,9 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	}
 	if err := db.QueryRowContext(ctx, `SELECT paused FROM build_scheduler_control WHERE id=TRUE`).Scan(&scheduler); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := r.acquireRenewal(ctx, db); err == nil {
+		t.Fatal("paused native authority admitted credential maintenance")
 	}
 	if !paused || !scheduler {
 		t.Fatal("failed verification resumed native authority")

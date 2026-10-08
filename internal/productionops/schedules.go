@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"ebof-wg-mesh/internal/deploy"
 )
@@ -169,33 +170,60 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 }
 
 func (r *Runner) renewCredentials(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+	defer cancel()
 	db, err := r.db(ctx, false)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	var paused bool
-	if err = db.QueryRowContext(ctx, "SELECT paused FROM recovery_runtime_authority WHERE singleton=TRUE").Scan(&paused); err != nil {
+	release, err := r.acquireRenewal(ctx, db)
+	if err != nil {
 		return err
 	}
-	if paused {
-		return fmt.Errorf("credential maintenance waits while runtime authority is paused")
-	}
-	if err = r.databaseCredentials(ctx, false); err != nil {
-		return err
-	}
-	if err = r.credentials(ctx, false); err != nil {
-		return err
-	}
+	defer release()
+	// Presence permits renewing an existing managed process; it does not permit
+	// database membership changes, unmasking or resurrection of retired units.
+	current := *r
+	current.Plan = r.Plan
+	current.Plan.Automatic = false
+	current.Plan.Placements = nil
+	var offline []string
+	checked := map[string]bool{}
 	for _, pl := range r.Plan.Placements {
-		// A retired/offline host cannot be resurrected by credential maintenance.
-		if pl.Role == deploy.Database {
-			if _, err = r.remote(ctx, r.Plan, pl, "if systemctl is-active --quiet "+shell(unit(r.Plan, pl))+"; then systemctl kill --kill-who=main --signal=HUP "+shell(unit(r.Plan, pl))+"; fi\n"); err != nil {
-				return err
+		online, known := checked[pl.Host]
+		if !known {
+			_, err := r.remote(ctx, r.Plan, pl, "true\n")
+			online = err == nil
+			checked[pl.Host] = online
+			if !online {
+				offline = append(offline, pl.Host)
 			}
-		} else if _, err = r.remote(ctx, r.Plan, pl, "if systemctl is-active --quiet "+shell(unit(r.Plan, pl))+"; then systemctl restart "+shell(unit(r.Plan, pl))+"; fi\n"); err != nil {
+		}
+		if online {
+			current.Plan.Placements = append(current.Plan.Placements, pl)
+		}
+	}
+	if err = current.databaseCredentials(ctx, false); err != nil {
+		return err
+	}
+	if err = current.credentials(ctx, false); err != nil {
+		return err
+	}
+	for _, pl := range current.Plan.Placements {
+		action := "restart " + shell(unit(r.Plan, pl))
+		if pl.Role == deploy.Database {
+			action = "kill --kill-who=main --signal=HUP " + shell(unit(r.Plan, pl))
+		}
+		if _, err = current.remote(ctx, current.Plan, pl, "if systemctl is-active --quiet "+shell(unit(r.Plan, pl))+"; then systemctl "+action+"; fi\n"); err != nil {
 			return err
 		}
 	}
-	return r.credentials(ctx, true)
+	if err = current.credentials(ctx, true); err != nil {
+		return err
+	}
+	if len(offline) > 0 {
+		return fmt.Errorf("online credentials renewed; unavailable hosts require later inspection: %v", offline)
+	}
+	return nil
 }

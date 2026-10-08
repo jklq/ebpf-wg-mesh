@@ -70,7 +70,7 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		if pl.Role == deploy.Database {
 			continue
 		}
-		if r.Plan.Automatic && (pl.Role == deploy.Builder || pl.Role == deploy.Agent) {
+		if !r.managedCredentials(pl) {
 			continue
 		}
 		files := map[string][]byte{"ca.crt": ca}
@@ -457,6 +457,9 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 			}
 		}
 
+	}
+	if !verify {
+		return r.replicateCredentialInputs(ctx)
 	}
 	return nil
 }
