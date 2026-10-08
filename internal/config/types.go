@@ -198,6 +198,7 @@ const (
 )
 
 type SourceArchiveS3Config struct {
+	CAFile                string
 	Endpoint              string
 	Region                string
 	Bucket                string

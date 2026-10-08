@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -67,6 +69,21 @@ func NewS3ArchiveStore(cfg config.SourceArchiveS3Config) (*S3ArchiveStore, error
 	if maxRetries <= 0 {
 		maxRetries = 3
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if cfg.CAFile != "" {
+		if endpoint.Scheme != "https" {
+			return nil, errors.New("S3 CA file requires an HTTPS endpoint")
+		}
+		pem, err := os.ReadFile(cfg.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("read S3 CA roots: %w", err)
+		}
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(pem) {
+			return nil, errors.New("S3 CA file contains no certificates")
+		}
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	}
 	credentials := newS3CredentialsProvider(cfg.CredentialsFile)
 	if err := credentials.validate(); err != nil {
 		return nil, err
@@ -80,7 +97,7 @@ func NewS3ArchiveStore(cfg config.SourceArchiveS3Config) (*S3ArchiveStore, error
 		kmsKeyID:    kmsKeyID,
 		maxRetries:  maxRetries,
 		credentials: credentials,
-		httpClient:  &http.Client{Timeout: time.Duration(timeout) * time.Second},
+		httpClient:  &http.Client{Timeout: time.Duration(timeout) * time.Second, Transport: transport},
 		now:         time.Now,
 		sleep: func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)

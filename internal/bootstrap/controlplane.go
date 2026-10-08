@@ -57,6 +57,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.StateDir, "state-dir", "CONTROLPLANE_STATE_DIR", "var/controlplane", "")
 	stringFlag(fs, &cfg.SourceArchives.Provider, "source-archives-provider", "CONTROLPLANE_SOURCE_ARCHIVES_PROVIDER", "", "file or s3; defaults to s3 when S3 fields are set, else file")
 	stringFlag(fs, &cfg.SourceArchives.Directory, "source-archives-dir", "CONTROLPLANE_SOURCE_ARCHIVES_DIR", "", "defaults under the control-plane state directory; file provider only")
+	stringFlag(fs, &cfg.SourceArchives.S3.CAFile, "source-archives-s3-ca-file", "CONTROLPLANE_SOURCE_ARCHIVES_S3_CA_FILE", "", "PEM roots for the selected S3 TLS endpoint")
 	stringFlag(fs, &cfg.SourceArchives.S3.Endpoint, "source-archives-s3-endpoint", "CONTROLPLANE_SOURCE_ARCHIVES_S3_ENDPOINT", "", "S3-compatible endpoint URL, e.g. https://s3.us-east-1.amazonaws.com")
 	stringFlag(fs, &cfg.SourceArchives.S3.Region, "source-archives-s3-region", "CONTROLPLANE_SOURCE_ARCHIVES_S3_REGION", "", "")
 	stringFlag(fs, &cfg.SourceArchives.S3.Bucket, "source-archives-s3-bucket", "CONTROLPLANE_SOURCE_ARCHIVES_S3_BUCKET", "", "")

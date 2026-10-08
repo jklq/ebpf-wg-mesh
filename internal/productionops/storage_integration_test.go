@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/recovery"
 	iniFile "gopkg.in/ini.v1"
@@ -31,6 +32,10 @@ import (
 // An actual TLS MinIO process, isolated credentials, KMS key and on-disk bucket.
 // No mock bucket receipts or object-version metadata are used.
 func nativeObjectStore(t *testing.T, ctx context.Context) recovery.StorageConfig {
+	return nativeObjectStoreAt(t, ctx, "127.0.0.8", true)
+}
+
+func nativeObjectStoreAt(t *testing.T, ctx context.Context, host string, immutable bool) recovery.StorageConfig {
 	t.Helper()
 	binary := os.Getenv("MINIO_BINARY")
 	if binary == "" {
@@ -62,7 +67,7 @@ func nativeObjectStore(t *testing.T, ctx context.Context) recovery.StorageConfig
 	if err != nil {
 		t.Fatal(err)
 	}
-	node, err := certificate("node", &ca, []string{"127.0.0.8"})
+	node, err := certificate("node", &ca, []string{host})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,14 +81,14 @@ func nativeObjectStore(t *testing.T, ctx context.Context) recovery.StorageConfig
 	secret := base64.RawURLEncoding.EncodeToString(random)
 	rand.Read(random)
 	kms := "isolated:" + base64.StdEncoding.EncodeToString(random)
-	address := freeAddress(t, "127.0.0.8")
+	address := freeAddress(t, host)
 	endpoint := "https://" + address
 	log, err := os.Create(filepath.Join(dir, "minio.log"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { log.Close() })
-	process := exec.CommandContext(ctx, binary, "server", "--address", address, "--console-address", freeAddress(t, "127.0.0.8"), "--certs-dir", filepath.Join(dir, "certs"), filepath.Join(dataRoot, "objects"))
+	process := exec.CommandContext(ctx, binary, "server", "--address", address, "--console-address", freeAddress(t, host), "--certs-dir", filepath.Join(dir, "certs"), filepath.Join(dataRoot, "objects"))
 	process.Env = append(os.Environ(), "MINIO_ROOT_USER=isolated-admin", "MINIO_ROOT_PASSWORD="+secret, "MINIO_KMS_SECRET_KEY="+kms, "MINIO_BROWSER=off")
 	isolateChild(process)
 	process.Stdout, process.Stderr = log, log
@@ -111,9 +116,16 @@ func nativeObjectStore(t *testing.T, ctx context.Context) recovery.StorageConfig
 		}
 	}
 	command("alias", "set", "isolated", endpoint, "isolated-admin", secret)
-	command("mb", "--with-lock", "isolated/recovery")
+	if immutable {
+		command("mb", "--with-lock", "isolated/recovery")
+	} else {
+		command("mb", "isolated/recovery")
+		command("version", "enable", "isolated/recovery")
+	}
 	command("encrypt", "set", "sse-s3", "isolated/recovery")
-	command("retention", "set", "--default", "COMPLIANCE", "31d", "isolated/recovery")
+	if immutable {
+		command("retention", "set", "--default", "COMPLIANCE", "31d", "isolated/recovery")
+	}
 	rand.Read(random)
 	writer := base64.RawURLEncoding.EncodeToString(random)
 	command("admin", "user", "add", "isolated", "isolated-writer", writer)
@@ -121,6 +133,9 @@ func nativeObjectStore(t *testing.T, ctx context.Context) recovery.StorageConfig
 		map[string]any{"Effect": "Allow", "Action": []string{"s3:*"}, "Resource": []string{"arn:aws:s3:::recovery", "arn:aws:s3:::recovery/*"}},
 		map[string]any{"Effect": "Deny", "Action": []string{"s3:DeleteObjectVersion", "s3:PutBucketVersioning", "s3:PutBucketObjectLockConfiguration", "s3:PutBucketPolicy", "s3:DeleteBucketPolicy", "s3:BypassGovernanceRetention", "s3:DeleteBucket"}, "Resource": []string{"arn:aws:s3:::recovery", "arn:aws:s3:::recovery/*"}},
 	}}
+	if !immutable {
+		policy["Statement"] = policy["Statement"].([]any)[:1]
+	}
 	p := filepath.Join(dir, "writer-policy.json")
 	if err := saveJSON(p, policy); err != nil {
 		t.Fatal(err)
@@ -492,4 +507,50 @@ func TestNativeReferenceBootstrapCompletePointAndInstallerDiskLoss(t *testing.T)
 		t.Fatal("independently recovered AWS executable", err)
 	}
 	t.Logf("independent installer/artifact/key recovery measured %.2fs", time.Since(began).Seconds())
+}
+
+func TestNativeSourceArchiveTLSAndSelectedCredentials(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	c := nativeObjectStoreAt(t, ctx, "127.0.0.8", false)
+	ini, err := iniFile.Load(mustRead(t, c.CredentialsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec := ini.Section(c.Profile)
+	credentials := t.TempDir() + "/source.json"
+	if err := saveJSON(credentials, map[string]string{"accessKeyId": sec.Key("aws_access_key_id").String(), "secretAccessKey": sec.Key("aws_secret_access_key").String()}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.SourceArchiveS3Config{Endpoint: c.Endpoint, Region: c.Region, Bucket: c.Bucket, Prefix: "archives", CredentialsFile: credentials, CAFile: c.CAFile, ServerSideEncryption: "AES256"}
+	store, err := source.NewS3ArchiveStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !store.Ready() {
+		t.Fatal("native source HEAD readiness failed")
+	}
+	data := "native source archive"
+	digest := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(data)))
+	key, err := source.ArchiveObjectKey(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Put(ctx, key, strings.NewReader(data), int64(len(data)), digest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Stat(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+	cfg.CAFile = ""
+	untrusted, err := source.NewS3ArchiveStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if untrusted.Ready() {
+		t.Fatal("private S3 endpoint accepted without selected TLS authority")
+	}
 }
