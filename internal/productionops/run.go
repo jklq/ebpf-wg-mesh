@@ -246,14 +246,29 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 	case "platform-bootstrap":
 		return r.bootstrap(ctx)
 	case "credentials":
+		ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+		defer cancel()
+		db, err := r.db(ctx, false)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		release, err := r.acquireMaintenance(ctx, db, true)
+		if err != nil {
+			return err
+		}
+		defer release()
 		return r.credentials(ctx, false)
 	case "reservations":
 		return r.reservations(ctx, false)
 	case "quiesce":
+		if err := r.stopPriorMaintenance(ctx); err != nil {
+			return err
+		}
 		if err := r.pause(ctx, true, r.Plan.Recovery && r.RecoveryProgress != nil && r.RecoveryProgress.ApprovedDigest != ""); err != nil {
 			return err
 		}
-		return r.stopPriorMaintenance(ctx)
+		return nil
 	case "resume":
 		return r.resume(ctx, false)
 	case "recovery-protect":
@@ -263,10 +278,7 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 	case "backup":
 		return r.backup(ctx)
 	case "backup-complete":
-		if err := r.protect(ctx, false); err != nil {
-			return err
-		}
-		return r.completeBackup(ctx)
+		return r.scheduledBackup(ctx)
 	case "recovery-finalize":
 		return r.finalize(ctx, false)
 	case "database-verify", "storage-verify", "production-verify", "recovery-verify":

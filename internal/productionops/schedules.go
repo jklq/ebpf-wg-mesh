@@ -195,7 +195,7 @@ func (r *Runner) stopPriorMaintenance(ctx context.Context) error {
 }
 
 func (r *Runner) priorMaintenance(ctx context.Context, stop bool) error {
-	if r.Plan.Previous == nil || r.Plan.Automatic || r.Plan.Recovery {
+	if r.Plan.Previous == nil || r.Plan.Recovery {
 		return nil
 	}
 	currentHosts, err := r.completionHosts()
@@ -206,6 +206,13 @@ func (r *Runner) priorMaintenance(ctx context.Context, stop bool) error {
 	old := r.Plan.Previous
 	prior := deploy.Plan{Installation: old.Installation, Release: old.Release, Placements: old.Placements, Previous: old, Generation: r.Plan.Generation}
 	for _, host := range prior.Installation.Hosts {
+		if r.Plan.Automatic {
+			if _, err := r.remote(ctx, prior, deploy.Placement{Host: host.ID}, "true\n"); err != nil {
+				// Presence does not establish fencing. SQL admission prevents a
+				// returning old scheduled process from acquiring current ownership.
+				continue
+			}
+		}
 		name := "platform-" + prior.Installation.ID + "-recovery"
 		var script strings.Builder
 		for _, service := range []string{name, name + "-credentials"} {

@@ -131,6 +131,14 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 		t.Fatal("upgrade changed existing encryption or console keys")
 	}
 	r.Plan.Previous = nil
+	admitted, err := r.admitMaintenancePlan(ctx, db)
+	if err != nil {
+		t.Fatal("native scheduled plan admission", err)
+	}
+	admitted()
+	if err := r.verifyMaintenancePlan(ctx, db); err != nil {
+		t.Fatal("native scheduled plan observation", err)
+	}
 	first, err := r.acquireRenewal(ctx, db)
 	if err != nil {
 		t.Fatal("native renewal ownership", err)
@@ -151,6 +159,40 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 		t.Fatal("old issuer released replacement ownership", err)
 	}
 	second()
+	// Automatic placement changes retain the generation. A lost completer must
+	// still be unable to renew or publish using the prior plan when it returns.
+	stale := *r
+	backupOwner, err := r.acquireNativeLease(ctx, db, "backup_completion", true, true)
+	if err != nil {
+		t.Fatal("native independent backup ownership", err)
+	}
+	r.Plan.ID = "replacement-plan"
+	if release, err := r.admitMaintenancePlan(ctx, db); err == nil {
+		release()
+		t.Fatal("schedule replacement interrupted an owned native backup")
+	}
+	if err := stale.verifyMaintenancePlan(ctx, db); err != nil {
+		t.Fatal("failed schedule replacement changed actual plan admission", err)
+	}
+	backupOwner()
+	admitted, err = r.admitMaintenancePlan(ctx, db)
+	if err != nil {
+		t.Fatal("native replacement plan admission", err)
+	}
+	admitted()
+	if release, err := stale.acquireRenewal(ctx, db); err == nil {
+		release()
+		t.Fatal("old plan renewed after actual placement admission changed")
+	}
+	if release, err := stale.acquireNativeLease(ctx, db, "backup_completion", true, true); err == nil {
+		release()
+		t.Fatal("old plan published after actual placement admission changed")
+	}
+	backupOwner, err = r.acquireNativeLease(ctx, db, "backup_completion", true, true)
+	if err != nil {
+		t.Fatal("native admitted replacement backup ownership", err)
+	}
+	backupOwner()
 	// No service process is fabricated here: only DB/bootstrap roles are declared.
 	// Pause and failed resume must leave actual SQL authority and scheduling paused.
 	r.Plan.Placements = nil

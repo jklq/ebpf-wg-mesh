@@ -222,10 +222,22 @@ func (r *Runner) protect(ctx context.Context, verify bool) error {
 	return err
 }
 func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 11*time.Minute)
+	defer cancel()
+	db, err := r.db(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	if !verify {
 		if err := r.stopPriorMaintenance(ctx); err != nil {
 			return err
 		}
+		release, err := r.admitMaintenancePlan(ctx, db)
+		if err != nil {
+			return err
+		}
+		defer release()
 		if err := r.prepareProtection(ctx, &r.Plan.Release); err != nil {
 			return err
 		}
@@ -237,36 +249,27 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 		if err != nil {
 			return err
 		}
-		db, err := r.db(ctx, false)
-		if err != nil {
-			return err
-		}
 		c, s, err := recoveryConfig(r.effectiveConfig())
 		if err != nil {
-			db.Close()
 			return err
 		}
 		clear(s.RecoveryKey)
 		name := strings.TrimPrefix(c.BackupConnection, "external://")
 		if name == "" || strings.ContainsAny(name, "/ -'\"") {
-			db.Close()
 			return fmt.Errorf("backup requires a named external connection")
 		}
 		if c.Storage.CAFile != "" {
 			ca, readErr := os.ReadFile(c.Storage.CAFile)
 			pool := x509.NewCertPool()
 			if readErr != nil || !pool.AppendCertsFromPEM(ca) {
-				db.Close()
 				return fmt.Errorf("invalid backup storage TLS CA")
 			}
 			if _, err := db.ExecContext(ctx, "SET CLUSTER SETTING cloudstorage.http.custom_ca = $1", string(ca)); err != nil {
-				db.Close()
 				return err
 			}
 		}
 		statement := "CREATE EXTERNAL CONNECTION IF NOT EXISTS " + name + " AS '" + strings.ReplaceAll(strings.TrimSpace(string(uri)), "'", "''") + "'"
 		_, err = db.ExecContext(ctx, statement)
-		db.Close()
 		if err != nil {
 			return fmt.Errorf("native backup connection provisioning failed")
 		}
@@ -274,11 +277,9 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 			return err
 		}
 	}
-	db, err := r.db(ctx, false)
-	if err != nil {
+	if err := r.verifyMaintenancePlan(ctx, db); err != nil {
 		return err
 	}
-	defer db.Close()
 	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
 	if err != nil {
 		return err
@@ -315,6 +316,8 @@ func (r *Runner) backup(ctx context.Context) error {
 	if _, err := r.backupEvidence(ctx); err == nil {
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, 11*time.Minute)
+	defer cancel()
 	c, s, err := recoveryConfig(r.effectiveConfig())
 	if err != nil {
 		return err
@@ -325,9 +328,32 @@ func (r *Runner) backup(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
+	release, err := r.acquireNativeLease(ctx, db, "backup_completion", true, false)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if _, err := db.ExecContext(ctx, "BACKUP INTO '"+strings.ReplaceAll(c.BackupConnection, "'", "''")+"' WITH revision_history"); err != nil {
 		return fmt.Errorf("native full-cluster backup failed: %w", err)
 	}
+	return r.completeBackup(ctx)
+}
+
+func (r *Runner) scheduledBackup(ctx context.Context) error {
+	// Finish before durable ownership can expire, including cancellation of
+	// native subprocesses. Schedule replacement holds this same SQL lease.
+	ctx, cancel := context.WithTimeout(ctx, 11*time.Minute)
+	defer cancel()
+	db, err := r.db(ctx, false)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	release, err := r.acquireNativeLease(ctx, db, "backup_completion", true, true)
+	if err != nil {
+		return err
+	}
+	defer release()
 	return r.completeBackup(ctx)
 }
 func (r *Runner) completeBackup(ctx context.Context) (returnErr error) {
