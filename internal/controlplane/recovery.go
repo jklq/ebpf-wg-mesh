@@ -17,6 +17,11 @@ type protectedArchives struct {
 	protect func(context.Context, string) error
 }
 
+func (a protectedArchives) Ready() bool {
+	store, ok := a.ArchiveStore.(interface{ Ready() bool })
+	return ok && store.Ready()
+}
+
 func (a protectedArchives) Delete(ctx context.Context, key string) error {
 	if err := a.protect(ctx, key); err != nil {
 		return err
