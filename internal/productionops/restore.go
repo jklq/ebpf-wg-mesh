@@ -147,8 +147,8 @@ func (r *Runner) restore(ctx context.Context) error {
 			return fmt.Errorf("restore has no database destination")
 		}
 		h, _ := r.Plan.Installation.Host(pl.Host)
-		var node int64
-		if err := db.QueryRowContext(ctx, `SELECT node_id FROM crdb_internal.gossip_nodes WHERE address=$1`, h.Network.Address+":26257").Scan(&node); err != nil {
+		node, err := databaseNodeID(ctx, db, h.Network.Address)
+		if err != nil {
 			return err
 		}
 		root := dataDir(r.Plan, pl) + "/external-io/" + r.Plan.ID + "/database"

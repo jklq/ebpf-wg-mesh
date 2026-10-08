@@ -111,7 +111,6 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		selected.Database.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/cockroachdb"
 		selected.Console.AdminBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/console-admin"
 		effective := c
-		effective.Storage.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/aws"
 		effective.Images.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/skopeo"
 		files := map[string][]byte{}
 		for path, b := range inputs {
@@ -124,7 +123,6 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 			return err
 		}
 		clear(baseService.RecoveryKey)
-		base.Storage.Binary = effective.Storage.Binary
 		base.Images.Binary = effective.Images.Binary
 		files[r.Config.RecoveryConfig], _ = json.Marshal(base)
 		for _, path := range sortedFiles(files) {

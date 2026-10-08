@@ -88,7 +88,7 @@ func TestHydrateIndependentInstallerAfterOriginalDiskLoss(t *testing.T) {
 	if err := privateJSON(result.RecoveryConfig, &operator); err != nil {
 		t.Fatal(err)
 	}
-	if operator.Storage.Binary != result.Tools["r43/tool/aws/"+runtime.GOARCH] {
+	if operator.Images.Binary != result.Tools["r43/tool/skopeo/"+runtime.GOARCH] {
 		t.Fatal("operator still depends on lost native tools")
 	}
 	for _, path := range actual.Policy.OperationsInputs {

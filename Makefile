@@ -68,5 +68,5 @@ cleanup-local:
 # output uses the operator's artifact service and is separate from deployment.
 .PHONY: package-production
 package-production:
-	@test -n "$(RELEASE_ID)" -a -n "$(ARTIFACT_URL_BASE)" -a -n "$(NATIVE_INPUTS)"
-	python3 scripts/package-production-release.py --id "$(RELEASE_ID)" --url-base "$(ARTIFACT_URL_BASE)" --native-inputs "$(NATIVE_INPUTS)" --output "artifacts/production/$(RELEASE_ID)"
+	@test -n "$(RELEASE_ID)" -a -n "$(ARTIFACT_URL_BASE)" -a -n "$(NATIVE_INPUTS)" -a -n "$(RELEASE_IMAGES)"
+	python3 scripts/package-production-release.py --id "$(RELEASE_ID)" --url-base "$(ARTIFACT_URL_BASE)" --native-inputs "$(NATIVE_INPUTS)" --images "$(RELEASE_IMAGES)" --output "artifacts/production/$(RELEASE_ID)"

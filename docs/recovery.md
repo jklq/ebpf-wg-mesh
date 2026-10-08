@@ -16,9 +16,11 @@ timestamp and exact protected object versions for its entire dependency graph.
 | Installation | Installation manifest, immutable deployment-state snapshot, release bundles and every executable artifact and management tool for their declared architectures. |
 
 Local certificate caches, build caches and transient observations are excluded.
-ClickHouse uses its own log-retention policy. Direct images and images declared in
-release bundles remain explicit external dependencies; their registries must be
-available during production recovery. They do not become protected platform images.
+ClickHouse uses its own log-retention policy. Direct-image application artifacts
+remain explicit external dependencies; their registries must be available during
+production recovery. Release-owned platform images are protected as complete OCI
+closures, including the builder toolchain and frontend, and do not require the
+original publisher during recovery.
 The isolated test has no access to these external services; its release tool must
 disable calls to them and report its availability checks accordingly.
 
@@ -28,15 +30,20 @@ encrypted-key/token probes and installer requirements from
 `platform_recovery.public.installations`. Both releases remain registered during a
 cutover; `recovery finalize` removes the previous release's inventory only after
 the new platform passes production verification. Historical rows remain in backup
-revision history. No recovery inventory is reconstructed from mutable image tags.
+revision history. No recovery inventory is reconstructed from mutable image tags. Each complete
+point also selects the latest independently captured installer state and service
+inputs; those preserve host bindings and quarantined resources introduced after
+the SQL cutoff. Points without these installer selectors are rejected.
 
 ## Independent storage
 
 Use an S3-compatible bucket in a separate account and outside **both** the primary
 site and primary storage failure domains. The configuration declares these domains
-and the independent bucket's canonical owner ID. The adapter verifies the owner,
+and the independent bucket's canonical owner ID, or an explicit TLS public-key
+pin for a compatible service without canonical owners. Normal TLS hostname and
+chain verification remains required with the pin. The adapter verifies the owner,
 versioning, bucket encryption, Object Lock and resource-policy restrictions using
-supported S3 operations through a release-pinned AWS CLI v2 executable. An endpoint
+supported S3 operations through the native client packaged in operations and platformctl. An endpoint
 must implement these operations and policy semantics; basic S3 upload support is
 insufficient.
 

@@ -1,6 +1,5 @@
 {
   "storage": {
-    "binary": "/opt/ebpf-wg-mesh/production/r43/tools/aws",
     "endpoint": "https://s3.recovery.example.com",
     "bucket": "independent-recovery",
     "prefix": "production",

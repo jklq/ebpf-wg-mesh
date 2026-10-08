@@ -240,7 +240,7 @@ func startTestBuilder(t *testing.T, server *Server, builderID string) *builder.A
 		ID:      builderID,
 		Name:    builderID,
 		ControlPlane: config.BuilderControlPlaneConfig{
-			Address: server.InternalAddr(),
+			Addresses: []string{server.InternalAddr()},
 			TLS: config.InternalClientTLSConfig{
 				CAFile:     caPath,
 				CertFile:   certPath,

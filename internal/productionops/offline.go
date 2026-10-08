@@ -50,7 +50,14 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	}
 	var release deploy.Release
 	var installation deploy.Installation
+	selected := map[string]string{}
+	for _, requirement := range input.Point.Installer {
+		selected[requirement.Kind] = requirement.ID
+	}
 	for _, d := range input.Point.Dependencies {
+		if (d.Kind == "release" || d.Kind == "installation") && selected[d.Kind] != d.ID {
+			continue
+		}
 		switch d.Kind {
 		case "release":
 			if err := privateJSON(input.Files[d.Kind+"/"+d.ID], &release); err != nil {
@@ -288,7 +295,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 			return ready, err
 		}
 	}
-	env = map[string]string{"DASHBOARD_PROFILE": "production", "DASHBOARD_AUTHORITY_FILE": authorityFile, "DASHBOARD_DATABASE_URL": strings.Replace(url, "127.0.0.1:26257", "database.offline.invalid:26257", 1), "DASHBOARD_DATABASE_SCHEMA": input.Config.ConsoleSchema, "DASHBOARD_JWT_SECRET": string(session), "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": string(assertion), "DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": strings.TrimSpace(string(token)), "DASHBOARD_PUBLIC_BASE_URL": "https://console.offline.invalid", "DASHBOARD_INGRESS_TARGET_HOST": "console.offline.invalid", "DASHBOARD_CONTROLPLANE_ADDRESS": "controlplane.offline.invalid:9443", "DASHBOARD_CONTROLPLANE_SERVER_NAME": "controlplane.offline.invalid", "DASHBOARD_CONTROLPLANE_CERT_FILE": workspace + "/console-client.crt", "DASHBOARD_CONTROLPLANE_KEY_FILE": workspace + "/console-client.key", "DASHBOARD_CONTROLPLANE_CA_FILE": consoleCA, "PORT": "3000", "HOST": "127.0.0.1"}
+	env = map[string]string{"DASHBOARD_PROFILE": "production", "DASHBOARD_AUTHORITY_FILE": authorityFile, "DASHBOARD_DATABASE_URL": strings.Replace(url, "127.0.0.1:26257", "database.offline.invalid:26257", 1), "DASHBOARD_DATABASE_SCHEMA": input.Config.ConsoleSchema, "DASHBOARD_JWT_SECRET": string(session), "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": string(assertion), "DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": strings.TrimSpace(string(token)), "DASHBOARD_PUBLIC_BASE_URL": "https://console.offline.invalid", "DASHBOARD_INGRESS_TARGET_HOST": "console.offline.invalid", "DASHBOARD_CONTROLPLANE_ADDRESSES": "controlplane.offline.invalid:9443", "DASHBOARD_CONTROLPLANE_SERVER_NAME": "controlplane.offline.invalid", "DASHBOARD_CONTROLPLANE_CERT_FILE": workspace + "/console-client.crt", "DASHBOARD_CONTROLPLANE_KEY_FILE": workspace + "/console-client.key", "DASHBOARD_CONTROLPLANE_CA_FILE": consoleCA, "PORT": "3000", "HOST": "127.0.0.1"}
 	if err := start("console", console, nil, env); err != nil {
 		return ready, err
 	}

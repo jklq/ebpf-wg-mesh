@@ -329,6 +329,7 @@ func applyAgentDefaults(cfg *AgentConfig) {
 }
 
 func applyBuilderDefaults(cfg *BuilderConfig) {
+	cfg.ControlPlane.Addresses = uniqueAddresses(cfg.ControlPlane.Addresses)
 	if cfg.HostType == "" {
 		cfg.HostType = HostStable
 	}

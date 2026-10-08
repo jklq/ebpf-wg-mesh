@@ -46,7 +46,7 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	if b, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("compile console helper: %v %s", err, b)
 	}
-	rec := recovery.Config{Storage: recovery.StorageConfig{Binary: "/bin/false", Bucket: "isolated", Prefix: "test", Region: "test", Owner: "test", CredentialsFile: r.Config.StateDirectory + "/credentials", Profile: "test", Account: "isolated-recovery", PrimaryAccount: "isolated-primary", FailureDomain: "isolated-recovery", PrimaryDomains: []string{"isolated-primary"}, WriterPrincipal: "test"}, RecoveryKeyFile: r.Config.StateDirectory + "/recovery.key", KeyringFile: r.Config.StateDirectory + "/keyring.json"}
+	rec := recovery.Config{Storage: recovery.StorageConfig{Bucket: "isolated", Prefix: "test", Region: "test", Owner: "test", CredentialsFile: r.Config.StateDirectory + "/credentials", Profile: "test", Account: "isolated-recovery", PrimaryAccount: "isolated-primary", FailureDomain: "isolated-recovery", PrimaryDomains: []string{"isolated-primary"}, WriterPrincipal: "test"}, RecoveryKeyFile: r.Config.StateDirectory + "/recovery.key", KeyringFile: r.Config.StateDirectory + "/keyring.json"}
 	if err := writePrivate(rec.RecoveryKeyFile, []byte(strings.Repeat("r", 32))); err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,7 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	defer logs.Close()
 	process := exec.CommandContext(ctx, binary, "start", "--certs-dir="+certs, "--store="+r.Config.StateDirectory+"/store", "--listen-addr="+r.Config.Database.Address, "--advertise-addr="+r.Config.Database.Address, "--http-addr="+httpAddress, "--join="+r.Config.Database.Address, "--cache=128MiB", "--max-sql-memory=128MiB", "--external-io-dir="+r.Config.StateDirectory+"/external")
 	process.Stdout, process.Stderr = logs, logs
+	isolateChild(process)
 	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +168,10 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	if err := client.PingContext(ctx); err != nil {
 		t.Fatal("component client TLS", err)
 	}
+	if node, err := databaseNodeID(ctx, db, host.Network.Address); err != nil || node <= 0 {
+		t.Fatal("actual native node with a custom advertised port", node, err)
+	}
+	testNativeWorkQuarantine(t, ctx, r, db)
 }
 func mustRead(t *testing.T, path string) []byte {
 	t.Helper()

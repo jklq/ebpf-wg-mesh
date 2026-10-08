@@ -2,21 +2,29 @@ package recovery
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 func (s *S3) multipart(ctx context.Context, key, file, digest string, size int64, until time.Time) (string, error) {
-	var created struct{ UploadId string }
-	if err := s.call(ctx, &created, "create-multipart-upload", "--key", key, "--server-side-encryption", "AES256", "--metadata", "digest="+digest, "--checksum-algorithm", "SHA256", "--object-lock-mode", "COMPLIANCE", "--object-lock-retain-until-date", until.UTC().Format(time.RFC3339Nano)); err != nil {
+	c, err := s.client()
+	if err != nil {
 		return "", err
 	}
-	if created.UploadId == "" {
+	bucket, name := aws.String(s.Config.Bucket), aws.String(key)
+	created, err := c.CreateMultipartUpload(ctx, &s3.CreateMultipartUploadInput{Bucket: bucket, Key: name, ServerSideEncryption: types.ServerSideEncryptionAes256, Metadata: map[string]string{"digest": digest}, ChecksumAlgorithm: types.ChecksumAlgorithmSha256, ChecksumType: types.ChecksumTypeComposite, ObjectLockMode: types.ObjectLockModeCompliance, ObjectLockRetainUntilDate: &until})
+	if err != nil {
+		return "", storageError("create multipart upload", err)
+	}
+	if aws.ToString(created.UploadId) == "" {
 		return "", fmt.Errorf("S3 did not identify the multipart upload")
 	}
 	completed := false
@@ -24,7 +32,7 @@ func (s *S3) multipart(ctx context.Context, key, file, digest string, size int64
 		if !completed {
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			defer cancel()
-			_ = s.call(cleanup, nil, "abort-multipart-upload", "--key", key, "--upload-id", created.UploadId)
+			_, _ = c.AbortMultipartUpload(cleanup, &s3.AbortMultipartUploadInput{Bucket: bucket, Key: name, UploadId: created.UploadId})
 		}
 	}()
 	input, err := os.Open(file)
@@ -33,58 +41,27 @@ func (s *S3) multipart(ctx context.Context, key, file, digest string, size int64
 	}
 	defer input.Close()
 	partSize := max(int64(64<<20), (size+9999)/10000)
-	type part struct {
-		PartNumber     int
-		ETag           string
-		ChecksumSHA256 string
-	}
-	var parts []part
-	for number := 1; ; number++ {
-		f, err := temporary()
-		if err != nil {
+	var parts []types.CompletedPart
+	for offset, number := int64(0), int32(1); offset < size; offset, number = offset+partSize, number+1 {
+		length := min(partSize, size-offset)
+		h := sha256.New()
+		if _, err = io.Copy(h, io.NewSectionReader(input, offset, length)); err != nil {
 			return "", err
 		}
-		n, copyErr := io.CopyN(f, input, partSize)
-		closeErr := f.Close()
-		if n == 0 {
-			os.Remove(f.Name())
-			if copyErr == io.EOF {
-				break
-			}
-			return "", copyErr
-		}
-		if copyErr != nil && copyErr != io.EOF {
-			os.Remove(f.Name())
-			return "", copyErr
-		}
-		if closeErr != nil {
-			os.Remove(f.Name())
-			return "", closeErr
-		}
-		digest, _, err := FileDigest(f.Name())
+		checksum := base64.StdEncoding.EncodeToString(h.Sum(nil))
+		uploaded, err := c.UploadPart(ctx, &s3.UploadPartInput{Bucket: bucket, Key: name, UploadId: created.UploadId, PartNumber: aws.Int32(number), Body: io.NewSectionReader(input, offset, length), ContentLength: aws.Int64(length), ChecksumSHA256: aws.String(checksum)})
 		if err != nil {
-			os.Remove(f.Name())
-			return "", err
+			return "", storageError("upload part", err)
 		}
-		raw, _ := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
-		var uploaded struct {
-			ETag           string
-			ChecksumSHA256 string
-		}
-		err = s.call(ctx, &uploaded, "upload-part", "--key", key, "--upload-id", created.UploadId, "--part-number", fmt.Sprint(number), "--body", f.Name(), "--checksum-sha256", base64.StdEncoding.EncodeToString(raw))
-		os.Remove(f.Name())
-		if err != nil {
-			return "", err
-		}
-		if uploaded.ETag == "" || uploaded.ChecksumSHA256 != base64.StdEncoding.EncodeToString(raw) {
+		if aws.ToString(uploaded.ETag) == "" || aws.ToString(uploaded.ChecksumSHA256) != checksum {
 			return "", fmt.Errorf("S3 multipart part failed checksum verification")
 		}
-		parts = append(parts, part{number, uploaded.ETag, uploaded.ChecksumSHA256})
+		parts = append(parts, types.CompletedPart{PartNumber: aws.Int32(number), ETag: uploaded.ETag, ChecksumSHA256: uploaded.ChecksumSHA256})
 	}
-	var result struct{ VersionId string }
-	if err := s.call(ctx, &result, "complete-multipart-upload", "--key", key, "--upload-id", created.UploadId, "--multipart-upload", string(jsonBytes(map[string]any{"Parts": parts}))); err != nil {
-		return "", err
+	result, err := c.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{Bucket: bucket, Key: name, UploadId: created.UploadId, MultipartUpload: &types.CompletedMultipartUpload{Parts: parts}, ChecksumType: types.ChecksumTypeComposite})
+	if err != nil {
+		return "", storageError("complete multipart upload", err)
 	}
 	completed = true
-	return result.VersionId, nil
+	return aws.ToString(result.VersionId), nil
 }

@@ -75,13 +75,17 @@ type Database struct {
 }
 
 type Point struct {
-	Version      int          `json:"version"`
-	Installation string       `json:"installation"`
-	Snapshot     Snapshot     `json:"snapshot"`
-	Database     Database     `json:"database"`
-	Dependencies []Dependency `json:"dependencies"`
-	CompletedAt  time.Time    `json:"completedAt"`
-	ExpiresAt    time.Time    `json:"expiresAt"`
+	// Installer selects the current independently observed host inventory and
+	// operator inputs. They may postdate the SQL cutoff; retaining them prevents
+	// reuse of identities/ranges introduced after that cutoff.
+	Installer    []Requirement `json:"installer"`
+	Version      int           `json:"version"`
+	Installation string        `json:"installation"`
+	Snapshot     Snapshot      `json:"snapshot"`
+	Database     Database      `json:"database"`
+	Dependencies []Dependency  `json:"dependencies"`
+	CompletedAt  time.Time     `json:"completedAt"`
+	ExpiresAt    time.Time     `json:"expiresAt"`
 }
 
 type Report struct {
@@ -119,9 +123,18 @@ func (p Point) Validate(now time.Time) error {
 			return fmt.Errorf("database chain has a gap at layer %d", n)
 		}
 	}
+	selected := map[string]int{}
+	for _, r := range p.Installer {
+		selected[r.Kind]++
+	}
+	for _, kind := range []string{"installation", "release", "deployment-state", "external-secret"} {
+		if selected[kind] != 1 {
+			return fmt.Errorf("installer requires exactly one selected %s", kind)
+		}
+	}
 	seen := map[string]bool{}
 	kinds := map[string]bool{}
-	for _, r := range p.Snapshot.Requirements {
+	for _, r := range p.Requirements() {
 		key := r.Kind + "/" + r.ID
 		if r.ID == "" || seen[key] || (r.Digest != "" && !digestPattern.MatchString(r.Digest)) {
 			return fmt.Errorf("invalid or duplicate requirement %s", key)
@@ -137,6 +150,23 @@ func (p Point) Validate(now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// Requirements combines the historical platform graph with independently
+// selected installer inputs. Identical requirements need only one protected copy.
+func (p Point) Requirements() []Requirement {
+	out := append([]Requirement{}, p.Snapshot.Requirements...)
+	seen := map[Requirement]bool{}
+	for _, r := range out {
+		seen[r] = true
+	}
+	for _, r := range p.Installer {
+		if !seen[r] {
+			out = append(out, r)
+			seen[r] = true
+		}
+	}
+	return out
 }
 
 func (p Point) ManifestDigest() string { return Digest(append(jsonBytes(p), '\n')) }
@@ -162,7 +192,7 @@ func (p Point) ValidateDependencies() error {
 			return err
 		}
 	}
-	for _, r := range p.Snapshot.Requirements {
+	for _, r := range p.Requirements() {
 		d, ok := seen[identity(r)]
 		if !ok || d.Digest != r.Digest || len(d.Objects) == 0 || (d.Kind == "image" && len(d.Inventory) == 0) {
 			return fmt.Errorf("missing protected dependency %s", identity(r))

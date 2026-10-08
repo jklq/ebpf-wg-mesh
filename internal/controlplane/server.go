@@ -151,7 +151,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	}
 	var protectImage func(context.Context, string) error
 	if cfg.Profile.IsProduction() {
-		protectArchive, imageGuard, err := recoveryGuards(cfg.RecoveryConfig, archiveStore)
+		protectArchive, imageGuard, err := recoveryGuards(cfg.RecoveryConfig, archiveStore, store.db)
 		if err != nil {
 			store.Close()
 			return nil, err

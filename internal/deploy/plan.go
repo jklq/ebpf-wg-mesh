@@ -16,6 +16,7 @@ type HostStatus struct {
 	Capabilities []string  `json:"capabilities"`
 }
 type DatabaseStatus struct {
+	Live       []string      `json:"live"`
 	Members    []string      `json:"members"` // stable host IDs, including unavailable members
 	Replicated bool          `json:"replicated"`
 	Ranges     []RangeStatus `json:"ranges,omitempty"`

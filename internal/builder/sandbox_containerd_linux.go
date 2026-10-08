@@ -82,16 +82,19 @@ func newSandboxBackendPlatform(cfg SandboxBackendConfig) (SandboxBackend, error)
 		return nil, fmt.Errorf("dial containerd: %w", err)
 	}
 	backend := &containerdSandboxBackend{cfg: cfg, client: client, netnsDir: netnsDir}
-	ctx, cancel := context.WithTimeout(namespaces.WithNamespace(context.Background(), cfg.Namespace), 30*time.Second)
+	ctx, cancel := context.WithTimeout(namespaces.WithNamespace(context.Background(), cfg.Namespace), 10*time.Minute)
 	defer cancel()
 	if _, err := client.Version(ctx); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("containerd version check: %w", err)
 	}
 	image, err := client.GetImage(ctx, cfg.Image)
+	if errdefs.IsNotFound(err) {
+		image, err = client.Pull(ctx, cfg.Image, containerd.WithPullUnpack, containerd.WithPullSnapshotter(cfg.Snapshotter))
+	}
 	if err != nil {
 		_ = client.Close()
-		return nil, fmt.Errorf("sandbox image %q is not present: pre-pull the operator toolchain image: %w", cfg.Image, err)
+		return nil, fmt.Errorf("provision sandbox image %q: %w", cfg.Image, err)
 	}
 	// Unpack now so a present-but-unpacked image fails here, not mid-build.
 	if err := image.Unpack(ctx, cfg.Snapshotter); err != nil {

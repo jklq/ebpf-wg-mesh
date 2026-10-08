@@ -206,31 +206,44 @@ func (s Service) Find(ctx context.Context, r Requirement, until time.Time) (Depe
 			continue
 		}
 		good := true
-		for _, object := range d.Objects {
-			if err := s.Storage.Retain(ctx, object, until); err != nil {
+		for n, object := range d.Objects {
+			current, err := s.Storage.Inspect(ctx, object)
+			if err != nil {
 				last = err
 				good = false
 				break
 			}
-			if err := s.verifyObject(ctx, object, until, false); err != nil {
-				last = err
+			if current.RetainUntil.Before(until) {
+				if err = s.Storage.Retain(ctx, object, until); err != nil {
+					last = err
+					good = false
+					break
+				}
+				current, err = s.Storage.Inspect(ctx, object)
+				if err != nil {
+					last = err
+					good = false
+					break
+				}
+			}
+			if current.Size != object.Size || current.Digest != "" && current.Digest != object.Digest || current.RetainUntil.Before(until) {
+				last = fmt.Errorf("protected object content or retention differs")
 				good = false
 				break
 			}
+			d.Objects[n].RetainUntil = current.RetainUntil
 		}
 		if good {
-			// Receipts remain discoverable as long as the artifact is required;
-			// their original upload age must never break the dependency graph.
-			if err := s.Storage.Retain(ctx, o, until); err != nil {
-				last = err
-				continue
-			}
-			for n := range d.Objects {
-				current, err := s.Storage.Inspect(ctx, d.Objects[n])
-				if err != nil {
-					return Dependency{}, err
+			if catalog.RetainUntil.Before(until) {
+				if err := s.Storage.Retain(ctx, o, until); err != nil {
+					last = err
+					continue
 				}
-				d.Objects[n].RetainUntil = current.RetainUntil
+				retained, err := s.Storage.Inspect(ctx, o)
+				if err != nil || retained.RetainUntil.Before(until) {
+					last = fmt.Errorf("receipt retention unresolved: %v", err)
+					continue
+				}
 			}
 			return d, nil
 		}
@@ -288,7 +301,7 @@ func (s Service) Verify(ctx context.Context, p Point, content bool) Report {
 		}
 		dependencies[k] = d
 	}
-	for _, need := range p.Snapshot.Requirements {
+	for _, need := range p.Requirements() {
 		d, ok := dependencies[identity(need)]
 		if !ok || d.Digest != need.Digest || len(d.Objects) == 0 {
 			r.Missing = append(r.Missing, identity(need))

@@ -36,11 +36,7 @@ func TestRecoveryReleaseMatchesSchemaAndCompleteExecutableInventory(t *testing.T
 	}
 	snapshot := recovery.Snapshot{Schema: bundle.Schema, ConsoleSchema: bundle.ConsoleSchema, Requirements: []recovery.Requirement{r}}
 	for _, need := range needs {
-		if need.Kind == "external-image" {
-			snapshot.ExternalImages = append(snapshot.ExternalImages, need.ID)
-		} else {
-			snapshot.Requirements = append(snapshot.Requirements, need)
-		}
+		snapshot.Requirements = append(snapshot.Requirements, need)
 	}
 	dependencies := []recovery.Dependency{{Kind: "release", ID: bundle.ID, Objects: []recovery.Object{{Digest: r.Digest, Size: int64(len(data))}}}}
 	s := recovery.Service{Storage: releaseStorage{body: data}}

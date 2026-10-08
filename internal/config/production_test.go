@@ -216,7 +216,7 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 	t.Run("loopback control plane for builder", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionBuilder()
-		cfg.ControlPlane.Address = "127.0.0.1:9443"
+		cfg.ControlPlane.Addresses = []string{"127.0.0.1:9443"}
 		if err := FinalizeBuilder(&cfg); err != nil {
 			t.Fatal(err)
 		}
@@ -342,7 +342,7 @@ func validMinimalProductionBuilder() BuilderConfig {
 		ID:      "builder-1",
 		Name:    "builder-1",
 		ControlPlane: BuilderControlPlaneConfig{
-			Address: "controlplane.example.test:9443",
+			Addresses: []string{"controlplane.example.test:9443"},
 			TLS: InternalClientTLSConfig{
 				CAFile:     "/etc/ebpf-wg-mesh/ca.crt",
 				CertFile:   "/etc/ebpf-wg-mesh/builder.crt",

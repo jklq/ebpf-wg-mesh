@@ -48,7 +48,7 @@ func startLocalBuilder(ctx context.Context, stateDir string, controlPlaneAddr st
 		ID:      localBuilderID,
 		Name:    "Local Teststack Builder",
 		ControlPlane: config.BuilderControlPlaneConfig{
-			Address: controlPlaneAddr,
+			Addresses: []string{controlPlaneAddr},
 			TLS: config.InternalClientTLSConfig{
 				CAFile:     caPath,
 				CertFile:   certPath,

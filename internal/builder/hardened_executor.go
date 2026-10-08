@@ -278,6 +278,9 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if cacheDir != "" {
 		mounts = append(mounts, SandboxMount{Source: cacheDir, Dest: sandboxGuestCache})
 	}
+	if spec.Railpack.FrontendDirectory != "" {
+		mounts = append(mounts, SandboxMount{Source: spec.Railpack.FrontendDirectory, Dest: sandboxBuildRoot + "/platform-frontend", ReadOnly: true})
+	}
 	mounts = append(mounts,
 		SandboxMount{Source: resolvHost, Dest: "/etc/resolv.conf", ReadOnly: true},
 		SandboxMount{Source: hostsHost, Dest: "/etc/hosts", ReadOnly: true},
@@ -421,6 +424,15 @@ func (e *hardenedExecutor) invokeRailpackBuild(ctx context.Context, spec Executi
 		return "", &buildFailureError{kind: failureKindBuild, err: err}
 	}
 	req := railpackBuildCommand(spec.Buildkit.Binary, buildkitAddr, spec.Railpack.FrontendImage, guest.contextDir, guestPlanDir, guestPlan, spec.Push.Reference, guest.metadataFile, e.sandboxEnv(guest.dockerConfigDir))
+	if spec.Railpack.FrontendDirectory != "" {
+		digest := spec.Railpack.FrontendImage[strings.LastIndex(spec.Railpack.FrontendImage, "@")+1:]
+		for n, arg := range req.Args {
+			if arg == "source="+spec.Railpack.FrontendImage {
+				req.Args[n] = "source=platform-frontend"
+			}
+		}
+		req.Args = append(req.Args, "--opt", "context:platform-frontend=oci-layout:frontend@"+digest, "--oci-layout", "frontend="+sandboxBuildRoot+"/platform-frontend")
+	}
 	e.appendCacheFlags(spec, &req)
 	if err := e.runSandboxStep(ctx, sandboxNet, spec, mounts, "build", req, report); err != nil {
 		return "", err

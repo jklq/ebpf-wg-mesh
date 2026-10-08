@@ -47,7 +47,7 @@ func releaseRequirements(c recovery.Config) ([]recovery.Requirement, map[string]
 			if len(parts) != 2 {
 				return nil, nil, fmt.Errorf("release image is not digest-pinned")
 			}
-			needs = append(needs, recovery.Requirement{Kind: "external-image", ID: ref, Digest: parts[1]})
+			needs = append(needs, recovery.Requirement{Kind: "image", ID: ref, Digest: parts[1]})
 		}
 	}
 	return needs, artifacts, nil
@@ -65,14 +65,17 @@ func protectRelease(ctx context.Context, s recovery.Service, c recovery.Config, 
 		return nil
 	}}
 	for _, r := range needs {
-		if r.Kind == "external-image" {
-			continue
-		}
 		if _, err := s.Find(ctx, r, time.Now().Add(recovery.Retention)); err == nil {
 			continue
 		}
 		if verify {
 			return nil, fmt.Errorf("missing protected release executable %s", r.ID)
+		}
+		if r.Kind == "image" {
+			if _, err := s.ProtectImage(ctx, c.Images, r.ID); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		a := artifacts[r.ID]
 		if !strings.HasPrefix(a.URL, "https://") || len(a.SHA256) != 64 {
@@ -118,10 +121,6 @@ func verifyReleaseInventory(ctx context.Context, s recovery.Service, snapshot re
 	requirements := map[string]string{}
 	for _, r := range snapshot.Requirements {
 		requirements[r.Kind+"/"+r.ID] = r.Digest
-	}
-	external := map[string]bool{}
-	for _, ref := range snapshot.ExternalImages {
-		external[ref] = true
 	}
 	matchingSchema := false
 	for _, r := range snapshot.Requirements {
@@ -172,12 +171,6 @@ func verifyReleaseInventory(ctx context.Context, s recovery.Service, snapshot re
 			return err
 		}
 		for _, need := range needs {
-			if need.Kind == "external-image" {
-				if !external[need.ID] {
-					return fmt.Errorf("release external image missing from timestamped inventory")
-				}
-				continue
-			}
 			if digest, ok := requirements[need.Kind+"/"+need.ID]; !ok || digest != need.Digest {
 				return fmt.Errorf("release executable %s missing from timestamped recovery inventory", need.ID)
 			}

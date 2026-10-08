@@ -22,7 +22,7 @@ func TestActiveArchiveDeletionRequiresProtectedCopy(t *testing.T) {
 	if err := a.Delete(ctx, "source"); err == nil || !called {
 		t.Fatal("archive deletion bypassed independent storage")
 	}
-	archive, image, err := recoveryGuards("", store)
+	archive, image, err := recoveryGuards("", store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

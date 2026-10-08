@@ -76,8 +76,9 @@ type BuildkitEndpoint struct {
 }
 
 type RailpackToolchain struct {
-	Binary        string
-	FrontendImage string
+	Binary            string
+	FrontendImage     string
+	FrontendDirectory string
 }
 
 // ResourceLimits are explicit per-execution limits; zero values are rejected by Validate.

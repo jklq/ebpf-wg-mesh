@@ -17,7 +17,7 @@ func (s Service) Publish(ctx context.Context, p Point) (Object, Report, error) {
 	}
 
 	missing := Report{Timestamp: p.Snapshot.Timestamp}
-	for _, need := range p.Snapshot.Requirements {
+	for _, need := range p.Requirements() {
 		d, err := s.Find(ctx, need, p.ExpiresAt)
 		if err != nil {
 			missing.Missing = append(missing.Missing, identity(need))

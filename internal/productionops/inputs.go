@@ -16,6 +16,29 @@ import (
 func (r *Runner) externalInputs(c recovery.Config) (map[string][]byte, error) {
 	paths := []string{r.Plan.Installation.OperationsConfig, r.Config.RecoveryConfig, c.Storage.CredentialsFile, c.Storage.CAFile, c.Images.AuthFile, r.Config.WildcardCertificate, r.Config.WildcardKey, r.Config.SourceConfig, r.Config.MonitorTokenFile, r.Config.Database.BackupURIFile}
 	paths = append(paths, r.Plan.Installation.OperationsInputs...)
+	// Once generated, native database authority and installer client credentials
+	// belong to the same independently encrypted closure as service secrets.
+	if _, err := os.Stat(r.Config.Database.URLFile); err == nil {
+		paths = append(paths, r.Config.Database.URLFile)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if _, err := os.Stat(r.Config.Database.CertificateDirectory); err == nil {
+		if err := filepath.WalkDir(r.Config.Database.CertificateDirectory, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			if !d.Type().IsRegular() {
+				return fmt.Errorf("database key closure contains a nonregular file")
+			}
+			paths = append(paths, path)
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
 	for _, f := range r.Config.Fences {
 		paths = append(paths, f.CredentialsFile, f.CAFile)
 	}

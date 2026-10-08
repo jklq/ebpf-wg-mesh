@@ -93,11 +93,22 @@ func validateProductionBuilder(cfg BuilderConfig) error {
 	if err := validateProductionTLSName("builder.controlPlane.tls.serverName", cfg.ControlPlane.TLS.ServerName); err != nil {
 		return err
 	}
-	if err := validateProductionDurableTarget("builder.controlPlane.address", cfg.ControlPlane.Address); err != nil {
-		return err
+	for _, address := range cfg.ControlPlane.Addresses {
+		if err := validateProductionDurableTarget("builder.controlPlane.addresses", address); err != nil {
+			return err
+		}
 	}
 	if strings.TrimSpace(cfg.Health.Listen) == "" {
 		return errors.New("builder.health.listen is required in production")
+	}
+	if cfg.RailpackFrontendDirectory != "" {
+		if err := validateProductionDurablePath("builder.railpackFrontendDirectory", cfg.RailpackFrontendDirectory); err != nil {
+			return err
+		}
+		parts := strings.Split(cfg.RailpackFrontendImage, "@sha256:")
+		if len(parts) != 2 || len(parts[1]) != 64 {
+			return errors.New("local Railpack frontend requires a pinned image digest")
+		}
 	}
 	return nil
 }

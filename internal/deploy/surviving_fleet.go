@@ -51,7 +51,7 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 	base := State{Version: 1, Bindings: state.Bindings}
 	for _, pl := range state.Placements {
 		if pl.Role == Agent {
-			if _, ok := i.Host(pl.Host); ok {
+			if _, ok := i.Host(pl.Host); ok && inv.Hosts[pl.Host].Online {
 				base.Placements = append(base.Placements, pl)
 			}
 		}
@@ -222,7 +222,7 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 		}
 		r.Acknowledgements = e.Recovery.Acknowledgements
 	case "recovery-work":
-		return validateReceipt(e, p, "stale-build-ownership-invalidated", "new-worker-leases", "external-effects-reconciled")
+		return validateReceipt(e, p, "stale-build-ownership-invalidated", "new-worker-authority", "external-effects-reconciled")
 	case "production-verify":
 		if err := validateReceipt(e, p, "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login"); err != nil {
 			return err

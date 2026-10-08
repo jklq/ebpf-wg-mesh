@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -37,7 +38,7 @@ func saveJSON(path string, v any) error {
 	return writePrivate(path, b)
 }
 
-func (r *Runner) prepareProtection(ctx context.Context) error {
+func (r *Runner) prepareProtection(ctx context.Context, selected *deploy.Release) error {
 	if !r.Plan.Recovery {
 		if err := r.prepareInitialKeys(ctx); err != nil {
 			return err
@@ -48,16 +49,7 @@ func (r *Runner) prepareProtection(ctx context.Context) error {
 		return err
 	}
 	defer clear(s.RecoveryKey)
-	binary, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	digest, _, err := recovery.FileDigest(binary)
-	if err != nil {
-		return err
-	}
-	c.DrillCommand = []string{binary, "offline-recovery"}
-	c.DrillCommandDigest = digest
+	c.Images.RegistryService = r.Config.RegistryService
 	c.Installation, c.Release, c.DatabaseURLFile, c.ConsoleSchema = r.Plan.Installation.ID, r.Plan.Release.ID, r.Config.Database.URLFile, r.Config.Console.Schema
 	dir := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "inputs")
 	var files []recovery.File
@@ -96,6 +88,47 @@ func (r *Runner) prepareProtection(ctx context.Context) error {
 	snapshot.Generation = r.Plan.Generation
 	snapshot.Policy = &r.Plan.Installation
 	snapshot.Bundle = &r.Plan.Release
+	if selected == nil && r.Plan.Previous != nil && !r.Plan.Recovery {
+		// An upgrade backup still belongs to the running release until SQL
+		// conversion and new credentials have admitted the cutover.
+		db, err := r.db(ctx, false)
+		if err != nil {
+			return fmt.Errorf("cannot determine the running release for protection: %w", err)
+		}
+		var previous, current bool
+		var schema int
+		err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM platform_recovery.public.installations WHERE installation=$1 AND release=$2), EXISTS(SELECT 1 FROM platform_recovery.public.installations WHERE installation=$1 AND release=$3)`, r.Plan.Installation.ID, r.Plan.Previous.Release.ID, r.Plan.Release.ID).Scan(&previous, &current)
+		if err == nil {
+			err = db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&schema)
+		}
+		db.Close()
+		if err != nil {
+			return err
+		}
+		if previous && !current && schema == r.Plan.Previous.Release.Schema {
+			snapshot.Bundle = &r.Plan.Previous.Release
+		} else if schema != r.Plan.Release.Schema {
+			return fmt.Errorf("running schema has no unambiguous protected release")
+		}
+	}
+	if selected != nil {
+		snapshot.Bundle = selected
+	}
+	// The isolated drill must use the protected running release, including a
+	// pre-conversion upgrade backup. The currently executing new release tool is
+	// not necessarily the executable admitted at this SQL cutoff.
+	tool, exists := snapshot.Bundle.Tools["operations"][runtime.GOARCH]
+	if !exists || len(tool.SHA256) != 64 {
+		return fmt.Errorf("selected release has no pinned native recovery executable")
+	}
+	c.DrillCommand = []string{"/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + snapshot.Bundle.ID + "/tools/operations", "offline-recovery"}
+	c.DrillCommandDigest = "sha256:" + tool.SHA256
+	policy := r.Plan.Installation
+	policy.Release = snapshot.Bundle.ID
+	snapshot.Policy = &policy
+	if err := saveJSON(filepath.Join(dir, "installation.json"), policy); err != nil {
+		return err
+	}
 	snapshot.Placements = append([]deploy.Placement{}, r.Plan.Placements...)
 	if r.Plan.Previous != nil {
 		for _, old := range r.Plan.Previous.Placements {
@@ -104,11 +137,30 @@ func (r *Runner) prepareProtection(ctx context.Context) error {
 			}
 		}
 	}
+	if snapshot.Bindings == nil {
+		snapshot.Bindings = map[string]deploy.Binding{}
+	}
+	for _, host := range r.Plan.Installation.Hosts {
+		if _, exists := snapshot.Bindings[host.ID]; !exists && host.Binding.ServerID != "" {
+			snapshot.Bindings[host.ID] = host.Binding
+		}
+	}
 	snapshot.Progress = nil
 	if err := saveJSON(statePath, snapshot); err != nil {
 		return err
 	}
 
+	if snapshot.Bundle.ID != r.Plan.Release.ID {
+		path := filepath.Join(dir, "release.json")
+		if err := saveJSON(path, *snapshot.Bundle); err != nil {
+			return err
+		}
+		for n := range files {
+			if files[n].Requirement.Kind == "release" {
+				files[n].Requirement.ID = snapshot.Bundle.ID
+			}
+		}
+	}
 	stateData, err := os.ReadFile(statePath)
 	if err != nil {
 		return err
@@ -153,7 +205,7 @@ func (r *Runner) prepareProtection(ctx context.Context) error {
 
 func (r *Runner) protect(ctx context.Context, verify bool) error {
 	if !verify {
-		if err := r.prepareProtection(ctx); err != nil {
+		if err := r.prepareProtection(ctx, nil); err != nil {
 			return err
 		}
 		_, err := r.nativeRecovery(ctx, "protect-files")
@@ -164,7 +216,10 @@ func (r *Runner) protect(ctx context.Context, verify bool) error {
 }
 func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 	if !verify {
-		if err := r.protect(ctx, false); err != nil {
+		if err := r.prepareProtection(ctx, &r.Plan.Release); err != nil {
+			return err
+		}
+		if _, err := r.nativeRecovery(ctx, "protect-files"); err != nil {
 			return err
 		}
 		// The backup URI is a private service selection, not lifecycle code.

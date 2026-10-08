@@ -127,7 +127,7 @@ func BuilderStartupContract(cfg BuilderConfig) StartupContract {
 		Profile:   cfg.Profile,
 		Features:  features,
 		Dependencies: []DependencyRef{
-			{Name: "control_plane", Class: dependencyClassForURL(cfg.ControlPlane.Address)},
+			{Name: "control_plane", Class: dependencyClassForURL(strings.Join(cfg.ControlPlane.Addresses, ","))},
 		},
 	}
 }

@@ -49,7 +49,7 @@
     "registry": {"url": "https://registry.example.com/v2/", "status": 401}
   },
   "storage": {
-    "archives": {"kind": "s3", "s3": {"binary": "/opt/ebpf-wg-mesh/production/r43/tools/aws", "endpoint": "https://s3.active.example.com", "bucket": "platform-archives", "prefix": "production", "region": "oslo", "owner": "replace-with-active-bucket-owner", "credentialsFile": "/etc/platform/active-s3.ini", "profile": "active"}},
-    "registry": {"kind": "s3", "s3": {"binary": "/opt/ebpf-wg-mesh/production/r43/tools/aws", "endpoint": "https://s3.active.example.com", "bucket": "platform-registry", "prefix": "production", "region": "oslo", "owner": "replace-with-active-bucket-owner", "credentialsFile": "/etc/platform/active-s3.ini", "profile": "active"}}
+    "archives": {"kind": "s3", "s3": {"endpoint": "https://s3.active.example.com", "bucket": "platform-archives", "prefix": "production", "region": "oslo", "owner": "replace-with-active-bucket-owner", "credentialsFile": "/etc/platform/active-s3.ini", "profile": "active"}},
+    "registry": {"kind": "s3", "s3": {"endpoint": "https://s3.active.example.com", "bucket": "platform-registry", "prefix": "production", "region": "oslo", "owner": "replace-with-active-bucket-owner", "credentialsFile": "/etc/platform/active-s3.ini", "profile": "active"}}
   }
 }

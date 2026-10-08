@@ -55,7 +55,7 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 		return err
 	}
 	defer clear(s.RecoveryKey)
-	if contains([]string{"protect-files", "verify-files", "schedule", "finalize"}, args[0]) {
+	if contains([]string{"protect-files", "verify-files", "schedule", "finalize", "complete"}, args[0]) {
 		for n := range c.Files {
 			f := &c.Files[n]
 			if !f.Secret && f.Requirement.Digest == "" {
@@ -293,7 +293,12 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 					return err
 				}
 			case "image":
-				if _, err := s.ProtectImage(ctx, c.Images, r.ID); err != nil {
+				images, releaseAccess, err := recovery.ImageAccess(ctx, db, c.KeyringFile, c.Images, r.ID, false)
+				if err != nil {
+					return err
+				}
+				defer releaseAccess()
+				if _, err := s.ProtectImage(ctx, images, r.ID); err != nil {
 					return err
 				}
 			default:
@@ -318,7 +323,7 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 		if Digest(chain.Layers) != Digest(checked.Layers) {
 			return fmt.Errorf("native backup chain changed during capture; retry completion")
 		}
-		p := recovery.Point{Version: 1, Installation: c.Installation, Snapshot: snapshot, Database: chain}
+		p := recovery.Point{Installer: c.Requirements(), Version: 1, Installation: c.Installation, Snapshot: snapshot, Database: chain}
 		object, report, err := s.Publish(ctx, p)
 		failureReport = report
 		if err != nil {

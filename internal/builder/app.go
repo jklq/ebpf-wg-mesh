@@ -19,8 +19,11 @@ import (
 	"ebof-wg-mesh/internal/reconciliation"
 
 	"google.golang.org/grpc"
+	_ "google.golang.org/grpc/balancer/roundrobin"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/resolver"
+	"google.golang.org/grpc/resolver/manual"
 	"google.golang.org/grpc/status"
 )
 
@@ -123,7 +126,13 @@ func New(cfg config.BuilderConfig) (*App, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, cfg.ControlPlane.Address, grpc.WithTransportCredentials(creds), grpc.WithBlock())
+	seeds := manual.NewBuilderWithScheme("platform-builder")
+	addresses := make([]resolver.Address, 0, len(cfg.ControlPlane.Addresses))
+	for _, address := range cfg.ControlPlane.Addresses {
+		addresses = append(addresses, resolver.Address{Addr: address})
+	}
+	seeds.InitialState(resolver.State{Addresses: addresses})
+	conn, err := grpc.DialContext(ctx, "platform-builder:///replicas", grpc.WithResolvers(seeds), grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`), grpc.WithTransportCredentials(creds), grpc.WithDisableRetry(), grpc.WithBlock())
 	if err != nil {
 		return nil, fmt.Errorf("dial control plane: %w", err)
 	}
@@ -163,7 +172,9 @@ func (a *App) Close() error {
 }
 
 func (a *App) readyReport(context.Context) health.Report {
- if a == nil { return health.Report{Status: health.StatusNotReady, Failed: []string{"control_plane"}} }
+	if a == nil {
+		return health.Report{Status: health.StatusNotReady, Failed: []string{"control_plane"}}
+	}
 	if a != nil && a.conn != nil && a.conn.GetState() == connectivity.Ready {
 		return health.Report{Status: health.StatusReady, Authority: &a.recoveryAuthority}
 	}
@@ -171,6 +182,13 @@ func (a *App) readyReport(context.Context) health.Report {
 }
 
 func (a *App) Run(ctx context.Context) error {
+	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
+		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
+		if err != nil {
+			return fmt.Errorf("listen health: %w", err)
+		}
+		a.healthStop = shutdown
+	}
 	if a.recoveryPaused {
 		<-ctx.Done()
 		return nil
@@ -185,13 +203,7 @@ func (a *App) Run(ctx context.Context) error {
 	} else if reclaimed > 0 {
 		slog.Info("collected stale build log spools", "count", reclaimed)
 	}
-	if listen := strings.TrimSpace(a.cfg.Health.Listen); listen != "" {
-		_, shutdown, err := health.ListenAndServe(ctx, listen, a.readyReport)
-		if err != nil {
-			return fmt.Errorf("listen health: %w", err)
-		}
-		a.healthStop = shutdown
-	}
+
 	pollInterval := time.Duration(a.cfg.PollIntervalSeconds) * time.Second
 	for {
 		select {
@@ -387,8 +399,9 @@ func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob,
 			Address: a.cfg.BuildkitAddress,
 		},
 		Railpack: RailpackToolchain{
-			Binary:        a.cfg.RailpackBinary,
-			FrontendImage: a.cfg.RailpackFrontendImage,
+			Binary:            a.cfg.RailpackBinary,
+			FrontendImage:     a.cfg.RailpackFrontendImage,
+			FrontendDirectory: a.cfg.RailpackFrontendDirectory,
 		},
 		Limits: ResourceLimits{
 			Timeout:           time.Duration(a.cfg.Limits.TimeoutSeconds) * time.Second,

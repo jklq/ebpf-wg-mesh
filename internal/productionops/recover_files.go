@@ -63,7 +63,14 @@ func RecoverFiles(ctx context.Context, configPath, backup, destination string) (
 	if err := s.RecoverKeyring(ctx, point, result.Keyring); err != nil {
 		return result, err
 	}
+	selected := map[string]bool{}
+	for _, requirement := range point.Installer {
+		selected[requirement.Kind+"/"+requirement.ID] = true
+	}
 	for _, d := range point.Dependencies {
+		if (d.Kind == "installation" || d.Kind == "release" || d.Kind == "deployment-state" || d.Kind == "external-secret") && !selected[d.Kind+"/"+d.ID] {
+			continue
+		}
 		name := strings.TrimPrefix(recovery.Digest([]byte(d.Kind+"/"+d.ID)), "sha256:")
 		target := filepath.Join(destination, "dependencies", name)
 		switch d.Kind {
@@ -218,10 +225,6 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 	if rec.Images.CertificateDirectory != "" {
 		rec.Images.CertificateDirectory = filepath.Join(destination, "files", strings.TrimPrefix(rec.Images.CertificateDirectory, "/"))
 	}
-	rec.Storage.Binary, err = tool("aws")
-	if err != nil {
-		return err
-	}
 	rec.Images.AuthFile = relocated(rec.Images.AuthFile)
 	rec.Images.Binary, err = tool("skopeo")
 	if err != nil {
@@ -248,7 +251,6 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 	toolRoot := "/opt/ebpf-wg-mesh/" + installation.ID + "/" + installation.Release + "/tools/"
 	config.Database.Binary = toolRoot + "cockroachdb"
 	config.Console.AdminBinary = toolRoot + "console-admin"
-	remoteRec.Storage.Binary = toolRoot + "aws"
 	remoteRec.Images.Binary = toolRoot + "skopeo"
 	remoteRec.DrillCommand = []string{toolRoot + "operations", "offline-recovery"}
 	if config.SourceConfig != "" {
@@ -293,10 +295,16 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 
 	// Keep the externally retained decryption key external, rather than requiring
 	// the lost disk's original path or re-encrypting it under itself.
-	ref := installation.Secrets[installation.Backup.RecoveryKey]
+	ref, exists := installation.Secrets[installation.Backup.RecoveryKey]
+	if !exists || installation.Backup.RecoveryKey == "" {
+		return fmt.Errorf("protected installation is missing the independent recovery-key reference")
+	}
 	ref.File = independent.RecoveryKeyFile
 	installation.Secrets[installation.Backup.RecoveryKey] = ref
 	if state.Policy != nil {
+		if state.Policy.Secrets == nil {
+			state.Policy.Secrets = map[string]deploy.SecretRef{}
+		}
 		state.Policy.Secrets[installation.Backup.RecoveryKey] = ref
 		state.Policy.OperationsInputs = installation.OperationsInputs
 	}
@@ -330,6 +338,9 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 		return err
 	}
 	defer store.Close()
+	if state.Bindings == nil {
+		state.Bindings = map[string]deploy.Binding{}
+	}
 	if err = store.Write(*state); err != nil {
 		return err
 	}

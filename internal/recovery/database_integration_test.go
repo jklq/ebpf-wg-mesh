@@ -70,6 +70,15 @@ func TestNativeSchedulesAndTimestampedRecoveryInventory(t *testing.T) {
 	if err := VerifySchedules(ctx, db, "installation", "external://recovery_test"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.ExecContext(ctx, "SET CLUSTER SETTING jobs.scheduler.enabled=false"); err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySchedules(ctx, db, "installation", "external://recovery_test"); err == nil {
+		t.Fatal("disabled native scheduler accepted")
+	}
+	if _, err := db.ExecContext(ctx, "SET CLUSTER SETTING jobs.scheduler.enabled=true"); err != nil {
+		t.Fatal(err)
+	}
 	// Pause both schedules so an explicit backup exercises the supported native
 	// inspection without racing the automatic initial backup during this test.
 	if _, err := db.ExecContext(ctx, `PAUSE SCHEDULES SELECT id FROM [SHOW SCHEDULES] WHERE label='recovery-installation'`); err != nil {

@@ -81,7 +81,9 @@ def main():
     parser.add_argument("--url-base", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--native-inputs", required=True, type=Path,
-                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: cockroachdb, envoy, registry, bun, aws, skopeo")
+                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: cockroachdb, envoy, registry, bun, aws, skopeo, buildkitd")
+    parser.add_argument("--images", required=True, type=Path,
+                        help="JSON containing builder-sandbox and railpack-frontend repository@sha256 references")
     parser.add_argument("--architectures", default="amd64,arm64")
     parser.add_argument("--skip-console-build", action="store_true")
     args = parser.parse_args()
@@ -93,16 +95,22 @@ def main():
     if not architectures or len(set(architectures)) != len(architectures) or any(a not in ("amd64", "arm64") for a in architectures):
         parser.error("architectures must be distinct amd64/arm64 values")
     inputs = json.loads(args.native_inputs.read_text())
+    images = json.loads(args.images.read_text())
+    if set(images) != {"builder-sandbox", "railpack-frontend"} or any(
+        not isinstance(ref, str) or not re.fullmatch(r"[^\s@]+@sha256:[a-f0-9]{64}", ref)
+        for ref in images.values()
+    ):
+        parser.error("images must pin both the builder toolchain and Railpack frontend")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     release = yaml.safe_load((ROOT / "infra/production/examples/releases/r43.yaml").read_text())
     release["id"] = args.id
-    release["tools"] = {name: {} for name in ("operations", "platformctl", "console-admin", "cockroachdb", "aws", "skopeo")}
+    release["tools"] = {name: {} for name in ("operations", "platformctl", "console-admin", "cockroachdb", "aws", "skopeo", "buildkitd")}
     if not args.skip_console_build:
         run(["bun", "run", "build"], cwd=ROOT / "console")
     for role in release["programs"].values():
         role["artifacts"] = {}
-    release["images"] = {}  # Component processes are protected native artifacts.
+    release["images"] = images
     for arch in architectures:
         env = os.environ | {"GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}
         for name in ("operations", "platformctl", "controlplane", "agent", "builder"):
@@ -111,7 +119,7 @@ def main():
         run(["bun", "build", "--compile", f"--target={target}", "tooling/production-admin.ts", "--outfile", str(output / f"console-admin-{arch}")], cwd=ROOT / "console")
         with tempfile.TemporaryDirectory(prefix="platform-release-") as tmp:
             tmp = Path(tmp)
-            for name in ("cockroachdb", "envoy", "registry", "aws", "skopeo"):
+            for name in ("cockroachdb", "envoy", "registry", "aws", "skopeo", "buildkitd"):
                 specification = inputs[name][arch]
                 source = Path(specification["path"]).resolve(strict=True)
                 artifact = output / f"{name}-{arch}"

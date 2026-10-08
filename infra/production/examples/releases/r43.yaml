@@ -14,7 +14,8 @@ dependencies:
     cockroachdb: 26.1.0
     containerd: 1.7.30
 images:
-    registry: distribution@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    builder-sandbox: registry.example.com/platform/builder-sandbox@sha256:1111111111111111111111111111111111111111111111111111111111111111
+    railpack-frontend: ghcr.io/railwayapp/railpack-frontend@sha256:1111111111111111111111111111111111111111111111111111111111111111
 programs:
     agent:
         artifacts:

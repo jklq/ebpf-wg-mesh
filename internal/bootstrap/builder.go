@@ -3,6 +3,7 @@ package bootstrap
 import (
 	"flag"
 	"fmt"
+	"strings"
 
 	"ebof-wg-mesh/internal/config"
 )
@@ -10,6 +11,7 @@ import (
 func Builder(args []string) (config.BuilderConfig, error) {
 	var cfg config.BuilderConfig
 	var profile string
+	var controlPlaneAddresses string
 	var hostType string
 	var deniedCIDRs string
 	var nameservers string
@@ -26,7 +28,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	stringFlag(fs, &cfg.Health.Listen, "health-listen", "BUILDER_HEALTH_LISTEN", "", "liveness and readiness listen address")
 	stringFlag(fs, &cfg.ID, "builder-id", "BUILDER_ID", "", "")
 	stringFlag(fs, &cfg.Name, "builder-name", "BUILDER_NAME", "", "")
-	stringFlag(fs, &cfg.ControlPlane.Address, "controlplane-address", "BUILDER_CONTROLPLANE_ADDRESS", "", "")
+	stringFlag(fs, &controlPlaneAddresses, "controlplane-addresses", "BUILDER_CONTROLPLANE_ADDRESSES", "", "comma-separated control-plane replicas")
 	stringFlag(fs, &cfg.ControlPlane.TLS.CAFile, "ca-file", "BUILDER_CA_FILE", "", "")
 	stringFlag(fs, &cfg.ControlPlane.TLS.CertFile, "cert-file", "BUILDER_CERT_FILE", "", "")
 	stringFlag(fs, &cfg.ControlPlane.TLS.KeyFile, "key-file", "BUILDER_KEY_FILE", "", "")
@@ -43,6 +45,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	stringFlag(fs, &cfg.BuildkitAddress, "buildkit-address", "BUILDER_BUILDKIT_ADDRESS", "unix:///run/buildkit/buildkitd.sock", "")
 	stringFlag(fs, &cfg.RailpackBinary, "railpack-binary", "BUILDER_RAILPACK_BINARY", "railpack", "")
 	stringFlag(fs, &cfg.RailpackFrontendImage, "railpack-frontend-image", "BUILDER_RAILPACK_FRONTEND_IMAGE", "ghcr.io/railwayapp/railpack-frontend:latest", "")
+	stringFlag(fs, &cfg.RailpackFrontendDirectory, "railpack-frontend-directory", "BUILDER_RAILPACK_FRONTEND_DIRECTORY", "", "protected local OCI frontend layout")
 	stringFlag(fs, &cfg.Executor, "executor", "BUILDER_EXECUTOR", "", "build executor backend: development or hardened; empty defaults by profile")
 	stringFlag(fs, &cfg.Sandbox.Backend, "sandbox-backend", "BUILDER_SANDBOX_BACKEND", "containerd", "hardened executor sandbox backend")
 	stringFlag(fs, &cfg.Sandbox.Socket, "sandbox-socket", "BUILDER_SANDBOX_SOCKET", "/run/containerd/containerd.sock", "containerd socket for build sandboxes")
@@ -81,6 +84,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 		cfg.Sandbox.Nameservers = servers
 	}
 	cfg.HostType = config.HostType(hostType)
+	cfg.ControlPlane.Addresses = strings.Split(controlPlaneAddresses, ",")
 	if err := config.FinalizeBuilder(&cfg); err != nil {
 		return config.BuilderConfig{}, fmt.Errorf("bootstrap builder: %w", err)
 	}

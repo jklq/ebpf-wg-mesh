@@ -138,7 +138,7 @@ func (r *managedDashboardReconciler) dashboardEnv() (map[string]string, error) {
 		env["DASHBOARD_GITHUB_INSTALL_URL"] = r.cfg.GitHubInstallURL
 	}
 	env["DASHBOARD_INGRESS_TARGET_HOST"] = r.cfg.IngressTargetHost
-	env["DASHBOARD_CONTROLPLANE_ADDRESS"] = r.cfg.ControlPlaneAddr
+	env["DASHBOARD_CONTROLPLANE_ADDRESSES"] = r.cfg.ControlPlaneAddr
 	env["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = r.cfg.ControlPlaneSNI
 	if _, ok := env["DASHBOARD_PROFILE"]; !ok {
 		profile := r.profile

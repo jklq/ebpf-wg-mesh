@@ -134,6 +134,7 @@ func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, 
 		addressToHost[h.Network.Address] = h.ID
 	}
 	nodeHosts := map[string]string{}
+	liveNodes := map[string]bool{}
 	healthy := true
 	for _, row := range records {
 		address, _, err := net.SplitHostPort(row["address"])
@@ -155,6 +156,9 @@ func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, 
 		nodeHosts[row["id"]] = id
 		if row["is_live"] != "true" || row["is_available"] != "true" {
 			healthy = false
+		} else {
+			liveNodes[row["id"]] = true
+			status.Live = append(status.Live, id)
 		}
 		for _, column := range []string{"ranges_underreplicated", "ranges_unavailable"} {
 			count, err := strconv.Atoi(row[column])
@@ -163,6 +167,9 @@ func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, 
 			}
 			if count != 0 {
 				status.Replicated = false
+				if column == "ranges_unavailable" && liveNodes[row["id"]] {
+					return status, false, fmt.Errorf("live database node %s reports unavailable ranges", row["id"])
+				}
 			}
 		}
 	}
@@ -181,17 +188,24 @@ func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, 
 		seen[row["range_id"]] = true
 		rangeStatus := RangeStatus{ID: row["range_id"]}
 		hosts := map[string]bool{}
+		live := 0
 		voters := strings.Trim(row["voting_replicas"], "{}")
 		if voters == "" {
 			return status, false, fmt.Errorf("range %s has no voting replicas", row["range_id"])
 		}
 		for _, node := range strings.Split(voters, ",") {
+			if liveNodes[strings.TrimSpace(node)] {
+				live++
+			}
 			id, ok := nodeHosts[strings.TrimSpace(node)]
 			if !ok {
 				status.Replicated = false
 				id = "unknown-node-" + strings.TrimSpace(node)
 			}
 			hosts[id] = true
+		}
+		if live < len(strings.Split(voters, ","))/2+1 {
+			return status, false, fmt.Errorf("range %s has no observed live voting quorum", row["range_id"])
 		}
 		for id := range hosts {
 			rangeStatus.Voters = append(rangeStatus.Voters, id)
@@ -203,6 +217,7 @@ func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, 
 		status.Ranges = append(status.Ranges, rangeStatus)
 	}
 	sort.Strings(status.Members)
+	sort.Strings(status.Live)
 	sort.Slice(status.Ranges, func(a, b int) bool { return status.Ranges[a].ID < status.Ranges[b].ID })
 	return status, healthy, nil
 }

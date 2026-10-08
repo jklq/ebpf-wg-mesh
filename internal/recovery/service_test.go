@@ -124,6 +124,7 @@ func fixture(t *testing.T, timestamp time.Time) (Service, *memoryStorage, Point)
 			t.Fatal(err)
 		}
 	}
+	p.Installer = append([]Requirement{}, p.Snapshot.Requirements...)
 	return s, m, p
 }
 

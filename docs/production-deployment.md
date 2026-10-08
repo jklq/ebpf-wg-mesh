@@ -23,8 +23,11 @@ PC, three reliable hosts across providers, and a fleet across regions. They
 are inventory/policy templates. Replace the example IPs, provider IDs, artifact
 URLs, service selections and externally managed credentials before applying.
 Build the bundled operations executable and all native release artifacts with
-`make package-production RELEASE_ID=r43 ARTIFACT_URL_BASE=https://your-release-service/r43 NATIVE_INPUTS=/absolute/native-inputs.json`.
+`make package-production RELEASE_ID=r43 ARTIFACT_URL_BASE=https://your-release-service/r43 NATIVE_INPUTS=/absolute/native-inputs.json RELEASE_IMAGES=/absolute/images.json`.
 Use the generated `release.json`, whose artifact hashes are computed from the actual binaries.
+`images.json` pins `builder-sandbox` and `railpack-frontend` by repository and manifest digest.
+The reference [toolchain Dockerfile](../infra/production/toolchain/Dockerfile) packages verified native `buildctl` and `railpack` binaries in a digest-pinned Linux base image.
+Include `buildkitd` in the native inputs. Installation protects the complete OCI image closures in independent storage before starting builders. Recovery imports the sandbox into containerd and installs the frontend as a verified local OCI layout; BuildKit reads that layout without depending on the original image publisher.
 They do not represent purchased or running infrastructure.
 
 Host capacity uses CPU milliseconds, MiB of RAM and GiB of disk. `reserve` is
@@ -42,7 +45,7 @@ builder's admission reserve covers the host's other consumers, leaving its own
 declared build budget available.
 
 `reliableReplicas` establishes each component's reliable baseline; higher
-ordinals may use intermittent hosts. All database members must be reliable.
+ordinals may use intermittent hosts. All database members must be reliable. `reliable` declares that the machine remains always on; do not use it for a sleeping or periodically disconnected home PC.
 Replicas of the same component use different hosts. `distinctDomains` also
 requires different declared failure domains. Valid placements are preserved.
 `hosts`, `capabilities`, `diskClass`, storage ownership, connectivity and the
@@ -188,7 +191,7 @@ unreachable machine without an external fence blocks restoration.
 | `database-credentials` | Provision and verify CA, node and root/client certificates before database startup. |
 | `database-init` | Initialize a fresh secure cluster once, with a distinct fresh-install admission. Restore initializes only an empty native destination and never creates platform schemas. |
 | `platform-bootstrap` | Explicitly initialize the platform schema, shared keyring and all signing scopes; provision console schema/authentication. |
-| `credentials` | Issue distinct component credentials, pre-enroll agents with the declared stable/intermittent host policy and failure domains, register durable ingress identities, distribute master-key versions and renew external wildcard certificates. |
+| `credentials` | Issue distinct component credentials, pre-enroll agents with the declared stable/intermittent host policy and failure domains, register durable ingress identities, distribute master-key versions, provision protected builder images and verify externally renewed wildcard certificates. |
 | `reservations` | Drain/cordon as required and establish scheduler reservations and host policy before new platform components consume host capacity. Preserve explicit operator retirement barriers. |
 | `database-verify` | Return observed `DatabaseStatus` JSON; verify native membership, range voting replicas, learners and replication convergence. |
 | `storage-verify` | Return a map of storage names to `{hosts, verified}`; verify actual shared backing storage and durability. |
