@@ -26,6 +26,8 @@ func mutable(role deploy.Role) bool {
 }
 
 func (r *Runner) pause(ctx context.Context, paused, checkpoints bool) error {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Minute)
+	defer cancel()
 	if paused {
 		if err := r.credentialTimers(ctx, false); err != nil {
 			return err

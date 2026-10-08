@@ -100,14 +100,24 @@ func (r *Runner) replicateCredentialInputs(ctx context.Context) error {
 // local interruption; a bounded operation finishes before its durable lease
 // expires, and a replacement generation cannot admit the lost authority.
 func (r *Runner) acquireRenewal(ctx context.Context, db *sql.DB) (func(), error) {
-	return r.acquireMaintenance(ctx, db, false)
+	return r.acquireNativeLease(ctx, db, "credential_renewal", false, true)
 }
 func (r *Runner) acquireMaintenance(ctx context.Context, db *sql.DB, allowPaused bool) (func(), error) {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS platform_recovery.public.credential_renewal(installation STRING PRIMARY KEY,generation STRING NOT NULL,owner STRING NOT NULL,expires_at TIMESTAMPTZ NOT NULL)`); err != nil {
+	return r.acquireNativeLease(ctx, db, "credential_renewal", allowPaused, false)
+}
+func (r *Runner) acquireNativeLease(ctx context.Context, db *sql.DB, kind string, allowPaused, selected bool) (func(), error) {
+	if kind != "credential_renewal" && kind != "backup_completion" {
+		return nil, fmt.Errorf("unknown native maintenance lease")
+	}
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS platform_recovery.public.maintenance_plan(installation STRING PRIMARY KEY,generation STRING NOT NULL,plan_id STRING NOT NULL)`); err != nil {
+		return nil, err
+	}
+	table := "platform_recovery.public." + kind
+	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+table+`(installation STRING PRIMARY KEY,generation STRING NOT NULL,owner STRING NOT NULL,expires_at TIMESTAMPTZ NOT NULL)`); err != nil {
 		return nil, err
 	}
 	owner := uuid.NewString()
-	result, err := db.ExecContext(ctx, `INSERT INTO platform_recovery.public.credential_renewal SELECT $1,$2,$3,statement_timestamp()+INTERVAL '10 minutes' FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2 AND (paused=FALSE OR $4) ON CONFLICT(installation) DO UPDATE SET generation=excluded.generation,owner=excluded.owner,expires_at=excluded.expires_at WHERE credential_renewal.expires_at<=statement_timestamp() OR credential_renewal.generation<>excluded.generation`, r.Plan.Installation.ID, r.Plan.Generation, owner, allowPaused)
+	result, err := db.ExecContext(ctx, "INSERT INTO "+table+` SELECT $1,$2,$3,statement_timestamp()+INTERVAL '15 minutes' FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2 AND (paused=FALSE OR $4) AND (NOT $5 OR EXISTS(SELECT 1 FROM platform_recovery.public.maintenance_plan WHERE installation=$1 AND generation=$2 AND plan_id=$6)) ON CONFLICT(installation) DO UPDATE SET generation=excluded.generation,owner=excluded.owner,expires_at=excluded.expires_at WHERE `+kind+`.expires_at<=statement_timestamp() OR `+kind+`.generation<>excluded.generation`, r.Plan.Installation.ID, r.Plan.Generation, owner, allowPaused, selected, r.Plan.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -116,20 +126,57 @@ func (r *Runner) acquireMaintenance(ctx context.Context, db *sql.DB, allowPaused
 		return nil, err
 	}
 	if n != 1 {
-		return nil, fmt.Errorf("credential renewal waits for unpaused authority and its current owner")
+		return nil, fmt.Errorf("%s waits for its applied plan, authority and current owner", kind)
 	}
 	return func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
-		db.ExecContext(cleanup, `DELETE FROM platform_recovery.public.credential_renewal WHERE installation=$1 AND owner=$2`, r.Plan.Installation.ID, owner)
+		db.ExecContext(cleanup, "DELETE FROM "+table+` WHERE installation=$1 AND owner=$2`, r.Plan.Installation.ID, owner)
 	}, nil
+}
+
+// Hold both kinds of maintenance while replacing their admitted plan. A
+// disconnected old completer cannot publish or renew using obsolete placement
+// inputs after these durable owners yield or expire.
+func (r *Runner) admitMaintenancePlan(ctx context.Context, db *sql.DB) (func(), error) {
+	credentials, err := r.acquireMaintenance(ctx, db, true)
+	if err != nil {
+		return nil, err
+	}
+	backup, err := r.acquireNativeLease(ctx, db, "backup_completion", true, false)
+	if err != nil {
+		credentials()
+		return nil, err
+	}
+	release := func() { backup(); credentials() }
+	result, err := db.ExecContext(ctx, `UPSERT INTO platform_recovery.public.maintenance_plan SELECT $1,$2,$3 FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2`, r.Plan.Installation.ID, r.Plan.Generation, r.Plan.ID)
+	if err != nil {
+		release()
+		return nil, err
+	}
+	if changed, err := result.RowsAffected(); err != nil || changed != 1 {
+		release()
+		return nil, fmt.Errorf("schedule replacement has no admitted runtime authority")
+	}
+	return release, nil
+}
+
+func (r *Runner) verifyMaintenancePlan(ctx context.Context, db *sql.DB) error {
+	var generation, plan string
+	if err := db.QueryRowContext(ctx, `SELECT generation,plan_id FROM platform_recovery.public.maintenance_plan WHERE installation=$1`, r.Plan.Installation.ID).Scan(&generation, &plan); err != nil {
+		return err
+	}
+	if generation != r.Plan.Generation || plan != r.Plan.ID {
+		return fmt.Errorf("independent maintenance belongs to another applied plan")
+	}
+	return nil
 }
 
 func (r *Runner) credentialTimers(ctx context.Context, active bool) error {
 	// Include old completers before an upgrade so no independently running
 	// renewal can overwrite pause admission after quiescence has begun.
 	plans := []deploy.Plan{r.Plan}
-	if r.Plan.Previous != nil {
+	if !active && r.Plan.Previous != nil {
 		old := r.Plan.Previous
 		plans = append(plans, deploy.Plan{Installation: old.Installation, Release: old.Release, Placements: old.Placements, Previous: old, Generation: r.Plan.Generation})
 	}
