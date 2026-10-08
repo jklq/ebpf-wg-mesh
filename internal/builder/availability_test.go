@@ -120,8 +120,23 @@ func TestBuilderReplicaFailoverDoesNotReplaySubmittedEffectsAndPausedAdmissionRe
 	a.fail.Store(false)
 	b.fail.Store(false)
 	first.Stop()
-	if _, err := app.client.ReportBuildHeartbeat(ctx, &platformv1.BuilderHeartbeatRequest{}, grpc.WaitForReady(true)); err != nil {
-		t.Fatal("surviving replica", err)
+	// Stop closes the server before the client's transport necessarily observes
+	// its GOAWAY. Each explicit probe below is a new submission, and retry is
+	// allowed only after inspecting that neither native handler received it.
+	beforeFailover := a.calls.Load() + b.calls.Load()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := app.client.ReportBuildHeartbeat(ctx, &platformv1.BuilderHeartbeatRequest{}, grpc.WaitForReady(true))
+		if err == nil {
+			break
+		}
+		if status.Code(err) != codes.Unavailable || a.calls.Load()+b.calls.Load() != beforeFailover || time.Now().After(deadline) {
+			t.Fatal("surviving replica", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if a.calls.Load()+b.calls.Load() != beforeFailover+1 || b.calls.Load() == 0 {
+		t.Fatal("failover did not submit exactly once to the survivor")
 	}
 	before := a.calls.Load() + b.calls.Load()
 	done := make(chan error, 1)
