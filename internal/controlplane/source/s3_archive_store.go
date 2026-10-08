@@ -113,25 +113,37 @@ func NewS3ArchiveStore(cfg config.SourceArchiveS3Config) (*S3ArchiveStore, error
 }
 
 func (s *S3ArchiveStore) Ready() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return s.CheckReady(ctx) == nil
+}
+
+// CheckReady preserves the reason for independent storage inspections without
+// exposing signed request headers or credential contents.
+func (s *S3ArchiveStore) CheckReady(ctx context.Context) error {
 	if s == nil || s.endpoint == nil || s.region == "" || s.bucket == "" {
-		return false
+		return errors.New("S3 archive store is not configured")
 	}
 	endpoint := *s.endpoint
 	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/") + "/" + s.bucket
 	endpoint.RawPath = ""
 	endpoint.RawQuery = ""
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodHead, endpoint.String(), nil)
-	if err != nil || s.authorize(req.Context(), req, emptyPayloadHash) != nil {
-		return false
+	if err != nil {
+		return err
+	}
+	if err := s.authorize(req.Context(), req, emptyPayloadHash); err != nil {
+		return err
 	}
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		return false
+		return fmt.Errorf("S3 archive readiness: %w", err)
 	}
-	resp.Body.Close()
-	return resp.StatusCode >= 200 && resp.StatusCode < 300
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("S3 archive readiness rejected: HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func (s *S3ArchiveStore) objectPath(key string) (string, error) {

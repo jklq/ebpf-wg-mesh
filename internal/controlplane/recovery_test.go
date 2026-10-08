@@ -3,6 +3,7 @@ package controlplane
 import (
 	"context"
 	"errors"
+	"os"
 	"testing"
 
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -28,5 +29,23 @@ func TestActiveArchiveDeletionRequiresProtectedCopy(t *testing.T) {
 	}
 	if archive(ctx, "source") == nil || image(ctx, "image") == nil {
 		t.Fatal("production deletion allowed without recovery configuration")
+	}
+}
+
+func TestProtectedArchivesPreserveActualReadiness(t *testing.T) {
+	root := t.TempDir()
+	store, err := source.NewFileArchiveStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archives := protectedArchives{ArchiveStore: store}
+	if !archives.Ready() {
+		t.Fatal("healthy production archive wrapper lost native readiness")
+	}
+	if err := os.Remove(root); err != nil {
+		t.Fatal(err)
+	}
+	if archives.Ready() {
+		t.Fatal("production archive wrapper accepted unavailable native storage")
 	}
 }

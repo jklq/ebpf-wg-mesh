@@ -4,6 +4,7 @@ import (
 	"context"
 	"ebof-wg-mesh/internal/builder"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/source"
 	"ebof-wg-mesh/internal/recovery"
 	"encoding/json"
 	"flag"
@@ -29,6 +30,26 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	args = fs.Args()
 	if len(args) == 0 {
 		return fmt.Errorf("usage: operations [--plan FILE] [--config FILE] <lifecycle|verify lifecycle|ready role instance probe-file>")
+	}
+	if args[0] == "source-storage" {
+		if len(args) != 2 {
+			return fmt.Errorf("source-storage requires its private archive selection")
+		}
+		var selection config.SourceArchiveConfig
+		if err := privateJSON(args[1], &selection); err != nil {
+			return err
+		}
+		archives, err := source.NewSourceArchiveStore(selection)
+		if err != nil {
+			return err
+		}
+		if checker, ok := archives.(interface{ CheckReady(context.Context) error }); ok {
+			return checker.CheckReady(ctx)
+		}
+		if checker, ok := archives.(interface{ Ready() bool }); !ok || !checker.Ready() {
+			return fmt.Errorf("source archive storage is unavailable")
+		}
+		return nil
 	}
 	if args[0] == "image-layout" {
 		if len(args) != 4 {

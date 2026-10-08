@@ -82,8 +82,20 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		return err
 	}
 	planPath := filepath.Join(r.Config.StateDirectory, "scheduled-plan.json")
-	statePath := "/etc/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/installer-state.json"
-	if data, err := os.ReadFile(statePath); err == nil {
+	stateSource := "/etc/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/installer-state.json"
+	statePath := filepath.Join(r.Config.StateDirectory, "scheduled-installer-state.json")
+	if data, err := os.ReadFile(stateSource); err == nil {
+		var state deploy.State
+		if err := json.Unmarshal(data, &state); err != nil {
+			return err
+		}
+		// Attempt progress changes after every effect. The independent service needs
+		// the actual host bindings and resource inventory, without that mutable journal.
+		snapshot := deploy.State{Version: 1, InstallationID: r.Plan.Installation.ID, Generation: r.Plan.Generation, Policy: &r.Plan.Installation, Bundle: &r.Plan.Release, Placements: r.Plan.Placements, Retained: state.Retained, Bindings: state.Bindings}
+		data, err = json.Marshal(snapshot)
+		if err != nil {
+			return err
+		}
 		inputs[statePath] = data
 	} else if !os.IsNotExist(err) {
 		return err
@@ -99,7 +111,7 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		if config == "" {
 			return fmt.Errorf("reference schedules require operationsConfig")
 		}
-		service := "[Unit]\nDescription=Complete independent platform recovery point\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=12min\nEnvironment=PLATFORM_DEPLOYMENT_STATE=/etc/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/installer-state.json\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " backup-complete\n"
+		service := "[Unit]\nDescription=Complete independent platform recovery point\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=12min\nEnvironment=PLATFORM_DEPLOYMENT_STATE=" + statePath + "\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " backup-complete\n"
 		timer := "[Unit]\nDescription=Independent platform recovery completion\n[Timer]\nOnBootSec=1min\nOnUnitActiveSec=1min\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
 		renewal := "[Unit]\nDescription=Renew native platform credentials\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=10min\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " credential-renew\n"
 		renewalTimer := "[Timer]\nOnBootSec=10min\nOnUnitActiveSec=1h\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
@@ -127,6 +139,11 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		files[r.Config.RecoveryConfig], _ = json.Marshal(base)
 		for _, path := range sortedFiles(files) {
 			if verify {
+				// Fleet inventory is refreshed by each completed backup; its content is
+				// inspected and replicated by that operation, rather than frozen here.
+				if path == r.Plan.Installation.Recovery.Inventory {
+					continue
+				}
 				script.WriteString(verifyRemoteFile(path, files[path]))
 			} else {
 				script.WriteString(remoteFile(path, files[path]))
