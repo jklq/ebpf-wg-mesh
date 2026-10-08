@@ -50,8 +50,10 @@ func fixture(n int) (Installation, Release, Inventory) {
 			count = n
 		}
 		if role == Builder {
-			count = 1
-			reliable = 0
+			count, reliable = 1, 0
+			if n >= 3 {
+				count, reliable = 2, 2
+			}
 		}
 		c := Component{Replicas: count, ReliableReplicas: reliable, Resources: Resources{200, 256, 1}, Env: map[string]string{}}
 		if role == Database {
@@ -399,5 +401,34 @@ func TestInsufficientCapacityExplainsReservationsTrustAndCapabilities(t *testing
 	p = build(t, i, r, State{}, inv, false)
 	if !strings.Contains(fmt.Sprint(p.Unmet), "missing observed capability") {
 		t.Fatal(p.Unmet)
+	}
+}
+
+func TestBuildPlanRedundancyRequiresSurvivingBuildExecution(t *testing.T) {
+	i, r, inv := fixture(3)
+	baseline := build(t, i, r, State{}, inv, false)
+	requireComplete(t, baseline)
+	if !baseline.Availability.OneHostFailure {
+		t.Fatal(baseline.Availability)
+	}
+	builder := i.Components[Builder]
+	builder.Replicas, builder.ReliableReplicas = 1, 1
+	builder.Hosts = []string{"a"}
+	i.Components[Builder] = builder
+	p := build(t, i, r, State{}, inv, false)
+	requireComplete(t, p)
+	if p.Availability.OneHostFailure {
+		t.Fatal("a sole builder was counted as a redundant platform")
+	}
+	found := false
+	for _, failure := range p.Availability.Failures {
+		for _, requirement := range failure.Unmet {
+			if failure.Host == "a" && requirement.Subject == "builder" && requirement.Code == "replicas" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing build execution failure", p.Availability)
 	}
 }

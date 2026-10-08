@@ -98,7 +98,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 				add("range-quorum", rng.ID, "observed voting replica placement loses its majority")
 			}
 		}
-		for _, role := range []Role{ControlPlane, Console, Envoy, Registry} {
+		for _, role := range []Role{ControlPlane, Console, Envoy, Registry, Builder} {
 			if len(byRole[role]) == 0 {
 				add("replicas", string(role), "no reliable replica survives this host/path failure")
 			}
@@ -106,7 +106,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 		// Evaluate dependencies before their consumers. Public paths must end at
 		// a usable replica, including the transitive dependencies of that replica.
 		usable := map[Role][]Placement{Database: byRole[Database]}
-		for _, role := range []Role{Registry, ControlPlane, Console, Agent, Envoy} {
+		for _, role := range []Role{Registry, ControlPlane, Console, Builder, Agent, Envoy} {
 			for _, p := range byRole[role] {
 				reachable := 0
 				for _, q := range byRole[Database] {
@@ -140,7 +140,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 						dependenciesOK = false
 					}
 				}
-				if (role == Agent || reachable >= quorum) && dependenciesOK {
+				if (role == Agent || role == Builder || reachable >= quorum) && dependenciesOK {
 					usable[role] = append(usable[role], p)
 				}
 			}
@@ -176,7 +176,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 		}
 		free := Resources{}
 		agentHosts := map[string]bool{}
-		for _, agent := range byRole[Agent] {
+		for _, agent := range usable[Agent] {
 			agentHosts[agent.Host] = true
 		}
 		for _, h := range i.Hosts {
@@ -200,7 +200,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 }
 func dependencies(r Role) []Role {
 	switch r {
-	case Agent:
+	case Agent, Builder:
 		return []Role{ControlPlane, Registry}
 	case Console:
 		return []Role{ControlPlane}
