@@ -84,7 +84,7 @@ func (r *Runner) installAdmission(ctx context.Context, paused, checkpoints, rest
 			}
 			script := remoteFile(cfgDir(p, pl)+"/authority.json", b)
 			if restart {
-				script += "if systemctl cat " + shell(unit(p, pl)) + " >/dev/null 2>&1; then systemctl restart " + shell(unit(p, pl)) + "; fi\n"
+				script += "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then systemctl restart " + shell(unit(p, pl)) + "; fi\n"
 			}
 			if _, err := r.remote(ctx, p, pl, script); err != nil {
 				// An offline retained participant is safe only with independently
@@ -100,7 +100,17 @@ func (r *Runner) installAdmission(ctx context.Context, paused, checkpoints, rest
 func (r *Runner) participantPlans(paused bool) []deploy.Plan {
 	if paused && !r.Plan.Recovery && r.Plan.Previous != nil {
 		old := r.Plan.Previous
-		return []deploy.Plan{{Installation: old.Installation, Release: old.Release, Placements: old.Placements, Previous: old, Generation: r.Plan.Generation}}
+		prior := deploy.Plan{Installation: old.Installation, Release: old.Release, Previous: old, Generation: r.Plan.Generation}
+		for _, pl := range old.Placements {
+			shared := false
+			for _, current := range r.Plan.Placements {
+				shared = shared || (current.Host == pl.Host && current.Instance == pl.Instance)
+			}
+			if !shared {
+				prior.Placements = append(prior.Placements, pl)
+			}
+		}
+		return []deploy.Plan{prior, r.Plan}
 	}
 	return []deploy.Plan{r.Plan}
 }
@@ -126,19 +136,37 @@ func (r *Runner) verifyPause(ctx context.Context, paused, recovered bool) error 
 			if !r.managedCredentials(pl) {
 				continue
 			}
-			out, err := r.remote(ctx, p, pl, "systemctl is-active --quiet "+shell(unit(p, pl))+"\ncat "+shell(cfgDir(p, pl)+"/authority.json")+"\n")
+			script := "systemctl is-active --quiet " + shell(unit(p, pl)) + "\nprintf 'running\\n'\n"
+			if paused {
+				// A stopped or not-yet-installed participant is quiescent. Verify
+				// native process state and preserve its paused admission for restart.
+				script = "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then printf 'running\\n'; else\n"
+				script += "load=$(systemctl show --value -p LoadState " + shell(unit(p, pl)) + ") || test \"$load\" = not-found\n"
+				script += "pid=$(systemctl show --value -p MainPID " + shell(unit(p, pl)) + ") || test \"$load\" = not-found\ntest \"$pid\" = 0\n"
+				script += "state=$(systemctl show --value -p ActiveState " + shell(unit(p, pl)) + ") || test \"$load\" = not-found\n"
+				script += "case \"$load:$state\" in loaded:inactive|loaded:failed|masked:inactive|not-found:inactive) ;; *) exit 1;; esac\nprintf 'stopped\\n'\nfi\n"
+			}
+			script += "cat " + shell(cfgDir(p, pl)+"/authority.json") + "\n"
+			out, err := r.remote(ctx, p, pl, script)
 			if err != nil {
 				return err
 			}
+			state, authority, ok := strings.Cut(string(out), "\n")
+			if !ok || (state != "running" && !(paused && state == "stopped")) {
+				return fmt.Errorf("participant process state is unresolved")
+			}
 			var a reconciliation.Authority
-			if err := json.Unmarshal(out, &a); err != nil {
+			if err := json.Unmarshal([]byte(authority), &a); err != nil {
 				return err
 			}
 			if a.Paused != paused || a.Generation != generation || a.InstallationID != installation {
 				return fmt.Errorf("host authority does not match database")
 			}
+			if state == "stopped" {
+				continue
+			}
 			if pl.Role != deploy.Console {
-				probe := r.expandProbe(r.Config.Probes[pl.Role], pl)
+				probe := r.expandPlanProbe(p, r.Config.Probes[pl.Role], pl)
 				// The process reports the authority it admitted at startup. A changed
 				// file without a restart cannot satisfy this observation.
 				body, err := r.hostProbe(ctx, p, pl, probe, false)
@@ -154,7 +182,7 @@ func (r *Runner) verifyPause(ctx context.Context, paused, recovered bool) error 
 				}
 			} else {
 				// Console readiness includes the admitted runtime generation and pause.
-				body, err := r.hostProbe(ctx, p, pl, r.expandProbe(r.Config.Probes[pl.Role], pl), false)
+				body, err := r.hostProbe(ctx, p, pl, r.expandPlanProbe(p, r.Config.Probes[pl.Role], pl), false)
 				if err != nil {
 					return err
 				}
