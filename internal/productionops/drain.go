@@ -3,12 +3,15 @@ package productionops
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/health"
+	"ebof-wg-mesh/internal/recovery"
 )
 
 func drainAgent(ctx context.Context, db *sql.DB, id string) error {
@@ -84,20 +87,65 @@ func (r *Runner) admitReservations(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
+	var paused bool
+	if err := db.QueryRowContext(ctx, `SELECT paused FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2`, r.Plan.Installation.ID, r.Plan.Generation).Scan(&paused); err != nil {
+		return err
+	}
 	// Native reservation is applied in the agent cgroups and advertised capacity.
 	// Scheduler rows reserve only additional capacity, avoiding double subtraction.
 	for _, pl := range r.Plan.Placements {
-		if pl.Role != deploy.Agent {
+		if pl.Role != deploy.Agent || !r.managedCredentials(pl) {
 			continue
 		}
 		h, _ := r.Plan.Installation.Host(pl.Host)
-		var cpu, ram int64
-		if err = db.QueryRowContext(ctx, `SELECT cpu_millis_capacity,memory_mebibytes_capacity FROM agent_registrations WHERE id=$1`, pl.Instance).Scan(&cpu, &ram); err != nil {
+		probe := r.expandProbe(r.Config.Probes[deploy.Agent], pl)
+		if probe.RuntimeURL != "" {
+			probe.URL = probe.RuntimeURL
+		}
+		body, err := r.hostProbe(ctx, r.Plan, pl, probe, false)
+		if err != nil {
 			return err
 		}
+		var live health.Report
+		if err := json.Unmarshal(body, &live); err != nil {
+			return err
+		}
+		var inventory recovery.FleetHost
+		if err := json.Unmarshal(live.Inventory, &inventory); err != nil {
+			return err
+		}
+		if live.Capacity == nil || live.Authority == nil || live.Authority.InstallationID != r.Plan.Installation.ID || live.Authority.Generation != r.Plan.Generation || live.Authority.Paused != paused || inventory.ID != pl.Instance || inventory.Generation != r.Plan.Generation || inventory.LocalStoreID == "" {
+			return fmt.Errorf("agent %s has not reported its live admitted capacity and local identity", pl.Instance)
+		}
+		cpu, ram := live.Capacity.CPUMillis, live.Capacity.MemoryMiB
 		reserve := r.Plan.Reservations[pl.Host]
 		if cpu > h.Capacity.CPUMillis-reserve.CPUMillis || ram > h.Capacity.MemoryMiB-reserve.MemoryMiB || cpu <= 0 || ram <= 0 {
 			return fmt.Errorf("agent has not advertised its native applied reservation")
+		}
+		// Inspect the live kernel limits, not just the agent's configuration.
+		script := "pid=$(systemctl show --value -p MainPID " + shell(unit(r.Plan, pl)) + ")\ntest \"$pid\" -gt 0\n"
+		script += "cg=$(sed -n 's/^0:://p' /proc/$pid/cgroup)\ntest -n \"$cg\"\n"
+		script += fmt.Sprintf("test \"$(cat /sys/fs/cgroup\"$cg\"/memory.min)\" -ge %d\ntest \"$(cat /sys/fs/cgroup\"$cg\"/memory.low)\" -ge %d\n", reserve.MemoryMiB*1024*1024, reserve.MemoryMiB*1024*1024)
+		script += "test \"$(cat /sys/fs/cgroup\"$cg\"/cpu.weight)\" = 10000\n"
+		script += fmt.Sprintf("test \"$(cat /sys/fs/cgroup/ebpf-wg-mesh-workloads/memory.max)\" = %d\n", ram*1024*1024)
+		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
+			return fmt.Errorf("agent %s native reservation differs from its live resource budget: %w", pl.Instance, err)
+		}
+		// Paused Sync collects inventory without registering a session. Admit only
+		// the observed budget for this existing local identity; do not allocate
+		// networks, admit checkpoints, or enable workload reconciliation. Restores
+		// use approved fleet reconciliation instead of this upgrade-only path.
+		if err := adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
+			result, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_registrations SET cpu_millis_capacity=$2,memory_mebibytes_capacity=$3,local_store_id=$4 FROM agent_administration a WHERE agent_registrations.id=$1 AND a.agent_id=agent_registrations.id AND a.lifecycle_state<>'retired' AND a.credential_revoked_at IS NULL AND (local_store_id=$4 OR (local_store_id='' AND a.lifecycle_state='enrolling'))`, pl.Instance, cpu, ram, inventory.LocalStoreID)
+			if err != nil {
+				return err
+			}
+			if count, err := result.RowsAffected(); err != nil || count != 1 {
+				return fmt.Errorf("agent %s local identity differs from its enrolled registration", pl.Instance)
+			}
+			return nil
+		}); err != nil {
+			return err
 		}
 	}
 	var exists bool

@@ -218,7 +218,7 @@ func (i Installation) Validate(r Release) error {
 			return fmt.Errorf("complete installation requires %s", role)
 		}
 	}
-	for _, name := range []string{"database-credentials", "database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
+	for _, name := range RequiredHooks() {
 		if !hookValid(r.Hooks[name]) {
 			return fmt.Errorf("release requires idempotent %s hook with verification", name)
 		}

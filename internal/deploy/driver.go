@@ -243,9 +243,20 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 			return false, Evidence{}, nil
 		}
 		evidence := Evidence{}
-		if op.Hook == "backup" || op.Hook == "recovery-verify" || restorationPlan(p) {
-			if err := json.Unmarshal(out, &evidence); err != nil {
-				return false, evidence, fmt.Errorf("backup verification must return Evidence JSON")
+		if contract, declared := ContractForHook(op.Hook); declared {
+			var target any = &evidence
+			switch contract.Kind {
+			case DatabaseVerification:
+				evidence.Database = &DatabaseStatus{}
+				target = evidence.Database
+			case StorageVerification:
+				target = &evidence.Storage
+			}
+			if err := json.Unmarshal(out, target); err != nil {
+				return false, evidence, fmt.Errorf("%s verification must return its declared evidence: %w", op.Hook, err)
+			}
+			if err := validateHookState(op.Hook, p, state, evidence, time.Now()); err != nil {
+				return false, evidence, err
 			}
 		}
 		return true, evidence, nil

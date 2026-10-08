@@ -31,7 +31,15 @@ type Checkpoint struct {
 	Cursor         int64  `json:"cursor"`
 	Complete       bool   `json:"complete"`
 }
+
+// Capacity is the running agent's resource budget after native reservations.
+// Host administration can observe it while normal registration is paused.
+type Capacity struct {
+	CPUMillis int64 `json:"cpuMillis"`
+	MemoryMiB int64 `json:"memoryMiB"`
+}
 type Report struct {
+	Capacity   *Capacity                 `json:"capacity,omitempty"`
 	Inventory  json.RawMessage           `json:"inventory,omitempty"`
 	Checkpoint *Checkpoint               `json:"checkpoint,omitempty"`
 	Authority  *reconciliation.Authority `json:"authority,omitempty"`

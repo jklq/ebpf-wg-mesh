@@ -70,57 +70,50 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 			p.Placements[n].Instance = fmt.Sprintf("cockroachdb-%d-%s", p.Placements[n].Ordinal, Digest([]any{p.Generation, p.Placements[n].Host})[:12])
 		}
 	}
-	var ops []Operation
-	add := func(kind, host, hook string, pl *Placement) {
-		op := Operation{Kind: kind, Host: host, Hook: hook, Placement: pl}
-		op.ID = Digest([]any{op, len(ops)})[:24]
-		ops = append(ops, op)
+	groups := map[string][]Operation{}
+	add := func(phase, kind, host, hook string, pl *Placement) {
+		groups[phase] = append(groups[phase], Operation{Kind: kind, Host: host, Hook: hook, Placement: pl})
 	}
 	for _, op := range p.Operations {
-		if contains([]string{"stage", "stage-tools", "purchase"}, op.Kind) {
-			if op.Placement != nil {
-				for _, pl := range p.Placements {
-					if pl.Slot() == op.Placement.Slot() {
-						op.Placement = &pl
-						op.ID = Digest([]any{op, len(ops)})[:24]
-						break
-					}
+		if !contains([]string{"stage", "stage-tools", "purchase"}, op.Kind) {
+			continue
+		}
+		if op.Placement != nil {
+			for _, pl := range p.Placements {
+				if pl.Slot() == op.Placement.Slot() {
+					op.Placement = &pl
+					break
 				}
 			}
-			ops = append(ops, op)
 		}
+		groups[op.Phase] = append(groups[op.Phase], op)
 	}
-	add("hook", p.AdministrationHost, "recovery-verify", nil)
-	add("hook", p.AdministrationHost, "recovery-fence", nil)
 	for _, pl := range state.Placements {
 		if pl.Role != Agent {
 			if _, present := i.Host(pl.Host); present {
-				add("stop", pl.Host, "", &pl)
+				add("stop-prior", "stop", pl.Host, "", &pl)
 			}
 		}
 	}
-	add("hook", p.AdministrationHost, "database-credentials", nil)
 	for _, pl := range p.Placements {
+		phase := string(pl.Role)
 		if pl.Role == Database {
-			add("configure", pl.Host, "", &pl)
-			add("install", pl.Host, "", &pl)
+			phase = "database-runtime"
+		}
+		for _, action := range runtimeActions {
+			add(phase, action, pl.Host, "", &pl)
 		}
 	}
-	add("hook", p.AdministrationHost, "recovery-database", nil)
-	add("hook", p.AdministrationHost, "restore", nil)
-	add("hook", p.AdministrationHost, "recovery-authority", nil)
-	for _, role := range []Role{Registry, ControlPlane, Console, Agent, Envoy, Builder} {
-		for _, pl := range p.Placements {
-			if pl.Role == role {
-				add("configure", pl.Host, "", &pl)
-				add("install", pl.Host, "", &pl)
-			}
+	ops, err := p.compileWorkflow(groups)
+	if err != nil {
+		return p, state, err
+	}
+	p.Operations, p.DatabaseChanges = ops, nil
+	for _, op := range ops {
+		if op.Hook == "database-verify" {
+			p.DatabaseChanges = append(p.DatabaseChanges, op)
 		}
 	}
-	for _, hook := range []string{"recovery-inventory", "recovery-reserve", "recovery-approve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "database-verify", "storage-verify", "production-verify", "backup-schedule", "backup", "recovery-resume"} {
-		add("hook", p.AdministrationHost, hook, nil)
-	}
-	p.Operations = ops
 	if len(p.Unmet) > 0 {
 		return p, state, fmt.Errorf("recovery inventory has unmet placement requirements: %v", p.Unmet)
 	}
@@ -172,19 +165,19 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 	}
 	switch op.Hook {
 	case "recovery-fence":
-		if err := validateReceipt(e, p, "provider-or-host-fence", "prior-authority-disabled"); err != nil {
+		if err := ValidateHookEvidence(op.Hook, p, e); err != nil {
 			return err
 		}
 		r.Fenced = true
 	case "recovery-database":
-		return validateReceipt(e, p, "empty-destination", "schemas-not-initialized")
+		return ValidateHookEvidence(op.Hook, p, e)
 	case "restore":
 		if !r.Fenced {
 			return fmt.Errorf("restore requires independently verified fencing")
 		}
-		return validateReceipt(e, p, "database-restored", "selected-release")
+		return ValidateHookEvidence(op.Hook, p, e)
 	case "recovery-authority":
-		return validateReceipt(e, p, "new-ca-without-overlap", "client-identities", "console-sessions-invalidated", "registry-authority", "all-participants-paused", "host-admin-admission")
+		return ValidateHookEvidence(op.Hook, p, e)
 	case "recovery-inventory":
 		if e.Fleet == nil {
 			return fmt.Errorf("recovery inventory must return restored desired state and latest external host inventory")
@@ -196,7 +189,7 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 		r.Report = &report
 		r.ReportDigest = report.ApprovalDigest()
 	case "recovery-reserve":
-		if err := validateReceipt(e, p, "network-reservations"); err != nil {
+		if err := ValidateHookEvidence(op.Hook, p, e); err != nil {
 			return err
 		}
 		if r.Report == nil || e.Recovery.ReportDigest != r.Report.ApprovalDigest() {
@@ -204,14 +197,14 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 		}
 		r.ReservedDigest = e.Recovery.ReportDigest
 	case "recovery-reconcile":
-		if err := validateReceipt(e, p, "quarantine-preserved", "approved-desired-state"); err != nil {
+		if err := ValidateHookEvidence(op.Hook, p, e); err != nil {
 			return err
 		}
 		if r.Report == nil || r.ApprovedDigest != r.Report.ApprovalDigest() || e.Recovery.ReportDigest != r.ApprovedDigest {
 			return ErrRecoveryApproval
 		}
 	case "recovery-checkpoints":
-		if err := validateReceipt(e, p, "complete-checkpoints"); err != nil {
+		if err := ValidateHookEvidence(op.Hook, p, e); err != nil {
 			return err
 		}
 		if r.Report == nil {
@@ -222,16 +215,13 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 		}
 		r.Acknowledgements = e.Recovery.Acknowledgements
 	case "recovery-work":
-		return validateReceipt(e, p, "stale-build-ownership-invalidated", "new-worker-authority", "external-effects-reconciled")
+		return ValidateHookEvidence(op.Hook, p, e)
 	case "production-verify":
-		if err := validateReceipt(e, p, "database-health", "key-access", "overlay-connectivity", "image-access", "ingress-acknowledgements", "certificate-trust", "console-login"); err != nil {
+		if err := ValidateHookEvidence(op.Hook, p, e); err != nil {
 			return err
 		}
 		r.Verified = true
 	case "backup":
-		if e.DataLossCutoff.Before(r.StartedAt) || !e.DataLossCutoff.After(state.LastRestore.DataLossCutoff) {
-			return fmt.Errorf("resume requires a new complete recovery point")
-		}
 		point := e
 		point.Recovery, point.Fleet = nil, nil
 		r.NewRecoveryPoint = &point
@@ -239,7 +229,7 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 		if err := validateRecoveryResume(p, r, now); err != nil {
 			return err
 		}
-		if err := validateReceipt(e, p, "all-participants-resumed"); err != nil {
+		if err := ValidateHookEvidence(op.Hook, p, e); err != nil {
 			return err
 		}
 		r.CompletedAt = now.UTC()
@@ -250,22 +240,12 @@ func recordRecoveryEvidence(p Plan, state *State, op Operation, e Evidence, now 
 // Check before executing a hook: checking its receipt after a resume or
 // destructive reconciliation has run would be too late to enforce the gate.
 func requireRecoveryStep(p Plan, state State, op Operation) error {
+	contract, _ := ContractForHook(op.Hook)
 	r := state.Recovery
 	if r == nil || r.Generation != p.Generation {
 		return fmt.Errorf("recovery generation is not independently recorded")
 	}
-	if op.Hook == "restore" && !r.Fenced {
-		return fmt.Errorf("restore requires independent fencing before execution")
-	}
-	if contains([]string{"recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"}, op.Hook) {
-		if r.Report == nil || r.Report.Blocked || r.ApprovedDigest != r.Report.ApprovalDigest() || r.ReservedDigest != r.ApprovedDigest {
-			return ErrRecoveryApproval
-		}
-	}
-	if op.Hook == "recovery-resume" {
-		return validateRecoveryResume(p, r, time.Now())
-	}
-	return nil
+	return validateAdmission(p, r, contract.Admission, time.Now())
 }
 
 func validateRecoveryCheckpoints(p Plan, report *recovery.FleetReport, acks map[string]CheckpointAcknowledgement) error {
@@ -287,26 +267,8 @@ func validateRecoveryCheckpoints(p Plan, report *recovery.FleetReport, acks map[
 
 // The controller and host-admin SQL transition enforce the same resume contract.
 func validateRecoveryResume(p Plan, r *RecoveryProgress, now time.Time) error {
-	if !p.Recovery || r == nil || r.Generation != p.Generation || r.Release != p.Release.ID {
-		return fmt.Errorf("resume differs from the independently recorded recovery operation")
-	}
-	if !r.Fenced || !r.Verified || r.Report == nil {
-		return fmt.Errorf("recovery verification is incomplete; automation remains paused")
-	}
-	report := r.Report
-	if report.Installation != p.Installation.ID || report.Generation != p.Generation || report.Release != p.Release.ID || report.Blocked || !report.Fenced {
-		return fmt.Errorf("resume requires the fenced and resolved report for this recovery")
-	}
-	if r.ApprovedDigest != report.ApprovalDigest() || r.ReservedDigest != r.ApprovedDigest {
-		return ErrRecoveryApproval
-	}
-	if r.NewRecoveryPoint == nil || r.NewRecoveryPoint.DataLossCutoff.Before(r.StartedAt) || !r.NewRecoveryPoint.DataLossCutoff.After(report.Cutoff) {
-		return fmt.Errorf("resume requires a new complete recovery point")
-	}
-	if err := validateRecoveryEvidence(*r.NewRecoveryPoint, p.Installation.ID, p.Installation.Backup.Target, now); err != nil {
-		return err
-	}
-	return validateRecoveryCheckpoints(p, report, r.Acknowledgements)
+	contract, _ := ContractForHook("recovery-resume")
+	return validateAdmission(p, r, contract.Admission, now)
 }
 
 func (e Engine) RefreshRecoveryInventory() error {

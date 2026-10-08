@@ -16,12 +16,14 @@ import (
 )
 
 type Evidence struct {
-	Recovery       *RecoveryReceipt     `json:"recovery,omitempty"`
-	Fleet          *recovery.FleetInput `json:"fleet,omitempty"`
-	Point          *recovery.Point      `json:"point,omitempty"`
-	Object         *recovery.Object     `json:"object,omitempty"`
-	Backup         string               `json:"backup,omitempty"`
-	DataLossCutoff time.Time            `json:"dataLossCutoff,omitempty"`
+	Database       *DatabaseStatus          `json:"database,omitempty"`
+	Storage        map[string]StorageStatus `json:"storage,omitempty"`
+	Recovery       *RecoveryReceipt         `json:"recovery,omitempty"`
+	Fleet          *recovery.FleetInput     `json:"fleet,omitempty"`
+	Point          *recovery.Point          `json:"point,omitempty"`
+	Object         *recovery.Object         `json:"object,omitempty"`
+	Backup         string                   `json:"backup,omitempty"`
+	DataLossCutoff time.Time                `json:"dataLossCutoff,omitempty"`
 }
 type Progress struct {
 	Plan      *Plan               `json:"plan"`
