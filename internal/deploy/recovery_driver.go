@@ -70,6 +70,14 @@ func (d *SSHDriver) uploadRecovered(ctx context.Context, p Plan, h Host, id stri
 	if selected == nil || len(selected.Objects) != 1 {
 		return fmt.Errorf("selected recovery point lacks pinned release executable %s", id)
 	}
+	// A surviving host can retain the exact protected executable. Inspect its
+	// actual bytes before reusing it; a staging marker cannot establish this.
+	if body, err := d.Remote.Run(ctx, p.Installation, h, "test -f "+quote(target)+"\ntest -x "+quote(target)+"\nsha256sum "+quote(target)+"\n"); err == nil {
+		fields := strings.Fields(string(body))
+		if len(fields) >= 2 && fields[0] == a.SHA256 {
+			return nil
+		}
+	}
 	f, err := os.CreateTemp("", "recover-executable-*")
 	if err != nil {
 		return err
