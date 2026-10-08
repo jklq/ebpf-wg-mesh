@@ -64,6 +64,7 @@ func RecoverFiles(ctx context.Context, configPath, backup, destination string) (
 		return result, err
 	}
 	selected := map[string]bool{}
+	materializedTools := map[string]string{}
 	for _, requirement := range point.Installer {
 		selected[requirement.Kind+"/"+requirement.ID] = true
 	}
@@ -76,8 +77,23 @@ func RecoverFiles(ctx context.Context, configPath, backup, destination string) (
 		switch d.Kind {
 		case "installation", "release", "deployment-state", "external-secret", "console-key", "tool":
 			secret := d.Kind == "deployment-state" || d.Kind == "external-secret" || d.Kind == "console-key"
-			if err := s.Materialize(ctx, d, target, secret); err != nil {
-				return result, err
+			// Programs and management tools can pin the same native executable.
+			// Each protected dependency was independently verified above; retain
+			// their distinct identities while materializing identical bytes once.
+			cached := materializedTools[d.Digest]
+			if d.Kind == "tool" && d.Digest != "" && cached != "" {
+				target = cached
+			} else {
+				if err := s.Materialize(ctx, d, target, secret); err != nil {
+					return result, fmt.Errorf("materialize %s/%s: %w", d.Kind, d.ID, err)
+				}
+				if d.Kind == "tool" && d.Digest != "" {
+					actual, _, err := recovery.FileDigest(target)
+					if err != nil || actual != d.Digest {
+						return result, fmt.Errorf("materialized executable differs from its release digest")
+					}
+					materializedTools[d.Digest] = target
+				}
 			}
 		default:
 			continue
