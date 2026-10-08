@@ -116,6 +116,10 @@ func operationsBinary(p deploy.Plan) string {
 func (r *Runner) hostProbe(ctx context.Context, p deploy.Plan, pl deploy.Placement, probe Probe, authorization bool) ([]byte, error) {
 	// The release tool inspects from the component's actual network namespace/host,
 	// using its mounted credentials. No host-admin credentials leave this host.
+	probe, material, err := localizeProbe(probe, cfgDir(p, pl))
+	if err != nil {
+		return nil, err
+	}
 	b, err := json.Marshal(probe)
 	if err != nil {
 		return nil, err
@@ -125,7 +129,11 @@ func (r *Runner) hostProbe(ctx context.Context, p deploy.Plan, pl deploy.Placeme
 	if authorization {
 		command += " unauthorized"
 	}
-	return r.remote(ctx, p, pl, remoteFile(path, b)+command+"\n")
+	var script string
+	for _, name := range sortedFiles(material) {
+		script += remoteFile(cfgDir(p, pl)+"/"+name, material[name])
+	}
+	return r.remote(ctx, p, pl, script+remoteFile(path, b)+command+"\n")
 }
 func (r *Runner) storageStatus(ctx context.Context) (map[string]deploy.StorageStatus, error) {
 	result := map[string]deploy.StorageStatus{}
