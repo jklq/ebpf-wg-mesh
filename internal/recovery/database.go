@@ -259,7 +259,12 @@ func InspectBackup(ctx context.Context, db *sql.DB, collection, subdirectory str
 	if !strings.HasPrefix(collection, "external://") || subdirectory == "" || strings.Contains(subdirectory, "..") {
 		return b, fmt.Errorf("invalid native backup selection")
 	}
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT backup_type,start_time,end_time,is_full_cluster FROM [SHOW BACKUP FROM `+literal(subdirectory)+` IN `+literal(collection)+` WITH check_files] ORDER BY end_time`)
+	// Backup HLC endpoints can contain sub-microsecond wall time. The pgwire
+	// binary timestamp representation can round that endpoint forward, outside
+	// the native manifest's coverage. Select a supported timestamp inside the
+	// coverage before encoding it, and use that exact cutoff for every read and
+	// restore. Never adjust a timestamp from an already published point.
+	rows, err := db.QueryContext(ctx, `SELECT DISTINCT backup_type,date_trunc('microsecond',start_time) AS start_time,date_trunc('microsecond',end_time) AS end_time,is_full_cluster FROM [SHOW BACKUP FROM `+literal(subdirectory)+` IN `+literal(collection)+` WITH check_files] ORDER BY end_time`)
 	if err != nil {
 		return b, fmt.Errorf("native backup verification failed: %w", err)
 	}
