@@ -129,4 +129,15 @@ func TestNativeSchedulesAndTimestampedRecoveryInventory(t *testing.T) {
 	if agent != "agent-original" || archive != "archive-original" || version != "k1" {
 		t.Fatal("restore lost timestamp identity", agent, archive, version)
 	}
+	// Completion selects the latest inspected endpoint. Unlike an interior
+	// timestamp, rounding that endpoint forward can put it outside the backup.
+	endpoint, stopEndpoint := testserver.NewDBForTest(t, testserver.CustomVersionOpt(testdb.DefaultVersion), testserver.CacheSizeOpt(.02), testserver.ExternalIODirOpt(dir))
+	defer stopEndpoint()
+	cutoff := chain.Layers[len(chain.Layers)-1].End
+	if _, err := endpoint.ExecContext(ctx, `RESTORE FROM `+literal(path)+` IN 'nodelocal://1/recovery' AS OF SYSTEM TIME `+literal(cutoff.Format(time.RFC3339Nano))); err != nil {
+		t.Fatal("native exact inspected endpoint restore", cutoff, err)
+	}
+	if err := endpoint.QueryRowContext(ctx, `SELECT id FROM agent_registrations`).Scan(&agent); err != nil || agent != "agent-new" {
+		t.Fatal("native endpoint restore did not retain actual cutoff data", agent, err)
+	}
 }
