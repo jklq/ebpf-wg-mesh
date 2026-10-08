@@ -125,13 +125,19 @@ func TestAppliedHostIdentityCannotBeReboundToAnotherMachine(t *testing.T) {
 func TestBootstrapIssuesCredentialsBeforeConfiguringPlatformComponents(t *testing.T) {
 	i, r, inv := fixture(1)
 	p := build(t, i, r, State{}, inv, false)
-	bootstrap, credentials := -1, -1
+	bootstrap, credentials, reservations := -1, -1, -1
 	for n, op := range p.Operations {
 		if op.Hook == "platform-bootstrap" {
 			bootstrap = n
 		}
+		if op.Hook == "reservations" {
+			reservations = n
+		}
 		if op.Hook == "credentials" {
 			credentials = n
+			if !(bootstrap >= 0 && reservations > bootstrap && n > reservations) {
+				t.Fatal("agent credentials verified before enrollment/reservations", op)
+			}
 		}
 		if op.Kind == "configure" && op.Placement.Role != Database {
 			if !(bootstrap >= 0 && credentials > bootstrap && n > credentials) {

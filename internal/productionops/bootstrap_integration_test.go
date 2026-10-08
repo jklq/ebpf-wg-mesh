@@ -168,6 +168,25 @@ func TestNativeSecureFreshBootstrapCredentialsAndInterruption(t *testing.T) {
 	if err := client.PingContext(ctx); err != nil {
 		t.Fatal("component client TLS", err)
 	}
+	clientURL := r.Config.StateDirectory + "/component-url"
+	if err := writePrivate(clientURL, []byte(u)); err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectSQLClient(ctx, clientURL, r.Config.Console.Schema); err != nil {
+		t.Fatal("actual component table and schema permissions", err)
+	}
+	if _, err := db.ExecContext(ctx, "REVOKE USAGE ON SCHEMA "+r.Config.Console.Schema+" FROM component_controlplane_a"); err != nil {
+		t.Fatal(err)
+	}
+	if err := inspectSQLClient(ctx, clientURL, r.Config.Console.Schema); err == nil {
+		t.Fatal("table grants hid a missing schema usage grant")
+	}
+	if err := r.databaseClient(ctx, pl, db, files, map[string]string{}, false); err != nil {
+		t.Fatal("idempotent component permissions repair", err)
+	}
+	if err := inspectSQLClient(ctx, clientURL, r.Config.Console.Schema); err != nil {
+		t.Fatal("repaired component permissions", err)
+	}
 	if node, err := databaseNodeID(ctx, db, host.Network.Address); err != nil || node <= 0 {
 		t.Fatal("actual native node with a custom advertised port", node, err)
 	}

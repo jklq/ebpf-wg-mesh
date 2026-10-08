@@ -110,11 +110,13 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		add("hook", managementHost, "platform-bootstrap", nil)
 	}
 	add("hook", managementHost, "backup-schedule", nil)
-	// Credential distribution/renewal runs independently of platform login.
-	add("hook", managementHost, "credentials", nil)
 	if state.Bundle == nil {
+		// Enrollment and scheduler reservations exist before a certificate can
+		// authenticate as an admitted, unrevoked agent. No agent starts yet.
 		add("hook", managementHost, "reservations", nil)
 	}
+	// Credential distribution/renewal runs independently of platform login.
+	add("hook", managementHost, "credentials", nil)
 	for _, role := range []Role{Registry, ControlPlane, Console, Builder, Agent, Envoy} {
 		for _, pl := range p.Placements {
 			if pl.Role == role {

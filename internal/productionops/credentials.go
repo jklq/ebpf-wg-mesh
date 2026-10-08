@@ -514,7 +514,7 @@ func (r *Runner) databaseClient(ctx context.Context, pl deploy.Placement, db *sq
 	}
 	files["db-ca.crt"], files["db-client.crt"], files["db-client.key"] = ca.Certificate, b.Certificate, b.Key
 	if !verify {
-		for _, statement := range []string{"CREATE USER IF NOT EXISTS " + name, "GRANT ALL ON DATABASE " + r.Config.Database.Name + " TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA public TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA " + r.Config.Console.Schema + " TO " + name} {
+		for _, statement := range []string{"CREATE USER IF NOT EXISTS " + name, "GRANT ALL ON DATABASE " + r.Config.Database.Name + " TO " + name, "GRANT USAGE ON SCHEMA public TO " + name, "GRANT USAGE ON SCHEMA " + r.Config.Console.Schema + " TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA public TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA " + r.Config.Console.Schema + " TO " + name} {
 			if _, err := db.ExecContext(ctx, statement); err != nil {
 				return err
 			}

@@ -7,6 +7,7 @@ import (
 	"ebof-wg-mesh/internal/recovery"
 	"encoding/json"
 	"fmt"
+	"os"
 	"time"
 )
 
@@ -71,5 +72,37 @@ func (r *Runner) captureExternalInventory(ctx context.Context) error {
 		}
 		current.Observed = append(current.Observed, host)
 	}
-	return saveJSON(r.Plan.Installation.Recovery.Inventory, current)
+	if err := saveJSON(r.Plan.Installation.Recovery.Inventory, current); err != nil {
+		return err
+	}
+	return r.replicateInventory(ctx)
+}
+
+// Every independently scheduled completer needs the last observed inventory.
+// Otherwise loss of the first completer also loses the only evidence of an
+// unreachable agent's resources, preventing safe backups of the surviving fleet.
+func (r *Runner) replicateInventory(ctx context.Context) error {
+	hosts, err := r.completionHosts()
+	if err != nil {
+		return err
+	}
+	path := r.Plan.Installation.Recovery.Inventory
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	verified := 0
+	var failures []error
+	for _, host := range hosts {
+		_, err := r.remote(ctx, r.Plan, deploy.Placement{Host: host}, remoteFile(path, body)+verifyRemoteFile(path, body))
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		verified++
+	}
+	if verified == 0 {
+		return fmt.Errorf("no independent completer retained verified fleet inventory: %v", failures)
+	}
+	return nil
 }
