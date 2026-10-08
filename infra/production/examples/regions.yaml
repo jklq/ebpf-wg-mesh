@@ -237,8 +237,8 @@ components:
             - cgroup-v2
         distinctDomains: false
     builder:
-        replicas: 1
-        reliableReplicas: 0
+        replicas: 2
+        reliableReplicas: 2
         resources:
             cpuMillis: 1000
             memoryMiB: 9216

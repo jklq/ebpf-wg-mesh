@@ -198,58 +198,27 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 	if err := r.credentials(ctx, true); err != nil {
 		return err
 	}
+	verifiedBuilders := 0
 	for _, pl := range r.Plan.Placements {
 		if r.Plan.Automatic && pl.Role == deploy.Database && !slices.Contains(database.Live, pl.Host) {
-			// Membership remains unchanged. Native range inspection above must
-			// establish a live voting quorum even while a member is unavailable.
+			continue // Native range inspection above established a voting quorum.
+		}
+		retainedBuilder := r.Plan.Automatic && pl.Role == deploy.Builder
+		if !r.managedCredentials(pl) && !retainedBuilder {
 			continue
 		}
-		if !r.managedCredentials(pl) {
-			continue
-		}
-		p, ok := r.Config.Probes[pl.Role]
-		if !ok {
-			return fmt.Errorf("no runtime probe for %s", pl.Role)
-		}
-		p = r.expandProbe(p, pl)
-		if p.RuntimeURL != "" {
-			p.URL = p.RuntimeURL
-		}
-		if _, err := r.hostProbe(ctx, r.Plan, pl, p, false); err != nil {
+		if err := r.verifyRuntime(ctx, pl); err != nil {
+			if retainedBuilder {
+				continue
+			}
 			return err
 		}
 		if pl.Role == deploy.Builder {
-			if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" builder-runtime "+shell(cfgDir(r.Plan, pl)+"/builder-runtime.json")+"\n"); err != nil {
-				return fmt.Errorf("builder runtime inspection: %w", err)
-			}
+			verifiedBuilders++
 		}
-		if pl.Role == deploy.ControlPlane || pl.Role == deploy.Console || pl.Role == deploy.Registry {
-			if _, err := r.hostProbe(ctx, r.Plan, pl, p, true); err != nil {
-				return err
-			}
-		}
-		// Inspect from each actual component host. Replica clients select a live
-		// peer before submitting work; loss of a retained member is permitted only
-		// when another dependency is reachable and native readiness passed.
-		ports := map[deploy.Role]string{deploy.Database: "26257", deploy.ControlPlane: "9443", deploy.Registry: "5000"}
-		dependencies := map[deploy.Role][]deploy.Role{deploy.ControlPlane: {deploy.Database, deploy.ControlPlane}, deploy.Console: {deploy.Database, deploy.ControlPlane}, deploy.Builder: {deploy.ControlPlane, deploy.Registry}, deploy.Agent: {deploy.ControlPlane, deploy.Registry}, deploy.Envoy: {deploy.ControlPlane}}
-		for _, role := range dependencies[pl.Role] {
-			reachable := false
-			for _, target := range r.Plan.Placements {
-				if target.Role != role {
-					continue
-				}
-				h, _ := r.Plan.Installation.Host(target.Host)
-				address := net.JoinHostPort(h.Network.Address, ports[role])
-				if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" connect "+shell(address)+"\n"); err == nil {
-					reachable = true
-					break
-				}
-			}
-			if !reachable {
-				return fmt.Errorf("runtime dependency %s -> %s has no reachable replica", pl.Instance, role)
-			}
-		}
+	}
+	if verifiedBuilders == 0 {
+		return fmt.Errorf("no builder has verified runtime readiness and dependencies")
 	}
 	if len(r.Plan.Installation.Endpoints) == 0 {
 		return fmt.Errorf("production endpoints are required")
@@ -286,6 +255,55 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 		}
 		if err := c.Images.Verify(ctx, ref); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// Inspect retained builders without restarting work they own. A failed retained
+// host is tolerated only when another builder proves its runtime dependencies.
+func (r *Runner) verifyRuntime(ctx context.Context, pl deploy.Placement) error {
+	p, ok := r.Config.Probes[pl.Role]
+	if !ok {
+		return fmt.Errorf("no runtime probe for %s", pl.Role)
+	}
+	p = r.expandProbe(p, pl)
+	if p.RuntimeURL != "" {
+		p.URL = p.RuntimeURL
+	}
+	if _, err := r.hostProbe(ctx, r.Plan, pl, p, false); err != nil {
+		return err
+	}
+	if pl.Role == deploy.Builder {
+		if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" builder-runtime "+shell(cfgDir(r.Plan, pl)+"/builder-runtime.json")+"\n"); err != nil {
+			return fmt.Errorf("builder runtime inspection: %w", err)
+		}
+	}
+	if pl.Role == deploy.ControlPlane || pl.Role == deploy.Console || pl.Role == deploy.Registry {
+		if _, err := r.hostProbe(ctx, r.Plan, pl, p, true); err != nil {
+			return err
+		}
+	}
+	// Inspect from each actual component host. Replica clients select a live
+	// peer before submitting work; loss of a retained member is permitted only
+	// when another dependency is reachable and native readiness passed.
+	ports := map[deploy.Role]string{deploy.Database: "26257", deploy.ControlPlane: "9443", deploy.Registry: "5000"}
+	dependencies := map[deploy.Role][]deploy.Role{deploy.ControlPlane: {deploy.Database, deploy.ControlPlane}, deploy.Console: {deploy.Database, deploy.ControlPlane}, deploy.Builder: {deploy.ControlPlane, deploy.Registry}, deploy.Agent: {deploy.ControlPlane, deploy.Registry}, deploy.Envoy: {deploy.ControlPlane}}
+	for _, role := range dependencies[pl.Role] {
+		reachable := false
+		for _, target := range r.Plan.Placements {
+			if target.Role != role {
+				continue
+			}
+			h, _ := r.Plan.Installation.Host(target.Host)
+			address := net.JoinHostPort(h.Network.Address, ports[role])
+			if _, err := r.remote(ctx, r.Plan, pl, shell(operationsBinary(r.Plan))+" connect "+shell(address)+"\n"); err == nil {
+				reachable = true
+				break
+			}
+		}
+		if !reachable {
+			return fmt.Errorf("runtime dependency %s -> %s has no reachable replica", pl.Instance, role)
 		}
 	}
 	return nil
