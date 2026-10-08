@@ -7,7 +7,7 @@ import { createGitHubTokenCipher } from "#/lib/dashboard/store/token-crypto.serv
 import type { DashboardStoreRuntimeConfig } from "#/lib/dashboard/store/types.server";
 
 describe("restored console startup", () => {
-	function fixture(generation = "recovery", versions = ["3"]) {
+	function fixture(generation = "recovery", versions = ["3"], paused = true) {
 		const statements: string[] = [];
 		const runtime: DashboardStoreRuntimeConfig = {
 			installationID: "installation",
@@ -21,7 +21,7 @@ describe("restored console startup", () => {
 				statements.push(text);
 				if (text.includes("recovery_runtime_authority")) {
 					return {
-						rows: [{ installation: "installation", generation, paused: true }],
+						rows: [{ installation: "installation", generation, paused }],
 					};
 				}
 				if (text.includes("schema_migrations")) {
@@ -37,6 +37,14 @@ describe("restored console startup", () => {
 		const { runtime, db, statements } = fixture();
 		await migrateDashboardStore(runtime, db);
 		expect(runtime.recoveryPaused).toBe(true);
+		expect(statements).toHaveLength(2);
+		expect(statements.every((sql) => sql.startsWith("SELECT"))).toBe(true);
+	});
+
+	it("verifies the installer-owned schema on an unpaused production restart", async () => {
+		const { runtime, db, statements } = fixture("recovery", ["3"], false);
+		await migrateDashboardStore(runtime, db);
+		expect(runtime.recoveryPaused).toBe(false);
 		expect(statements).toHaveLength(2);
 		expect(statements.every((sql) => sql.startsWith("SELECT"))).toBe(true);
 	});
