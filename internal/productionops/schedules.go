@@ -108,8 +108,9 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 	for _, id := range hosts {
 		name := "platform-" + r.Plan.Installation.ID + "-recovery"
 		binary := operationsBinary(r.Plan)
-		config := r.Plan.Installation.OperationsConfig
-		if config == "" {
+		config := filepath.Join(r.Config.StateDirectory, "scheduled-operations.json")
+		baseConfig := filepath.Join(r.Config.StateDirectory, "scheduled-base-recovery.json")
+		if r.Plan.Installation.OperationsConfig == "" {
 			return fmt.Errorf("reference schedules require operationsConfig")
 		}
 		service := "[Unit]\nDescription=Complete independent platform recovery point\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=12min\nEnvironment=PLATFORM_DEPLOYMENT_STATE=" + statePath + "\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " backup-complete\n"
@@ -121,6 +122,7 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		// Native executables are already staged by the applied plan. Rewrite the
 		// selected config to those pinned executables on every independent completer.
 		selected := r.Config
+		selected.RecoveryConfig = baseConfig
 		selected.Database.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/cockroachdb"
 		selected.Console.AdminBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/console-admin"
 		effective := c
@@ -137,7 +139,9 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		}
 		clear(baseService.RecoveryKey)
 		base.Images.Binary = effective.Images.Binary
-		files[r.Config.RecoveryConfig], _ = json.Marshal(base)
+		// Service-specific paths live in generated files. Operator inputs keep
+		// their exact original bytes, including harmless JSON formatting.
+		files[baseConfig], _ = json.Marshal(base)
 		for _, path := range sortedFiles(files) {
 			if verify {
 				// Fleet inventory is refreshed by each completed backup; its content is
