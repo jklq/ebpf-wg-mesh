@@ -94,11 +94,14 @@ func Ready(ctx context.Context, role deploy.Role, instance, path string) error {
 	return err
 }
 func (r *Runner) expandProbe(p Probe, pl deploy.Placement) Probe {
+	return r.expandPlanProbe(r.Plan, p, pl)
+}
+func (r *Runner) expandPlanProbe(plan deploy.Plan, p Probe, pl deploy.Placement) Probe {
 	if pl.Role == deploy.ControlPlane && p.ServerName == "" {
 		p.ServerName = r.Config.InternalServerName
 	}
-	h, _ := r.Plan.Installation.Host(pl.Host)
-	replace := strings.NewReplacer("{configDir}", cfgDir(r.Plan, pl), "{stateDir}", dataDir(r.Plan, pl), "{address}", h.Network.Address, "{socketHost}", h.Network.SocketHost(), "{instance}", pl.Instance)
+	h, _ := plan.Installation.Host(pl.Host)
+	replace := strings.NewReplacer("{configDir}", cfgDir(plan, pl), "{stateDir}", dataDir(plan, pl), "{address}", h.Network.Address, "{socketHost}", h.Network.SocketHost(), "{instance}", pl.Instance)
 	p.URL = replace.Replace(p.URL)
 	p.RuntimeURL = replace.Replace(p.RuntimeURL)
 	p.CAFile = replace.Replace(p.CAFile)

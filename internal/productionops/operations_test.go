@@ -267,3 +267,29 @@ func portableHostScript(script string) string {
 	}
 	return script
 }
+
+func TestPausedParticipantsIncludeCurrentAndPriorDistinctInstances(t *testing.T) {
+	r := testRunner(t)
+	old := deploy.Placement{Role: deploy.Agent, Host: "a", Instance: "old-agent"}
+	shared := deploy.Placement{Role: deploy.ControlPlane, Host: "a", Instance: "shared-core"}
+	current := deploy.Placement{Role: deploy.Agent, Host: "a", Instance: "new-agent"}
+	r.Plan.Placements = []deploy.Placement{shared, current}
+	r.Plan.Previous = &deploy.AppliedDeployment{Installation: r.Plan.Installation, Release: r.Plan.Release, Placements: []deploy.Placement{old, shared}}
+	plans := r.participantPlans(true)
+	seen := map[string]int{}
+	for _, p := range plans {
+		for _, pl := range p.Placements {
+			seen[pl.Instance]++
+		}
+	}
+	if len(seen) != 3 || seen[old.Instance] != 1 || seen[shared.Instance] != 1 || seen[current.Instance] != 1 {
+		t.Fatal("pause omitted a current or prior participant", seen)
+	}
+	for _, p := range r.participantPlans(false) {
+		for _, pl := range p.Placements {
+			if pl.Instance == old.Instance {
+				t.Fatal("resume included a prior participant")
+			}
+		}
+	}
+}
