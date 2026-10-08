@@ -71,6 +71,12 @@ type protectedExecutableFile struct {
 	reads   int
 }
 
+type localRecoveryRemote struct{ SSHRemote }
+
+func (localRecoveryRemote) Run(ctx context.Context, _ Installation, _ Host, script string) ([]byte, error) {
+	return exec.CommandContext(ctx, "/bin/sh", "-eu", "-c", script).Output()
+}
+
 func (s *protectedExecutableFile) Get(_ context.Context, _ recovery.Object, target string) error {
 	s.reads++
 	return os.WriteFile(target, s.content, 0600)
@@ -86,7 +92,7 @@ func TestRecoveryExecutableReuseChecksActualBytesOnEveryRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &protectedExecutableFile{content: content}
-	d := SSHDriver{Remote: SSHRemote{}, recoveryPoint: recovery.Point{Dependencies: []recovery.Dependency{{Kind: "tool", ID: "protected", Digest: digest, Objects: []recovery.Object{{Digest: digest, Size: int64(len(content))}}}}}, recoveryService: recovery.Service{Storage: s}}
+	d := SSHDriver{Remote: localRecoveryRemote{}, recoveryPoint: recovery.Point{Dependencies: []recovery.Dependency{{Kind: "tool", ID: "protected", Digest: digest, Objects: []recovery.Object{{Digest: digest, Size: int64(len(content))}}}}}, recoveryService: recovery.Service{Storage: s}}
 	p := Plan{Installation: i}
 	if err := d.uploadRecovered(context.Background(), p, h, "protected", a, target); err != nil || s.reads != 0 {
 		t.Fatal("exact executable was not reused", err, s.reads)
