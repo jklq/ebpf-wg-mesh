@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"testing"
 
 	"ebof-wg-mesh/internal/deploy"
+	"github.com/jackc/pgx/v5"
 )
 
 // Executes generated scripts against isolated directories. It never fabricates
@@ -181,4 +183,68 @@ func TestRunPrivateProbeAndCLIOutput(t *testing.T) {
 
 func pemCertificate(der []byte) []byte {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func TestReferenceServiceSelectionsValidateBeforeExpansion(t *testing.T) {
+	// Operators select service addresses using the documented host substitution.
+	// The complete reference configuration must load before any certificates or
+	// native processes are created; expanded probes still enforce real TLS.
+	b, err := os.ReadFile("../../infra/production/operations/config.example.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg Config
+	if err = json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err = cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	invalid := cfg.Probes[deploy.ControlPlane]
+	invalid.AuthorizationURL = "http://{address}:9443/platform.v1.PlatformService/ListProjects"
+	if err = invalid.Validate(); err == nil {
+		t.Fatal("unencrypted host authorization inspection accepted")
+	}
+}
+
+func TestDatabaseURLRetainsVerifiedIPv6Failover(t *testing.T) {
+	ca, err := certificate("sql-test-ca", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaf, err := certificate("root", &ca, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for name, b := range map[string][]byte{"ca": ca.Certificate, "cert": leaf.Certificate, "key": leaf.Key} {
+		if err = writePrivate(filepath.Join(dir, name), b); err != nil {
+			t.Fatal(err)
+		}
+	}
+	u, err := verifiedDatabaseURL("root", "[fd42::a]:26257,[fd42::b]:26258,sql.example.invalid:26259", "platform", dir+"/ca", dir+"/cert", dir+"/key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(u.String())
+	if err != nil {
+		t.Fatal("operator URL cannot be inspected", err)
+	}
+	cfg, err := pgx.ParseConfig(parsed.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Host != "fd42::a" || cfg.Port != 26257 || cfg.TLSConfig.ServerName != "fd42::a" || cfg.TLSConfig.InsecureSkipVerify || len(cfg.Fallbacks) != 2 {
+		t.Fatalf("primary SQL/TLS failover: %+v", cfg.Config)
+	}
+	for n, want := range []string{"fd42::b", "sql.example.invalid"} {
+		if cfg.Fallbacks[n].Host != want || cfg.Fallbacks[n].TLSConfig.ServerName != want || cfg.Fallbacks[n].TLSConfig.InsecureSkipVerify {
+			t.Fatal("fallback weakened hostname verification", n)
+		}
+	}
+	selectDatabaseHost(parsed, "[fd42::b]:26258")
+	cfg, err = pgx.ParseConfig(parsed.String())
+	if err != nil || cfg.Host != "fd42::b" || len(cfg.Fallbacks) != 0 {
+		t.Fatal("console/native selected peer was overridden", err)
+	}
 }

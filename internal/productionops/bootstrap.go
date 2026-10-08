@@ -1,6 +1,7 @@
 package productionops
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -127,7 +128,7 @@ func (r *Runner) consoleAdmin(ctx context.Context, action string) error {
 	if err != nil {
 		return err
 	}
-	parsed.Host = r.reachableDatabase(ctx)
+	selectDatabaseHost(parsed, r.reachableDatabase(ctx))
 	adminURL := filepath.Join(r.Config.StateDirectory, "console-admin-url")
 	if err = writePrivate(adminURL, []byte(parsed.String())); err != nil {
 		return err
@@ -145,8 +146,14 @@ func (r *Runner) consoleAdmin(ctx context.Context, action string) error {
 	b, _ := json.Marshal(input)
 	cmd := exec.CommandContext(ctx, r.Config.Console.AdminBinary, action)
 	cmd.Stdin = strings.NewReader(string(b))
+	var output privateCommandOutput
+	cmd.Stdout, cmd.Stderr = &output, &output
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("native console %s failed: %w", action, err)
+		path := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "native-console-"+action+".log")
+		if writeErr := writePrivate(path, output.Bytes()); writeErr != nil {
+			return fmt.Errorf("native console %s failed: %w; private diagnostics unavailable: %v", action, err, writeErr)
+		}
+		return fmt.Errorf("native console %s failed: %w (private diagnostics: %s)", action, err, path)
 	}
 	return nil
 }
@@ -201,4 +208,19 @@ func adminTransaction(ctx context.Context, db *sql.DB, fn func(context.Context, 
 	})
 	_, err := j.Execute(ctx, fn)
 	return err
+}
+
+// Native tool diagnostics can include private service identifiers. Bound their
+// retained size and keep them in the operator-only state directory.
+type privateCommandOutput struct{ bytes.Buffer }
+
+func (b *privateCommandOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	if remaining := (64 << 10) - b.Len(); remaining > 0 {
+		if len(p) > remaining {
+			p = p[:remaining]
+		}
+		b.Buffer.Write(p)
+	}
+	return n, nil
 }

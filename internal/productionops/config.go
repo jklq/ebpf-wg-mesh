@@ -137,7 +137,7 @@ func (c Config) Validate() error {
 	return nil
 }
 func (p Probe) Validate() error {
-	target := strings.NewReplacer("{address}", "127.0.0.1", "{instance}", "instance").Replace(p.URL)
+	target := strings.NewReplacer("{address}", "127.0.0.1", "{socketHost}", "127.0.0.1", "{instance}", "instance").Replace(p.URL)
 	u, err := url.Parse(target)
 	if err != nil || u.Host == "" || u.User != nil || p.Status < 100 || p.Status > 599 {
 		return fmt.Errorf("invalid HTTP probe")
@@ -152,7 +152,7 @@ func (p Probe) Validate() error {
 		return fmt.Errorf("authorization inspection only supports read-only GET or Connect POST")
 	}
 	if p.AuthorizationURL != "" {
-		a, err := url.Parse(p.AuthorizationURL)
+		a, err := url.Parse(strings.NewReplacer("{address}", "127.0.0.1", "{socketHost}", "127.0.0.1", "{instance}", "instance").Replace(p.AuthorizationURL))
 		if err != nil || a.Scheme != "https" || a.User != nil || a.Host == "" || (p.UnauthorizedStatus != 401 && p.UnauthorizedStatus != 403 && p.UnauthorizedStatus != 503) {
 			return fmt.Errorf("authorization probes require HTTPS and a rejection status")
 		}

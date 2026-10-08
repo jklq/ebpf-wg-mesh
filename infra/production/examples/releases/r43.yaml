@@ -95,9 +95,9 @@ programs:
             - --certs-dir={configDir}/certs
             - --store={stateDir}/data
             - --external-io-dir={stateDir}/external-io
-            - --http-addr={address}:8080
-            - --listen-addr={address}:26257
-            - --advertise-addr={address}:26257
+            - --http-addr={socketHost}:8080
+            - --listen-addr={socketHost}:26257
+            - --advertise-addr={socketHost}:26257
             - --join={joins}
             - --cache=128MiB
             - --max-sql-memory=128MiB
