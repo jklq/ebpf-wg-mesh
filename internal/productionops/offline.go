@@ -122,7 +122,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	if err := start("database", cockroach, []string{"start-single-node", "--certs-dir=" + certDir, "--store=" + filepath.Join(workspace, "store"), "--listen-addr=127.0.0.1:26257", "--http-addr=127.0.0.1:8080", "--external-io-dir=" + filepath.Join(workspace, "database"), "--cache=128MiB", "--max-sql-memory=128MiB"}, nil); err != nil {
 		return ready, err
 	}
-	url := fmt.Sprintf("postgresql://root@127.0.0.1:26257/defaultdb?sslmode=verify-full&sslrootcert=%s&sslcert=%s&sslkey=%s", certDir+"/ca.crt", certDir+"/client.root.crt", certDir+"/client.root.key")
+	url := fmt.Sprintf("postgresql://root@127.0.0.1:26257/system?sslmode=verify-full&sslrootcert=%s&sslcert=%s&sslkey=%s", certDir+"/ca.crt", certDir+"/client.root.crt", certDir+"/client.root.key")
 	db, err := sql.Open("pgx", url)
 	if err != nil {
 		return ready, err
@@ -156,7 +156,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 	if databaseName == "" {
 		return ready, fmt.Errorf("restored platform database is missing")
 	}
-	url = strings.Replace(url, "/defaultdb?", "/"+databaseName+"?", 1)
+	url = strings.Replace(url, "/system?", "/"+databaseName+"?", 1)
 	db.Close()
 	db, err = sql.Open("pgx", url)
 	if err != nil {
