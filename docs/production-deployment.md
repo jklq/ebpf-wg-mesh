@@ -181,10 +181,21 @@ not a measured RPO guarantee. A shared directory readback cannot establish
 independent backing replicas; use a selected object service for replicated
 registry/archive storage.
 
+SQL admits the applied plan for independent backup completion and credential
+renewal, including placement changes within the same authority generation.
+Schedule replacement waits for durable maintenance ownership; returning old
+completers cannot acquire ownership using obsolete plans. Quiescence stops old
+jobs before pausing, and resume starts only the current credential timers.
+
 Imported hosts can use a configured HTTPS Redfish computer-system endpoint for
 independent power fencing. Otherwise prior units must be reachable for persistent
 systemd masking, or provider power must be independently observed off. An
 unreachable machine without an external fence blocks restoration.
+
+Reachable-host fencing also inventories the actual installation's systemd units
+and timers, including services absent from a saved installer snapshot. Unknown
+units are stopped and persistently masked, and their definitions remain in
+quarantine. A mask with a live or starting process does not establish a fence.
 
 | Hook | Required behavior |
 | --- | --- |
