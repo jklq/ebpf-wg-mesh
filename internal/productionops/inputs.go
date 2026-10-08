@@ -39,6 +39,19 @@ func (r *Runner) externalInputs(c recovery.Config) (map[string][]byte, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
+	appendProbe := func(probe Probe) {
+		for _, path := range []string{probe.CAFile, probe.CertFile, probe.KeyFile} {
+			if path != "" && !strings.Contains(path, "{") {
+				paths = append(paths, path)
+			}
+		}
+	}
+	for _, probe := range r.Config.Probes {
+		appendProbe(probe)
+	}
+	for _, probe := range r.Config.EndpointProbes {
+		appendProbe(probe)
+	}
 	for _, f := range r.Config.Fences {
 		paths = append(paths, f.CredentialsFile, f.CAFile)
 	}
