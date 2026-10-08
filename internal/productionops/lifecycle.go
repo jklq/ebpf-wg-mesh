@@ -26,11 +26,22 @@ func mutable(role deploy.Role) bool {
 }
 
 func (r *Runner) pause(ctx context.Context, paused, checkpoints bool) error {
+	if paused {
+		if err := r.credentialTimers(ctx, false); err != nil {
+			return err
+		}
+	}
 	db, err := r.db(ctx, false)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
+	release, err := r.acquireMaintenance(ctx, db, true)
+	if err != nil {
+		return err
+	}
+	defer release()
+
 	result, err := db.ExecContext(ctx, `UPDATE recovery_runtime_authority SET paused=$1 WHERE singleton=TRUE AND installation=$2 AND generation=$3`, paused, r.Plan.Installation.ID, r.Plan.Generation)
 	if err != nil {
 		return err
@@ -41,7 +52,13 @@ func (r *Runner) pause(ctx context.Context, paused, checkpoints bool) error {
 	if _, err := db.ExecContext(ctx, `UPDATE build_scheduler_control SET paused=$1,updated_at=statement_timestamp() WHERE id=TRUE`, paused); err != nil {
 		return err
 	}
-	return r.installAdmission(ctx, paused, checkpoints, true)
+	if err := r.installAdmission(ctx, paused, checkpoints, true); err != nil {
+		return err
+	}
+	if !paused {
+		return r.credentialTimers(ctx, true)
+	}
+	return nil
 }
 func (r *Runner) installAdmission(ctx context.Context, paused, checkpoints, restart bool) error {
 	db, err := r.db(ctx, false)
@@ -106,7 +123,7 @@ func (r *Runner) verifyPause(ctx context.Context, paused, recovered bool) error 
 			if !mutable(pl.Role) {
 				continue
 			}
-			if r.Plan.Automatic && (pl.Role == deploy.Agent || pl.Role == deploy.Builder) {
+			if !r.managedCredentials(pl) {
 				continue
 			}
 			out, err := r.remote(ctx, p, pl, "systemctl is-active --quiet "+shell(unit(p, pl))+"\ncat "+shell(cfgDir(p, pl)+"/authority.json")+"\n")

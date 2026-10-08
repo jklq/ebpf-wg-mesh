@@ -25,7 +25,7 @@ func probeHTTP(ctx context.Context, p Probe, authorization bool) ([]byte, error)
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: p.ServerName}
 	if p.CAFile != "" {
 		b, err := os.ReadFile(p.CAFile)
 		if err != nil {
@@ -94,6 +94,9 @@ func Ready(ctx context.Context, role deploy.Role, instance, path string) error {
 	return err
 }
 func (r *Runner) expandProbe(p Probe, pl deploy.Placement) Probe {
+	if pl.Role == deploy.ControlPlane && p.ServerName == "" {
+		p.ServerName = r.Config.InternalServerName
+	}
 	h, _ := r.Plan.Installation.Host(pl.Host)
 	replace := strings.NewReplacer("{configDir}", cfgDir(r.Plan, pl), "{stateDir}", dataDir(r.Plan, pl), "{address}", h.Network.Address, "{socketHost}", h.Network.SocketHost(), "{instance}", pl.Instance)
 	p.URL = replace.Replace(p.URL)
@@ -201,7 +204,7 @@ func (r *Runner) productionVerify(ctx context.Context) error {
 			// establish a live voting quorum even while a member is unavailable.
 			continue
 		}
-		if r.Plan.Automatic && (pl.Role == deploy.Agent || pl.Role == deploy.Builder) {
+		if !r.managedCredentials(pl) {
 			continue
 		}
 		p, ok := r.Config.Probes[pl.Role]

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -29,7 +30,7 @@ func (s isolatedRemote) path(h deploy.Host, path string) string {
 	return strings.NewReplacer("/etc/ebpf-wg-mesh/", s.Root+"/"+h.ID+"/etc/", "/var/lib/ebpf-wg-mesh/", s.Root+"/"+h.ID+"/state/").Replace(path)
 }
 func (s isolatedRemote) Run(ctx context.Context, i deploy.Installation, h deploy.Host, script string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "sh", "-eu", "-c", s.path(h, script))
+	cmd := exec.CommandContext(ctx, "sh", "-eu", "-c", portableHostScript(s.path(h, script)))
 	b, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("isolated script failed: %w", err)
@@ -117,6 +118,15 @@ func TestTLSReadinessAndAuthorizationInspectActualResponses(t *testing.T) {
 	if _, err := probeHTTP(context.Background(), p, false); err == nil {
 		t.Fatal("failed readiness passed")
 	}
+	p.ServerName = "wrong-service.invalid"
+	if _, err := probeHTTP(context.Background(), p, true); err == nil {
+		t.Fatal("wrong TLS service identity passed")
+	}
+	p.ServerName = "example.com"
+	if _, err := probeHTTP(context.Background(), p, true); err != nil {
+		t.Fatal("selected certificate DNS identity was not verified", err)
+	}
+	p.ServerName = ""
 	p.CAFile = ""
 	if _, err := probeHTTP(context.Background(), p, true); err == nil {
 		t.Fatal("untrusted endpoint passed")
@@ -247,4 +257,13 @@ func TestDatabaseURLRetainsVerifiedIPv6Failover(t *testing.T) {
 	if err != nil || cfg.Host != "fd42::b" || len(cfg.Fallbacks) != 0 {
 		t.Fatal("console/native selected peer was overridden", err)
 	}
+}
+
+// These fixtures execute Linux-host scripts on the test machine. Darwin ships
+// shasum and BSD mv, so select their equivalent checksum and symlink semantics.
+func portableHostScript(script string) string {
+	if runtime.GOOS == "darwin" {
+		return strings.NewReplacer("sha256sum", "shasum -a 256", "mv -Tf", "mv -hf").Replace(script)
+	}
+	return script
 }

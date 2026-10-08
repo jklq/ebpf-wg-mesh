@@ -24,7 +24,7 @@ func (r inventoryPeerRemote) Run(ctx context.Context, i deploy.Installation, h d
 		return nil, fmt.Errorf("host %s unreachable", h.ID)
 	}
 	target := filepath.Join(r.Root, h.ID)
-	return exec.CommandContext(ctx, "sh", "-eu", "-c", strings.ReplaceAll(script, filepath.Dir(r.Source), target)).Output()
+	return exec.CommandContext(ctx, "sh", "-eu", "-c", portableHostScript(strings.ReplaceAll(script, filepath.Dir(r.Source), target))).Output()
 }
 func (r inventoryPeerRemote) Upload(context.Context, deploy.Installation, deploy.Host, string, string, string) error {
 	return fmt.Errorf("unused upload")

@@ -61,6 +61,7 @@ type ConsoleConfig struct {
 // HTTP probes use a TLS trust root and optional client identity. Plain HTTP is
 // allowed only for a health listener on loopback, inspected on its owning host.
 type Probe struct {
+	ServerName          string `json:"serverName,omitempty"`
 	URL                 string `json:"url"`
 	RuntimeURL          string `json:"runtimeURL,omitempty"`
 	CAFile              string `json:"caFile,omitempty"`
