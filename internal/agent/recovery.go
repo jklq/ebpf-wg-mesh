@@ -14,6 +14,7 @@ import (
 var installationIDKey = []byte("installation_identity")
 var recoveryGenerationKey = []byte("recovery_generation")
 var checkpointRequiredKey = []byte("recovery_checkpoint_required")
+var checkpointApprovedKey = []byte("recovery_checkpoint_approved")
 
 type generationCommand interface {
 	GetInstallationId() string
@@ -38,6 +39,11 @@ func (s *localStateStore) admitAuthority(a reconciliation.Authority) (bool, erro
 			return errors.New("recovery cannot change installation identity")
 		}
 		if string(meta.Get(recoveryGenerationKey)) == a.Generation {
+			// Approval belongs to this generation, independently of whether
+			// checkpoint delivery is currently enabled during a lifecycle step.
+			if a.Checkpoints {
+				return meta.Put(checkpointApprovedKey, []byte{1})
+			}
 			return nil
 		}
 		retiredKey := []byte("retired_generation/" + a.Generation)
@@ -50,6 +56,14 @@ func (s *localStateStore) admitAuthority(a reconciliation.Authority) (bool, erro
 		previous := string(meta.Get(recoveryGenerationKey))
 		if previous != "" {
 			if err := meta.Put([]byte("retired_generation/"+previous), []byte{1}); err != nil {
+				return err
+			}
+		}
+		if err := meta.Delete(checkpointApprovedKey); err != nil {
+			return err
+		}
+		if a.Checkpoints {
+			if err := meta.Put(checkpointApprovedKey, []byte{1}); err != nil {
 				return err
 			}
 		}

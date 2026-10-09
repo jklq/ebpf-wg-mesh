@@ -272,6 +272,12 @@ func (r *Runner) authority(ctx context.Context, verify bool) error {
 		if err := r.reservations(ctx, false); err != nil {
 			return err
 		}
+		// Fencing permits the recovery transition to replace retained host
+		// admission. Credential issuance and renewal only verify that identity.
+		// Keep processes stopped until their subsequent runtime phases.
+		if err := r.installAdmission(ctx, true, false, false); err != nil {
+			return err
+		}
 		return r.credentials(ctx, false)
 	}
 	var id, generation string

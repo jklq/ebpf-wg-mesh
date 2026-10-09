@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/reconciliation"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -291,5 +292,58 @@ func TestPausedParticipantsIncludeCurrentAndPriorDistinctInstances(t *testing.T)
 				t.Fatal("resume included a prior participant")
 			}
 		}
+	}
+}
+
+func TestCredentialIssuancePreservesLifecycleAdmission(t *testing.T) {
+	r := testRunner(t)
+	pl := deploy.Placement{Role: deploy.Agent, Host: "a", Instance: "agent-a"}
+	wanted := reconciliation.Authority{InstallationID: r.Plan.Installation.ID, Generation: r.Plan.Generation, ClusterID: "current-ca", Paused: true}
+	ctx := context.Background()
+	if err := r.ensureAdmissionIdentity(ctx, pl, wanted, true); err == nil {
+		t.Fatal("missing admission was verified")
+	}
+	if err := r.ensureAdmissionIdentity(ctx, pl, wanted, false); err != nil {
+		t.Fatal(err)
+	}
+	path := r.Remote.(isolatedRemote).path(r.Plan.Installation.Hosts[0], cfgDir(r.Plan, pl)+"/authority.json")
+	approved := wanted
+	approved.Checkpoints = true
+	encoded, _ := json.Marshal(approved)
+	if err := writePrivate(path, encoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, verify := range []bool{false, true} {
+		if err := r.ensureAdmissionIdentity(ctx, pl, wanted, verify); err != nil {
+			t.Fatal("issuance reconstructed the approved mode", err)
+		}
+		actual, err := os.ReadFile(path)
+		if err != nil || string(actual) != string(encoded) {
+			t.Fatal("issuance replaced lifecycle admission", err)
+		}
+	}
+	wanted.Paused = false
+	if err := r.ensureAdmissionIdentity(ctx, pl, wanted, false); err == nil {
+		t.Fatal("renewal silently changed a mismatched pause")
+	}
+	approved.Paused = false
+	encoded, _ = json.Marshal(approved)
+	if err := writePrivate(path, encoded); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ensureAdmissionIdentity(ctx, pl, wanted, true); err != nil {
+		t.Fatal("resumed approved admission was rejected", err)
+	}
+	wanted.ClusterID = "different-ca"
+	if err := r.ensureAdmissionIdentity(ctx, pl, wanted, false); err == nil {
+		t.Fatal("issuance replaced a different admission identity")
+	}
+	pl.Role, pl.Instance = deploy.Envoy, "envoy-a"
+	if err := r.ensureAdmissionIdentity(ctx, pl, wanted, false); err != nil {
+		t.Fatal(err)
+	}
+	path = r.Remote.(isolatedRemote).path(r.Plan.Installation.Hosts[0], cfgDir(r.Plan, pl)+"/authority.json")
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("a component without admission received an authority file", err)
 	}
 }

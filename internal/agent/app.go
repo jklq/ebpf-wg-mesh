@@ -238,7 +238,13 @@ func (a *App) readyReport(context.Context) health.Report {
 	if a.stateStore != nil {
 		summary, err := a.stateStore.summary()
 		if err == nil {
-			report.Checkpoint = &health.Checkpoint{Generation: summary.RecoveryGeneration, AuthorityEpoch: summary.AuthorityEpoch, Cursor: summary.ReconciliationCursor, Complete: summary.Initialization == initializationReady && !summary.CheckpointRequired && summary.NodeConfigVersion != "" && summary.CredentialsVersion != "" && summary.ReplicasVersion != ""}
+			complete := summary.checkpointComplete() && summary.InstallationID == a.recoveryAuthority.InstallationID && summary.RecoveryGeneration == a.recoveryAuthority.Generation && summary.ClusterIdentity == a.recoveryAuthority.ClusterID
+			report.Checkpoint = &health.Checkpoint{Generation: summary.RecoveryGeneration, AuthorityEpoch: summary.AuthorityEpoch, Cursor: summary.ReconciliationCursor, Complete: complete}
+			// Approved recovery can reconcile known allocations while unknown
+			// resources keep the separate destructive-cleanup guard closed.
+			if a.supervisor != nil && summary.CheckpointApproved && complete {
+				report.Status, report.Failed = health.StatusReady, nil
+			}
 		}
 		inventory, err := a.stateStore.fleetInventory()
 		if err == nil {

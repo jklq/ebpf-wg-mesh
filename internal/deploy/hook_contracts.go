@@ -90,6 +90,10 @@ func ValidateHookEvidence(name string, p Plan, e Evidence) error {
 		return fmt.Errorf("unknown verification contract %s", name)
 	}
 	switch c.Kind {
+	case ReceiptVerification:
+		if len(c.Checks) == 0 {
+			return fmt.Errorf("receipt contract %s has no proof obligations", name)
+		}
 	case DatabaseVerification:
 		if e.Database == nil || !e.Database.Replicated || len(e.Database.Members) == 0 || len(e.Database.Live) < len(e.Database.Members)/2+1 {
 			return fmt.Errorf("database verification requires native membership, replication and live quorum")
@@ -106,6 +110,8 @@ func ValidateHookEvidence(name string, p Plan, e Evidence) error {
 		if e.Fleet == nil {
 			return fmt.Errorf("fleet verification requires actual surviving-host inventory")
 		}
+	default:
+		return fmt.Errorf("unsupported verification kind for %s", name)
 	}
 	if len(c.Checks) > 0 {
 		return validateReceipt(e, p, c.Checks...)

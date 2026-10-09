@@ -514,3 +514,87 @@ func TestResumeObservationFailureRepausesBeforeRetry(t *testing.T) {
 		t.Fatal("verified retry did not activate")
 	}
 }
+
+type unprovenPauseDriver struct{ Driver }
+
+func (d unprovenPauseDriver) Observe(ctx context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
+	done, evidence, err := d.Driver.Observe(ctx, p, state, op)
+	if op.Hook == "quiesce" {
+		evidence.Recovery = nil
+	}
+	return done, evidence, err
+}
+
+func TestInterruptedResumeRequiresDeclaredPauseProof(t *testing.T) {
+	i, r, inv := fixture(3)
+	p := build(t, i, r, State{}, inv, false)
+	d := fake(inv)
+	engine := Engine{Driver: unprovenPauseDriver{Driver: d}}
+	if err := engine.pauseBeforeRetry(context.Background(), p, State{}); err == nil || !strings.Contains(err.Error(), "verification contract") {
+		t.Fatalf("pause attempt accepted without its required proof: %v", err)
+	}
+	if !d.paused {
+		t.Fatal("pause did not execute before its proof was rejected")
+	}
+}
+
+type resumeJournalDriver struct {
+	Driver
+	journal State
+}
+
+func (d *resumeJournalDriver) Observe(ctx context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
+	done, evidence, err := d.Driver.Observe(ctx, p, state, op)
+	if op.Hook == "resume" && done && err == nil {
+		d.journal = snapshot(state)
+		d.journal.Progress.Completed[op.ID] = evidence
+	}
+	return done, evidence, err
+}
+
+func TestJournaledResumeRepausesUntilDeploymentCommit(t *testing.T) {
+	i, r, inv := fixture(3)
+	state := applied(build(t, i, r, State{}, inv, false))
+	r.ID, i.Release = "r43", "r43"
+	p := build(t, i, r, state, inv, false)
+	store, _, _ := testStore(t)
+	if err := store.Write(state); err != nil {
+		t.Fatal(err)
+	}
+	driver := fake(inv)
+	journal := &resumeJournalDriver{Driver: driver}
+	engine := Engine{Store: store, Driver: journal}
+	if err := engine.Apply(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	if driver.paused || journal.journal.Progress == nil {
+		t.Fatal("resume did not execute and produce its verified journal")
+	}
+	// Reopen the exact verified resume journal, as if the operator disappeared
+	// before the final deployment commit. Live production checks now fail.
+	if err := store.Write(journal.journal); err != nil {
+		t.Fatal(err)
+	}
+	driver.failObserveHook = "production-verify"
+	if err := engine.Apply(context.Background(), p); err == nil {
+		t.Fatal("failed live verification accepted")
+	}
+	if !driver.paused {
+		t.Fatal("journaled activation remained active during failed verification")
+	}
+	actual, err := store.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range p.Operations {
+		if op.Hook == "resume" {
+			if _, completed := actual.Progress.Completed[op.ID]; completed {
+				t.Fatal("pause retained stale activation proof")
+			}
+		}
+	}
+	driver.failObserveHook = ""
+	if err := engine.Apply(context.Background(), p); err != nil || driver.paused {
+		t.Fatal("verified retry did not resume the deployment", err)
+	}
+}

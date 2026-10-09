@@ -75,7 +75,9 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		}
 		files := map[string][]byte{"ca.crt": ca}
 		a := reconciliation.Authority{InstallationID: installation, Generation: generation, ClusterID: clusterID(ca), Paused: paused, Checkpoints: paused && r.RecoveryProgress != nil && r.RecoveryProgress.Report != nil && r.RecoveryProgress.ApprovedDigest == r.RecoveryProgress.Report.ApprovalDigest()}
-		files["authority.json"], _ = json.Marshal(a)
+		if err := r.ensureAdmissionIdentity(ctx, pl, a, verify); err != nil {
+			return err
+		}
 		env := map[string]string{}
 		if prefix, ok := map[deploy.Role]string{deploy.Agent: "AGENT", deploy.Builder: "BUILDER", deploy.ControlPlane: "CONTROLPLANE"}[pl.Role]; ok {
 			listener := map[deploy.Role]string{deploy.Agent: "127.0.0.1:9091", deploy.Builder: "127.0.0.1:9092", deploy.ControlPlane: "127.0.0.1:9090"}[pl.Role]

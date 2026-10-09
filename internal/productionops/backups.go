@@ -152,7 +152,11 @@ func (r *Runner) prepareProtection(ctx context.Context, selected *deploy.Release
 			snapshot.Bindings[host.ID] = host.Binding
 		}
 	}
+	// Protection records the fenced inventory, not an installer execution session.
+	// A point made before resume is independently restorable after another loss;
+	// carrying the unfinished recovery journal would prohibit that new recovery.
 	snapshot.Progress = nil
+	snapshot.Recovery = nil
 	if err := saveJSON(statePath, snapshot); err != nil {
 		return err
 	}
@@ -272,6 +276,11 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 		_, err = db.ExecContext(ctx, statement)
 		if err != nil {
 			return fmt.Errorf("native backup connection provisioning failed")
+		}
+		if r.Plan.Recovery {
+			if err := recovery.ReestablishSchedules(ctx, db, r.Plan.Installation.ID, c.BackupConnection); err != nil {
+				return err
+			}
 		}
 		if _, err := r.nativeRecovery(ctx, "schedule"); err != nil {
 			return err

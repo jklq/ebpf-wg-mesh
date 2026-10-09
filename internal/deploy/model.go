@@ -3,6 +3,7 @@
 package deploy
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -212,8 +213,23 @@ func Load[T any](path string) (T, error) {
 		return value, err
 	}
 	defer f.Close()
-	d := yaml.NewDecoder(io.LimitReader(f, 4<<20))
-	d.KnownFields(true)
+	data, err := io.ReadAll(io.LimitReader(f, (4<<20)+1))
+	if err != nil {
+		return value, err
+	}
+	if len(data) > 4<<20 {
+		return value, fmt.Errorf("%s exceeds the document size limit", path)
+	}
+	var d interface{ Decode(any) error }
+	if json.Valid(data) {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		d = decoder
+	} else {
+		decoder := yaml.NewDecoder(bytes.NewReader(data))
+		decoder.KnownFields(true)
+		d = decoder
+	}
 	if err := d.Decode(&value); err != nil {
 		return value, fmt.Errorf("decode %s: %w", path, err)
 	}

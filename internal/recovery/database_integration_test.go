@@ -87,6 +87,52 @@ func TestNativeSchedulesAndTimestampedRecoveryInventory(t *testing.T) {
 	if err := VerifySchedules(ctx, db, "installation", "external://recovery_test"); err == nil {
 		t.Fatal("paused schedules accepted")
 	}
+	if _, err := db.ExecContext(ctx, `CREATE SCHEDULE 'operator-owned' FOR BACKUP INTO 'external://recovery_test' RECURRING '@daily' WITH SCHEDULE OPTIONS first_run='2100-01-01'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `PAUSE SCHEDULES SELECT id FROM [SHOW SCHEDULES] WHERE label='operator-owned'`); err != nil {
+		t.Fatal(err)
+	}
+	const unrelatedQuery = `SELECT string_agg(id::STRING,',' ORDER BY id) FROM [SHOW SCHEDULES] WHERE label='operator-owned' AND schedule_status='PAUSED'`
+	var unrelatedBefore string
+	if err := db.QueryRowContext(ctx, unrelatedQuery).Scan(&unrelatedBefore); err != nil || unrelatedBefore == "" {
+		t.Fatal("unrelated paused schedules missing", err)
+	}
+	if err := ReestablishSchedules(ctx, db, "installation", "external://wrong_destination"); err == nil {
+		t.Fatal("recovery replaced a pair with an unverified destination")
+	}
+	if err := VerifySchedules(ctx, db, "installation", "external://recovery_test"); err == nil {
+		t.Fatal("rejected recovery changed the paused pair")
+	}
+	if err := ReestablishSchedules(ctx, db, "installation", "external://recovery_test"); err != nil {
+		t.Fatal("recovery failed to re-establish the paused native pair", err)
+	}
+	var fullID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM [SHOW SCHEDULES] WHERE label='recovery-installation' AND recurrence=$1`, FullCron).Scan(&fullID); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReestablishSchedules(ctx, db, "installation", "external://recovery_test"); err != nil {
+		t.Fatal("re-establishment retry", err)
+	}
+	var retryID int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM [SHOW SCHEDULES] WHERE label='recovery-installation' AND recurrence=$1`, FullCron).Scan(&retryID); err != nil || retryID != fullID {
+		t.Fatal("retry replaced the active native pair", err)
+	}
+	var unrelatedAfter string
+	if err := db.QueryRowContext(ctx, unrelatedQuery).Scan(&unrelatedAfter); err != nil || unrelatedAfter != unrelatedBefore {
+		t.Fatal("unrelated paused schedules were changed", err)
+	}
+	// Interruption after dropping the old pair must recover from actual absence.
+	if _, err := db.ExecContext(ctx, `DROP SCHEDULES SELECT id FROM [SHOW SCHEDULES] WHERE label='recovery-installation'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := ReestablishSchedules(ctx, db, "installation", "external://recovery_test"); err != nil {
+		t.Fatal("re-establishment after interrupted removal", err)
+	}
+	// Keep the following explicit backup independent of the automatic jobs.
+	if _, err := db.ExecContext(ctx, `PAUSE SCHEDULES SELECT id FROM [SHOW SCHEDULES] WHERE label='recovery-installation'`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.ExecContext(ctx, `BACKUP INTO 'external://recovery_test' AS OF SYSTEM TIME `+literal(fullTimestamp.Format(time.RFC3339Nano))+` WITH revision_history`); err != nil {
 		t.Fatal(err)
 	}
@@ -110,6 +156,15 @@ func TestNativeSchedulesAndTimestampedRecoveryInventory(t *testing.T) {
 	}
 	if !timestamp.After(chain.Layers[0].End) || !timestamp.Before(chain.Layers[1].End) {
 		t.Fatal("test did not select a timestamp between backup endpoints")
+	}
+	// Re-establish into the actual nonempty collection after site loss. Native
+	// schedule creation requires acknowledgment of its protected old backups.
+	if err := ReestablishSchedules(ctx, db, "installation", "external://recovery_test"); err != nil {
+		t.Fatal("re-establish native schedules over historical backups", err)
+	}
+	preserved, err := InspectBackup(ctx, db, "external://recovery_test", path)
+	if err != nil || len(preserved.Layers) != len(chain.Layers) || !preserved.Layers[1].End.Equal(chain.Layers[1].End) {
+		t.Fatal("schedule recovery changed the protected backup chain", err)
 	}
 	restored, stopRestore := testserver.NewDBForTest(t, testserver.CustomVersionOpt(testdb.DefaultVersion), testserver.CacheSizeOpt(.02), testserver.ExternalIODirOpt(dir))
 	defer stopRestore()

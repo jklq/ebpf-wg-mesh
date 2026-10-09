@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"cmp"
 	"fmt"
 	"slices"
 )
@@ -119,6 +120,8 @@ func (p Plan) compileWorkflow(groups map[string][]Operation) ([]Operation, error
 }
 
 func compileWorkflow(p Plan, definition []workflowPhase, mode workflowMode, groups map[string][]Operation) ([]Operation, error) {
+	definition = slices.Clone(definition)
+	slices.SortFunc(definition, func(a, b workflowPhase) int { return cmp.Compare(a.Name, b.Name) })
 	known := map[string]bool{}
 	for _, phase := range definition {
 		if known[phase.Name] {
@@ -152,6 +155,8 @@ func compileWorkflow(p Plan, definition []workflowPhase, mode workflowMode, grou
 			if !ready {
 				continue
 			}
+			slices.Sort(dependencies)
+			dependencies = slices.Compact(dependencies)
 			steps := groups[phase.Name]
 			if phase.Modes&mode == 0 {
 				if len(steps) != 0 {
