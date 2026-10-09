@@ -80,9 +80,11 @@ variable names to single-line references. The controller never resolves secret
 references into a plan or state document. Component reference file paths
 support `{instance}` and `{host}` so the credential issuer can materialize each
 replica's private files from the plan. Values are installed through SSH in private
-files. External credential management supplies the shared master keyring,
-component credentials and renewed wildcard certificates. Readiness must verify
-that each component actually uses the provisioned credentials.
+files. The reference operations generate the shared master keyring and component
+credentials, and renew managed client identities through independent OS timers.
+Select externally managed storage, infrastructure and public TLS identities in
+the operations configuration. Readiness verifies the credentials actually used
+by each component.
 Executable staging precedes bootstrap; component credential files are installed
 after key provisioning and the credential hook. Database CA/node credentials are
 provisioned independently before starting CockroachDB.
@@ -231,7 +233,7 @@ quarantine. A mask with a live or starting process does not establish a fence.
 | `backup` | Publish/verify a complete recovery point with `platformctl recovery`. Return Evidence JSON with `backup`, `dataLossCutoff`, `point` and exact protected `object` only after all dependencies pass. |
 | `recovery-verify` | Independently verify the selected version-pinned point and exact cutoff before fencing or destructive restore; return complete Evidence JSON. |
 | `recovery-finalize` | Retire the previous release's installer inventory after production verification; retained recovery points keep its artifacts. |
-| `resume` | Resume mutations/background work and safely uncordon affected workers after readiness. |
+| `resume` | Resume mutations/background work and safely uncordon affected workers only after all declared live verification gates succeed. |
 | `restore` | Verify backup completeness, restore all stores and key material, and validate the requested release's exact schemas. |
 | `recovery-fence` | Independently fence every previous instance and public traffic path using provider or gateway credentials before restoration. An unavailable old host must be fenced externally; heartbeat expiry is insufficient. |
 
@@ -311,6 +313,20 @@ approval of the concrete report. `resume --approve-report <digest>` continues ap
 reconciliation; checkpoints, health verification, work reconciliation and a new
 complete point precede resuming public mutations and automation.
 
+Admission retries inspect the running authority and checkpoint mode before
+restarting a participant. A replaced file cannot establish that a process loaded
+it. After report approval, a complete durable checkpoint can establish agent
+readiness while unknown resources remain quarantined; the separate ownership
+guard continues to prevent their destructive cleanup after resume. Approval is
+bound to the admitted generation and survives later upgrade pauses; changing the
+generation clears it and requires a new complete checkpoint. Credential renewal
+preserves lifecycle admission instead of regenerating its pause/checkpoint mode.
+Recovery re-establishes the verified paused native backup schedule pair with a
+fresh full chain. Retries retain an already active pair, and unrelated schedules
+and protected historical points remain untouched. Protected installer snapshots
+retain process and provider inventory but exclude execution journals, so a point
+created before activation can start a new recovery after another loss.
+
 The [recovery runbook](recovery.md) defines complete independent points and their
 storage/verification contract. `backup` policy now declares an independent S3
 target, account, primary account, failure domain, restricted writer credentials,
@@ -323,8 +339,10 @@ of reconciliation. An external monitor alerts when the latest complete database
 timestamp is older than 15 minutes. Release and key activation, plus active
 archive/image deletion, require protected copies first.
 
-Initial production bootstrap requires a pre-provisioned, protected keyring and
-`--recovery-config` (or `PLATFORM_RECOVERY_CONFIG`). The runbook includes command
+Initial production bootstrap requires independent storage credentials and a
+separately retained recovery key selected through `--recovery-config` (or
+`PLATFORM_RECOVERY_CONFIG`). The reference implementation creates and protects
+the initial platform keyring; upgrades and restores require its existing versions. The runbook includes command
 mapping for the new hooks, configuration/policy/timer templates and the offline
 release-tool contract. The two-hour recovery target includes provisioning,
 transfer, restore, validation and platform availability from declaration; publish
@@ -337,5 +355,7 @@ failure dependencies, repeatability, stale plans, interrupted SSH, uncertain
 purchases and cutover ordering. Cockroach-backed installation tests verify actual
 bootstrap, shared revocations, refusal to initialize populated databases and
 data-preserving conversion. Provider/SSH lifecycle tests use controlled transports;
-running the templates on purchased hosts requires operator credentials and the
-completed release hooks.
+running the packaged release on purchased hosts requires operator credentials
+and an applied plan. The opt-in [native fleet scenarios](../internal/productionops/testdata/host/README.md)
+exercise the packaged operations over SSH with actual Linux services, native
+database restore, independently recovered tools and quarantined resources.

@@ -41,7 +41,7 @@ func TestProtectionSnapshotDoesNotOverwriteAppliedPlan(t *testing.T) {
 	}
 	oldPolicy, oldBundle := r.Plan.Installation, r.Plan.Release
 	oldPolicy.Release, oldPolicy.ManagementHost, oldBundle.ID = "r42", "old-admin", "r42"
-	previous := deploy.State{Version: 1, Policy: &oldPolicy, Bundle: &oldBundle, Bindings: map[string]deploy.Binding{"a": {Provider: "linux", ServerID: "protected-binding"}}}
+	previous := deploy.State{Progress: &deploy.Progress{PlanID: "interrupted-recovery"}, Recovery: &deploy.RecoveryProgress{Generation: "prior-authority", Phase: "backup"}, Version: 1, Policy: &oldPolicy, Bundle: &oldBundle, Bindings: map[string]deploy.Binding{"a": {Provider: "linux", ServerID: "protected-binding"}}}
 	statePath := filepath.Join(r.Config.StateDirectory, "previous-state.json")
 	if err := saveJSON(statePath, previous); err != nil {
 		t.Fatal(err)
@@ -61,6 +61,9 @@ func TestProtectionSnapshotDoesNotOverwriteAppliedPlan(t *testing.T) {
 		}
 		if protected.Bundle.ID != "r43" || protected.Policy.Release != "r43" || protected.Policy.ManagementHost != r.Plan.Installation.ManagementHost || protected.Bindings["a"].ServerID != "protected-binding" {
 			t.Fatal("protected installer did not combine the applied plan with retained bindings")
+		}
+		if protected.Progress != nil || protected.Recovery != nil {
+			t.Fatal("independent protection retained an unfinished installer recovery session")
 		}
 		var selection recovery.Config
 		if err := privateJSON(r.effectiveConfig(), &selection); err != nil {

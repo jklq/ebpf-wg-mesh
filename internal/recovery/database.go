@@ -20,47 +20,109 @@ func ScheduleSQL(installation, connection string) (string, error) {
 	if installation == "" || !strings.HasPrefix(connection, "external://") || strings.ContainsAny(connection, "?\n\r") {
 		return "", fmt.Errorf("native backup schedules require an installation and credential-free external connection")
 	}
-	return "CREATE SCHEDULE IF NOT EXISTS " + literal("recovery-"+installation) + " FOR BACKUP INTO " + literal(connection) + " WITH revision_history RECURRING " + literal(IncrementalCron) + " FULL BACKUP " + literal(FullCron) + " WITH SCHEDULE OPTIONS first_run = 'now', on_execution_failure = 'retry', on_previous_running = 'wait'", nil
+	return "CREATE SCHEDULE IF NOT EXISTS " + literal("recovery-"+installation) + " FOR BACKUP INTO " + literal(connection) + " WITH revision_history RECURRING " + literal(IncrementalCron) + " FULL BACKUP " + literal(FullCron) + " WITH SCHEDULE OPTIONS first_run = 'now', on_execution_failure = 'retry', on_previous_running = 'wait', ignore_existing_backups", nil
+}
+
+type nativeBackupSchedule struct {
+	ID                  int64
+	Cron, Status, State string
+}
+
+func (s nativeBackupSchedule) active() bool {
+	return s.Status == "ACTIVE" || s.Cron == IncrementalCron && strings.Contains(s.State, "Waiting for initial backup")
+}
+
+func readBackupSchedules(ctx context.Context, db *sql.DB, installation, connection string) ([]nativeBackupSchedule, error) {
+	var enabled bool
+	if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING jobs.scheduler.enabled").Scan(&enabled); err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, fmt.Errorf("native backup scheduler is disabled")
+	}
+	rows, err := db.QueryContext(ctx, `SELECT id,recurrence,command,schedule_status,COALESCE(state,'') FROM [SHOW SCHEDULES] WHERE label=$1`, "recovery-"+installation)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var schedules []nativeBackupSchedule
+	seen := map[string]bool{}
+	for rows.Next() {
+		var s nativeBackupSchedule
+		var command string
+		if err := rows.Scan(&s.ID, &s.Cron, &command, &s.Status, &s.State); err != nil {
+			return nil, err
+		}
+		if (s.Cron != FullCron && s.Cron != IncrementalCron) || !strings.Contains(command, literal(connection)) || !strings.Contains(command, "revision_history") {
+			return nil, fmt.Errorf("native recovery backup schedule has changed its cadence, destination, or revision history")
+		}
+		if seen[s.Cron] {
+			return nil, fmt.Errorf("duplicate native recovery backup schedules")
+		}
+		seen[s.Cron] = true
+		schedules = append(schedules, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(schedules) != 0 && len(schedules) != 2 {
+		return nil, fmt.Errorf("full and incremental native backup schedules are required")
+	}
+	return schedules, nil
 }
 
 func VerifySchedules(ctx context.Context, db *sql.DB, installation, connection string) error {
-	var enabled bool
-	if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING jobs.scheduler.enabled").Scan(&enabled); err != nil {
-		return err
-	}
-	if !enabled {
-		return fmt.Errorf("native backup scheduler is disabled")
-	}
-
-	rows, err := db.QueryContext(ctx, `SELECT recurrence,command,schedule_status,COALESCE(state,'') FROM [SHOW SCHEDULES] WHERE label=$1`, "recovery-"+installation)
+	schedules, err := readBackupSchedules(ctx, db, installation, connection)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	seen := map[string]bool{}
-	for rows.Next() {
-		var cron, command, status, state string
-		if err := rows.Scan(&cron, &command, &status, &state); err != nil {
-			return err
-		}
-		if (cron != FullCron && cron != IncrementalCron) || !strings.Contains(command, literal(connection)) || !strings.Contains(command, "revision_history") {
-			return fmt.Errorf("native recovery backup schedule has changed its cadence, destination, or revision history")
-		}
-		if seen[cron] {
-			return fmt.Errorf("duplicate native recovery backup schedules")
-		}
-		if status != "ACTIVE" && !(cron == IncrementalCron && strings.Contains(state, "Waiting for initial backup")) {
-			return fmt.Errorf("native backup schedule is paused or failed: %s", state)
-		}
-		seen[cron] = true
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(seen) != 2 {
+	if len(schedules) != 2 {
 		return fmt.Errorf("full and incremental native backup schedules are required")
 	}
+	for _, s := range schedules {
+		if !s.active() {
+			return fmt.Errorf("native backup schedule is paused or failed: %s", s.State)
+		}
+	}
 	return nil
+}
+
+// ReestablishSchedules is used only by an applied recovery plan. Replace the
+// validated, paused platform pair so the new cluster starts a fresh full chain;
+// retaining restored incremental-chain state would bind it to the lost cluster.
+// Unrelated schedules and all protected historical backup objects are retained.
+func ReestablishSchedules(ctx context.Context, db *sql.DB, installation, connection string) error {
+	statement, err := ScheduleSQL(installation, connection)
+	if err != nil {
+		return err
+	}
+	schedules, err := readBackupSchedules(ctx, db, installation, connection)
+	if err != nil {
+		return err
+	}
+	paused := false
+	for _, s := range schedules {
+		if !s.active() {
+			if s.Status != "PAUSED" {
+				return fmt.Errorf("native backup schedule failure requires inspection: %s", s.State)
+			}
+			paused = true
+		}
+	}
+	if len(schedules) == 2 && !paused {
+		return nil
+	}
+	if paused {
+		// One native statement removes the pair. A retry after this effect sees
+		// no pair and recreates it; a retry after creation keeps the active pair.
+		if _, err := db.ExecContext(ctx, `DROP SCHEDULES SELECT id FROM [SHOW SCHEDULES] WHERE label=$1 AND id IN ($2,$3)`, "recovery-"+installation, schedules[0].ID, schedules[1].ID); err != nil {
+			return err
+		}
+	}
+	if _, err := db.ExecContext(ctx, statement); err != nil {
+		return err
+	}
+	return VerifySchedules(ctx, db, installation, connection)
 }
 
 // Read only the supported SHOW CREATE response. Credential-bearing URI values

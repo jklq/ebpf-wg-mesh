@@ -13,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/signkeys/signkeystest"
+	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/recovery"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -149,6 +150,72 @@ func TestRecoveryCheckpointOnFreshAgent(t *testing.T) {
 	summary, _ := store.summary()
 	if summary.Initialization != initializationReady {
 		t.Fatal("fresh agent did not become ready after checkpoint")
+	}
+}
+
+func TestApprovedCheckpointReadinessPreservesQuarantine(t *testing.T) {
+	store := openTestLocalState(t)
+	authority := reconciliation.Authority{InstallationID: "installation", Generation: "recovery", ClusterID: "cluster-a", Paused: true, Checkpoints: true}
+	if _, err := store.admitAuthority(authority); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &supervisorTestRuntime{inventory: []RuntimeResource{{AllocationID: "unknown", RuntimeID: "quarantined-runtime"}}}
+	s := newWorkloadSupervisor("node-1", runtime, store, func(context.Context, *agentv1.AssignedNodeConfig) error { return nil })
+	s.recoveryPaused, s.recoveryCheckpoints = true, true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := s.Start(ctx, authority.ClusterID); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{stateStore: store, supervisor: s, recoveryAuthority: authority}
+	if report := app.readyReport(ctx); report.Status == health.StatusReady || report.Checkpoint.Complete {
+		t.Fatal("admission alone established checkpoint readiness", report)
+	}
+	state := testDesiredState(1, 1)
+	state.InstallationId, state.RecoveryGeneration = authority.InstallationID, authority.Generation
+	if _, err := s.AcceptDesired(authority.ClusterID, "test-session", state); err != nil {
+		t.Fatal(err)
+	}
+	if report := app.readyReport(ctx); report.Checkpoint.Complete {
+		t.Fatal("checkpoint omitted credentials and replica acknowledgment")
+	}
+	deadline := timestamppb.New(time.Now().Add(15 * time.Second))
+	creds := &agentv1.PullCredentialSet{AgentId: "node-1", ClusterId: authority.ClusterID, InstallationId: authority.InstallationID, RecoveryGeneration: authority.Generation, SessionId: "test-session", AuthorityEpoch: 1, AuthorityNotAfter: deadline}
+	creds.CredentialsVersion = reconciliation.HashCredentials(nil)
+	if _, err := s.AcceptCredentials(authority.ClusterID, "test-session", creds); err != nil {
+		t.Fatal(err)
+	}
+	replicas := &agentv1.ReplicaEndpoints{AgentId: "node-1", ClusterId: authority.ClusterID, InstallationId: authority.InstallationID, RecoveryGeneration: authority.Generation, SessionId: "test-session", AuthorityEpoch: 1, AuthorityNotAfter: deadline, ReplicaAddresses: []string{"core:9443"}}
+	replicas.ReplicasVersion = reconciliation.HashReplicas(replicas.ReplicaAddresses)
+	if _, err := s.AcceptReplicas(authority.ClusterID, "test-session", replicas); err != nil {
+		t.Fatal(err)
+	}
+	// Ordinary upgrade quiescence disables delivery after recovery, while
+	// approval and the independently verified checkpoint remain valid.
+	app.recoveryAuthority.Checkpoints, s.recoveryCheckpoints = false, false
+	if _, err := store.admitAuthority(app.recoveryAuthority); err != nil {
+		t.Fatal(err)
+	}
+	for _, paused := range []bool{true, false} {
+		app.recoveryAuthority.Paused, s.recoveryPaused = paused, paused
+		if report := app.readyReport(ctx); report.Status != health.StatusReady || !report.Checkpoint.Complete {
+			t.Fatal("accepted approved checkpoint remained unavailable", report)
+		}
+		s.reconcile(ctx, "desired-state")
+	}
+	summary, err := store.summary()
+	if err != nil || summary.Initialization != initializationRecovery || len(summary.RuntimeResources) != 1 || runtime.calls != 1 || runtime.cleanup[0] {
+		t.Fatal("checkpoint readiness released quarantined resources or cleanup", summary, err)
+	}
+	app.recoveryAuthority.Generation = "other"
+	if report := app.readyReport(ctx); report.Status == health.StatusReady || report.Checkpoint.Complete {
+		t.Fatal("checkpoint was admitted under another authority", report)
+	}
+	if _, err := store.admitAuthority(app.recoveryAuthority); err != nil {
+		t.Fatal(err)
+	}
+	if summary, err := store.summary(); err != nil || summary.CheckpointApproved {
+		t.Fatal("approval survived a generation change", summary, err)
 	}
 }
 

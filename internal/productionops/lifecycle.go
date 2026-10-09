@@ -86,7 +86,12 @@ func (r *Runner) installAdmission(ctx context.Context, paused, checkpoints, rest
 			}
 			script := remoteFile(cfgDir(p, pl)+"/authority.json", b)
 			if restart {
-				script += "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then systemctl restart " + shell(unit(p, pl)) + "; fi\n"
+				// Inspect the running admission, including the checkpoint mode. An
+				// unchanged file alone cannot prove that an interrupted restart ran.
+				live, err := r.participantAdmission(ctx, p, pl)
+				if err != nil || live != admitted {
+					script += "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then systemctl restart " + shell(unit(p, pl)) + "; fi\n"
+				}
 			}
 			if _, err := r.remote(ctx, p, pl, script); err != nil {
 				// An offline retained participant is safe only with independently
@@ -99,6 +104,44 @@ func (r *Runner) installAdmission(ctx context.Context, paused, checkpoints, rest
 	}
 	return nil
 }
+
+// Credential issuance owns the admission identity at first provisioning, while
+// lifecycle transitions own its pause and checkpoint mode. Renewal must retain
+// an already admitted mode instead of reconstructing it from a backup receipt.
+func (r *Runner) ensureAdmissionIdentity(ctx context.Context, pl deploy.Placement, wanted reconciliation.Authority, verify bool) error {
+	if !mutable(pl.Role) {
+		return nil
+	}
+	path := cfgDir(r.Plan, pl) + "/authority.json"
+	quoted := shell(path)
+	script := "if test -e " + quoted + " || test -L " + quoted + "; then\n"
+	script += "test -f " + quoted + "\ntest ! -L " + quoted + "\n"
+	script += "test -n \"$(find " + quoted + " -prune -type f \\( -perm 0600 -o -perm 0400 \\) -print)\"\ncat " + quoted + "\nfi\n"
+	body, err := r.remote(ctx, r.Plan, pl, script)
+	if err != nil {
+		return err
+	}
+	if len(body) == 0 {
+		if verify {
+			return fmt.Errorf("participant admission identity is missing")
+		}
+		encoded, err := json.Marshal(wanted)
+		if err != nil {
+			return err
+		}
+		_, err = r.remote(ctx, r.Plan, pl, remoteFile(path, encoded))
+		return err
+	}
+	var admitted reconciliation.Authority
+	if err := json.Unmarshal(body, &admitted); err != nil {
+		return err
+	}
+	if admitted.InstallationID != wanted.InstallationID || admitted.Generation != wanted.Generation || admitted.ClusterID != wanted.ClusterID || admitted.Paused != wanted.Paused {
+		return fmt.Errorf("participant admission identity or pause differs from database authority")
+	}
+	return nil
+}
+
 func (r *Runner) participantPlans(paused bool) []deploy.Plan {
 	if paused && !r.Plan.Recovery && r.Plan.Previous != nil {
 		old := r.Plan.Previous
@@ -117,6 +160,27 @@ func (r *Runner) participantPlans(paused bool) []deploy.Plan {
 	return []deploy.Plan{r.Plan}
 }
 func (r *Runner) verifyPause(ctx context.Context, paused, recovered bool) error {
+	return r.verifyAdmission(ctx, paused, recovered, nil)
+}
+
+func (r *Runner) participantAdmission(ctx context.Context, p deploy.Plan, pl deploy.Placement) (reconciliation.Authority, error) {
+	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	body, err := r.hostProbe(probeCtx, p, pl, r.expandPlanProbe(p, r.Config.Probes[pl.Role], pl), false)
+	if err != nil {
+		return reconciliation.Authority{}, err
+	}
+	var report health.Report
+	if err := json.Unmarshal(body, &report); err != nil {
+		return reconciliation.Authority{}, err
+	}
+	if report.Authority == nil {
+		return reconciliation.Authority{}, fmt.Errorf("participant does not report its admitted authority")
+	}
+	return *report.Authority, nil
+}
+
+func (r *Runner) verifyAdmission(ctx context.Context, paused, recovered bool, checkpoints *bool) error {
 	db, err := r.db(ctx, false)
 	if err != nil {
 		return err
@@ -161,42 +225,18 @@ func (r *Runner) verifyPause(ctx context.Context, paused, recovered bool) error 
 			if err := json.Unmarshal([]byte(authority), &a); err != nil {
 				return err
 			}
-			if a.Paused != paused || a.Generation != generation || a.InstallationID != installation {
+			if a.Paused != paused || a.Generation != generation || a.InstallationID != installation || checkpoints != nil && a.Checkpoints != *checkpoints {
 				return fmt.Errorf("host authority does not match database")
 			}
 			if state == "stopped" {
 				continue
 			}
-			if pl.Role != deploy.Console {
-				probe := r.expandPlanProbe(p, r.Config.Probes[pl.Role], pl)
-				// The process reports the authority it admitted at startup. A changed
-				// file without a restart cannot satisfy this observation.
-				body, err := r.hostProbe(ctx, p, pl, probe, false)
-				if err != nil {
-					return err
-				}
-				var report health.Report
-				if err := json.Unmarshal(body, &report); err != nil {
-					return err
-				}
-				if report.Authority == nil || report.Authority.Paused != paused || report.Authority.Generation != generation || report.Authority.InstallationID != installation || report.Authority.ClusterID != a.ClusterID {
-					return fmt.Errorf("running %s has not admitted the selected authority", pl.Instance)
-				}
-			} else {
-				// Console readiness includes the admitted runtime generation and pause.
-				body, err := r.hostProbe(ctx, p, pl, r.expandPlanProbe(p, r.Config.Probes[pl.Role], pl), false)
-				if err != nil {
-					return err
-				}
-				var report struct {
-					Authority *reconciliation.Authority `json:"authority"`
-				}
-				if err := json.Unmarshal(body, &report); err != nil {
-					return err
-				}
-				if report.Authority == nil || report.Authority.Generation != generation || report.Authority.Paused != paused {
-					return fmt.Errorf("console has not admitted the selected authority")
-				}
+			live, err := r.participantAdmission(ctx, p, pl)
+			if err != nil {
+				return err
+			}
+			if live != a {
+				return fmt.Errorf("running %s has not admitted the selected authority", pl.Instance)
 			}
 		}
 	}
@@ -215,8 +255,23 @@ func (r *Runner) resume(ctx context.Context, recovered bool) (returnErr error) {
 			}
 		}
 	}()
-	if err := r.productionVerify(ctx); err != nil {
-		return fmt.Errorf("resume gate: %w", err)
+	name := "resume"
+	if recovered {
+		name = "recovery-resume"
+	}
+	contract, _ := deploy.ContractForHook(name)
+	for _, gate := range contract.LiveGates {
+		result, err := r.Verify(ctx, []string{gate})
+		if err != nil {
+			return fmt.Errorf("resume gate %s: %w", gate, err)
+		}
+		evidence, ok := result.(deploy.Evidence)
+		if !ok {
+			return fmt.Errorf("resume gate %s returned an incompatible evidence type", gate)
+		}
+		if err := deploy.ValidateHookEvidence(gate, r.Plan, evidence); err != nil {
+			return err
+		}
 	}
 	if recovered {
 		if err := r.recoverWork(ctx, true); err != nil {
@@ -236,7 +291,9 @@ func (r *Runner) resume(ctx context.Context, recovered bool) (returnErr error) {
 			return err
 		}
 	}
-	if err := r.pause(ctx, false, false); err != nil {
+	// Preserve approved checkpoint admission after recovery resumes. Unknown
+	// resources keep their independent destructive-cleanup fence closed.
+	if err := r.pause(ctx, false, recovered); err != nil {
 		return err
 	}
 	return r.verifyPause(ctx, false, recovered)

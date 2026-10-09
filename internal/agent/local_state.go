@@ -115,6 +115,7 @@ type localStateSummary struct {
 	InstallationID            string
 	RecoveryGeneration        string
 	CheckpointRequired        bool
+	CheckpointApproved        bool
 	LocalStoreID              string
 	Allocations               []*agentv1.ServiceCondition
 	Initialization            initializationState
@@ -128,6 +129,10 @@ type localStateSummary struct {
 	ObservationOverlayVersion string
 	RuntimeResources          []RuntimeResource
 	QuarantinedStore          string
+}
+
+func (s localStateSummary) checkpointComplete() bool {
+	return (s.Initialization == initializationReady || s.Initialization == initializationRecovery) && !s.CheckpointRequired && s.AuthorityEpoch > 0 && s.NodeConfigVersion != "" && s.CredentialsVersion != "" && s.ReplicasVersion != ""
 }
 
 type localStateStore struct {
@@ -1448,6 +1453,7 @@ func (s *localStateStore) summary() (localStateSummary, error) {
 		result.InstallationID = string(meta.Get(installationIDKey))
 		result.RecoveryGeneration = string(meta.Get(recoveryGenerationKey))
 		result.CheckpointRequired = meta.Get(checkpointRequiredKey) != nil
+		result.CheckpointApproved = meta.Get(checkpointApprovedKey) != nil
 		result.LocalStoreID = string(meta.Get(localStoreIDKey))
 		result.Initialization = initializationState(meta.Get(initStateKey))
 		result.AgentIdentity = string(meta.Get(agentIdentityKey))

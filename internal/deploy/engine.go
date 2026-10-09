@@ -62,14 +62,17 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			return err
 		}
 	}
-	// Resume may have changed only some processes before an interruption. Restore
-	// the pause before revisiting any earlier verification or backup gate.
+	// An unfinished plan may have activated some or all processes, including an
+	// interruption after recording resume but before committing the deployment.
+	// Restore the pause and invalidate that activation before revisiting gates.
 	for _, op := range p.Operations {
 		if activationHook(op.Hook) && state.Progress.Started[op.ID] {
-			if _, ok := state.Progress.Completed[op.ID]; !ok {
-				if err := e.pauseBeforeRetry(ctx, p, state); err != nil {
-					return err
-				}
+			if err := e.pauseBeforeRetry(ctx, p, state); err != nil {
+				return err
+			}
+			delete(state.Progress.Completed, op.ID)
+			if err := e.Store.Write(state); err != nil {
+				return err
 			}
 		}
 	}
@@ -270,9 +273,12 @@ func (e Engine) pauseBeforeRetry(ctx context.Context, p Plan, state State) error
 	if _, err := e.Driver.Execute(pauseCtx, p, state, op); err != nil {
 		return fmt.Errorf("interrupted resume requires a verified pause: %w", err)
 	}
-	done, _, err := e.Driver.Observe(pauseCtx, p, state, op)
+	done, evidence, err := e.Driver.Observe(pauseCtx, p, state, op)
 	if err != nil || !done {
 		return fmt.Errorf("pause remains unresolved after interrupted resume: %v", err)
+	}
+	if err := validateHookState(op.Hook, p, state, evidence, time.Now()); err != nil {
+		return fmt.Errorf("interrupted resume pause verification contract: %w", err)
 	}
 	return nil
 }

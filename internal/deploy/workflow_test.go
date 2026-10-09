@@ -33,6 +33,26 @@ func TestLifecycleGraphIgnoresDeclarationOrderAndRejectsCycles(t *testing.T) {
 	if _, err := compileWorkflow(p, definition, mode, groups); err == nil {
 		t.Fatal("dependency cycle was accepted")
 	}
+	// Independent branches must also compile identically when declarations move.
+	branches := []workflowPhase{
+		{Name: "left", Modes: freshMode},
+		{Name: "right", Modes: freshMode},
+		{Name: "join", After: []string{"left", "right"}, Modes: freshMode},
+	}
+	branchActions := map[string][]Operation{
+		"left":  {{Kind: "retain", Host: "a"}},
+		"right": {{Kind: "retain", Host: "b"}},
+		"join":  {{Kind: "retain", Host: "c"}},
+	}
+	before, err := compileWorkflow(p, branches, freshMode, branchActions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Reverse(branches)
+	after, err := compileWorkflow(p, branches, freshMode, branchActions)
+	if err != nil || Digest(before) != Digest(after) {
+		t.Fatalf("independent branches depend on declaration order: %v", err)
+	}
 }
 
 func TestPlanRejectsMissingVerificationAndEarlyDatabaseStartup(t *testing.T) {

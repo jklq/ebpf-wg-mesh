@@ -263,8 +263,9 @@ export type DashboardRuntimeProfile = "development" | "production";
 export interface DashboardConfig {
 	installationID?: string;
 	recoveryGeneration?: string;
- recoveryClusterID?: string;
+	recoveryClusterID?: string;
 	recoveryPaused?: boolean;
+	recoveryCheckpoints?: boolean;
 	profile: DashboardRuntimeProfile;
 	sessionCookieName: string;
 	refreshCookieName: string;

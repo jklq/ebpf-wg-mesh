@@ -210,7 +210,8 @@ func (r *Runner) reconcileFleet(ctx context.Context, verify bool) error {
 	}
 	// Complete restored checkpoints perform adoption/recreation. Host admission
 	// keeps all cleanup paused, including resources unknown at the cutoff.
-	if err := r.verifyPause(ctx, true, true); err != nil {
+	checkpoints := true
+	if err := r.verifyAdmission(ctx, true, true, &checkpoints); err != nil {
 		return err
 	}
 	if err := r.restoreArtifacts(ctx, true); err != nil {

@@ -101,6 +101,7 @@ export async function checkDashboardReadiness(): Promise<{
 		generation: string;
 		clusterId: string;
 		paused: boolean;
+		checkpoints: boolean;
 	};
 	failed?: Array<string>;
 }> {
@@ -134,6 +135,7 @@ export async function checkDashboardReadiness(): Promise<{
 						generation: config.recoveryGeneration,
 						clusterId: config.recoveryClusterID,
 						paused: config.recoveryPaused ?? false,
+						checkpoints: config.recoveryCheckpoints ?? false,
 					}
 				: undefined,
 	};
@@ -238,6 +240,7 @@ function readConfig(): RuntimeConfig {
 		recoveryGeneration: admission?.generation,
 		recoveryClusterID: admission?.clusterId,
 		recoveryPaused: admission?.paused ?? false,
+		recoveryCheckpoints: admission?.checkpoints ?? false,
 		profile,
 		databaseURL,
 		databaseURLs,
@@ -377,6 +380,7 @@ function readConsoleAuthority(profile: "development" | "production"):
 			generation: string;
 			clusterId: string;
 			paused: boolean;
+			checkpoints: boolean;
 	  }
 	| undefined {
 	const file = process.env.DASHBOARD_AUTHORITY_FILE;
@@ -396,10 +400,11 @@ function readConsoleAuthority(profile: "development" | "production"):
 		!authority.generation ||
 		typeof authority.clusterId !== "string" ||
 		!authority.clusterId ||
-		typeof authority.paused !== "boolean"
+		typeof authority.paused !== "boolean" ||
+		typeof authority.checkpoints !== "boolean"
 	)
 		throw new Error(
-			"console admission requires installation, generation and pause state",
+			"console admission requires installation, generation, cluster, pause and checkpoint state",
 		);
 	return authority;
 }
