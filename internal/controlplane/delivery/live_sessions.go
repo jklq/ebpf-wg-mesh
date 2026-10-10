@@ -13,7 +13,7 @@ import (
 )
 
 func (l *Live) requireAccepting() error {
-	if l == nil || !l.serving || !l.accepting {
+	if l == nil || !l.serving || !l.accepting || l.ownerCtx == nil || l.ownerCtx.Err() != nil {
 		return ErrNotLiveOwner
 	}
 	return nil

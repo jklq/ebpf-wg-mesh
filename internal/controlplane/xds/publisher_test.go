@@ -204,6 +204,32 @@ func TestPublisherFencedAfterTakeover(t *testing.T) {
 	if pubs.writes != 0 {
 		t.Fatal("a fenced owner must not write the publication row")
 	}
+	if source.calls.Load() != 0 {
+		t.Fatal("a fenced owner must not read replacement inputs")
+	}
+}
+
+func TestPublisherRetainsSnapshotWhenPublicationCASLoses(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	accepted := mustBuild(t, BuildInput{
+		Backends:        []Backend{{Domain: "a.example.com", Upstream: "10.0.0.10:8080"}},
+		HTTPListenAddrs: []string{":8080"},
+	})
+	pub := Publication{Version: accepted.Version, Inputs: accepted.Inputs}
+	pubs := &movingPublications{first: pub, moved: pub}
+	server := NewServer(ctx)
+	server.Publish(ctx, accepted)
+	publisher := NewPublisher(PublisherConfig{
+		Source: &fakeSource{}, Publications: pubs, Server: server,
+		HTTPListenAddrs: []string{":8080"},
+	})
+	if err := publisher.Sync(ctx); err == nil {
+		t.Fatal("expected rejected publication error")
+	}
+	if got := server.Status().Version; got != accepted.Version {
+		t.Fatalf("served rejected empty snapshot: version=%s, want %s", got, accepted.Version)
+	}
 }
 
 func TestPublisherRequestSyncCoalescesBurst(t *testing.T) {

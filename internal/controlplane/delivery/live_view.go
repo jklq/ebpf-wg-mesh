@@ -201,6 +201,28 @@ func (l *Live) Product() *journal.Projection {
 	return l.product
 }
 
+// IngressState captures durable routes and their health under one lock. A
+// resign or takeover cannot turn an allowed read into an empty configuration.
+func (l *Live) IngressState() (*journal.Projection, map[string]AllocationRecord, error) {
+	if l == nil {
+		return nil, nil, ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.publicationReadyLocked(); err != nil {
+		return nil, nil, err
+	}
+	allocations := make(map[string]AllocationRecord)
+	for _, domain := range l.product.Domains {
+		for _, id := range l.product.AssignmentIDsForService(domain.ServiceID) {
+			if _, exists := allocations[id]; !exists {
+				allocations[id] = l.overlayAllocationLocked(allocationRecordFromAssignment(l.product.DurableState, l.product.Assignments[id]))
+			}
+		}
+	}
+	return l.product, allocations, nil
+}
+
 func (l *Live) AgentIDs() []string {
 	if l == nil {
 		return nil

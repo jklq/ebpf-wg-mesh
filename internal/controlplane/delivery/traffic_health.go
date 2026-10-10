@@ -64,9 +64,19 @@ func probeAllocationTraffic(ctx context.Context, allocation AllocationRecord) (b
 // large agent. An inaccessible local mesh defers replacement just like success.
 func (d *Delivery) allocationsRetainedByTraffic(ctx context.Context, agentID string) map[string]AllocationRecord {
 	var candidates []AllocationRecord
+	retained := make(map[string]AllocationRecord)
+	product := d.live.Product()
 	for _, allocation := range d.live.AllocationsByAgent(agentID) {
-		if allocation.RolloutState == AllocationRolloutServing && allocation.Healthy {
+		if allocation.RolloutState != AllocationRolloutServing {
+			continue
+		}
+		if allocation.Healthy {
 			candidates = append(candidates, allocation)
+		} else if _, observed := d.live.Observation(allocation.ID, allocation.DesiredRolloutGeneration); !observed && len(product.DomainHostnamesForService(allocation.ServiceID)) > 0 {
+			// Takeover erased health evidence, not the running workload. Keep
+			// routed allocations until an agent supplies failure evidence or
+			// durable intent explicitly withdraws them.
+			retained[allocation.ID] = allocation
 		}
 	}
 	jobs := make(chan AllocationRecord, len(candidates))
@@ -87,7 +97,6 @@ func (d *Delivery) allocationsRetainedByTraffic(ctx context.Context, agentID str
 			}
 		}()
 	}
-	retained := make(map[string]AllocationRecord)
 	for range candidates {
 		if allocation := <-results; allocation.ID != "" {
 			retained[allocation.ID] = allocation

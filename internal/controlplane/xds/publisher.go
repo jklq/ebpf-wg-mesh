@@ -106,23 +106,23 @@ func (p *Publisher) Sync(ctx context.Context) error {
 	p.pushMu.Lock()
 	defer p.pushMu.Unlock()
 
-	inputs, err := p.source.IngressInputs(ctx)
-	if err != nil {
-		return err
-	}
-	snap, err := Build(ctx, BuildInput{
-		Backends:         inputs.Backends,
-		Static:           p.static,
-		HTTPListenAddrs:  p.http,
-		HTTPSListenAddrs: p.https,
-		Certificates:     inputs.Certificates,
-		Challenges:       inputs.Challenges,
-		Keys:             p.keys,
-	})
-	if err != nil {
-		return err
-	}
 	return p.source.WithLeaseGuard(ctx, func() error {
+		inputs, err := p.source.IngressInputs(ctx)
+		if err != nil {
+			return err
+		}
+		snap, err := Build(ctx, BuildInput{
+			Backends:         inputs.Backends,
+			Static:           p.static,
+			HTTPListenAddrs:  p.http,
+			HTTPSListenAddrs: p.https,
+			Certificates:     inputs.Certificates,
+			Challenges:       inputs.Challenges,
+			Keys:             p.keys,
+		})
+		if err != nil {
+			return err
+		}
 		return p.publishLocked(ctx, snap)
 	})
 }
@@ -308,12 +308,14 @@ func (p *Publisher) flushNodeObservations(ctx context.Context) error {
 
 func (p *Publisher) publishLocked(ctx context.Context, snap *Snapshot) error {
 	if p.pubs != nil {
+		accepted := false
 		for range 2 {
 			pub, err := p.pubs.LoadPublication(ctx)
 			if err != nil {
 				return err
 			}
 			if pub.Version == snap.Version {
+				accepted = true
 				break
 			}
 			won, err := p.pubs.CompareAndSwapPublication(ctx, pub.Version, Publication{
@@ -323,8 +325,12 @@ func (p *Publisher) publishLocked(ctx context.Context, snap *Snapshot) error {
 				return err
 			}
 			if won {
+				accepted = true
 				break
 			}
+		}
+		if !accepted {
+			return fmt.Errorf("publication changed during publish")
 		}
 	}
 	if p.server != nil {

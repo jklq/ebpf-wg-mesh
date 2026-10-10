@@ -345,7 +345,21 @@ type routingPersistence struct {
 }
 
 func (s *routingPersistence) WithLeaseGuard(ctx context.Context, fn func() error) error {
-	return s.withLeaseGuard(ctx, fn)
+	if s.live == nil {
+		return deliverycore.ErrNotLiveOwner
+	}
+	ownerCtx, err := s.live.PublicationContext()
+	if err != nil {
+		return err
+	}
+	claim, ok := ownerCtx.Value(leaseContextKey{}).(leaseClaim)
+	if !ok {
+		return errLeaseLost
+	}
+	if requested, ok := ctx.Value(leaseContextKey{}).(leaseClaim); ok && requested != claim {
+		return errLeaseLost
+	}
+	return s.withLeaseGuard(context.WithValue(ctx, leaseContextKey{}, claim), fn)
 }
 
 func newPersistence(db *database) *persistence {

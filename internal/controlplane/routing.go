@@ -614,19 +614,24 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 type ingressLiveReader interface {
 	Publishing() bool
 	Product() *journal.Projection
-	OverlayAllocation(deliverycore.AllocationRecord) deliverycore.AllocationRecord
+	PublicationContext() (context.Context, error)
+	IngressState() (*journal.Projection, map[string]deliverycore.AllocationRecord, error)
 }
 
 func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]xds.Backend, error) {
 	_ = ctx
 	live := s.live
-	if live == nil || !live.Publishing() {
-		return nil, nil
+	if live == nil {
+		return nil, deliverycore.ErrNotLiveOwner
 	}
-	return healthyIngressBackends(live.Product(), live), nil
+	product, allocations, err := live.IngressState()
+	if err != nil {
+		return nil, err
+	}
+	return healthyIngressBackends(product, allocations), nil
 }
 
-func healthyIngressBackends(product *journal.Projection, live ingressLiveReader) []xds.Backend {
+func healthyIngressBackends(product *journal.Projection, allocations map[string]deliverycore.AllocationRecord) []xds.Backend {
 	durable := product.DurableState
 	type row struct {
 		hostname, allocationID, ipv4, ipv6 string
@@ -636,13 +641,7 @@ func healthyIngressBackends(product *journal.Projection, live ingressLiveReader)
 	var rows []row
 	for _, domain := range durable.Domains {
 		for _, id := range product.AssignmentIDsForService(domain.ServiceID) {
-			assignment := durable.Assignments[id]
-			rec := live.OverlayAllocation(deliverycore.AllocationRecord{
-				ID: assignment.ID, ServiceID: assignment.ServiceID, AgentID: assignment.AgentID,
-				DesiredSpecRevision: assignment.DesiredSpecRevision, DesiredRolloutGeneration: assignment.DesiredRolloutGeneration,
-				AllocationIPv4: assignment.AllocationIPv4, AllocationIPv6: assignment.AllocationIPv6,
-				RolloutState: assignment.RolloutState, Message: assignment.IntentMessage,
-			})
+			rec := allocations[id]
 			if !rec.Healthy || rec.RolloutState != deliverycore.AllocationRolloutServing ||
 				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration ||
 				rec.Phase == restartpolicy.PhaseCrashLoop {
