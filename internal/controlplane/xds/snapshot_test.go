@@ -111,9 +111,9 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 		t.Fatal("rebuilt snapshot resources differ")
 	}
 	// Older publications must not reuse a version for the new traffic policy.
-	oldInputs := bytes.Replace(snap.Inputs, []byte(`"format":1,`), nil, 1)
+	oldInputs := bytes.Replace(snap.Inputs, []byte(`"format":2,`), []byte(`"format":1,`), 1)
 	if _, err := BuildFromInputs(context.Background(), oldInputs, nil); err == nil {
-		t.Fatal("accepted publication without the current resource format")
+		t.Fatal("accepted publication with the previous resource format")
 	}
 
 	for _, raw := range [][]byte{nil, {}, []byte("not json"), []byte(`{"domains":[{"name":"x","endpoints":["nope"]}]}`)} {
@@ -131,7 +131,7 @@ func TestBuildGoldenVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A fixed input must hash to a fixed version across processes and replicas.
-	const want = "14b56290cc1f8d309e5993cdf591d7e0b4ebe3fc0b55a329556ad08629db1e69"
+	const want = "dc0af465ced938fa6f69a523ac51f0a9f7c3a85ac85ed757194a9dff23490b54"
 	if snap.Version != want {
 		t.Fatalf("version = %s, want %s", snap.Version, want)
 	}
@@ -184,6 +184,9 @@ func TestBuildRoutesMultipleReplicasPerService(t *testing.T) {
 	}
 	if checks[0].GetNoTrafficInterval().AsDuration() != 2*time.Second {
 		t.Fatal("idle workloads are not probed")
+	}
+	if !cluster.GetIgnoreHealthOnHostRemoval() {
+		t.Fatal("healthy withdrawn workloads can still receive traffic")
 	}
 	if cluster.GetCommonLbConfig().GetHealthyPanicThreshold() == nil || cluster.GetCommonLbConfig().GetHealthyPanicThreshold().GetValue() != 0 {
 		t.Fatal("failed workloads can receive panic traffic")

@@ -36,7 +36,7 @@ import (
 
 // Increment when fixed resource policy changes, so unchanged backend inputs
 // still produce a new publication and Envoy receives the changed CDS policy.
-const snapshotFormat = 1
+const snapshotFormat = 2
 
 const (
 	HTTPRouteConfigName  = "ingress_http"
@@ -895,6 +895,9 @@ func edsCluster(name, claName string) clusterv3.Cluster {
 			HealthyThreshold:   wrapperspb.UInt32(1),
 			HealthChecker:      &corev3.HealthCheck_TcpHealthCheck_{TcpHealthCheck: &corev3.HealthCheck_TcpHealthCheck{}},
 		}},
+		// Withdrawal ACKs must stop new traffic even while the old workload is
+		// healthy, so the rollout can safely stop it after ingress converges.
+		IgnoreHealthOnHostRemoval: true,
 		// An all-unhealthy cluster must fail closed instead of panic routing to
 		// failed workloads. Checks continue independently of agent sessions.
 		CommonLbConfig: &clusterv3.Cluster_CommonLbConfig{HealthyPanicThreshold: &typev3.Percent{Value: 0}},
