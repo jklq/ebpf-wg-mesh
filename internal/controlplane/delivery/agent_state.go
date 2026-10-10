@@ -105,10 +105,8 @@ func workloadIdentities(product *journal.Projection, agentID string) ([]*agentv1
 type agentView struct {
 	agentID            string
 	product            *journal.Projection
-	sessions           map[string]AgentSession
 	observations       map[liveObsKey]AllocationObservation
 	now                time.Time
-	ttl                time.Duration
 	epoch              uint64
 	hostsByEnvironment map[string][]*agentv1.InternalHost
 }
@@ -127,8 +125,8 @@ func (l *Live) agentView(agentID string) (*agentView, error) {
 	}
 	l.mu.Lock()
 	product := l.product
-	epoch, now, ttl := l.authorityEpoch, l.now().UTC(), l.ttl
-	// Only observations and presence in the agent's private network scopes
+	epoch, now := l.authorityEpoch, l.now().UTC()
+	// Only observations in the agent's private network scopes
 	// affect its rendering. Durable rows and indexes are already immutable.
 	assignmentIDs := make(map[string]bool)
 	for _, id := range product.AssignmentIDsForAgent(agentID) {
@@ -141,13 +139,9 @@ func (l *Live) agentView(agentID string) (*agentView, error) {
 			}
 		}
 	}
-	sessions := make(map[string]AgentSession)
 	observations := make(map[liveObsKey]AllocationObservation)
 	for id := range assignmentIDs {
 		a := product.Assignments[id]
-		if session := l.sessions[a.AgentID]; session != nil {
-			sessions[a.AgentID] = *session
-		}
 		key := liveObsKey{AllocationID: id, Generation: a.DesiredRolloutGeneration}
 		if obs, ok := l.observations[key]; ok {
 			observations[key] = obs
@@ -157,7 +151,7 @@ func (l *Live) agentView(agentID string) (*agentView, error) {
 	if _, exists := product.Agents[agentID]; !exists {
 		return nil, sql.ErrNoRows
 	}
-	return &agentView{agentID: agentID, product: product, sessions: sessions, observations: observations, now: now, ttl: ttl, epoch: epoch}, nil
+	return &agentView{agentID: agentID, product: product, observations: observations, now: now, epoch: epoch}, nil
 }
 
 func (v *agentView) checkpoint(mesh config.ControlPlaneMeshConfig) (*agentv1.DesiredNodeState, error) {
@@ -258,9 +252,8 @@ func (v *agentView) internalHostsForEnvironment(environmentID string) []*agentv1
 		for _, assignmentID := range product.AssignmentIDsForService(serviceID) {
 			assignment := durable.Assignments[assignmentID]
 			rec := allocationRecordFromAssignment(durable, assignment)
-			session, hasSession := v.sessions[rec.AgentID]
 			obs, hasObs := v.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
-			rec = overlayAllocation(rec, session, hasSession, obs, hasObs, v.now, v.ttl)
+			rec = overlayAllocation(rec, obs, hasObs)
 			if !rec.Healthy || rec.RolloutState != AllocationRolloutServing ||
 				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration {
 				continue

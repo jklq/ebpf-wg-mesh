@@ -5,6 +5,7 @@ import (
 	"context"
 	"sort"
 	"testing"
+	"time"
 
 	clusterv3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -109,6 +110,11 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 	if !bytes.Equal(snapshotBytes(t, rebuilt), snapshotBytes(t, snap)) {
 		t.Fatal("rebuilt snapshot resources differ")
 	}
+	// Older publications must not reuse a version for the new traffic policy.
+	oldInputs := bytes.Replace(snap.Inputs, []byte(`"format":1,`), nil, 1)
+	if _, err := BuildFromInputs(context.Background(), oldInputs, nil); err == nil {
+		t.Fatal("accepted publication without the current resource format")
+	}
 
 	for _, raw := range [][]byte{nil, {}, []byte("not json"), []byte(`{"domains":[{"name":"x","endpoints":["nope"]}]}`)} {
 		if _, err := BuildFromInputs(context.Background(), raw, nil); err == nil {
@@ -125,7 +131,7 @@ func TestBuildGoldenVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A fixed input must hash to a fixed version across processes and replicas.
-	const want = "45dc7e8fe8944408c0a614e06e2dde86ff47ebc5555e554eb79ce5466b2905f6"
+	const want = "14b56290cc1f8d309e5993cdf591d7e0b4ebe3fc0b55a329556ad08629db1e69"
 	if snap.Version != want {
 		t.Fatalf("version = %s, want %s", snap.Version, want)
 	}
@@ -171,6 +177,16 @@ func TestBuildRoutesMultipleReplicasPerService(t *testing.T) {
 	}
 	if got := cluster.GetEdsClusterConfig().GetServiceName(); got != "endpoints/a.example.com" {
 		t.Fatalf("EDS service name = %q", got)
+	}
+	checks := cluster.GetHealthChecks()
+	if len(checks) != 1 || checks[0].GetTcpHealthCheck() == nil || checks[0].GetUnhealthyThreshold().GetValue() != 2 {
+		t.Fatalf("workload traffic probes missing: %v", checks)
+	}
+	if checks[0].GetNoTrafficInterval().AsDuration() != 2*time.Second {
+		t.Fatal("idle workloads are not probed")
+	}
+	if cluster.GetCommonLbConfig().GetHealthyPanicThreshold() == nil || cluster.GetCommonLbConfig().GetHealthyPanicThreshold().GetValue() != 0 {
+		t.Fatal("failed workloads can receive panic traffic")
 	}
 
 	routes := routeResources(t, snap)

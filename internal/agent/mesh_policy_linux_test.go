@@ -5,13 +5,17 @@ package agent
 import (
 	"context"
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/firewall"
+	"ebof-wg-mesh/internal/meshstate"
 	"ebof-wg-mesh/internal/testutil"
 
 	"github.com/vishvananda/netlink"
@@ -66,6 +70,123 @@ func TestMeshPolicyCatalogShrinkUpdatesLivePolicy(t *testing.T) {
 	}
 	for _, endpoint := range b.endpoints() {
 		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
+}
+
+func TestMeshPolicySurvivesFirewallRestart(t *testing.T) {
+	h := startMeshPolicyHarness(t, true)
+	a, b, c := h.workload("a"), h.workload("b"), h.workload("c")
+	// A flow to an address outside the identity catalog exercises connection
+	// tracking on the return path, not just same-environment policy.
+	flow := persistentExternalFlow(t, h.cfg, a.netns)
+	checkPersistentFlow(t, flow)
+	if err := h.firewall.Close(); err != nil {
+		t.Fatal(err)
+	}
+	checkPersistentFlow(t, flow)
+	// Traffic and isolation must keep working while no manager is alive.
+	for _, endpoint := range b.endpoints() {
+		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
+	for _, endpoint := range c.endpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ownership, err := meshstate.Acquire(h.cfg.WireGuard.InterfaceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted, err := firewall.Start(ctx, h.cfg, ownership)
+	if err != nil {
+		_ = ownership.Close()
+		t.Fatalf("restart firewall: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := restarted.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if restarted.AttachedCount() != len(h.workloads) {
+		t.Fatalf("adopted %d workloads, want %d", restarted.AttachedCount(), len(h.workloads))
+	}
+	checkPersistentFlow(t, flow)
+	for _, endpoint := range b.endpoints() {
+		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
+	for _, endpoint := range c.endpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
+}
+
+func persistentExternalFlow(t *testing.T, cfg config.MeshRuntimeConfig, namespace string) net.Conn {
+	t.Helper()
+	_, pool, err := net.ParseCIDR(cfg.WorkloadIPv4PoolCIDR)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hostIP net.IP
+	for _, iface := range interfaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err == nil && ip.To4() != nil && ip.IsGlobalUnicast() && !pool.Contains(ip) {
+				hostIP = ip
+				break
+			}
+		}
+		if hostIP != nil {
+			break
+		}
+	}
+	if hostIP == nil {
+		t.Fatal("host has no IPv4 address outside the workload catalog")
+	}
+	ln, err := net.Listen("tcp4", net.JoinHostPort(hostIP.String(), "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_, _ = io.Copy(conn, conn)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := dialInNetworkNamespace(ctx, namespace, "tcp", net.JoinHostPort(hostIP.String(), strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)))
+	if err != nil {
+		t.Fatalf("establish tracked external flow: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func checkPersistentFlow(t *testing.T, conn net.Conn) {
+	t.Helper()
+	if err := conn.SetDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("connection-tracking-survives-restart")
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("write established flow: %v", err)
+	}
+	response := make([]byte, len(payload))
+	if _, err := io.ReadFull(conn, response); err != nil {
+		t.Fatalf("established return traffic lost: %v", err)
+	}
+	if string(response) != string(payload) {
+		t.Fatalf("unexpected return traffic: %q", response)
 	}
 }
 
@@ -161,13 +282,21 @@ func startMeshPolicyHarness(t *testing.T, includeC bool) *meshPolicyHarness {
 		WorkloadPoolCIDR:     "fd00:200::/48",
 	}
 
-	fw, err := firewall.Start(ctx, meshCfg)
+	ownership, err := meshstate.Acquire(iface)
 	if err != nil {
+		t.Fatal(err)
+	}
+	fw, err := firewall.Start(ctx, meshCfg, ownership)
+	if err != nil {
+		_ = ownership.Close()
 		t.Skipf("BPF/TCX cannot load on this host: %v", err)
 	}
 	t.Cleanup(func() {
 		if err := fw.Close(); err != nil {
 			t.Errorf("close firewall: %v", err)
+		}
+		if err := firewall.Remove(iface); err != nil {
+			t.Errorf("remove firewall: %v", err)
 		}
 	})
 

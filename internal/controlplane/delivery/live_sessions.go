@@ -35,7 +35,7 @@ func (l *Live) BeginSession(agentID, sessionID string, inventory []string, assig
 	}
 	now := l.now().UTC()
 	if previous, ok := l.sessions[agentID]; ok && previous.SessionID != sessionID {
-		l.invalidateSessionLocked(agentID, previous.SessionID)
+		l.invalidateSessionLocked(agentID)
 	}
 	session := &AgentSession{
 		AgentID: agentID, SessionID: sessionID, LastContact: now,
@@ -89,12 +89,9 @@ func inventoryReconciled(assigned, inventory []string) bool {
 	return true
 }
 
-func (l *Live) invalidateSessionLocked(agentID, sessionID string) {
-	for key, obs := range l.observations {
-		if obs.AgentID == agentID && obs.SessionID == sessionID {
-			delete(l.observations, key)
-		}
-	}
+func (l *Live) invalidateSessionLocked(agentID string) {
+	// Observations belong to the agent identity and allocation generation.
+	// Replacing the transport fences old reports without erasing running work.
 	if timer, ok := l.timers[agentID]; ok {
 		timer.Stop()
 		delete(l.timers, agentID)

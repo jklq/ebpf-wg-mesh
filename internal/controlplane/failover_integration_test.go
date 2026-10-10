@@ -4,6 +4,7 @@ package controlplane
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"strings"
 	"sync"
@@ -149,9 +150,7 @@ func TestFailoverReconcilerTriggersStatelessServiceRollover(t *testing.T) {
 	}
 	original := mustAllocationOnAgent(t, store, service.ID, "node-a")
 	originalID := original.ID
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, original.AllocationIPv6, 8080); err != nil {
-		t.Fatal(err)
-	}
+	reportStoppedListener(t, store, service.ID)
 
 	now := time.Now().UTC()
 	lastSeen := now.Add(-2 * deliverycore.AgentHealthyTTL)
@@ -297,9 +296,7 @@ func TestServiceFailoverMovesStatelessServiceAndNotifiesCluster(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalID := mustAllocationOnAgent(t, store, service.ID, "old-node").ID
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, mustAllocationOnAgent(t, store, service.ID, "old-node").AllocationIPv6, 8080); err != nil {
-		t.Fatal(err)
-	}
+	reportStoppedListener(t, store, service.ID)
 	now := time.Now().UTC()
 	makeAgentUnhealthy(t, store, "old-node", now.Add(-2*time.Minute))
 
@@ -413,14 +410,14 @@ func TestServiceFailoverSurfacesVolumeAndCapacityBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != "Unavailable" || !strings.Contains(volumeAllocation.Message, "not replicated") {
+	if volumeAllocation.AgentID != "old-node" || volumeAllocation.Phase != "Pending" || !strings.Contains(volumeAllocation.Message, "not replicated") {
 		t.Fatalf("volume allocation did not surface a pinned-storage reason: %+v", volumeAllocation)
 	}
 	largeAllocation, err := store.primaryAllocationForTest(ctx, largeService.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != "Unavailable" || !strings.Contains(largeAllocation.Message, "blocked") || !(strings.Contains(largeAllocation.Message, "capacity") || strings.Contains(largeAllocation.Message, "CPU") || strings.Contains(largeAllocation.Message, "memory")) {
+	if largeAllocation.AgentID != "old-node" || largeAllocation.Phase != "Pending" || !strings.Contains(largeAllocation.Message, "blocked") || !(strings.Contains(largeAllocation.Message, "capacity") || strings.Contains(largeAllocation.Message, "CPU") || strings.Contains(largeAllocation.Message, "memory")) {
 		t.Fatalf("capacity allocation did not surface a no-capacity reason: %+v", largeAllocation)
 	}
 	if ingress.requests.Load() != 1 {
@@ -467,7 +464,7 @@ func TestServiceFailoverKeepsManagedWorkloadOnTrustedAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if allocation.AgentID != trusted.AgentId || allocation.Phase != "Unavailable" || !strings.Contains(allocation.Message, "trusted") {
+	if allocation.AgentID != trusted.AgentId || allocation.Phase != "Pending" || !strings.Contains(allocation.Message, "trusted") {
 		t.Fatalf("managed allocation migrated or lacked a trust failure: %+v", allocation)
 	}
 }
@@ -556,9 +553,7 @@ func TestServiceFailoverPreservesStagedUpdate(t *testing.T) {
 		t.Fatal(err)
 	}
 	original := mustAllocationOnAgent(t, store, service.ID, "old-node")
-	if err := store.markAllocationHealthyForTest(ctx, service.ID, original.AllocationIPv6, 8080); err != nil {
-		t.Fatal(err)
-	}
+	reportStoppedListener(t, store, service.ID)
 	if err := newTestDelivery(store, nil, nil, nil).ReconcileRollouts(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -655,4 +650,68 @@ func bootstrapFailoverProject(t *testing.T, store *persistence) string {
 func makeAgentUnhealthy(t *testing.T, store *persistence, agentID string, lastSeen time.Time) {
 	t.Helper()
 	fixtureLive(store).SetLastContactForTest(agentID, lastSeen.UTC())
+}
+
+func TestManagementLossKeepsServingTrafficUntilListenerFails(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	port := int32(ln.Addr().(*net.TCPAddr).Port)
+	store, serviceID := createHealthyBoundService(t, "reconnect.example.com", "127.0.0.1", port)
+	ctx := context.Background()
+	if _, err := upsertTestAgent(t, store, ctx, agentHello("node-2")); err != nil {
+		t.Fatal(err)
+	}
+	live := store.fleet.sessions.(*deliverycore.Live)
+	old, _ := live.Session("node-1")
+	if err := live.EndSession("node-1", old.SessionID); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := time.Now().UTC().Add(-2 * deliverycore.AgentHealthyTTL)
+	live.SetLastContactForTest("node-1", staleAt)
+	cutoff := time.Now().UTC().Add(-deliverycore.AgentHealthyTTL)
+	delivery := newTestDelivery(store, nil, nil, nil)
+	originalID := mustAllocationOnAgent(t, store, serviceID, "node-1").ID
+	if changed, _, err := delivery.failoverServicesFromAgent(ctx, "node-1", cutoff); err != nil || len(changed) != 0 {
+		t.Fatalf("management outage replaced serving allocation: changed=%v err=%v", changed, err)
+	}
+	backends, err := store.routing.HealthyIngressBackends(ctx)
+	if err != nil || len(backends) != 1 {
+		t.Fatalf("management outage withdrew routing: %v %v", backends, err)
+	}
+	if err := live.BeginSession("node-1", "reconnected", []string{originalID}, []string{originalID}, true); err != nil {
+		t.Fatal(err)
+	}
+	backends, err = store.routing.HealthyIngressBackends(ctx)
+	if err != nil || len(backends) != 1 {
+		t.Fatalf("new process withdrew routing: %v %v", backends, err)
+	}
+	if err := live.EndSession("node-1", "reconnected"); err != nil {
+		t.Fatal(err)
+	}
+	live.SetLastContactForTest("node-1", staleAt)
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if changed, _, err := delivery.failoverServicesFromAgent(ctx, "node-1", cutoff); err != nil || len(changed) == 0 {
+		t.Fatalf("failed listener did not trigger failover: changed=%v err=%v", changed, err)
+	}
+	requireNodeLossReplacement(t, store, serviceID, originalID, "node-1", "node-2")
+}
+
+// The report describes a previously healthy workload. Closing its real listener
+// gives failover traffic failure evidence independent of management presence.
+func reportStoppedListener(t *testing.T, store *persistence, serviceID string) {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	if err := store.markAllocationHealthyForTest(context.Background(), serviceID, "127.0.0.1", int32(ln.Addr().(*net.TCPAddr).Port)); err != nil {
+		t.Fatal(err)
+	}
 }

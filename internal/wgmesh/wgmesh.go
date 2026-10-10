@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,45 +26,28 @@ type Runtime struct {
 }
 
 func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
-	state, err := parseWireGuardState(cfg)
-	if err != nil {
+	if _, err := parseWireGuardState(cfg); err != nil {
 		return nil, err
 	}
-	if existing, err := netlink.LinkByName(cfg.InterfaceName); err == nil {
-		if err := netlink.LinkDel(existing); err != nil {
-			return nil, fmt.Errorf("delete existing %s: %w", cfg.InterfaceName, err)
-		}
-	}
-
-	gl := &netlink.GenericLink{
-		LinkAttrs: netlink.LinkAttrs{Name: cfg.InterfaceName},
-		LinkType:  "wireguard",
-	}
-	if err := netlink.LinkAdd(gl); err != nil {
-		return nil, fmt.Errorf("create wireguard interface %s: %w", cfg.InterfaceName, err)
-	}
-	cleanupOnFail := true
-	defer func() {
-		if cleanupOnFail {
-			_ = teardownLink(cfg.InterfaceName)
-		}
-	}()
-
-	link, err := netlink.LinkByName(cfg.InterfaceName)
+	iface, err := netlink.LinkByName(cfg.InterfaceName)
 	if err != nil {
-		return nil, fmt.Errorf("lookup created interface %s: %w", cfg.InterfaceName, err)
-	}
-
-	for _, addr := range state.addresses {
-		address := addr
-		if err := netlink.AddrAdd(link, &address); err != nil {
-			if !isAddressExists(err) {
-				return nil, fmt.Errorf("addr add %q to %s: %w", addr.String(), cfg.InterfaceName, err)
-			}
+		var notFound netlink.LinkNotFoundError
+		if !errors.As(err, &notFound) {
+			return nil, fmt.Errorf("lookup interface %s: %w", cfg.InterfaceName, err)
 		}
-	}
-	if err := netlink.LinkSetUp(link); err != nil {
-		return nil, fmt.Errorf("set %s up: %w", cfg.InterfaceName, err)
+		iface = &netlink.GenericLink{
+			LinkAttrs: netlink.LinkAttrs{Name: cfg.InterfaceName},
+			LinkType:  "wireguard",
+		}
+		if err := netlink.LinkAdd(iface); err != nil {
+			return nil, fmt.Errorf("create wireguard interface %s: %w", cfg.InterfaceName, err)
+		}
+		iface, err = netlink.LinkByName(cfg.InterfaceName)
+		if err != nil {
+			return nil, fmt.Errorf("lookup created interface %s: %w", cfg.InterfaceName, err)
+		}
+	} else if iface.Type() != "wireguard" {
+		return nil, fmt.Errorf("interface %s has type %s, want wireguard", cfg.InterfaceName, iface.Type())
 	}
 
 	client, err := wgctrl.New()
@@ -77,28 +60,52 @@ func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
 		}
 	}()
 
-	peerCfgs := make([]wgtypes.PeerConfig, 0, len(state.peers))
-	for _, peer := range state.peers {
-		peerCfgs = append(peerCfgs, peer)
+	device, err := client.Device(cfg.InterfaceName)
+	if err != nil {
+		return nil, fmt.Errorf("read wireguard device %s: %w", cfg.InterfaceName, err)
 	}
+	addresses, err := netlink.AddrList(iface, netlink.FAMILY_ALL)
+	if err != nil {
+		return nil, fmt.Errorf("read wireguard addresses %s: %w", cfg.InterfaceName, err)
+	}
+	r := &Runtime{ifName: cfg.InterfaceName, client: client, state: stateFromDevice(device, addresses)}
+	if iface.Attrs().Flags&net.FlagUp == 0 {
+		if err := netlink.LinkSetUp(iface); err != nil {
+			return nil, fmt.Errorf("set %s up: %w", cfg.InterfaceName, err)
+		}
+	}
+	if err := r.Update(cfg); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
 
-	privateKey := state.privateKey
-	listenPort := state.listenPort
-	deviceCfg := wgtypes.Config{
-		PrivateKey:   &privateKey,
-		ListenPort:   &listenPort,
-		ReplacePeers: true,
-		Peers:        peerCfgs,
+// Read the kernel's state so adoption uses the same incremental reconciliation
+// as a running process. ReplacePeers would discard existing peer sessions.
+func stateFromDevice(device *wgtypes.Device, addresses []netlink.Addr) wireGuardState {
+	state := wireGuardState{
+		privateKey: device.PrivateKey,
+		listenPort: device.ListenPort,
+		addresses:  make(map[string]netlink.Addr),
+		peers:      make(map[wgtypes.Key]wgtypes.PeerConfig),
+		routes:     make(map[string]net.IPNet),
 	}
-	if err := client.ConfigureDevice(cfg.InterfaceName, deviceCfg); err != nil {
-		return nil, fmt.Errorf("configure wireguard device %s: %w", cfg.InterfaceName, err)
+	for _, addr := range addresses {
+		state.addresses[addr.String()] = addr
 	}
-	if err := installPeerRoutes(link.Attrs().Index, state.routes); err != nil {
-		return nil, fmt.Errorf("configure wireguard routes %s: %w", cfg.InterfaceName, err)
+	for _, peer := range device.Peers {
+		keepalive := peer.PersistentKeepaliveInterval
+		state.peers[peer.PublicKey] = wgtypes.PeerConfig{
+			PublicKey: peer.PublicKey, Endpoint: peer.Endpoint,
+			PersistentKeepaliveInterval: &keepalive,
+			ReplaceAllowedIPs:           true, AllowedIPs: peer.AllowedIPs,
+		}
+		for _, cidr := range peer.AllowedIPs {
+			route := normalizeCIDR(cidr)
+			state.routes[route.String()] = route
+		}
 	}
-
-	cleanupOnFail = false
-	return &Runtime{ifName: cfg.InterfaceName, client: client, state: state}, nil
+	return state
 }
 
 type wireGuardState struct {
@@ -207,9 +214,6 @@ func (r *Runtime) Update(cfg config.WireGuard) error {
 		}
 	}
 	for key, route := range next.routes {
-		if _, exists := r.state.routes[key]; exists {
-			continue
-		}
 		if err := installPeerRoute(link.Attrs().Index, route); err != nil {
 			return fmt.Errorf("add wireguard route %s: %w", key, err)
 		}
@@ -251,12 +255,29 @@ func deviceUpdate(current, next wireGuardState) wgtypes.Config {
 		}
 	}
 	for key, peer := range next.peers {
-		if existing, exists := current.peers[key]; exists && reflect.DeepEqual(existing, peer) {
+		if existing, exists := current.peers[key]; exists && samePeer(existing, peer) {
 			continue
 		}
 		update.Peers = append(update.Peers, peer)
 	}
 	return update
+}
+
+func samePeer(a, b wgtypes.PeerConfig) bool {
+	if a.PublicKey != b.PublicKey || a.Endpoint.String() != b.Endpoint.String() ||
+		a.PersistentKeepaliveInterval == nil || b.PersistentKeepaliveInterval == nil ||
+		*a.PersistentKeepaliveInterval != *b.PersistentKeepaliveInterval {
+		return false
+	}
+	allowed := func(ips []net.IPNet) []string {
+		keys := make([]string, 0, len(ips))
+		for _, ip := range ips {
+			keys = append(keys, ip.String())
+		}
+		slices.Sort(keys)
+		return keys
+	}
+	return slices.Equal(allowed(a.AllowedIPs), allowed(b.AllowedIPs))
 }
 
 func buildAllowedIPs(p config.PeerConfig, ep *net.UDPAddr) ([]net.IPNet, error) {
@@ -282,15 +303,6 @@ func buildAllowedIPs(p config.PeerConfig, ep *net.UDPAddr) ([]net.IPNet, error) 
 		}}, nil
 	}
 	return nil, fmt.Errorf("unsupported endpoint ip %q", ep.IP.String())
-}
-
-func installPeerRoutes(linkIndex int, cidrs map[string]net.IPNet) error {
-	for key, cidr := range cidrs {
-		if err := installPeerRoute(linkIndex, cidr); err != nil {
-			return fmt.Errorf("replace route %s: %w", key, err)
-		}
-	}
-	return nil
 }
 
 func installPeerRoute(linkIndex int, cidr net.IPNet) error {
@@ -337,15 +349,11 @@ func (r *Runtime) Close() error {
 			errs = append(errs, fmt.Errorf("close wgctrl client: %w", err))
 		}
 	}
-	if r.ifName != "" {
-		if err := teardownLink(r.ifName); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	return errors.Join(errs...)
 }
 
-func teardownLink(name string) error {
+// Remove explicitly destroys the interface and its routes. Close only releases handles.
+func Remove(name string) error {
 	link, err := netlink.LinkByName(name)
 	if err != nil {
 		var notFound netlink.LinkNotFoundError
@@ -354,6 +362,10 @@ func teardownLink(name string) error {
 		}
 		return fmt.Errorf("lookup %s for teardown: %w", name, err)
 	}
+	if link.Type() != "wireguard" {
+		return fmt.Errorf("interface %s has type %s, want wireguard", name, link.Type())
+	}
+
 	if err := netlink.LinkDel(link); err != nil {
 		return fmt.Errorf("delete interface %s: %w", name, err)
 	}

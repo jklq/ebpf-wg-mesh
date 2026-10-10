@@ -234,6 +234,18 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 }
 
 func (d *Delivery) failoverAgent(ctx context.Context, agentID string, cutoff, now time.Time) (ServiceFailoverResult, error) {
+	// Probe outside the transaction, then validate the assignment generation
+	// before using the evidence. A management outage alone cannot evict a
+	// workload that is still accepting traffic.
+	agent, ok := d.live.Agent(agentID)
+	if !ok || agent.LifecycleState != AgentStateUnavailable || agent.LastSeenAt.After(cutoff) {
+		return ServiceFailoverResult{}, nil
+	}
+	retained := d.allocationsRetainedByTraffic(ctx, agentID)
+	if err := ctx.Err(); err != nil {
+		return ServiceFailoverResult{}, err
+	}
+
 	var result ServiceFailoverResult
 	changedEnvironments := make(map[string]struct{})
 	err := d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
@@ -249,6 +261,13 @@ func (d *Delivery) failoverAgent(ctx context.Context, agentID string, cutoff, no
 			return err
 		}
 		for _, allocation := range allocations {
+			if evidence, ok := retained[allocation.ID]; ok &&
+				evidence.DesiredSpecRevision == allocation.DesiredSpecRevision &&
+				evidence.DesiredRolloutGeneration == allocation.DesiredRolloutGeneration &&
+				evidence.AllocationIPv4 == allocation.AllocationIPv4 && evidence.AllocationIPv6 == allocation.AllocationIPv6 {
+				continue
+			}
+
 			replacement, err := d.replaceLostNodeAllocationTx(ctx, tx, agentID, allocation, now)
 			if err != nil {
 				return err
@@ -362,11 +381,7 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 		return result, nil
 	}
 	if decision.Action == failoverBlocked {
-		state := allocationFailoverState{
-			phase: allocation.Phase, message: allocation.Message,
-			healthyIPv4Ports: allocation.HealthyIPv4Ports, healthyIPv6Ports: allocation.HealthyIPv6Ports, healthy: allocation.Healthy,
-		}
-		changed, err := d.store.markAllocationUnavailableForFailoverTx(ctx, tx, allocation.ID, state, decision.Message, now)
+		changed, err := d.store.setFailoverMessageTx(ctx, tx, allocation.ID, decision.Message, now)
 		if err != nil {
 			return result, err
 		}
@@ -404,22 +419,12 @@ func (d *Delivery) replaceLostNodeAllocationTx(ctx context.Context, tx *sql.Tx, 
 	return result, nil
 }
 
-const allocationPhaseUnavailable = "Unavailable"
-
 type ServiceFailoverResult struct {
 	MovedServiceIDs   []string
 	BlockedServiceIDs []string
 	NotifyAgentIDs    []string
 	EnvironmentIDs    []string
 	IngressChanged    bool
-}
-
-type allocationFailoverState struct {
-	phase            string
-	message          string
-	healthyIPv4Ports jsonInt32Slice
-	healthyIPv6Ports jsonInt32Slice
-	healthy          bool
 }
 
 func (d *Delivery) failoverUnhealthyServices(ctx context.Context, now time.Time, unhealthyThreshold time.Duration) (ServiceFailoverResult, error) {
@@ -480,8 +485,12 @@ func listAllocationsForFailover(ctx context.Context, s *persistence, q ServiceQu
 	return out, rows.Err()
 }
 
-func (s *persistence) markAllocationUnavailableForFailoverTx(ctx context.Context, tx *sql.Tx, allocationID string, current allocationFailoverState, message string, now time.Time) (bool, error) {
-	if current.phase == allocationPhaseUnavailable && current.message == message && len(current.healthyIPv4Ports) == 0 && len(current.healthyIPv6Ports) == 0 && !current.healthy {
+func (s *persistence) setFailoverMessageTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) (bool, error) {
+	var current string
+	if err := tx.QueryRowContext(ctx, `SELECT intent_message FROM allocation_assignments WHERE id = $1`, allocationID).Scan(&current); err != nil {
+		return false, err
+	}
+	if current == message {
 		return false, nil
 	}
 	err := (&Delivery{store: s}).applyAllocationMutationsTx(ctx, tx, now, allocationMutation{

@@ -6,10 +6,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/firewall"
+	"ebof-wg-mesh/internal/meshstate"
 	"ebof-wg-mesh/internal/wgmesh"
 )
 
@@ -20,12 +22,21 @@ type Runtime struct {
 	closed    bool
 }
 
-func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (*Runtime, error) {
+func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Runtime, retErr error) {
+	ownership, err := meshstate.Acquire(cfg.WireGuard.InterfaceName)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if retErr != nil {
+			_ = ownership.Close()
+		}
+	}()
 	wgRuntime, err := wgmesh.Setup(cfg.WireGuard)
 	if err != nil {
 		return nil, fmt.Errorf("wireguard setup: %w", err)
 	}
-	fw, err := firewall.Start(ctx, cfg)
+	fw, err := firewall.Start(ctx, cfg, ownership)
 	if err != nil {
 		_ = wgRuntime.Close()
 		return nil, fmt.Errorf("firewall start: %w", err)
@@ -62,4 +73,18 @@ func (r *Runtime) Close() error {
 	}
 	r.closed = true
 	return errors.Join(r.firewall.Close(), r.wireguard.Close())
+}
+
+// Remove is the explicit destructive counterpart to Close. Stop the agent and
+// remove its workloads first; removal deliberately drops network connectivity.
+func Remove(interfaceName string) error {
+	ownership, err := meshstate.Acquire(interfaceName)
+	if err != nil {
+		return err
+	}
+	defer ownership.Close()
+	if err := os.RemoveAll(ownership.PinDir); err != nil {
+		return err
+	}
+	return wgmesh.Remove(interfaceName)
 }

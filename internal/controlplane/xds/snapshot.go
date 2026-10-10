@@ -24,13 +24,19 @@ import (
 	tlsinspector "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/listener/tls_inspector/v3"
 	hcm "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/network/http_connection_manager/v3"
 	tlsv3 "github.com/envoyproxy/go-control-plane/envoy/extensions/transport_sockets/tls/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	cachetypes "github.com/envoyproxy/go-control-plane/pkg/cache/types"
 	cachev3 "github.com/envoyproxy/go-control-plane/pkg/cache/v3"
 	resourcev3 "github.com/envoyproxy/go-control-plane/pkg/resource/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 )
+
+// Increment when fixed resource policy changes, so unchanged backend inputs
+// still produce a new publication and Envoy receives the changed CDS policy.
+const snapshotFormat = 1
 
 const (
 	HTTPRouteConfigName  = "ingress_http"
@@ -225,6 +231,7 @@ func canonicalize(input BuildInput) (canonicalInput, error) {
 	})
 
 	canonical := canonicalInput{
+		Format:         snapshotFormat,
 		HTTPListeners:  normalizedListenAddrs(input.HTTPListenAddrs),
 		HTTPSListeners: normalizedListenAddrs(input.HTTPSListenAddrs),
 		Certificates:   canonicalCertificates(input.Certificates),
@@ -247,6 +254,9 @@ func canonicalize(input BuildInput) (canonicalInput, error) {
 }
 
 func buildCanonical(canonical canonicalInput, raw []byte, keys map[string]KeyPair) (*Snapshot, error) {
+	if canonical.Format != snapshotFormat {
+		return nil, fmt.Errorf("unsupported xds snapshot format %d", canonical.Format)
+	}
 	httpPorts, err := listenPorts(canonical.HTTPListeners)
 	if err != nil {
 		return nil, err
@@ -413,6 +423,7 @@ type canonicalChallenge struct {
 }
 
 type canonicalInput struct {
+	Format         int                    `json:"format"`
 	Domains        []canonicalDomain      `json:"domains"`
 	Statics        []canonicalStatic      `json:"statics"`
 	HTTPListeners  []string               `json:"http_listeners"`
@@ -876,6 +887,18 @@ func edsCluster(name, claName string) clusterv3.Cluster {
 			ServiceName: claName,
 			EdsConfig:   adsConfigSource(),
 		},
+		HealthChecks: []*corev3.HealthCheck{{
+			Timeout:            durationpb.New(time.Second),
+			Interval:           durationpb.New(2 * time.Second),
+			NoTrafficInterval:  durationpb.New(2 * time.Second),
+			UnhealthyThreshold: wrapperspb.UInt32(2),
+			HealthyThreshold:   wrapperspb.UInt32(1),
+			HealthChecker:      &corev3.HealthCheck_TcpHealthCheck_{TcpHealthCheck: &corev3.HealthCheck_TcpHealthCheck{}},
+		}},
+		// An all-unhealthy cluster must fail closed instead of panic routing to
+		// failed workloads. Checks continue independently of agent sessions.
+		CommonLbConfig: &clusterv3.Cluster_CommonLbConfig{HealthyPanicThreshold: &typev3.Percent{Value: 0}},
+
 		LbPolicy: clusterv3.Cluster_ROUND_ROBIN,
 	}
 }

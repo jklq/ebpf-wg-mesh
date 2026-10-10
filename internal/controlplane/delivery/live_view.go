@@ -39,6 +39,14 @@ func (l *Live) applyProductLocked(update journal.Applied) {
 		update.Reset = true
 	}
 	l.product = state
+	// Retained observations stop belonging to live work when an assignment is
+	// removed, moved, or advances its desired generation.
+	for key, obs := range l.observations {
+		a, exists := state.Assignments[key.AllocationID]
+		if !exists || a.AgentID != obs.AgentID || a.DesiredRolloutGeneration != key.Generation {
+			delete(l.observations, key)
+		}
+	}
 	l.allocSync.applied(previous, update)
 	if state.ClusterID != "" && state.LogIndex > l.durableIndexes[state.ClusterID] {
 		l.durableIndexes[state.ClusterID] = state.LogIndex
@@ -388,13 +396,8 @@ func (l *Live) AllocationsByAgent(agentID string) []AllocationRecord {
 }
 
 func (l *Live) overlayAllocationLocked(rec AllocationRecord) AllocationRecord {
-	var session AgentSession
-	var hasSession bool
-	if s, ok := l.sessions[rec.AgentID]; ok && s != nil {
-		session, hasSession = *s, true
-	}
 	obs, hasObs := l.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
-	return overlayAllocation(rec, session, hasSession, obs, hasObs, l.now().UTC(), l.ttl)
+	return overlayAllocation(rec, obs, hasObs)
 }
 
 func (l *Live) AssignedIDs(agentID string) []string {
@@ -650,28 +653,20 @@ func overlayAgentAbsent(rec AgentRecord) AgentRecord {
 }
 
 func (l *Live) OverlayAllocation(rec AllocationRecord) AllocationRecord {
-	var session AgentSession
-	var hasSession bool
 	var obs AllocationObservation
 	var hasObs bool
-	var now time.Time
-	ttl := AgentHealthyTTL
 	if l != nil {
 		l.mu.Lock()
-		if s, ok := l.sessions[rec.AgentID]; ok {
-			session, hasSession = *s, true
-		}
 		obs, hasObs = l.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
-		now = l.now().UTC()
-		ttl = l.ttl
 		l.mu.Unlock()
 	}
-	return overlayAllocation(rec, session, hasSession, obs, hasObs, now, ttl)
+	return overlayAllocation(rec, obs, hasObs)
 }
 
-func overlayAllocation(rec AllocationRecord, session AgentSession, hasSession bool, obs AllocationObservation, hasObs bool, now time.Time, ttl time.Duration) AllocationRecord {
-	expired := !hasSession || !session.Reachable || (!now.IsZero() && now.Sub(session.LastContact) >= ttl)
-	if rec.RolloutState == AllocationRolloutLost || expired {
+func overlayAllocation(rec AllocationRecord, obs AllocationObservation, hasObs bool) AllocationRecord {
+	// Session reachability controls management and placement, not traffic.
+	// Retain generation-scoped observations while ingress probes the workloads.
+	if rec.RolloutState == AllocationRolloutLost {
 		rec.Phase = "Unavailable"
 		rec.Healthy = false
 		rec.HealthyIPv4Ports = nil
