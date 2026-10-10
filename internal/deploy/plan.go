@@ -16,10 +16,11 @@ type HostStatus struct {
 	Capabilities []string  `json:"capabilities"`
 }
 type DatabaseStatus struct {
-	Live       []string      `json:"live"`
-	Members    []string      `json:"members"` // stable host IDs, including unavailable members
-	Replicated bool          `json:"replicated"`
-	Ranges     []RangeStatus `json:"ranges,omitempty"`
+	Versions   map[string]string `json:"versions,omitempty"`
+	Live       []string          `json:"live"`
+	Members    []string          `json:"members"` // stable host IDs, including unavailable members
+	Replicated bool              `json:"replicated"`
+	Ranges     []RangeStatus     `json:"ranges,omitempty"`
 }
 type RangeStatus struct {
 	ID     string   `json:"id"`

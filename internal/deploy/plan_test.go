@@ -12,6 +12,7 @@ var testNow = time.Now().UTC().Truncate(time.Second)
 func fixture(n int) (Installation, Release, Inventory) {
 	i := Installation{Version: 1, ID: "production", Release: "r42", ManagementHost: "a", Providers: map[string]Provider{"hetzner": {Kind: "hetzner", Token: "provider"}, "gigahost": {Kind: "gigahost", Token: "provider"}, "imported": {Kind: "linux"}}, Secrets: map[string]SecretRef{"provider": {File: "/etc/platform/provider"}, "ssh": {File: "/etc/platform/ssh"}, "recovery": {File: "/etc/platform/recovery"}, "backup-writer": {File: "/etc/platform/backup-writer"}, "recovery-key": {File: "/etc/platform/recovery.key"}}, Components: map[Role]Component{}, Storage: map[string]Storage{}, Backup: Backup{Target: "s3://backups/production", Credentials: []string{"backup-writer"}, Account: "recovery", PrimaryAccount: "production", FailureDomain: "independent", RecoveryKey: "recovery-key", Monitor: "https://monitor.example/recovery"}, Recovery: Recovery{Inventory: "/var/lib/platform/fleet-inventory.json", Credentials: []string{"recovery"}}, OneHostFailure: n >= 3, Workload: Resources{500, 512, 1}, MaxDatabaseRTTMillis: 120}
 	r := Release{Version: 1, ID: "r42", Configuration: 1, Protocol: 1, Schema: 43, ConsoleSchema: 3, Dependencies: map[string]string{"cockroachdb": "26.1.0"}, Images: map[string]string{"registry": "distribution@sha256:" + strings.Repeat("1", 64)}, Programs: map[Role]Program{}, Hooks: map[string]Hook{}, Conversions: map[string]Hook{}}
+	r.SchemaCompatibility = true
 	inv := Inventory{Hosts: map[string]HostStatus{}, Storage: map[string]StorageStatus{}}
 	var ids []string
 	for x := 0; x < n; x++ {
@@ -70,13 +71,14 @@ func fixture(n int) (Installation, Release, Inventory) {
 		h := Hook{Command: []string{"/opt/platformops", string(role), "{instance}"}, Verify: []string{"/opt/platformops", "verify", string(role), "{instance}"}}
 		r.Programs[role] = Program{Artifacts: map[string]Artifact{"amd64": {URL: "https://releases.example.com/r42/" + string(role), SHA256: strings.Repeat("0", 64)}}, Args: []string{"--identity={instance}"}, Ready: []string{"/opt/platformops", "ready", "{instance}"}, Drain: h, Retire: h}
 	}
-	for _, name := range []string{"database-credentials", "database-init", "platform-bootstrap", "database-verify", "storage-verify", "production-verify", "reservations", "credentials", "backup", "recovery-protect", "backup-schedule", "recovery-finalize", "recovery-verify", "quiesce", "resume", "restore", "recovery-fence", "recovery-database", "recovery-authority", "recovery-inventory", "recovery-reserve", "recovery-reconcile", "recovery-checkpoints", "recovery-work", "recovery-resume"} {
+	for _, name := range RequiredHooks() {
 		r.Hooks[name] = Hook{Command: []string{"/opt/platformops", name}, Verify: []string{"/opt/platformops", "verify", name}}
 	}
+	r.Hooks["database-upgrade"] = Hook{Command: []string{"/opt/platformops", "database-upgrade", "{instance}"}, Verify: []string{"/opt/platformops", "verify", "database-upgrade", "{instance}"}}
 	for _, role := range []Role{Console, Envoy, Registry} {
 		i.Endpoints = append(i.Endpoints, Endpoint{Name: string(role), URL: "https://" + string(role) + ".example.com", Role: role, Hosts: ids})
 	}
-	inv.Database = DatabaseStatus{Members: ids[:min(n, 3)], Replicated: n >= 3}
+	inv.Database = DatabaseStatus{Members: ids[:min(n, 3)], Live: ids[:min(n, 3)], Replicated: n >= 3}
 	return i, r, inv
 }
 func build(t *testing.T, i Installation, r Release, state State, inv Inventory, automatic bool) Plan {

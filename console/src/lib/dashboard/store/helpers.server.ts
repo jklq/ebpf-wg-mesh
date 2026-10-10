@@ -7,6 +7,7 @@ import {
 	type GitHubAccountLoginInput,
 } from "#/lib/dashboard/core/types.server";
 import { dashboardStoreMigrations } from "#/lib/dashboard/store/migrations.server";
+import { validateDashboardSchema } from "#/lib/dashboard/store/schema-compatibility.server";
 import type {
 	DashboardStoreRuntimeConfig,
 	Queryable,
@@ -153,19 +154,7 @@ export async function migrateDashboardStore(
 	// bootstrap/conversion tool. Runtime startup only verifies that schema,
 	// including during a normal unpaused restart.
 	if (runtime.recoveryGeneration || runtime.recoveryPaused) {
-		const result = await query<{ version: string }>(
-			db,
-			"recovery.schema",
-			`SELECT version FROM ${tableName(runtime, "schema_migrations")}`,
-		);
-		const expected = dashboardStoreMigrations(runtime).map((m) => m.version);
-		const actual = result.rows.map((r) => Number(r.version));
-		if (
-			expected.length !== actual.length ||
-			expected.some((v) => !actual.includes(v))
-		) {
-			throw new Error("restored console schema differs from selected release");
-		}
+		await validateDashboardSchema(runtime, db);
 		return;
 	}
 	await queryVoid(
@@ -180,6 +169,7 @@ export async function migrateDashboardStore(
 			"migrate.createSchemaMigrations",
 			`CREATE TABLE IF NOT EXISTS ${tableName(runtime, "schema_migrations")} (
 				version INT8 PRIMARY KEY,
+				min_compatible_version INT8 NULL,
 				applied_at TIMESTAMPTZ NOT NULL
 			)`,
 		);
@@ -191,18 +181,9 @@ export async function migrateDashboardStore(
 		const appliedVersions = new Set(
 			result.rows.map((row) => Number.parseInt(row.version, 10)),
 		);
-		const currentVersions = new Set(
-			dashboardStoreMigrations(runtime).map((migration) => migration.version),
-		);
-		for (const version of appliedVersions) {
-			if (!currentVersions.has(version)) {
-				throw new DatabaseError({
-					operation: "migrateDashboardStore",
-					message:
-						"database schema differs from this release; apply a backed-up conversion or restore",
-					cause: version,
-				});
-			}
+		if (appliedVersions.size > 0) {
+			await validateDashboardSchema(runtime, client);
+			return;
 		}
 
 		for (const migration of dashboardStoreMigrations(runtime)) {

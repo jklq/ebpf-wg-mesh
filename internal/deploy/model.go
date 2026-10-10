@@ -189,21 +189,43 @@ type Program struct {
 	Drain     Hook                `json:"drain" yaml:"drain"`
 	Retire    Hook                `json:"retire" yaml:"retire"`
 }
+
+// SchemaChange separates online expansion/backfill from cleanup in a later
+// release. Hooks must be idempotent and verify their native SQL effects.
+type SchemaChange struct {
+	Expand   Hook `json:"expand,omitempty" yaml:"expand,omitempty"`
+	Backfill Hook `json:"backfill,omitempty" yaml:"backfill,omitempty"`
+	Contract Hook `json:"contract,omitempty" yaml:"contract,omitempty"`
+}
 type Release struct {
-	Tools         map[string]map[string]Artifact `json:"tools,omitempty" yaml:"tools,omitempty"`
-	Version       int                            `json:"version" yaml:"version"`
-	ID            string                         `json:"id" yaml:"id"`
-	Configuration int                            `json:"configuration" yaml:"configuration"`
-	Protocol      int                            `json:"protocol" yaml:"protocol"`
-	Schema        int                            `json:"schema" yaml:"schema"`
-	ConsoleSchema int                            `json:"consoleSchema" yaml:"consoleSchema"`
-	Dependencies  map[string]string              `json:"dependencies" yaml:"dependencies"`
-	Images        map[string]string              `json:"images" yaml:"images"`
-	Programs      map[Role]Program               `json:"programs" yaml:"programs"`
-	Hooks         map[string]Hook                `json:"hooks" yaml:"hooks"`
-	// Direct, explicit conversion from each supported source release. There is
-	// no migration chain. Restore is the only rollback across a schema cutover.
-	Conversions map[string]Hook `json:"conversions,omitempty" yaml:"conversions,omitempty"`
+	Tools               map[string]map[string]Artifact `json:"tools,omitempty" yaml:"tools,omitempty"`
+	Version             int                            `json:"version" yaml:"version"`
+	ID                  string                         `json:"id" yaml:"id"`
+	Configuration       int                            `json:"configuration" yaml:"configuration"`
+	Protocol            int                            `json:"protocol" yaml:"protocol"`
+	Schema              int                            `json:"schema" yaml:"schema"`
+	ConsoleSchema       int                            `json:"consoleSchema" yaml:"consoleSchema"`
+	MinSchema           int                            `json:"minSchema,omitempty" yaml:"minSchema,omitempty"`
+	MinConsoleSchema    int                            `json:"minConsoleSchema,omitempty" yaml:"minConsoleSchema,omitempty"`
+	SchemaCompatibility bool                           `json:"schemaCompatibility,omitempty" yaml:"schemaCompatibility,omitempty"`
+	Dependencies        map[string]string              `json:"dependencies" yaml:"dependencies"`
+	Images              map[string]string              `json:"images" yaml:"images"`
+	Programs            map[Role]Program               `json:"programs" yaml:"programs"`
+	Hooks               map[string]Hook                `json:"hooks" yaml:"hooks"`
+	// Legacy offline conversions. Rolling upgrades use SchemaChanges instead.
+	Conversions   map[string]Hook         `json:"conversions,omitempty" yaml:"conversions,omitempty"`
+	SchemaChanges map[string]SchemaChange `json:"schemaChanges,omitempty" yaml:"schemaChanges,omitempty"`
+}
+
+func (r Release) minimumSchemas() (int, int) {
+	schema, console := r.MinSchema, r.MinConsoleSchema
+	if schema == 0 {
+		schema = r.Schema
+	}
+	if console == 0 {
+		console = r.ConsoleSchema
+	}
+	return schema, console
 }
 
 func Load[T any](path string) (T, error) {

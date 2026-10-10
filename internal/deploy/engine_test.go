@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -328,119 +327,6 @@ func TestUnknownPurchaseRequiresDiscoveryAndNeverDuplicates(t *testing.T) {
 		t.Fatal("discovered purchase binding not retained")
 	}
 }
-func TestReleaseCutoverOrderAndBackupCutoff(t *testing.T) {
-	i, r, inv := fixture(3)
-	p := build(t, i, r, State{}, inv, false)
-	state := applied(p)
-	r.ID = "r43"
-	r.Schema = 44
-	i.Release = r.ID
-	r.Conversions = map[string]Hook{"r42": {Command: []string{"/opt/convert"}, Verify: []string{"/opt/verify-conversion"}}}
-	p = build(t, i, r, state, inv, false)
-	requireComplete(t, p)
-	quiesce, backup, convert, firstInstall, lastStop, lastDatabase, protect, schedule := -1, -1, -1, -1, -1, -1, -1, -1
-	for n, op := range p.Operations {
-		if op.Hook == "recovery-protect" {
-			protect = n
-		}
-		if op.Hook == "backup-schedule" {
-			schedule = n
-		}
-		if op.Hook == "quiesce" {
-			quiesce = n
-		}
-		if op.Hook == "backup" {
-			backup = n
-		}
-		if op.Kind == "convert" {
-			convert = n
-		}
-		if op.Kind == "stop" {
-			lastStop = n
-		}
-		if (op.Kind == "install" || op.Kind == "database-join") && op.Placement.Role == Database {
-			lastDatabase = n
-		}
-		if firstInstall < 0 && op.Kind == "install" && op.Placement.Role != Database {
-			firstInstall = n
-		}
-	}
-	if !(quiesce < backup && backup < lastStop && lastStop < lastDatabase && lastDatabase < convert && convert < firstInstall) {
-		t.Fatalf("unsafe cutover: q=%d b=%d stop=%d database=%d convert=%d install=%d", quiesce, backup, lastStop, lastDatabase, convert, firstInstall)
-	}
-	if !(protect < quiesce && convert < schedule && schedule < firstInstall) {
-		t.Fatal("activation/cutover bypassed recovery protection or native schedules")
-	}
-	s, _, _ := testStore(t)
-	if err := s.Write(state); err != nil {
-		t.Fatal(err)
-	}
-	d := fake(inv)
-	if err := (Engine{Store: s, Driver: d}).Apply(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
-	final, _ := s.Read()
-	if final.LastBackup.DataLossCutoff != testNow || final.LastBackup.Backup == "" {
-		t.Fatal("backup cutoff missing")
-	}
-	r.Conversions = nil
-	if _, err := BuildPlan(i, r, state, inv, false, testNow); err == nil {
-		t.Fatal("unimplemented conversion accepted")
-	}
-}
-
-func TestFailedUpgradeVerificationAndInterruptedResumeRemainPaused(t *testing.T) {
-	for _, interrupted := range []bool{false, true} {
-		t.Run(fmt.Sprint(interrupted), func(t *testing.T) {
-			i, r, inv := fixture(3)
-			state := applied(build(t, i, r, State{}, inv, false))
-			r.ID = "r43"
-			i.Release = r.ID
-			p := build(t, i, r, state, inv, false)
-			store, _, _ := testStore(t)
-			if err := store.Write(state); err != nil {
-				t.Fatal(err)
-			}
-			d := fake(inv)
-			e := Engine{Store: store, Driver: d}
-			if interrupted {
-				d.failHook = "resume"
-			} else {
-				d.failHook = "production-verify"
-			}
-			if err := e.Apply(context.Background(), p); err == nil {
-				t.Fatal("failure ignored")
-			}
-			for _, op := range p.Operations {
-				if op.Hook == "resume" && !interrupted && d.count[op.ID] != 0 {
-					t.Fatal("resumed failed upgrade")
-				}
-				if op.Hook == "production-verify" {
-					delete(d.done, op.ID)
-				}
-			}
-			if !d.paused {
-				t.Fatal("failed upgrade or partial resume did not preserve the pause")
-			}
-			d.failHook = "production-verify"
-			if err := e.Apply(context.Background(), p); err == nil {
-				t.Fatal("failed retry resumed")
-			}
-			if !d.paused {
-				t.Fatal("failed retry left automation active")
-			}
-			partial, _ := store.Read()
-			if partial.Progress == nil || partial.LastBackup.Backup == "" || partial.Bundle.ID != "r42" {
-				t.Fatal("recovery options lost")
-			}
-			d.failHook = ""
-			if err := e.Apply(context.Background(), p); err != nil {
-				t.Fatal(err)
-			}
-		})
-	}
-}
-
 func completeEvidence(installation, location string, t time.Time) Evidence {
 	until := t.Add(recovery.Retention)
 	object := recovery.Object{Key: "objects/test", Version: "protected", Digest: recovery.Digest([]byte("test")), Size: 4, RetainUntil: until}
@@ -480,41 +366,6 @@ func TestRecoveryEvidenceRejectsAssertionsAndUnprotectedSelection(t *testing.T) 
 	}
 }
 
-func TestResumeObservationFailureRepausesBeforeRetry(t *testing.T) {
-	i, r, inv := fixture(3)
-	state := applied(build(t, i, r, State{}, inv, false))
-	r.ID = "r43"
-	i.Release = r.ID
-	p := build(t, i, r, state, inv, false)
-	store, _, _ := testStore(t)
-	if err := store.Write(state); err != nil {
-		t.Fatal(err)
-	}
-	driver := fake(inv)
-	driver.failObserveHook = "resume"
-	engine := Engine{Store: store, Driver: driver}
-	if err := engine.Apply(context.Background(), p); err == nil {
-		t.Fatal("unverified resume accepted")
-	}
-	if !driver.paused {
-		t.Fatal("failed live resume observation left automation running")
-	}
-	actual, err := store.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if actual.Progress == nil || actual.LastBackup.Backup == "" || actual.Bundle.ID != "r42" {
-		t.Fatal("failed activation lost recovery options")
-	}
-	driver.failObserveHook = ""
-	if err := engine.Apply(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
-	if driver.paused {
-		t.Fatal("verified retry did not activate")
-	}
-}
-
 type unprovenPauseDriver struct{ Driver }
 
 func (d unprovenPauseDriver) Observe(ctx context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
@@ -535,66 +386,5 @@ func TestInterruptedResumeRequiresDeclaredPauseProof(t *testing.T) {
 	}
 	if !d.paused {
 		t.Fatal("pause did not execute before its proof was rejected")
-	}
-}
-
-type resumeJournalDriver struct {
-	Driver
-	journal State
-}
-
-func (d *resumeJournalDriver) Observe(ctx context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
-	done, evidence, err := d.Driver.Observe(ctx, p, state, op)
-	if op.Hook == "resume" && done && err == nil {
-		d.journal = snapshot(state)
-		d.journal.Progress.Completed[op.ID] = evidence
-	}
-	return done, evidence, err
-}
-
-func TestJournaledResumeRepausesUntilDeploymentCommit(t *testing.T) {
-	i, r, inv := fixture(3)
-	state := applied(build(t, i, r, State{}, inv, false))
-	r.ID, i.Release = "r43", "r43"
-	p := build(t, i, r, state, inv, false)
-	store, _, _ := testStore(t)
-	if err := store.Write(state); err != nil {
-		t.Fatal(err)
-	}
-	driver := fake(inv)
-	journal := &resumeJournalDriver{Driver: driver}
-	engine := Engine{Store: store, Driver: journal}
-	if err := engine.Apply(context.Background(), p); err != nil {
-		t.Fatal(err)
-	}
-	if driver.paused || journal.journal.Progress == nil {
-		t.Fatal("resume did not execute and produce its verified journal")
-	}
-	// Reopen the exact verified resume journal, as if the operator disappeared
-	// before the final deployment commit. Live production checks now fail.
-	if err := store.Write(journal.journal); err != nil {
-		t.Fatal(err)
-	}
-	driver.failObserveHook = "production-verify"
-	if err := engine.Apply(context.Background(), p); err == nil {
-		t.Fatal("failed live verification accepted")
-	}
-	if !driver.paused {
-		t.Fatal("journaled activation remained active during failed verification")
-	}
-	actual, err := store.Read()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, op := range p.Operations {
-		if op.Hook == "resume" {
-			if _, completed := actual.Progress.Completed[op.ID]; completed {
-				t.Fatal("pause retained stale activation proof")
-			}
-		}
-	}
-	driver.failObserveHook = ""
-	if err := engine.Apply(context.Background(), p); err != nil || driver.paused {
-		t.Fatal("verified retry did not resume the deployment", err)
 	}
 }

@@ -3,13 +3,72 @@ package productionops
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
 	"regexp"
 	"strings"
+
+	"ebof-wg-mesh/internal/deploy"
 )
+
+// Input is the NUL-separated running process environment. Never print it: SQL
+// URLs and the rest of the environment contain component credentials.
+func inspectSQLFailover(ctx context.Context, role deploy.Role, excluded string, input io.Reader) error {
+	data, err := io.ReadAll(io.LimitReader(input, 2<<20))
+	if err != nil {
+		return err
+	}
+	env := map[string]string{}
+	for _, item := range strings.Split(string(data), "\x00") {
+		key, value, ok := strings.Cut(item, "=")
+		if ok {
+			env[key] = value
+		}
+	}
+	var candidates []string
+	switch role {
+	case deploy.ControlPlane:
+		u, err := url.Parse(env["CONTROLPLANE_DB_URL"])
+		if err != nil || u.Scheme != "postgresql" {
+			return fmt.Errorf("running control plane has no verified SQL configuration")
+		}
+		hosts, ports := strings.Split(u.Query().Get("host"), ","), strings.Split(u.Query().Get("port"), ",")
+		if u.Query().Get("host") == "" {
+			hosts, ports = []string{u.Hostname()}, []string{u.Port()}
+		}
+		if len(hosts) != len(ports) {
+			return fmt.Errorf("SQL host and port lists differ")
+		}
+		for n, host := range hosts {
+			peer := *u
+			selectDatabaseHost(&peer, net.JoinHostPort(host, ports[n]))
+			candidates = append(candidates, peer.String())
+		}
+	case deploy.Console:
+		if err := json.Unmarshal([]byte(env["DASHBOARD_DATABASE_URLS"]), &candidates); err != nil {
+			return fmt.Errorf("running console has no SQL failover endpoints")
+		}
+	default:
+		return fmt.Errorf("SQL failover inspection requires a SQL client role")
+	}
+	for _, candidate := range candidates {
+		u, err := url.Parse(candidate)
+		if err != nil || u.Scheme != "postgresql" || u.Query().Get("sslmode") != "verify-full" {
+			return fmt.Errorf("SQL failover requires verified TLS")
+		}
+		if u.Host == excluded {
+			continue
+		}
+		if err := probeSQL(ctx, u.String()); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("running client has no reachable SQL endpoint outside the restarting node")
+}
 
 func inspectSQLClient(ctx context.Context, path, schema string) error {
 	if !regexp.MustCompile(`^[a-z][a-z0-9_]*$`).MatchString(schema) {

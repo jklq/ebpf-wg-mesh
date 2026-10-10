@@ -9,6 +9,7 @@ configuration: 1
 protocol: 2
 schema: 43
 consoleSchema: 3
+schemaCompatibility: true
 dependencies:
     bun: 1.3.11
     cockroachdb: 26.1.0
@@ -270,6 +271,24 @@ programs:
                 - registry
                 - '{instance}'
 hooks:
+    rolling-prepare:
+        command: ['{tool.operations}', rolling-prepare]
+        verify: ['{tool.operations}', verify, rolling-prepare]
+    builder-drain:
+        command: ['{tool.operations}', builder-drain, '{instance}']
+        verify: ['{tool.operations}', verify, builder-drain, '{instance}']
+    builder-resume:
+        command: ['{tool.operations}', builder-resume, '{instance}']
+        verify: ['{tool.operations}', verify, builder-resume, '{instance}']
+    database-upgrade:
+        command: ['{tool.operations}', database-upgrade, '{instance}']
+        verify: ['{tool.operations}', verify, database-upgrade, '{instance}']
+    database-finalize:
+        command: ['{tool.operations}', database-finalize]
+        verify: ['{tool.operations}', verify, database-finalize]
+    schema-verify:
+        command: ['{tool.operations}', schema-verify]
+        verify: ['{tool.operations}', verify, schema-verify]
     database-credentials:
         command: ['{tool.operations}', database-credentials]
         verify: ['{tool.operations}', verify, database-credentials]

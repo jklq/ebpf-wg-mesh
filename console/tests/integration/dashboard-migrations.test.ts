@@ -79,7 +79,7 @@ describe("dashboard CockroachDB migrations", () => {
 		await pool.query(`INSERT INTO ${runtime.databaseSchema}.onboarding (user_id, repository_selector) VALUES ('user-1', 'octocat/hello')`);
 
 		const store = createPostgresDashboardStore(runtime, pool);
-		await expect(store.ensureInitialized()).rejects.toThrow("backed-up conversion");
+		await expect(store.ensureInitialized()).rejects.toThrow("incompatible");
 
 		const versions = await pool.query<{ version: string }>(
 			`SELECT version FROM ${runtime.databaseSchema}.schema_migrations ORDER BY version`,
@@ -87,6 +87,22 @@ describe("dashboard CockroachDB migrations", () => {
 		expect(versions.rows.map((row) => Number(row.version))).toEqual([1]);
 		const drafts = await pool.query(`SELECT user_id, repository_selector FROM ${runtime.databaseSchema}.onboarding`);
 		expect(drafts.rows).toEqual([{ user_id: "user-1", repository_selector: "octocat/hello" }]);
+	});
+
+	it("runs old code on an expanded schema and rejects it after cleanup", async () => {
+		const runtime = newRuntime("dashboard_overlap");
+		const original = createPostgresDashboardStore(runtime, pool);
+		await original.ensureInitialized();
+		await original.upsertDevUser("overlap-user", "overlap@example.test");
+		await pool.query(`ALTER TABLE ${runtime.databaseSchema}.users ADD COLUMN future_label TEXT NULL`);
+		await pool.query(`UPDATE ${runtime.databaseSchema}.schema_migrations SET version=4,min_compatible_version=3`);
+		const oldReplica = createPostgresDashboardStore(runtime, pool);
+		await oldReplica.ensureInitialized();
+		await oldReplica.upsertDevUser("overlap-user", "still-serving@example.test");
+		const version = await pool.query(`SELECT version FROM ${runtime.databaseSchema}.schema_migrations`);
+		expect(Number(version.rows[0].version)).toBe(4);
+		await pool.query(`UPDATE ${runtime.databaseSchema}.schema_migrations SET min_compatible_version=4`);
+		await expect(createPostgresDashboardStore(runtime, pool).ensureInitialized()).rejects.toThrow("incompatible");
 	});
 
 	it("persists builder choices in the flat current schema", async () => {

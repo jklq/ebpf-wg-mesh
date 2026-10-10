@@ -25,7 +25,15 @@ describe("restored console startup", () => {
 					};
 				}
 				if (text.includes("schema_migrations")) {
-					return { rows: versions.map((version) => ({ version })) };
+					if (text.includes("information_schema")) {
+						return { rows: [{ exists: false }] };
+					}
+					return {
+						rows: versions.map((version) => ({
+							version,
+							compatible_from: version,
+						})),
+					};
 				}
 				throw new Error("restored startup attempted a schema mutation");
 			},
@@ -37,7 +45,7 @@ describe("restored console startup", () => {
 		const { runtime, db, statements } = fixture();
 		await migrateDashboardStore(runtime, db);
 		expect(runtime.recoveryPaused).toBe(true);
-		expect(statements).toHaveLength(2);
+		expect(statements).toHaveLength(3);
 		expect(statements.every((sql) => sql.startsWith("SELECT"))).toBe(true);
 	});
 
@@ -45,7 +53,7 @@ describe("restored console startup", () => {
 		const { runtime, db, statements } = fixture("recovery", ["3"], false);
 		await migrateDashboardStore(runtime, db);
 		expect(runtime.recoveryPaused).toBe(false);
-		expect(statements).toHaveLength(2);
+		expect(statements).toHaveLength(3);
 		expect(statements.every((sql) => sql.startsWith("SELECT"))).toBe(true);
 	});
 
@@ -60,7 +68,7 @@ describe("restored console startup", () => {
 	it("rejects an incomplete restored schema without creating it", async () => {
 		const { runtime, db, statements } = fixture("recovery", []);
 		await expect(migrateDashboardStore(runtime, db)).rejects.toThrow(
-			"restored console schema differs",
+			"console schema is incompatible",
 		);
 		expect(statements.every((sql) => sql.startsWith("SELECT"))).toBe(true);
 	});

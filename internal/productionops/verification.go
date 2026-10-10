@@ -10,6 +10,11 @@ import (
 // Related proofs share an inspection, executed once in each verification call.
 var nativeProofInspections = map[string]string{
 	"database-tls-provisioned":          "database-credentials",
+	"schema-compatibility":              "schema-verify",
+	"database-version-finalized":        "database-finalize",
+	"builder-work-drained":              "builder-drain",
+	"builder-drain-restored":            "builder-resume",
+	"rolling-maintenance-disabled":      "rolling-prepare",
 	"fresh-database-admitted":           "database-init",
 	"platform-bootstrap-ready":          "platform-bootstrap",
 	"component-identities-provisioned":  "credentials",
@@ -71,6 +76,14 @@ func (r *Runner) inspectProof(ctx context.Context, inspection string) error {
 		return r.databaseCredentials(ctx, true)
 	case "database-init":
 		return r.verifyFreshDatabaseReady(ctx)
+	case "schema-verify":
+		return r.verifySchemaCompatibility(ctx)
+	case "database-finalize":
+		return r.finalizeDatabaseUpgrade(ctx, true)
+	case "builder-drain", "builder-resume":
+		return r.inspectBuilderUpgrade(ctx, inspection)
+	case "rolling-prepare":
+		return r.priorMaintenance(ctx, false)
 	case "platform-bootstrap":
 		return r.verifyBootstrap(ctx)
 	case "credentials":

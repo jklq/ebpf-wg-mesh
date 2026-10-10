@@ -108,7 +108,27 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 
 		if _, ok := state.Progress.Completed[op.ID]; ok {
 			critical := op.Kind == "hook" && contract.Reobserve
-			if !critical && !contains([]string{"install", "database-join", "stage", "configure", "stage-tools"}, op.Kind) {
+			// This point protects the previous release before replacement. Once
+			// the database rollout starts, keep that exact point rather than
+			// pairing a fresh mixed-version backup with the previous release.
+			if op.Phase == "pre-backup" {
+				for _, step := range p.Operations {
+					if step.Phase == "database-runtime" && step.Kind != "configure" && state.Progress.Started[step.ID] {
+						critical = false
+					}
+				}
+			}
+			// Once cleanup starts, the previous compatibility boundary has been
+			// superseded. All replica installs and retirements already preceded it;
+			// replaying the old overlap gate would make that cleanup unresumable.
+			if op.Phase == "schema-overlap" {
+				for _, step := range p.Operations {
+					if step.Kind == "schema-contract" && state.Progress.Started[step.ID] {
+						critical = false
+					}
+				}
+			}
+			if !critical && !contains([]string{"install", "database-join", "database-upgrade", "stage", "configure", "stage-tools"}, op.Kind) {
 				continue
 			}
 			if !critical {
@@ -132,6 +152,15 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 				return fmt.Errorf("purchase outcome for %s is unknown after discovery; resolve the provider binding before resuming, never blindly repeat a purchase", op.Host)
 			}
 			state.Progress.Started[op.ID] = true
+			// An install retry can drain a builder that already resumed. Its
+			// matching resume must run again after this install verifies.
+			if op.Kind == "install" && op.Placement != nil && op.Placement.Role == Builder {
+				for _, step := range p.Operations {
+					if step.Hook == "builder-resume" && step.Placement != nil && *step.Placement == *op.Placement {
+						delete(state.Progress.Completed, step.ID)
+					}
+				}
+			}
 			if err := e.Store.Write(state); err != nil {
 				return err
 			}
