@@ -416,12 +416,11 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 			files[name] = data
 		}
 		files["probe.json"], _ = json.Marshal(probe)
-		files["runtime.env"] = environment(env)
+		ingressTarget := files[".ingress-current-target"]
+		delete(files, ".ingress-current-target")
+		files["runtime.env"] = credentialRuntimeEnvironment(files, env)
 		var script string
 		for _, name := range sortedFiles(files) {
-			if name == ".ingress-current-target" {
-				continue
-			}
 			path := cfgDir(r.Plan, pl) + "/" + name
 			if strings.HasPrefix(name, "tls/") {
 				path = dataDir(r.Plan, pl) + "/" + name
@@ -435,7 +434,7 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				script += remoteFile(path, files[name])
 			}
 		}
-		if target := files[".ingress-current-target"]; len(target) > 0 {
+		if target := ingressTarget; len(target) > 0 {
 			dir := cfgDir(r.Plan, pl) + "/ingress"
 			script += "ln -sfn " + shell(string(target)) + " " + shell(dir+"/current.next") + "\nmv -Tf " + shell(dir+"/current.next") + " " + shell(dir+"/current") + "\n"
 		}
