@@ -39,6 +39,23 @@ func (i Installation) Validate(r Release) error {
 	if r.Configuration <= 0 || r.Protocol <= 0 || r.Schema <= 0 || r.ConsoleSchema <= 0 {
 		return fmt.Errorf("release must pin configuration, protocol and both schema versions")
 	}
+	if r.MinSchema < 0 || r.MinSchema > r.Schema || r.MinConsoleSchema < 0 || r.MinConsoleSchema > r.ConsoleSchema {
+		return fmt.Errorf("minimum runtime schemas must be within the release schemas")
+	}
+	for source, change := range r.SchemaChanges {
+		if !safeID(source) {
+			return fmt.Errorf("invalid schema change source %s", source)
+		}
+		expand, backfill, contract := hookValid(change.Expand), hookValid(change.Backfill), hookValid(change.Contract)
+		for _, hook := range []Hook{change.Expand, change.Backfill, change.Contract} {
+			if (len(hook.Command) != 0 || len(hook.Verify) != 0) && !hookValid(hook) {
+				return fmt.Errorf("schema change hooks require commands and verification")
+			}
+		}
+		if (contract && (expand || backfill)) || (!contract && (!expand || !backfill)) {
+			return fmt.Errorf("schema change %s must expand and backfill, or contract in a later release", source)
+		}
+	}
 	for name, architectures := range r.Tools {
 		if !safeID(name) || len(architectures) == 0 {
 			return fmt.Errorf("invalid management tool %s", name)
@@ -219,6 +236,9 @@ func (i Installation) Validate(r Release) error {
 		}
 	}
 	for _, name := range RequiredHooks() {
+		if !r.SchemaCompatibility && contains(rollingHooks, name) {
+			continue
+		}
 		if !hookValid(r.Hooks[name]) {
 			return fmt.Errorf("release requires idempotent %s hook with verification", name)
 		}

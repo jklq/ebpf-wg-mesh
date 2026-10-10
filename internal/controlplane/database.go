@@ -20,6 +20,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
+	"ebof-wg-mesh/internal/schemacompat"
 	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -122,27 +123,27 @@ func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 	if err := s.db.PingContext(ctx); err != nil {
 		return false, false
 	}
-	var version, count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version), 0),COUNT(*) FROM schema_migrations`).Scan(&version, &count); err != nil {
+	status, err := schemacompat.Read(ctx, s.db, "public")
+	if err != nil {
 		return true, false
 	}
-	return true, version == currentSchemaVersion && count == 1
+	return true, status.Supports(currentSchemaVersion, minimumSchemaVersion)
 }
 
 func (s *database) validateSchema(ctx context.Context) error {
-	var version, count int
-	if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(version),0),COUNT(*) FROM schema_migrations`).Scan(&version, &count); err != nil {
+	status, err := schemacompat.Read(ctx, s.db, "public")
+	if err != nil {
 		return fmt.Errorf("schema is not initialized; run explicit controlplane database bootstrap: %w", err)
 	}
-	if version != currentSchemaVersion || count != 1 {
-		return fmt.Errorf("database schema %d does not match release schema %d; apply a backed-up conversion or restore", version, currentSchemaVersion)
+	if !status.Supports(currentSchemaVersion, minimumSchemaVersion) {
+		return fmt.Errorf("database schema %d (compatible from %d) cannot run release schema %d (minimum %d); apply an online schema change or restore", status.Version, status.CompatibleFrom, currentSchemaVersion, minimumSchemaVersion)
 	}
 	return nil
 }
 
 func (s *database) migrate(ctx context.Context) error {
 	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
+		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, min_compatible_version INT8 NULL, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 			return fmt.Errorf("create schema_migrations: %w", err)
 		}
 
@@ -164,12 +165,14 @@ func (s *database) migrate(ctx context.Context) error {
 			return fmt.Errorf("iterate schema versions: %w", err)
 		}
 		if len(applied) > 0 {
-			if len(applied) == 1 {
-				if _, ok := applied[currentSchemaVersion]; ok {
-					return nil
-				}
+			status, err := schemacompat.Read(ctx, tx, "public")
+			if err != nil {
+				return err
 			}
-			return fmt.Errorf("database schema does not match release schema %d; stop the old release and apply an explicit backed-up conversion or restore", currentSchemaVersion)
+			if status.Supports(currentSchemaVersion, minimumSchemaVersion) {
+				return nil
+			}
+			return fmt.Errorf("database schema is incompatible with release schema %d; apply an explicit online schema change or restore", currentSchemaVersion)
 		}
 		var populated bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations')`).Scan(&populated); err != nil {

@@ -86,6 +86,45 @@ func TestBootstrapRefusesPopulatedUnversionedDatabase(t *testing.T) {
 		t.Fatal(value, err)
 	}
 }
+
+func TestStartupAndReadinessAllowAdditiveSchemaOverlapUntilCleanup(t *testing.T) {
+	db := installationTestDB(t)
+	ctx := context.Background()
+	handle := &database{db: db}
+	if err := handle.migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	execInstallation(t, db, `ALTER TABLE projects ADD COLUMN future_label TEXT NULL`)
+	execInstallation(t, db, `UPDATE schema_migrations SET version=44,min_compatible_version=43`)
+	if err := handle.validateSchema(ctx); err != nil {
+		t.Fatal("old binary rejected an additive schema", err)
+	}
+	if databaseOK, schemaOK := handle.Ready(ctx); !databaseOK || !schemaOK {
+		t.Fatal("compatible replica left readiness")
+	}
+	if err := handle.migrate(ctx); err != nil {
+		t.Fatal("bootstrap attempted to downgrade compatible schema", err)
+	}
+	var version int
+	if err := db.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != 44 {
+		t.Fatal("bootstrap rewrote expanded schema", err)
+	}
+	execInstallation(t, db, `UPDATE schema_migrations SET min_compatible_version=44`)
+	if err := handle.validateSchema(ctx); err == nil {
+		t.Fatal("cleanup admitted the obsolete binary")
+	}
+	if databaseOK, schemaOK := handle.Ready(ctx); !databaseOK || schemaOK {
+		t.Fatal("incompatible schema remained ready")
+	}
+	execInstallation(t, db, `ALTER TABLE schema_migrations DROP COLUMN min_compatible_version`)
+	if err := handle.validateSchema(ctx); err == nil {
+		t.Fatal("legacy future schema was assumed compatible")
+	}
+	execInstallation(t, db, `UPDATE schema_migrations SET version=43`)
+	if err := handle.validateSchema(ctx); err != nil {
+		t.Fatal("existing schema without metadata was rejected", err)
+	}
+}
 func TestSharedRevocationsAgreeAcrossIndependentReplicas(t *testing.T) {
 	db := installationTestDB(t)
 	if err := BootstrapInstallation(context.Background(), db, filepath.Join(t.TempDir(), "keys.json")); err != nil {

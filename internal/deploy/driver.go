@@ -132,6 +132,20 @@ func (d *SSHDriver) hook(p Plan, state State, op Operation) (Hook, Placement, er
 	if op.Kind == "convert" {
 		return p.Release.Conversions[op.Hook], pl, nil
 	}
+	if op.Kind == "schema-expand" || op.Kind == "schema-backfill" || op.Kind == "schema-contract" {
+		if p.Previous == nil {
+			return Hook{}, pl, fmt.Errorf("schema change has no source deployment")
+		}
+		change := p.Release.SchemaChanges[p.Previous.Release.ID]
+		switch op.Kind {
+		case "schema-expand":
+			return change.Expand, pl, nil
+		case "schema-backfill":
+			return change.Backfill, pl, nil
+		default:
+			return change.Contract, pl, nil
+		}
+	}
 	if op.Kind == "drain" || op.Kind == "database-remove" || op.Kind == "retire" {
 		bundle := p.Release
 		if state.Bundle != nil {
@@ -166,7 +180,7 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 		commandPlan.Release = *state.Bundle
 	}
 	executionHost := op.Host
-	if op.Kind == "drain" || op.Kind == "retire" || op.Kind == "database-remove" {
+	if op.Kind == "drain" || op.Kind == "retire" || op.Kind == "database-remove" || op.Kind == "database-upgrade" {
 		executionHost = p.AdministrationHost
 	}
 	h, _, found, err := d.discover(ctx, p.Installation, state, executionHost)
@@ -237,7 +251,7 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 		_, _, found, err := d.discover(ctx, p.Installation, state, op.Host)
 		return !found, Evidence{}, err
 	}
-	if op.Kind == "hook" || op.Kind == "convert" || op.Kind == "drain" || op.Kind == "retire" {
+	if op.Kind == "hook" || op.Kind == "convert" || op.Kind == "schema-expand" || op.Kind == "schema-backfill" || op.Kind == "schema-contract" || op.Kind == "drain" || op.Kind == "retire" {
 		out, err := d.runHook(ctx, p, state, op, true)
 		if err != nil {
 			return false, Evidence{}, nil
@@ -321,7 +335,7 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 		_, err := d.Remote.Run(ctx, p.Installation, h, "! systemctl is-active --quiet "+quote(unit(p.Installation, pl))+"\n")
 		return err == nil, Evidence{}, nil
 	}
-	if op.Kind == "install" || op.Kind == "database-join" {
+	if op.Kind == "install" || op.Kind == "database-join" || op.Kind == "database-upgrade" {
 		out, err := d.Remote.Run(ctx, p.Installation, h, hostProbe)
 		if err != nil {
 			return false, Evidence{}, nil
@@ -335,7 +349,29 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 			return false, Evidence{}, err
 		}
 		_, err = d.Remote.Run(ctx, p.Installation, h, script)
-		return err == nil, Evidence{}, nil
+		if err != nil {
+			return false, Evidence{}, nil
+		}
+		if op.Kind == "database-upgrade" {
+			// A later unfinished node can be unavailable on resume. Do not turn
+			// an already verified earlier replica into a new restart just because
+			// the cluster-wide gate is waiting for that later node.
+			if state.Progress != nil {
+				if _, completed := state.Progress.Completed[op.ID]; completed {
+					return true, Evidence{}, nil
+				}
+			}
+			out, err := d.runHook(ctx, p, state, op, true)
+			if err != nil {
+				return false, Evidence{}, nil
+			}
+			status := &DatabaseStatus{}
+			if err := json.Unmarshal(out, status); err != nil {
+				return false, Evidence{}, err
+			}
+			return true, Evidence{Database: status}, nil
+		}
+		return true, Evidence{}, nil
 	}
 	return false, Evidence{}, fmt.Errorf("unknown operation %s", op.Kind)
 }
@@ -344,7 +380,7 @@ func (d *SSHDriver) observeDrain(ctx context.Context, p Plan, state State, op Op
 	return err == nil, Evidence{}, nil
 }
 func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operation) (Binding, error) {
-	if op.Kind == "hook" || op.Kind == "convert" || op.Kind == "drain" || op.Kind == "retire" {
+	if op.Kind == "hook" || op.Kind == "convert" || op.Kind == "schema-expand" || op.Kind == "schema-backfill" || op.Kind == "schema-contract" || op.Kind == "drain" || op.Kind == "retire" {
 		_, err := d.runHook(ctx, p, state, op, false)
 		return Binding{}, err
 	}
@@ -405,7 +441,7 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 			return Binding{}, err
 		}
 		script += fileScript(configDir(p.Installation, pl)+"/configured", []byte(p.ID+"/"+op.ID), "0600")
-	case "install", "database-join":
+	case "install", "database-join", "database-upgrade":
 		probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		out, probeErr := d.Remote.Run(probeCtx, p.Installation, h, hostProbe)
 		cancel()
@@ -427,6 +463,32 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 		script, err = installScript(p, pl, observed.Capacity)
 		if err != nil {
 			return Binding{}, err
+		}
+		if op.Kind == "database-upgrade" {
+			if _, err := d.runHook(ctx, p, state, op, false); err != nil {
+				return Binding{}, err
+			}
+		} else if _, mode := p.workflow(); mode == upgradeMode {
+			if err := d.verifyReplicaPeers(ctx, p, state, pl); err != nil {
+				return Binding{}, err
+			}
+			if pl.Role == Builder && p.previouslyPlaced(pl) {
+				// A previously verified builder may need another install on a
+				// retry. Drain again immediately before touching its process.
+				for _, step := range p.Operations {
+					if step.Hook == "builder-drain" && step.Placement != nil && *step.Placement == pl {
+						if _, err := d.runHook(ctx, p, state, step, false); err != nil {
+							return Binding{}, err
+						}
+						if done, _, err := d.Observe(ctx, p, state, step); err != nil {
+							return Binding{}, err
+						} else if !done {
+							return Binding{}, fmt.Errorf("builder drain must verify before install")
+						}
+						break
+					}
+				}
+			}
 		}
 	case "stop":
 		script = "systemctl disable --now " + quote(unit(p.Installation, pl)) + "\n"

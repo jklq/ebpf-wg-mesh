@@ -1,18 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { request } from "node:https";
-import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
-import { poolConfigFromURL } from "../src/lib/dashboard/store/pool-config.server";
-import { migrateDashboardStore } from "../src/lib/dashboard/store/helpers.server";
-import {
-	createGitHubTokenCipher,
-	decodeGitHubTokenEncryptionKey,
-} from "../src/lib/dashboard/store/token-crypto.server";
 import {
 	createSessionTokenPair,
 	verifyAccessToken,
 	verifyRefreshToken,
 } from "../src/lib/dashboard/core/jwt.server";
+import { migrateDashboardStore } from "../src/lib/dashboard/store/helpers.server";
+import { poolConfigFromURL } from "../src/lib/dashboard/store/pool-config.server";
+import { validateDashboardSchema } from "../src/lib/dashboard/store/schema-compatibility.server";
+import {
+	createGitHubTokenCipher,
+	decodeGitHubTokenEncryptionKey,
+} from "../src/lib/dashboard/store/token-crypto.server";
 
 // A compiled release tool. Administrative input travels on stdin, never argv.
 const input = JSON.parse(readFileSync(0, "utf8")) as {
@@ -44,11 +45,10 @@ try {
 		process.argv[2] === "check" ||
 		process.argv[2] === "check-endpoints"
 	) {
-		const version = await db.query(
-			`SELECT version FROM ${input.schema}.schema_migrations`,
+		await validateDashboardSchema(
+			{ databaseSchema: input.schema, githubTokenCipher: cipher },
+			db,
 		);
-		if (version.rowCount !== 1 || Number(version.rows[0].version) !== 3)
-			throw new Error("console schema differs from release");
 		const user = {
 			id: randomUUID(),
 			email: "production-verification@invalid.example",

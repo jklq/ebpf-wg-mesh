@@ -230,6 +230,11 @@ quarantine. A mask with a live or starting process does not establish a fence.
 | `credentials` | Issue distinct component credentials, pre-enroll agents with the declared stable/intermittent host policy and failure domains, register durable ingress identities, distribute master-key versions, provision protected builder images and verify externally renewed wildcard certificates. |
 | `reservations` | Drain/cordon as required and establish scheduler reservations and host policy before new platform components consume host capacity. Preserve explicit operator retirement barriers. |
 | `database-verify` | Return observed `DatabaseStatus` JSON; verify native membership, range voting replicas, learners and replication convergence. |
+| `rolling-prepare` | Stop prior completion and credential-renewal jobs before the upgrade. Keep runtime mutations and workload schedulers active. |
+| `database-upgrade` | Verify replication, surviving range quorums, and SQL failover before each node restart. Verify SQL readiness, membership, and the pinned version after restart. |
+| `database-finalize` | Verify every node's pinned version and replication health. Finalize a major-version upgrade only after these checks. |
+| `builder-drain` / `builder-resume` | Drain one builder. Let active builds finish before restart. Restore its previous operator drain setting after readiness verification. |
+| `schema-verify` | Verify both schemas and their compatibility boundaries before replica upgrades and after the schema change. |
 | `storage-verify` | Return a map of storage names to `{hosts, verified}`; verify actual shared backing storage and durability. |
 | `production-verify` | Check actual persistence, TLS, authorization, credentials, secret/keyring coverage and declared traffic/network paths. Topology limitations remain a separate assessment. |
 | `quiesce` | Pause mutations and background work on every old replica, and independently verify the pause. |
@@ -279,13 +284,118 @@ Expanding a single-node cluster uses native join/replication procedures. Tempora
 outages never reduce membership. A removal requires native decommission, zero
 remaining replicas and replication verification before infrastructure deletion.
 
-Release upgrades use a flat cutover: stage artifacts, quiesce mutations/background
-work, verify a complete backup, stop the old release, start the pinned new database
-processes, run one explicit SQL conversion, then start and verify the new platform
-processes. There is no startup migration chain.
-Production control-plane startup only validates schema 43; console schema 3 is
-flat and refuses a populated unversioned or mismatched schema. Initial bootstrap
-is explicit with `controlplane database bootstrap --db-url ... --keyring ...`.
+Release upgrades replace one replica at a time. The deployment first protects
+release dependencies and verifies a complete backup. It then restarts each
+database node and verifies its SQL readiness, membership, version, and replication.
+Each other component follows the same configure, restart, and readiness sequence.
+The next replica waits for successful verification of the current replica.
+
+Normal upgrades keep mutations and workload schedulers active. Before each restart,
+the installer verifies the readiness of other component peers. A builder
+first drains its own work queue and lets active builds finish. Its previous
+operator drain state returns after readiness verification. The installer
+retires obsolete placements after the replacement replicas pass verification.
+
+An interrupted upgrade resumes its original plan. Verified replicas keep their
+processes, and an unready replica blocks later replicas. The previous deployment
+and backup remain in installer state until the full plan completes. Single
+replicas still have a service interruption during restart. Rolling database
+restarts require at least three observed members and a live majority for
+every voting range. Expand a smaller cluster before a release upgrade.
+Once database replacement starts, retries retain the verified pre-upgrade
+recovery point instead of capturing a mixture of release versions.
+
+The database procedure follows the
+[CockroachDB upgrade guidance](https://docs.cockroachlabs.com/docs/v26.1/upgrade-cockroach-version).
+Every restart requires zero under-replicated and unavailable ranges, live members,
+and verified SQL connections through other nodes. The installer inspects the
+actual SQL configuration of each old control plane and console process.
+Control planes use pgx host lists, and consoles use separate pools for each node.
+SQL statements and transactions do not automatically repeat after an ambiguous failure.
+
+Native SQL backup schedules continue during the upgrade. Prior backup completion
+and credential-renewal jobs stop before the first replica restart. The installer
+replaces their selected release after all schema and replica checks complete.
+Renewal jobs cannot restart other replicas during the upgrade.
+Completion jobs cannot pair a cleanup schema with the old release.
+Complete recovery-point publication waits for this maintenance transition.
+
+Major-version upgrades disable automatic finalization before the first restart.
+The installer finalizes the version after every node passes the health gates.
+Finalization prevents a binary downgrade across that major version. The planner
+admits stable patch upgrades and adjacent major releases. It requires a separate
+plan for database membership changes before a major-version upgrade.
+
+Both runtime schemas use one version record with an optional
+`min_compatible_version` column. A missing or NULL boundary admits only that
+schema version. An explicit lower boundary admits older compatible binaries on
+a newer additive schema. Runtime startup and readiness check the binary's minimum
+schema and the compatibility boundary.
+Startup does not apply schema changes to a populated database.
+
+Initial bootstrap remains explicit:
+`controlplane database bootstrap --db-url ... --keyring ...`.
+The current control plane requires schema 43, and the console requires schema 3.
+A future binary must declare its minimum required schema in code and in the
+release's `minSchema` or `minConsoleSchema` field. Each minimum defaults to the
+release's schema version.
+
+Use this sequence for online schema changes:
+
+1. First deploy this compatibility mechanism with the current schema versions.
+   Set `schemaCompatibility: true` in that release manifest.
+
+2. In a subsequent release, declare `schemaChanges` for the source release.
+   Supply idempotent `expand` and `backfill` hooks, each with native verification.
+
+3. Let `expand` add structures and advance the version before the replica upgrades.
+   Preserve the previous binary version in `min_compatible_version`.
+
+4. Deploy code that supports both data layouts. Use dual writes or compatible
+   reads when old and new replicas need different representations.
+
+5. Let `backfill` complete after the replica upgrades and obsolete placement retirement.
+   Its verifier must wait for all batches and SQL schema jobs to finish.
+
+6. Remove obsolete structures in a later release with a `contract` hook.
+   Set that release's minimum schemas to versions available before cleanup.
+   Advance the schema version and compatibility boundary after every old replica leaves.
+
+For example, release `r44` can expand schema 43 to 44 and keep boundary 43:
+
+```yaml
+schema: 44
+consoleSchema: 3
+schemaCompatibility: true
+schemaChanges:
+  r43:
+    expand:
+      command: [/opt/releases/r44/expand]
+      verify: [/opt/releases/r44/verify-expand]
+    backfill:
+      command: [/opt/releases/r44/backfill]
+      verify: [/opt/releases/r44/verify-backfill]
+```
+
+Release `r45` can then remove the obsolete structures after its replica upgrades:
+
+```yaml
+schema: 45
+minSchema: 44
+consoleSchema: 3
+schemaCompatibility: true
+schemaChanges:
+  r44:
+    contract:
+      command: [/opt/releases/r45/contract]
+      verify: [/opt/releases/r45/verify-contract]
+```
+
+Schema hooks own the application SQL and its compatibility declaration.
+Expansion must preserve every structure and data representation that the old code requires.
+The planner rejects expansion and cleanup in the same transition.
+It also rejects schema downgrades and configuration or protocol version changes
+that prevent replica overlap. Legacy offline conversions cannot satisfy this sequence.
 
 The supplied `controlplane database convert --from-version 41 --backup ...
 --data-loss-cutoff ... --revocations-file ... --console-schema dashboard`
@@ -294,7 +404,8 @@ into SQL and converts console versions 1/2 directly to flat version 3. It requir
 expired old-release leases. Import the union of the old replicas' revocation files.
 Schema 42 converts directly to 43 with the same complete-backup and expired-lease
 gates; it already stores revocations in SQL. Other source versions require a
-separately provided explicit conversion.
+separately provided explicit conversion. These legacy tools remain offline
+administrative operations and do not run during normal rolling upgrades.
 
 Rollback across a schema change uses `platformctl restore --installation ...
 --bundle ... --backup ... --data-loss-cutoff ... --recovery-config ...`. Select the intended recovery

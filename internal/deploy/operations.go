@@ -15,7 +15,6 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 	}
 	_, mode := p.workflow()
 	upgrade := mode == upgradeMode
-	conversion := upgrade && (state.Bundle.Schema != p.Release.Schema || state.Bundle.ConsoleSchema != p.Release.ConsoleSchema)
 	if p.Automatic && state.Bundle != nil && Digest(*state.Bundle) != Digest(p.Release) {
 		return fmt.Errorf("automatic reconciliation cannot change releases")
 	}
@@ -48,21 +47,24 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		}
 		add("prior-tools", "stage-tools", h.ID, "previous", nil)
 	}
-	preDrained := map[string]bool{}
 	if upgrade {
-		for _, old := range state.Placements {
-			current, ok := selected[old.Slot()]
-			if (old.Role == Agent || old.Role == Builder) && (!ok || current.Instance != old.Instance) {
-				add("pre-drain", "drain", old.Host, "", &old)
-				preDrained[old.Instance] = true
-			}
-			add("stop-prior", "stop", old.Host, "", &old)
+		if len(inv.Database.Members) < 3 || !inv.Database.Replicated || len(inv.Database.Live) != len(inv.Database.Members) {
+			return fmt.Errorf("rolling release requires at least three healthy database members with verified replication; expand or repair the cluster before applying an upgrade")
 		}
-		if conversion {
-			if !hookValid(p.Release.Conversions[state.Bundle.ID]) {
-				return fmt.Errorf("schema cutover requires an explicit conversion from %s; rollback requires restore", state.Bundle.ID)
+		if err := p.validateRollingUpgrade(); err != nil {
+			return err
+		}
+		change, ok := p.Release.SchemaChanges[state.Bundle.ID]
+		if ok {
+			if hookValid(change.Expand) {
+				add("schema-expand", "schema-expand", p.AdministrationHost, "", nil)
 			}
-			add("convert", "convert", p.AdministrationHost, state.Bundle.ID, nil)
+			if hookValid(change.Backfill) {
+				add("schema-backfill", "schema-backfill", p.AdministrationHost, "", nil)
+			}
+			if hookValid(change.Contract) {
+				add("schema-contract", "schema-contract", p.AdministrationHost, "", nil)
+			}
 		}
 	}
 	for _, pl := range p.Placements {
@@ -74,12 +76,30 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		if pl.Role == Database {
 			phase = "database-runtime"
 		}
+		builderUpgrade := upgrade && pl.Role == Builder && p.previouslyPlaced(pl)
+		if builderUpgrade {
+			add(phase, "hook", p.AdministrationHost, "builder-drain", &pl)
+		}
 		for _, action := range runtimeActions {
 			kind := action
+			if action == "install" && upgrade && pl.Role == Database {
+				for _, old := range state.Placements {
+					if old.Role == Database && old.Instance == pl.Instance {
+						kind = "database-upgrade"
+					}
+				}
+			}
 			if action == "install" && pl.Role == Database && len(inv.Database.Members) > 0 && !contains(inv.Database.Members, pl.Host) {
 				kind = "database-join"
 			}
-			add(phase, kind, pl.Host, "", &pl)
+			hook := ""
+			if kind == "database-upgrade" {
+				hook = "database-upgrade"
+			}
+			add(phase, kind, pl.Host, hook, &pl)
+		}
+		if builderUpgrade {
+			add(phase, "hook", p.AdministrationHost, "builder-resume", &pl)
 		}
 	}
 	for _, old := range append(append([]Placement{}, state.Placements...), state.Retained...) {
@@ -99,9 +119,6 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 			actions = databaseRetirementActions
 		}
 		for _, action := range actions {
-			if action == "drain" && preDrained[old.Instance] {
-				continue
-			}
 			add("retire", action, old.Host, "", &old)
 		}
 		if old.Role == Database {
@@ -114,7 +131,7 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 	}
 	p.Operations, p.DatabaseChanges = ops, nil
 	for _, op := range ops {
-		if op.Kind == "database-join" || op.Kind == "database-remove" || op.Hook == "database-verify" {
+		if op.Kind == "database-join" || op.Kind == "database-upgrade" || op.Kind == "database-remove" || op.Hook == "database-verify" {
 			p.DatabaseChanges = append(p.DatabaseChanges, op)
 		}
 	}

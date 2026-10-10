@@ -160,6 +160,12 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return Ready(ctx, deploy.Role(args[1]), args[2], args[3])
 	}
+	if args[0] == "sql-failover" {
+		if len(args) != 3 {
+			return fmt.Errorf("sql-failover requires role and excluded database address")
+		}
+		return inspectSQLFailover(ctx, deploy.Role(args[1]), args[2], os.Stdin)
+	}
 	var p deploy.Plan
 	if err := privateJSON(*planPath, &p); err != nil {
 		return err
@@ -241,6 +247,14 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 		return r.renewCredentials(ctx)
 	case "database-credentials":
 		return r.databaseCredentials(ctx, false)
+	case "database-upgrade":
+		return r.prepareDatabaseUpgrade(ctx, args)
+	case "builder-drain", "builder-resume":
+		return r.builderUpgrade(ctx, args, false)
+	case "rolling-prepare":
+		return r.stopPriorMaintenance(ctx)
+	case "database-finalize":
+		return r.finalizeDatabaseUpgrade(ctx, false)
 	case "database-init":
 		return r.initializeDatabase(ctx, false)
 	case "platform-bootstrap":
@@ -281,7 +295,7 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 		return r.scheduledBackup(ctx)
 	case "recovery-finalize":
 		return r.finalize(ctx, false)
-	case "database-verify", "storage-verify", "production-verify", "recovery-verify":
+	case "database-verify", "schema-verify", "storage-verify", "production-verify", "recovery-verify":
 		return nil
 	case "recovery-fence":
 		return r.fence(ctx, false)
@@ -333,6 +347,9 @@ func (r *Runner) Verify(ctx context.Context, args []string) (any, error) {
 	e := deploy.Evidence{Recovery: &deploy.RecoveryReceipt{Installation: r.Plan.Installation.ID, Generation: r.Plan.Generation, Checks: map[string]bool{}}}
 	switch contract.Kind {
 	case deploy.DatabaseVerification:
+		if name == "database-upgrade" {
+			return r.verifyDatabaseUpgrade(ctx, args)
+		}
 		return r.databaseStatus(ctx)
 	case deploy.StorageVerification:
 		return r.storageStatus(ctx)

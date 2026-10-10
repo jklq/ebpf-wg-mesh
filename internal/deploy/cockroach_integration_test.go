@@ -60,7 +60,7 @@ func TestSecureNativeDatabaseInspection(t *testing.T) {
 	if err := json.Unmarshal(output.Bytes(), &status); err != nil {
 		t.Fatal(err)
 	}
-	if len(status.Members) != 1 || status.Members[0] != "a" || status.Replicated || len(status.Ranges) == 0 {
+	if len(status.Members) != 1 || status.Members[0] != "a" || status.Versions["a"] != testdb.DefaultVersion || status.Replicated || len(status.Ranges) == 0 {
 		t.Fatalf("incorrect native single-node assessment: %+v", status)
 	}
 }

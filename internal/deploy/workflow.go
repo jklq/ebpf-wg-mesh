@@ -35,16 +35,16 @@ var deploymentWorkflow = []workflowPhase{
 	{"prior-tools", []string{"tools"}, deploymentModes, ""},
 	{"protect", []string{"prior-tools"}, deploymentModes, "recovery-protect"},
 	{"yield", []string{"protect"}, upgradeMode | changeMode | automaticMode, "reservations"},
-	{"pre-drain", []string{"yield"}, upgradeMode, ""},
-	{"pause", []string{"pre-drain"}, upgradeMode, "quiesce"},
-	{"pre-backup", []string{"pause"}, upgradeMode, "backup"},
-	{"stop-prior", []string{"pre-backup"}, upgradeMode, ""},
-	{"database-credentials", []string{"stop-prior"}, deploymentModes, "database-credentials"},
+	{"upgrade-prepare", []string{"yield"}, upgradeMode, "rolling-prepare"},
+	{"pre-backup", []string{"upgrade-prepare"}, upgradeMode, "backup"},
+	{"database-credentials", []string{"pre-backup"}, deploymentModes, "database-credentials"},
 	{"database-runtime", []string{"database-credentials"}, manualModes, ""},
-	{"convert", []string{"database-runtime"}, upgradeMode, ""},
-	{"initialize", []string{"convert"}, freshMode, "database-init"},
+	{"database-finalize", []string{"database-runtime"}, upgradeMode, "database-finalize"},
+	{"schema-expand", []string{"database-finalize"}, upgradeMode, ""},
+	{"schema-overlap", []string{"schema-expand"}, upgradeMode, "schema-verify"},
+	{"initialize", []string{"schema-overlap"}, freshMode, "database-init"},
 	{"bootstrap", []string{"initialize"}, freshMode, "platform-bootstrap"},
-	{"schedule", []string{"bootstrap"}, deploymentModes, "backup-schedule"},
+	{"schedule", []string{"bootstrap"}, freshMode | changeMode | automaticMode, "backup-schedule"},
 	{"enroll", []string{"schedule"}, freshMode, "reservations"},
 	{"credentials", []string{"enroll"}, deploymentModes, "credentials"},
 	{"registry", []string{"credentials"}, deploymentModes, ""},
@@ -56,10 +56,13 @@ var deploymentWorkflow = []workflowPhase{
 	{"database-verify", []string{"envoy"}, manualModes, "database-verify"},
 	{"storage-verify", []string{"database-verify"}, manualModes, "storage-verify"},
 	{"retire", []string{"storage-verify"}, deploymentModes, ""},
-	{"production-verify", []string{"retire"}, deploymentModes, "production-verify"},
+	{"schema-backfill", []string{"retire"}, upgradeMode, ""},
+	{"schema-contract", []string{"schema-backfill"}, upgradeMode, ""},
+	{"schema-final", []string{"schema-contract"}, upgradeMode, "schema-verify"},
+	{"upgrade-schedule", []string{"schema-final"}, upgradeMode, "backup-schedule"},
+	{"production-verify", []string{"upgrade-schedule"}, deploymentModes, "production-verify"},
 	{"finalize", []string{"production-verify"}, deploymentModes, "recovery-finalize"},
-	{"resume", []string{"finalize"}, upgradeMode, "resume"},
-	{"delete", []string{"resume"}, manualModes, ""},
+	{"delete", []string{"finalize"}, manualModes, ""},
 	{"first-backup", []string{"delete"}, freshMode, "backup"},
 }
 
@@ -186,7 +189,12 @@ func compileWorkflow(p Plan, definition []workflowPhase, mode workflowMode, grou
 }
 
 func (p Plan) validateWorkflow() error {
-	definition, _ := p.workflow()
+	definition, mode := p.workflow()
+	if mode == upgradeMode {
+		if err := p.validateRollingUpgrade(); err != nil {
+			return err
+		}
+	}
 	generated := map[string]bool{}
 	for _, phase := range definition {
 		generated[phase.Name] = phase.Hook != ""
@@ -197,22 +205,48 @@ func (p Plan) validateWorkflow() error {
 			groups[op.Phase] = append(groups[op.Phase], op)
 		}
 	}
+	if mode == upgradeMode {
+		if err := p.validateRollingSteps(groups); err != nil {
+			return err
+		}
+	}
 	for phase, role := range map[string]Role{"database-runtime": Database, "registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy} {
 		steps := groups[phase]
-		if len(steps)%len(runtimeActions) != 0 {
-			return fmt.Errorf("phase %s has an incomplete actor sequence", phase)
-		}
-		for n := 0; n < len(steps); n += len(runtimeActions) {
-			for index, action := range runtimeActions {
+		for n := 0; n < len(steps); {
+			actions := runtimeActions
+			if role == Builder && mode == upgradeMode && steps[n].Placement != nil && p.previouslyPlaced(*steps[n].Placement) {
+				actions = []string{"builder-drain", "configure", "install", "builder-resume"}
+			}
+			if n+len(actions) > len(steps) {
+				return fmt.Errorf("phase %s has an incomplete actor sequence", phase)
+			}
+			for index, action := range actions {
 				op := steps[n+index]
+				if op.Placement == nil || steps[n].Placement == nil {
+					return fmt.Errorf("phase %s requires actor placements", phase)
+				}
+				if mode == upgradeMode && role == Database && action == "install" && p.previouslyPlaced(*op.Placement) && (op.Kind != "database-upgrade" || op.Hook != "database-upgrade") {
+					return fmt.Errorf("existing database replicas require rolling health gates")
+				}
 				kind := op.Kind
-				if role == Database && kind == "database-join" {
+				if kind == "hook" && op.Hook == action && (action == "builder-drain" || action == "builder-resume") {
+					kind = action
+				}
+				if role == Database && (kind == "database-join" || (mode == upgradeMode && kind == "database-upgrade" && op.Hook == "database-upgrade")) {
 					kind = "install"
 				}
-				if kind != action || op.Placement == nil || op.Placement.Role != role || op.Host != op.Placement.Host || steps[n].Placement == nil || op.Placement.Instance != steps[n].Placement.Instance {
+				host := op.Host
+				if action == "builder-drain" || action == "builder-resume" {
+					host = op.Placement.Host
+					if op.Host != p.AdministrationHost {
+						return fmt.Errorf("builder lifecycle requires the administration host")
+					}
+				}
+				if kind != action || op.Placement == nil || op.Placement.Role != role || host != op.Placement.Host || steps[n].Placement == nil || op.Placement.Instance != steps[n].Placement.Instance {
 					return fmt.Errorf("phase %s differs from its declared actor sequence", phase)
 				}
 			}
+			n += len(actions)
 		}
 	}
 	expected, err := p.compileWorkflow(groups)

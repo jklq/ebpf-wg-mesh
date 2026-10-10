@@ -295,15 +295,19 @@ func (r *Runner) verifyEmptyDatabase(ctx context.Context) error {
 }
 
 func (r *Runner) databaseStatus(ctx context.Context) (deploy.DatabaseStatus, error) {
+	return r.inspectDatabase(ctx, r.Plan, !r.Plan.Automatic)
+}
+
+func (r *Runner) inspectDatabase(ctx context.Context, plan deploy.Plan, convergence bool) (deploy.DatabaseStatus, error) {
 	var status deploy.DatabaseStatus
 	file := filepath.Join(r.Config.StateDirectory, "native-plan.json")
-	b, _ := json.Marshal(r.Plan)
+	b, _ := json.Marshal(plan)
 	if err := writePrivate(file, b); err != nil {
 		return status, err
 	}
 	var output strings.Builder
 	args := []string{"--plan", file, "--binary", r.Config.Database.Binary, "--host", r.reachableDatabase(ctx), "--certs-dir", r.databasePKI(), "--databases", "system," + r.Config.Database.Name}
-	if !r.Plan.Automatic {
+	if convergence {
 		args = append(args, "--require-convergence")
 	}
 	if err := deploy.RunDatabaseStatus(ctx, args, &output); err != nil {

@@ -91,7 +91,7 @@ func RunDatabaseStatus(ctx context.Context, args []string, out io.Writer) error 
 			}
 		}
 		for id := range desired {
-			if !contains(status.Members, id) {
+			if !contains(status.Members, id) || !contains(status.Live, id) {
 				return fmt.Errorf("database member %s has not joined", id)
 			}
 		}
@@ -124,7 +124,7 @@ func csvRecords(raw []byte, required ...string) ([]map[string]string, error) {
 	return records, nil
 }
 func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, bool, error) {
-	status := DatabaseStatus{Replicated: true}
+	status := DatabaseStatus{Replicated: true, Versions: map[string]string{}}
 	records, err := csvRecords(nodes, "id", "address", "is_live", "is_available", "ranges_underreplicated", "ranges_unavailable", "is_decommissioning", "gossiped_replicas")
 	if err != nil {
 		return status, false, err
@@ -153,9 +153,11 @@ func parseDatabaseStatus(i Installation, nodes, ranges []byte) (DatabaseStatus, 
 			continue
 		}
 		status.Members = append(status.Members, id)
+		status.Versions[id] = row["build"]
 		nodeHosts[row["id"]] = id
 		if row["is_live"] != "true" || row["is_available"] != "true" {
 			healthy = false
+			status.Replicated = false
 		} else {
 			liveNodes[row["id"]] = true
 			status.Live = append(status.Live, id)
