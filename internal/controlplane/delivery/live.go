@@ -3,6 +3,7 @@ package delivery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -11,6 +12,8 @@ import (
 )
 
 const LiveOwnerRedirectPrefix = "not the live owner; reconnect at "
+
+var ErrIngressObservationsPending = errors.New("ingress is waiting for fresh allocation observations")
 
 type liveObsKey struct {
 	AllocationID string
@@ -71,6 +74,7 @@ type Live struct {
 	serving    bool
 	publishing bool
 	accepting  bool
+	ownerCtx   context.Context
 
 	sessions     map[string]*AgentSession
 	observations map[liveObsKey]AllocationObservation
@@ -123,7 +127,43 @@ func (l *Live) Publishing() bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.publishing
+	return l.publicationReadyLocked() == nil
+}
+
+// PublicationContext binds request-driven syncs to the live owner's lease,
+// even when the request itself carries no lease claim.
+func (l *Live) PublicationContext() (context.Context, error) {
+	if l == nil {
+		return nil, ErrNotLiveOwner
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := l.publicationReadyLocked(); err != nil {
+		return nil, err
+	}
+	return l.ownerCtx, nil
+}
+
+func (l *Live) publicationReadyLocked() error {
+	if !l.serving || !l.publishing || l.ownerCtx == nil || l.ownerCtx.Err() != nil {
+		return ErrNotLiveOwner
+	}
+	// A hello or heartbeat establishes management presence, not workload health.
+	// Every routed serving allocation needs evidence in this ownership period;
+	// explicit unhealthy reports and durable withdrawals may remove endpoints.
+	for _, domain := range l.product.Domains {
+		for _, id := range l.product.AssignmentIDsForService(domain.ServiceID) {
+			assignment := l.product.Assignments[id]
+			if assignment.RolloutState != AllocationRolloutServing {
+				continue
+			}
+			obs, ok := l.observations[liveObsKey{AllocationID: id, Generation: assignment.DesiredRolloutGeneration}]
+			if !ok || obs.AgentID != assignment.AgentID {
+				return ErrIngressObservationsPending
+			}
+		}
+	}
+	return nil
 }
 
 func (l *Live) SetPublishing(ok bool) {
@@ -236,6 +276,7 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 	l.applyProductLocked(journal.Applied{Projection: product, Reset: true})
 	durable := l.product.DurableState
 	l.serving = true
+	l.ownerCtx = ctx
 	l.authorityEpoch = epoch
 	for id, assignment := range durable.Assignments {
 		if assignment.DrainDeadline != nil && !assignment.DrainDeadline.IsZero() {
@@ -261,6 +302,7 @@ func (l *Live) resetLocked() {
 	l.serving = false
 	l.publishing = false
 	l.accepting = false
+	l.ownerCtx = nil
 	l.sessions = make(map[string]*AgentSession)
 	l.observations = make(map[liveObsKey]AllocationObservation)
 	l.volumeObservations = make(map[volumeObsKey]VolumeObservation)

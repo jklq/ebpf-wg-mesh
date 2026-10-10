@@ -225,6 +225,9 @@ func (m *leaseManager) hold(ctx context.Context, name string) (context.Context, 
 					continue
 				}
 				if !ok {
+					if m.onUnfenced != nil {
+						m.onUnfenced()
+					}
 					m.notifyChanged(name)
 					cancel()
 					return
