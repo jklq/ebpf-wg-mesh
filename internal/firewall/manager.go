@@ -10,6 +10,8 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -25,6 +27,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/meshlabels"
+	"ebof-wg-mesh/internal/meshstate"
 )
 
 const (
@@ -44,6 +47,9 @@ type containerRuntime struct {
 }
 
 type Manager struct {
+	pinDir          string
+	ownership       *meshstate.Ownership
+	closed          bool
 	cfg             config.MeshRuntimeConfig
 	labelKeys       meshlabels.Keys
 	objs            firewallObjects
@@ -61,7 +67,7 @@ type Manager struct {
 	localHostIP     [16]byte
 }
 
-func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retErr error) {
+func Start(ctx context.Context, cfg config.MeshRuntimeConfig, ownership *meshstate.Ownership) (_ *Manager, retErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -87,6 +93,7 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 		}
 		if ms.InnerMap != nil && cfg.Firewall.ConntrackInnerEntries > 0 {
 			ms.InnerMap.MaxEntries = uint32(cfg.Firewall.ConntrackInnerEntries)
+			spec.Maps["conntrack_inner_template"].MaxEntries = uint32(cfg.Firewall.ConntrackInnerEntries)
 		}
 	}
 	if ms, ok := spec.Maps["cluster_identity_trie"]; ok && cfg.Firewall.ClusterIdentityEntries > 0 {
@@ -99,78 +106,54 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 		ms.MaxEntries = uint32(cfg.Firewall.MaxContainers + 16)
 	}
 
-	objs := firewallObjects{}
-	if err := spec.LoadAndAssign(&objs, nil); err != nil {
-		return nil, fmt.Errorf("load and assign eBPF objects: %w", err)
+	if ownership == nil || ownership.InterfaceName != cfg.WireGuard.InterfaceName {
+		return nil, errors.New("firewall startup requires ownership of its mesh interface")
 	}
-	cleanupObjs := true
+	pinDir := ownership.PinDir
+
+	m := &Manager{
+		cfg: cfg, labelKeys: cfg.Containerd.LabelKeys(), pinDir: pinDir, ownership: ownership,
+		wgIfindex: uint32(wgIface.Index), localHostIP: localHostIP,
+		containers:      make(map[string]*containerRuntime),
+		configuredByKey: make(map[firewallIdentityKey]firewallIdentityValue),
+	}
 	defer func() {
-		if cleanupObjs {
-			objs.Close()
+		if retErr != nil {
+			_ = m.Close()
 		}
 	}()
-
-	zero := uint32(0)
-	if err := objs.LocalNodeMap.Put(zero, localHostIP); err != nil {
-		return nil, fmt.Errorf("set local host map: %w", err)
+	if err := openPinnedObjects(spec, pinDir, &m.objs); err != nil {
+		return nil, fmt.Errorf("open persistent firewall maps: %w", err)
 	}
-	configuredSeeds, err := configuredIdentities(cfg)
-	if err != nil {
+	if err := m.adoptContainers(); err != nil {
+		return nil, fmt.Errorf("adopt container firewall: %w", err)
+	}
+	var key firewallIdentityKey
+	var value firewallIdentityValue
+	entries := m.objs.ClusterIdentityTrie.Iterate()
+	for entries.Next(&key, &value) {
+		m.configuredByKey[key] = value
+	}
+	if err := entries.Err(); err != nil {
 		return nil, err
 	}
-	seedByIP := make(map[[16]byte]firewallIdentityValue, len(cfg.Containerd.IdentitySeeds))
-	configuredByKey := make(map[firewallIdentityKey]firewallIdentityValue, len(configuredSeeds))
-	for _, seed := range configuredSeeds {
-		key := identityKeyForPrefix(seed.prefix)
-		value := firewallIdentityValue{
-			NetworkIdentity: seed.networkIdentity,
-			VethIfindex:     0,
-		}
-		if seed.hostIPv6.IsValid() {
-			value.HostIp = addrAs16(seed.hostIPv6)
-		}
-		if err := objs.ClusterIdentityTrie.Put(key, value); err != nil {
-			return nil, fmt.Errorf("seed identity trie for prefix %s: %w", seed.prefix.String(), err)
-		}
-		configuredByKey[key] = value
-		if key.Prefixlen == 128 {
-			seedByIP[key.IpAddress] = value
-		}
+	if err := m.UpdateIdentityCatalog(cfg); err != nil {
+		return nil, err
 	}
-	wgIfindex := uint32(wgIface.Index)
-	if err := objs.InterfaceRoleMap.Put(wgIfindex, roleWireGuard); err != nil {
-		return nil, fmt.Errorf("set wg interface role: %w", err)
+	if err := m.objs.LocalNodeMap.Put(uint32(0), localHostIP); err != nil {
+		return nil, fmt.Errorf("set local host map: %w", err)
 	}
-
-	wgIngress, err := link.AttachTCX(link.TCXOptions{
-		Interface: wgIface.Index,
-		Attach:    ebpf.AttachTCXIngress,
-		Program:   objs.TcxIngress,
-	})
+	if err := m.objs.InterfaceRoleMap.Put(m.wgIfindex, roleWireGuard); err != nil {
+		return nil, err
+	}
+	m.wgIngressLink, err = openPinnedTCX(filepath.Join(pinDir, "wg_ingress"), wgIface.Index, ebpf.AttachTCXIngress, m.objs.TcxIngress)
 	if err != nil {
-		return nil, fmt.Errorf("attach wg ingress tcx: %w", err)
+		return nil, fmt.Errorf("open wg ingress: %w", err)
 	}
-	cleanupWgIngress := true
-	defer func() {
-		if cleanupWgIngress {
-			wgIngress.Close()
-		}
-	}()
-
-	wgEgress, err := link.AttachTCX(link.TCXOptions{
-		Interface: wgIface.Index,
-		Attach:    ebpf.AttachTCXEgress,
-		Program:   objs.TcxEgress,
-	})
+	m.wgEgressLink, err = openPinnedTCX(filepath.Join(pinDir, "wg_egress"), wgIface.Index, ebpf.AttachTCXEgress, m.objs.TcxEgress)
 	if err != nil {
-		return nil, fmt.Errorf("attach wg egress tcx: %w", err)
+		return nil, fmt.Errorf("open wg egress: %w", err)
 	}
-	cleanupWgEgress := true
-	defer func() {
-		if cleanupWgEgress {
-			wgEgress.Close()
-		}
-	}()
 
 	staticByID := make(map[string]config.ContainerAssignment, len(cfg.Containerd.StaticAssignments))
 	for _, assignment := range cfg.Containerd.StaticAssignments {
@@ -186,35 +169,11 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig) (_ *Manager, retEr
 	if err != nil {
 		return nil, fmt.Errorf("connect containerd %s: %w", cfg.Containerd.Socket, err)
 	}
-	cleanupClient := true
-	defer func() {
-		if cleanupClient {
-			client.Close()
-		}
-	}()
-
 	eventsCtx, cancel := context.WithCancel(ctx)
-	m := &Manager{
-		cfg:             cfg,
-		labelKeys:       cfg.Containerd.LabelKeys(),
-		objs:            objs,
-		wgIfindex:       wgIfindex,
-		wgIngressLink:   wgIngress,
-		wgEgressLink:    wgEgress,
-		containerd:      client,
-		cancel:          cancel,
-		done:            make(chan struct{}),
-		containers:      make(map[string]*containerRuntime),
-		staticByID:      staticByID,
-		seedByIP:        seedByIP,
-		configuredByKey: configuredByKey,
-		localHostIP:     localHostIP,
-	}
-
-	cleanupObjs = false
-	cleanupWgIngress = false
-	cleanupWgEgress = false
-	cleanupClient = false
+	m.containerd = client
+	m.cancel = cancel
+	m.done = make(chan struct{})
+	m.staticByID = staticByID
 
 	go m.eventLoop(eventsCtx)
 	return m, nil
@@ -244,6 +203,9 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return errors.New("firewall manager is closed")
+	}
 
 	for key := range m.configuredByKey {
 		if _, retained := next[key]; retained {
@@ -402,10 +364,18 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 
 	if existing := m.containers[evt.ContainerID]; existing != nil {
-		_ = m.removeContainerLocked(existing)
+		if existing.ifindex == uint32(ifindex) && existing.networkIdentity == identity.NetworkIdentity &&
+			existing.ipv4 == identity.IPv4 && existing.ipv6 == identity.IPv6 {
+			return m.refreshContainerLinks(existing)
+		}
+		if err := m.removeContainerLocked(existing); err != nil {
+			return err
+		}
+		delete(m.containers, evt.ContainerID)
 	}
 
 	innerSpec := &ebpf.MapSpec{
+		Name:       fmt.Sprintf("ct_%d", ifindex),
 		Type:       ebpf.LRUHash,
 		KeySize:    uint32(binary.Size(firewallConnectionKey{})),
 		ValueSize:  8,
@@ -415,9 +385,21 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	if err != nil {
 		return fmt.Errorf("create conntrack inner map for %s: %w", evt.ContainerID, err)
 	}
+	path := m.containerPinPath(evt.ContainerID)
+	if err := os.MkdirAll(path, 0700); err != nil {
+		_ = innerMap.Close()
+		return err
+	}
+	if err := innerMap.Pin(filepath.Join(path, "conntrack")); err != nil {
+		_ = innerMap.Close()
+		return fmt.Errorf("pin container conntrack: %w", err)
+	}
+
 	ifKey := uint32(ifindex)
 	if err := m.objs.ConntrackMatrix.Put(ifKey, innerMap); err != nil {
-		innerMap.Close()
+		_ = innerMap.Unpin()
+		_ = innerMap.Close()
+		_ = os.RemoveAll(path)
 		return fmt.Errorf("insert inner map into conntrack_matrix: %w", err)
 	}
 
@@ -428,13 +410,17 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 	}
 	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
-		innerMap.Close()
+		_ = innerMap.Unpin()
+		_ = innerMap.Close()
+		_ = os.RemoveAll(path)
 		return fmt.Errorf("write container policy: %w", err)
 	}
 	if err := m.objs.InterfaceRoleMap.Put(ifKey, roleContainer); err != nil {
 		_ = m.objs.ContainerPolicyMap.Delete(ifKey)
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)
-		innerMap.Close()
+		_ = innerMap.Unpin()
+		_ = innerMap.Close()
+		_ = os.RemoveAll(path)
 		return fmt.Errorf("write interface role: %w", err)
 	}
 
@@ -462,27 +448,10 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		}
 	}
 
-	ingress, err := link.AttachTCX(link.TCXOptions{
-		Interface: ifindex,
-		Attach:    ebpf.AttachTCXIngress,
-		Program:   m.objs.TcxIngress,
-	})
-	if err != nil {
+	if err := m.refreshContainerLinks(runtime); err != nil {
 		_ = m.removeContainerLocked(runtime)
-		return fmt.Errorf("attach veth ingress tcx: %w", err)
+		return err
 	}
-	runtime.ingressLink = ingress
-
-	egress, err := link.AttachTCX(link.TCXOptions{
-		Interface: ifindex,
-		Attach:    ebpf.AttachTCXEgress,
-		Program:   m.objs.TcxEgress,
-	})
-	if err != nil {
-		_ = m.removeContainerLocked(runtime)
-		return fmt.Errorf("attach veth egress tcx: %w", err)
-	}
-	runtime.egressLink = egress
 	m.containers[evt.ContainerID] = runtime
 	slog.Info("container firewall attached",
 		"container", evt.ContainerID,
@@ -526,24 +495,30 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 	}
 	var errs []error
 	if runtime.ingressLink != nil {
+		if err := runtime.ingressLink.Unpin(); err != nil {
+			errs = append(errs, err)
+		}
 		if err := runtime.ingressLink.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close ingress link: %w", err))
 		}
 	}
 	if runtime.egressLink != nil {
+		if err := runtime.egressLink.Unpin(); err != nil {
+			errs = append(errs, err)
+		}
 		if err := runtime.egressLink.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close egress link: %w", err))
 		}
 	}
 	if runtime.ifindex != 0 {
 		ifkey := runtime.ifindex
-		if err := m.objs.InterfaceRoleMap.Delete(ifkey); err != nil {
+		if err := m.objs.InterfaceRoleMap.Delete(ifkey); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			errs = append(errs, fmt.Errorf("delete interface role: %w", err))
 		}
-		if err := m.objs.ContainerPolicyMap.Delete(ifkey); err != nil {
+		if err := m.objs.ContainerPolicyMap.Delete(ifkey); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			errs = append(errs, fmt.Errorf("delete container policy: %w", err))
 		}
-		if err := m.objs.ConntrackMatrix.Delete(ifkey); err != nil {
+		if err := m.objs.ConntrackMatrix.Delete(ifkey); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			errs = append(errs, fmt.Errorf("delete conntrack matrix entry: %w", err))
 		}
 	}
@@ -564,10 +539,17 @@ func (m *Manager) removeContainerLocked(runtime *containerRuntime) error {
 		}
 	}
 	if runtime.innerMap != nil {
+		if err := runtime.innerMap.Unpin(); err != nil {
+			errs = append(errs, err)
+		}
 		if err := runtime.innerMap.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("close inner map: %w", err))
 		}
 	}
+	if err := os.RemoveAll(m.containerPinPath(runtime.containerID)); err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
@@ -718,6 +700,8 @@ func (m *Manager) AttachedCount() int {
 	return len(m.containers)
 }
 
+// Close releases process ownership. Pinned attachments, policy and connection
+// tracking continue serving traffic until a workload exits or Remove is called.
 func (m *Manager) Close() error {
 	if m == nil {
 		return nil
@@ -728,39 +712,66 @@ func (m *Manager) Close() error {
 	if m.done != nil {
 		<-m.done
 	}
-
 	m.mu.Lock()
-	var errs []error
-	for id, runtime := range m.containers {
-		if err := m.removeContainerLocked(runtime); err != nil {
-			errs = append(errs, fmt.Errorf("cleanup %s: %w", id, err))
-		}
-		delete(m.containers, id)
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
 	}
-	m.mu.Unlock()
-
+	m.closed = true
+	var errs []error
+	for _, r := range m.containers {
+		errs = append(errs, closeContainerHandles(r))
+	}
 	if m.wgIngressLink != nil {
-		if err := m.wgIngressLink.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close wg ingress link: %w", err))
-		}
+		errs = append(errs, m.wgIngressLink.Close())
 	}
 	if m.wgEgressLink != nil {
-		if err := m.wgEgressLink.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close wg egress link: %w", err))
-		}
+		errs = append(errs, m.wgEgressLink.Close())
 	}
-	if m.objs.InterfaceRoleMap != nil && m.wgIfindex != 0 {
-		if err := m.objs.InterfaceRoleMap.Delete(m.wgIfindex); err != nil {
-			errs = append(errs, fmt.Errorf("delete wg role entry: %w", err))
-		}
-	}
-	if err := m.objs.Close(); err != nil {
-		errs = append(errs, fmt.Errorf("close eBPF objects: %w", err))
+	// Generated Close expects every object to be initialized. A load failure
+	// already closes the partially assigned collection.
+	if m.objs.TcxIngress != nil {
+		errs = append(errs, m.objs.Close())
 	}
 	if m.containerd != nil {
-		if err := m.containerd.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("close containerd client: %w", err))
-		}
+		errs = append(errs, m.containerd.Close())
+	}
+	if m.ownership != nil {
+		errs = append(errs, m.ownership.Close())
 	}
 	return errors.Join(errs...)
+}
+
+func closeContainerHandles(r *containerRuntime) error {
+	var errs []error
+	if r.ingressLink != nil {
+		errs = append(errs, r.ingressLink.Close())
+	}
+	if r.egressLink != nil {
+		errs = append(errs, r.egressLink.Close())
+	}
+	if r.innerMap != nil {
+		errs = append(errs, r.innerMap.Close())
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) refreshContainerLinks(r *containerRuntime) error {
+	// Reopening the pins also upgrades programs atomically without detaching.
+	if r.ingressLink != nil {
+		_ = r.ingressLink.Close()
+		r.ingressLink = nil
+	}
+	if r.egressLink != nil {
+		_ = r.egressLink.Close()
+		r.egressLink = nil
+	}
+	path := m.containerPinPath(r.containerID)
+	var err error
+	r.ingressLink, err = openPinnedTCX(filepath.Join(path, "ingress"), int(r.ifindex), ebpf.AttachTCXIngress, m.objs.TcxIngress)
+	if err != nil {
+		return err
+	}
+	r.egressLink, err = openPinnedTCX(filepath.Join(path, "egress"), int(r.ifindex), ebpf.AttachTCXEgress, m.objs.TcxEgress)
+	return err
 }

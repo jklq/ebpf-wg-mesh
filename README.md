@@ -44,3 +44,15 @@ make dev-ephemeral
 ```
 
 `localteststack` loads a repo-root `.env`, which can be a 1Password-mounted Environment. Shell variables take precedence. To enable GitHub sign-in and webhooks, set `LOCALTESTSTACK_ENABLE_PUBLIC_TUNNEL=1` and provide `CLOUDFLARE_TUNNEL_TOKEN`, `CLOUDFLARE_HOSTNAME`, and the `CONTROLPLANE_GITHUB_*` and `DASHBOARD_GITHUB_*` keys. Without them the stack runs in local-only mode with dev users.
+
+## Agent restarts and network removal
+
+Agent shutdown closes process handles while workloads keep their network. Startup adopts the existing WireGuard interface, reconciles peers and routes in place, and reopens eBPF maps and TCX links under `/sys/fs/bpf/ebpf-wg-mesh/<interface>`. Per-workload connection tracking and identity policy survive clean shutdown and process crashes. The host must mount bpffs at `/sys/fs/bpf`; pins last until explicit removal or a host reboot ([eBPF object lifecycle](https://ebpf-go.dev/concepts/object-lifecycle/)). Map layout or capacity mismatches fail startup while retaining existing state.
+
+Stop the agent and remove its workloads before explicitly destroying its network:
+
+```bash
+agent remove-network -mesh-interface-name wg0
+```
+
+Workload exit removes that workload's attachments, policy and connection tracking. Agent session loss affects management availability and placement; existing workload observations remain scoped to their allocation generation across reconnects. Envoy checks backend TCP listeners every two seconds, including idle backends, and excludes failed listeners without panic routing. Before replacing a serving allocation on an unavailable agent, the control plane checks its last healthy listeners directly. A reachable listener, an explicit local mesh-access error, or the absence of a reported listener defers replacement. These control-plane probes require network access to the workload addresses; Envoy probes run independently from the actual ingress path.

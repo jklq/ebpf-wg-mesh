@@ -6,7 +6,7 @@ test-unit-go:
 test-linux-runtime:
 	go test -count=1 -timeout 10m ./internal/agent
 	go test -count=1 -timeout 10m ./internal/builder
-	go test -count=1 -timeout 10m ./internal/firewall
+	go test -count=1 -timeout 10m ./internal/firewall ./internal/wgmesh
 
 # Same tests, but provisioned with containerd/CNI/BPF inside a privileged Linux
 # container so they actually run on a non-Linux host instead of skipping.

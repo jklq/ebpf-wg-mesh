@@ -86,6 +86,8 @@ EOF
 
 ensure_cni
 
+mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf
+
 install -d -m 0755 /etc/ebpf-wg-mesh
 umask 077
 printf 'AGENT_BOOTSTRAP_TOKEN=%s\n' "${BOOTSTRAP_TOKEN}" >/etc/ebpf-wg-mesh/agent.env

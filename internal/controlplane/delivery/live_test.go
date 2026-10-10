@@ -410,7 +410,7 @@ func TestLiveAdmissionReevaluatedOnStatusReport(t *testing.T) {
 	}
 }
 
-func TestLiveSessionReplacementInvalidatesObservations(t *testing.T) {
+func TestLiveSessionReplacementPreservesObservations(t *testing.T) {
 	l := startLive(t)
 	if err := l.BeginSession("agent", "s1", nil, nil, true); err != nil {
 		t.Fatal(err)
@@ -428,8 +428,8 @@ func TestLiveSessionReplacementInvalidatesObservations(t *testing.T) {
 	if err := l.BeginSession("agent", "s2", nil, nil, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := l.Observation("alloc", 1); ok {
-		t.Fatal("replacement left previous observation")
+	if obs, ok := l.Observation("alloc", 1); !ok || !obs.Healthy {
+		t.Fatal("replacement discarded running workload observation")
 	}
 	if err := l.Heartbeat("agent", "s1", true); !errors.Is(err, ErrStaleAgentSession) {
 		t.Fatalf("old session heartbeat: %v", err)
@@ -565,7 +565,7 @@ func TestLiveObservationStoresCrashEvidenceWithoutTriggeringWork(t *testing.T) {
 	}
 }
 
-func TestLiveOverlayPreservesCrashEvidenceWhenUnavailable(t *testing.T) {
+func TestLiveOverlayPreservesCrashEvidenceWithoutSession(t *testing.T) {
 	now := time.Now().UTC()
 	rec := AllocationRecord{ID: "alloc", AgentID: "agent", RolloutState: AllocationRolloutServing}
 	obs := AllocationObservation{
@@ -577,9 +577,9 @@ func TestLiveOverlayPreservesCrashEvidenceWhenUnavailable(t *testing.T) {
 		},
 		ObservedAt: now,
 	}
-	got := overlayAllocation(rec, AgentSession{}, false, obs, true, now, AgentHealthyTTL)
-	if got.Phase != "Unavailable" {
-		t.Fatalf("phase = %q, want Unavailable", got.Phase)
+	got := overlayAllocation(rec, obs, true)
+	if got.Phase != "CrashLoop" {
+		t.Fatalf("phase = %q, want CrashLoop", got.Phase)
 	}
 	if got.Restart.GetRestartCount() != 5 || !got.Restart.GetCrashLoop() {
 		t.Fatalf("crash evidence lost on unavailable overlay: %+v", got.Restart)

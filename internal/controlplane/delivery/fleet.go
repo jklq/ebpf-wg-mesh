@@ -263,7 +263,7 @@ func (s *persistence) overlayAgent(rec AgentRecord) AgentRecord {
 
 func (s *persistence) overlayAllocation(rec AllocationRecord) AllocationRecord {
 	if s == nil || s.live == nil {
-		return overlayAllocation(rec, AgentSession{}, false, AllocationObservation{}, false, time.Time{}, AgentHealthyTTL)
+		return overlayAllocation(rec, AllocationObservation{}, false)
 	}
 	return s.live.OverlayAllocation(rec)
 }

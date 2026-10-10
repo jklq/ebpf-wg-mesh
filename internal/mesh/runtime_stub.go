@@ -22,3 +22,5 @@ func (r *Runtime) Update(config.MeshRuntimeConfig) error {
 func (r *Runtime) Close() error {
 	return nil
 }
+
+func Remove(string) error { return errors.New("mesh runtime requires linux") }

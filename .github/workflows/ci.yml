@@ -116,6 +116,7 @@ jobs:
           sudo sysctl -w net.ipv6.conf.all.disable_ipv6=0
           sudo sysctl -w net.ipv6.conf.all.forwarding=1
           sudo sysctl -w net.ipv6.conf.default.forwarding=1
+          sudo mountpoint -q /sys/fs/bpf || sudo mount -t bpf bpf /sys/fs/bpf
           sudo systemctl enable --now containerd
           sudo ctr images pull docker.io/library/busybox:1.36.1
       - name: Run containerd engine and eBPF policy tests
@@ -127,7 +128,7 @@ jobs:
           sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
             "$(command -v go)" test -count=1 -timeout 10m -v ./internal/builder
           sudo --preserve-env=PATH,HOME,GOROOT,GOPATH,GOCACHE,GOMODCACHE,GOPROXY,GOSUMDB \
-            "$(command -v go)" test -count=1 -timeout 10m -v ./internal/firewall
+            "$(command -v go)" test -count=1 -timeout 10m -v ./internal/firewall ./internal/wgmesh
 
   go-integration:
     name: Go integration tests (shard ${{ matrix.label }}/4)
