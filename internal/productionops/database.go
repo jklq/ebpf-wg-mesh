@@ -173,13 +173,21 @@ func (r *Runner) databaseCredentials(ctx context.Context, verify bool) error {
 			return err
 		}
 		var script string
-		for name, b := range map[string][]byte{"ca.crt": ca.Certificate, "node.crt": node.Certificate, "node.key": node.Key} {
+		files := map[string][]byte{"ca.crt": ca.Certificate, "node.crt": node.Certificate, "node.key": node.Key}
+		for _, name := range sortedFiles(files) {
+			b := files[name]
 			path := cfgDir(r.Plan, pl) + "/certs/" + name
 			if verify {
 				script += verifyRemoteFile(path, b)
 			} else {
 				script += remoteFile(path, b)
 			}
+		}
+		activation := credentialRuntimeEnvironment(files, nil)
+		if verify {
+			script += verifyRemoteFile(cfgDir(r.Plan, pl)+"/runtime.env", activation)
+		} else {
+			script += remoteFile(cfgDir(r.Plan, pl)+"/runtime.env", activation)
 		}
 		probe, ok := r.Config.Probes[deploy.Database]
 		if !ok {

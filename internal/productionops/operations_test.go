@@ -92,6 +92,50 @@ func TestDatabaseCertificatesProvisionedBeforeStartupAndIdempotent(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestDatabaseCredentialFingerprintTracksCertificateContents(t *testing.T) {
+	r := testRunner(t)
+	ctx := context.Background()
+	if err := r.databaseCredentials(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	pl := r.Plan.Placements[0]
+	h := r.Plan.Installation.Hosts[0]
+	path := r.Remote.(isolatedRemote).path(h, cfgDir(r.Plan, pl)+"/runtime.env")
+	first, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.databaseCredentials(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	again, err := os.ReadFile(path)
+	if err != nil || string(first) != string(again) {
+		t.Fatal("identical certificate provisioning changed the activation fingerprint", err)
+	}
+	var ca certificateBundle
+	if err := privateJSON(filepath.Join(r.databasePKI(), "ca.json"), &ca); err != nil {
+		t.Fatal(err)
+	}
+	node, err := certificate("node", &ca, []string{h.Network.Address, "localhost", "127.0.0.1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveJSON(filepath.Join(r.databasePKI(), pl.Instance+".json"), node); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.databaseCredentials(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := os.ReadFile(path)
+	if err != nil || string(first) == string(changed) {
+		t.Fatal("renewed certificate did not change the activation fingerprint", err)
+	}
+	if err := r.databaseCredentials(ctx, true); err != nil {
+		t.Fatal("verification disagreed with installed credential contents", err)
+	}
+}
+
 func TestTLSReadinessAndAuthorizationInspectActualResponses(t *testing.T) {
 	status := http.StatusOK
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

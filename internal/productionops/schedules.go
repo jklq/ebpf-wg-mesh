@@ -281,11 +281,7 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 		return err
 	}
 	for _, pl := range current.Plan.Placements {
-		action := "restart " + shell(unit(r.Plan, pl))
-		if pl.Role == deploy.Database {
-			action = "kill --kill-who=main --signal=HUP " + shell(unit(r.Plan, pl))
-		}
-		if _, err = current.remote(ctx, current.Plan, pl, "if systemctl is-active --quiet "+shell(unit(r.Plan, pl))+"; then systemctl "+action+"; fi\n"); err != nil {
+		if err = current.activateCredentials(ctx, pl); err != nil {
 			return err
 		}
 	}

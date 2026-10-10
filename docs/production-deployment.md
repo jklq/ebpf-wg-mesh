@@ -158,6 +158,11 @@ scheduler-managed console. Shared SQL owns console authentication, platform
 signing-key state and certificate revocations. Individual console mTLS identities
 are admitted through `CONTROLPLANE_CONSOLE_CALLER_IDS`. Installed replicas do not
 need a controller to remain operational. The reference operations service installs independent hourly certificate renewal.
+Renewal compares credential contents with the credentials loaded by each process;
+rewriting identical files leaves it running. Changed credentials restart only the
+affected non-database units, followed by readiness checks. Database certificates
+use SIGHUP, with a reload receipt bound to the current systemd invocation so
+interrupted activation remains retryable.
 Externally issued wildcard certificates are selected as files and checked for
 identity, key agreement and remaining lifetime; their DNS-01 renewal service is external.
 
