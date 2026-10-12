@@ -20,7 +20,8 @@ import (
 
 // fileStore keeps human-readable JSONL segments, with no in-memory row index.
 // Metadata is proportional to segments; queries retain one bounded page.
-// One process owns a directory. All writes and reads cross the same mutex.
+// Each operation owns a directory lock. Overlapping process generations share
+// one byte budget and one visible history without concurrent file mutations.
 type fileStore struct {
 	mu       sync.Mutex
 	cfg      config.FileLogConfig
@@ -33,9 +34,10 @@ type fileStore struct {
 	segments []fileSegment
 }
 type fileSegment struct {
-	path   string
-	size   int64
-	expiry time.Time
+	path     string
+	modified time.Time
+	size     int64
+	expiry   time.Time
 }
 type fileRecord struct {
 	Line      *LogLineInput `json:"line,omitempty"`
@@ -61,15 +63,10 @@ func openFileStore(cfg config.FileLogConfig) (*fileStore, error) {
 		return nil, err
 	}
 	f := &fileStore{cfg: cfg, lock: flock.New(filepath.Join(cfg.Directory, ".lock")), stop: make(chan struct{}), done: make(chan struct{})}
-	ok, err := f.lock.TryLock()
-	if err != nil {
+	if err := f.acquire(context.Background()); err != nil {
 		return nil, err
 	}
-	if !ok {
-		_ = f.lock.Close()
-		return nil, errors.New("file log directory already has a writer; use ClickHouse for multiple replicas")
-	}
-	err = func() error {
+	err := func() error {
 		temps, err := filepath.Glob(filepath.Join(cfg.Directory, "*.tmp"))
 		if err != nil {
 			return err
@@ -79,35 +76,17 @@ func openFileStore(cfg config.FileLogConfig) (*fileStore, error) {
 				return err
 			}
 		}
-		paths, err := filepath.Glob(filepath.Join(cfg.Directory, "*.jsonl"))
-		if err != nil {
-			return err
-		}
-		if len(paths) > 0 {
-			if err := repairFileTail(paths[len(paths)-1]); err != nil {
-				return err
-			}
-		}
-		for _, path := range paths {
-			info, err := os.Stat(path)
-			if err != nil {
-				return err
-			}
-			segment := fileSegment{path: path, size: info.Size()}
-			if err := scanFile(context.Background(), path, func(r fileRecord) error { segment.expiry = earliestExpiry(segment.expiry, r.ExpiresAt); return nil }); err != nil {
-				return err
-			}
-			f.segments = append(f.segments, segment)
-		}
 		if err := f.expire(context.Background()); err != nil {
 			return err
 		}
 		return f.trim()
 	}()
 	if err != nil {
+		f.release()
 		_ = f.lock.Close()
 		return nil, err
 	}
+	f.release()
 	go func() {
 		defer close(f.done)
 		ticker := time.NewTicker(time.Minute)
@@ -117,9 +96,7 @@ func openFileStore(cfg config.FileLogConfig) (*fileStore, error) {
 			case <-f.stop:
 				return
 			case <-ticker.C:
-				f.mu.Lock()
-				err := f.expire(context.Background())
-				f.mu.Unlock()
+				err := f.sweep(context.Background())
 				if err != nil {
 					slog.Warn("sweep file log retention", "error", err)
 				}
@@ -223,11 +200,10 @@ func (f *fileStore) append(ctx context.Context, records []fileRecord) error {
 	if len(records) == 0 {
 		return nil
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if f.closed {
-		return errors.New("file logs closed")
+	if err := f.acquire(ctx); err != nil {
+		return err
 	}
+	defer f.release()
 	replacements := map[string]bool{}
 	for _, r := range records {
 		if r.Gap != nil {
@@ -416,8 +392,10 @@ func (f *fileStore) rewriteSegments(ctx context.Context, selected func(fileSegme
 	return nil
 }
 func (f *fileStore) purge(ctx context.Context, projectID string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	if err := f.acquire(ctx); err != nil {
+		return err
+	}
+	defer f.release()
 	return f.rewrite(ctx, func(r fileRecord) bool {
 		if r.Line != nil {
 			return r.Line.ProjectID != projectID

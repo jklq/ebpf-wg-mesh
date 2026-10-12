@@ -12,6 +12,7 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 ## Docs
 
 - [Production deployment](docs/production-deployment.md): typed installations, provider adapters, placement, availability and verified rolling upgrades.
+- [Listener handover](docs/zero-downtime-upgrades.md): stable listener owners, in-place process handover, overlap budgets, rollback and repair.
 - [Recovery](docs/recovery.md): complete independent recovery points, native backups, protected artifacts, monitoring and isolated restores.
 - [INGRESS.md](INGRESS.md): authenticated xDS, node retirement, and shared wildcard deployment and renewal.
 - [docs/map](docs/map/README.md): architecture map, one block per file. Render it with `go run ./cmd/archmap`.

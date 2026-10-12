@@ -100,7 +100,7 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 		if pl.Role == Database {
 			phase = "database-runtime"
 		}
-		for _, action := range runtimeActions {
+		for _, action := range replicaActions(p, restoreMode, pl) {
 			add(phase, action, pl.Host, "", &pl)
 		}
 	}

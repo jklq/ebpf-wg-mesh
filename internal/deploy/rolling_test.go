@@ -12,7 +12,7 @@ func rollingPlan(t *testing.T, schemaChange bool) (Plan, State, Inventory) {
 	t.Helper()
 	i, r, inv := fixture(3)
 	state := applied(build(t, i, r, State{}, inv, false))
-	r.ID, i.Release = "r44", "r44"
+	r, i.Release = nextRelease(r, "r44"), "r44"
 	if schemaChange {
 		r.Schema++
 		r.SchemaChanges = map[string]SchemaChange{state.Bundle.ID: {

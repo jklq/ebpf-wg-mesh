@@ -98,13 +98,15 @@ func TestFileLogsDurableFilteredPaginationAndPurge(t *testing.T) {
 		t.Fatalf("purge %+v %v", page, err)
 	}
 }
-func TestFileLogsSizeExpiryAndSingleWriter(t *testing.T) {
+func TestFileLogsSizeExpiryAndSharedWriters(t *testing.T) {
 	ctx := context.Background()
 	s := fileLogs(t, 256<<10)
 	dir := s.file.cfg.Directory
-	if _, err := OpenLogStore(ctx, config.LogCaptureConfig{File: config.FileLogConfig{Directory: dir}}); err == nil {
-		t.Fatal("second writer accepted")
+	peer, err := OpenLogStore(ctx, config.LogCaptureConfig{File: config.FileLogConfig{Directory: dir, MaxBytes: 256 << 10, SegmentBytes: 256 << 10}})
+	if err != nil {
+		t.Fatal(err)
 	}
+	defer peer.Close()
 	for i := 0; i < 20; i++ {
 		if err := s.WriteLogLines(ctx, []LogLineInput{{ID: fmt.Sprint(i), ServiceID: "svc", ProjectID: "p", ObservedAt: time.Now(), Line: strings.Repeat("x", 20000)}}); err != nil {
 			t.Fatal(err)

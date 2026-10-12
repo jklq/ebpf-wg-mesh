@@ -605,13 +605,20 @@ func (r *Runner) reservations(ctx context.Context, verify bool) error {
 			continue
 		}
 		h, _ := r.Plan.Installation.Host(pl.Host)
-		reserve := deploy.Resources{} // Already enforced by the native agent cgroups.
+		reserve := deploy.Resources{} // Additional capacity beyond native agent cgroups.
+		if r.Plan.Upgrade != nil {
+			reserve = overlapReservation(r.Plan, pl)
+		}
 		hostType := "stable"
 		if h.Reliability == "intermittent" {
 			hostType = "intermittent"
 		}
 		if !verify {
-			if err = r.yieldReservations(ctx, db, pl); err != nil {
+			err = r.yieldReservations(ctx, db, pl)
+			if err == nil && reserve != (deploy.Resources{}) {
+				err = r.reserveOverlap(ctx, db, pl, reserve)
+			}
+			if err != nil {
 				return err
 			}
 			err = adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {

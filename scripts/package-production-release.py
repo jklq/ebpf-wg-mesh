@@ -105,16 +105,17 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     release = yaml.safe_load((ROOT / "infra/production/examples/releases/r43.yaml").read_text())
     release["id"] = args.id
-    release["tools"] = {name: {} for name in ("operations", "platformctl", "console-admin", "cockroachdb", "aws", "skopeo", "buildkitd")}
+    release["tools"] = {name: {} for name in ("operations", "platformctl", "continuity", "console-admin", "cockroachdb", "aws", "skopeo", "buildkitd")}
     if not args.skip_console_build:
         run(["bun", "run", "build"], cwd=ROOT / "console")
     for role in release["programs"].values():
         role["artifacts"] = {}
     release["images"] = images
+    unpacked_sizes = {}
     for arch in architectures:
         env = os.environ | {"GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}
-        for name in ("operations", "platformctl", "controlplane", "agent", "builder"):
-            run(["go", "build", "-trimpath", "-o", str(output / f"{name}-{arch}"), f"./cmd/{name}"], env=env)
+        for name in ("operations", "platformctl", "continuity", "controlplane", "agent", "builder"):
+            run(["go", "build", "-trimpath", "-buildvcs=false", "-o", str(output / f"{name}-{arch}"), f"./cmd/{name}"], env=env)
         target = "bun-linux-x64" if arch == "amd64" else "bun-linux-arm64"
         run(["bun", "build", "--compile", f"--target={target}", "tooling/production-admin.ts", "--outfile", str(output / f"console-admin-{arch}")], cwd=ROOT / "console")
         with tempfile.TemporaryDirectory(prefix="platform-release-") as tmp:
@@ -133,6 +134,7 @@ def main():
                         raise ValueError("bundle entry must stay inside the native dependency tree")
                     verify_native(source / entry[0], arch)
                     bundle(artifact, source, entry)
+                    unpacked_sizes[artifact] = sum(path.stat().st_size for path in source.rglob("*") if path.is_file() and not path.is_symlink())
             console_tree = tmp / "console"
             console_tree.mkdir()
             shutil.copytree(ROOT / "console/.output", console_tree / ".output", symlinks=False)
@@ -141,12 +143,13 @@ def main():
             shutil.copy2(bun, console_tree / "bun")
             (console_tree / "bun").chmod(0o755)
             bundle(output / f"console-{arch}", console_tree, ["bun", "@bundle/.output/server/index.mjs"])
+            unpacked_sizes[output / f"console-{arch}"] = sum(path.stat().st_size for path in console_tree.rglob("*") if path.is_file())
         for name, role in release["programs"].items():
             artifact = output / f"{name}-{arch}"
-            role["artifacts"][arch] = {"url": f"{args.url_base.rstrip('/')}/{artifact.name}", "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+            role["artifacts"][arch] = {"url": f"{args.url_base.rstrip('/')}/{artifact.name}", "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(), "bytes": artifact.stat().st_size, "unpackedBytes": unpacked_sizes.get(artifact, 0)}
         for name, artifacts in release["tools"].items():
             artifact = output / f"{name}-{arch}"
-            artifacts[arch] = {"url": f"{args.url_base.rstrip('/')}/{artifact.name}", "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()}
+            artifacts[arch] = {"url": f"{args.url_base.rstrip('/')}/{artifact.name}", "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(), "bytes": artifact.stat().st_size, "unpackedBytes": unpacked_sizes.get(artifact, 0)}
     # JSON is a supported release format, and keeps a build independent of YAML
     # serializer ordering and aliases. No placeholder hashes survive packaging.
     (output / "release.json").write_text(json.dumps(release, indent=2) + "\n")

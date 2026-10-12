@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -61,6 +62,7 @@ type Server struct {
 	logStore        *logs.LogStore
 	logEmitter      *logs.LogEmitter
 	logIngester     *logs.AsyncIngester
+	logSpoolDir     string
 	notifier        *notifier
 	authority       *identity.TLSAuthority
 	internalGRPC    *grpc.Server
@@ -229,6 +231,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	// Each replica journals into its own durable directory. Shared authority
 	// lives in SQL; local spool files never have two writers.
 	replicaID := strings.NewReplacer(":", "_", "/", "_").Replace(cfg.AdvertiseAddr)
+	if generation := os.Getenv("PLATFORM_CONTINUITY_ID"); generation != "" {
+		replicaID += "-" + generation
+	}
 	if replicaID == "" {
 		replicaID = "default"
 	}
@@ -382,6 +387,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		requiredSigningScopes = append(requiredSigningScopes, signkeys.ScopeRegistry)
 	}
 	server := &Server{
+		logSpoolDir:         filepath.Join(cfg.Logs.File.Directory, "ingest", replicaID),
 		recoveryAuthority:   admission,
 		recoveryPaused:      admission.Paused,
 		recoveryCheckpoints: admission.Checkpoints,
@@ -556,6 +562,7 @@ func (s *Server) Run(ctx context.Context) error {
 	// Per-replica as well: every replica ingests the agent streams it terminates. Run drains
 	// accepted batches before returning; Close tears down the log store once runDone closes.
 	var logIngestDone chan error
+	var logRecoveryDone chan error
 	if s.logIngester != nil {
 		done := make(chan error, 1)
 		logIngestDone = done
@@ -563,6 +570,13 @@ func (s *Server) Run(ctx context.Context) error {
 			err := s.logIngester.Run(runCtx)
 			errCh <- err
 			done <- err
+		}()
+		recoveryDone := make(chan error, 1)
+		logRecoveryDone = recoveryDone
+		go func() {
+			err := logs.RecoverRetiredJournals(runCtx, s.logStore, s.logSpoolDir, int64(s.cfg.Logs.IngestQueueBytes))
+			errCh <- err
+			recoveryDone <- err
 		}()
 	}
 	leaseDone, leaseStopped := make(chan error, 1), make(chan struct{})
@@ -601,6 +615,11 @@ func (s *Server) Run(ctx context.Context) error {
 	// right after runDone, so Run must not return until the drain finished.
 	if logIngestDone != nil {
 		if err := <-logIngestDone; result == nil {
+			result = err
+		}
+	}
+	if logRecoveryDone != nil {
+		if err := <-logRecoveryDone; result == nil {
 			result = err
 		}
 	}

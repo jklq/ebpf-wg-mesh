@@ -65,6 +65,7 @@ type SpoolStats struct {
 // metadata. Committed records are retained for replay until Retention expires,
 // but may be collected sooner under pressure without counting as drops.
 type SpoolConfig struct {
+	TryOwnership bool // Used by recovery to skip journals with a live owner.
 	Dir          string
 	MaxBytes     int64
 	MaxRecords   int64
@@ -116,7 +117,11 @@ func OpenSpool(cfg SpoolConfig) (*Spool, error) {
 		}
 	}
 	diskLimit := 4*cfg.MaxBytes + spoolDiskReserve
-	db, err := bolt.Open(filepath.Join(cfg.Dir, SpoolFile), 0o600, &bolt.Options{Timeout: time.Second, MaxSize: int(diskLimit)})
+	timeout := time.Second
+	if cfg.TryOwnership {
+		timeout = time.Nanosecond
+	}
+	db, err := bolt.Open(filepath.Join(cfg.Dir, SpoolFile), 0o600, &bolt.Options{Timeout: timeout, MaxSize: int(diskLimit)})
 	if err != nil {
 		return nil, fmt.Errorf("open log spool database: %w", err)
 	}

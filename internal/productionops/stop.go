@@ -36,7 +36,11 @@ func prepareStop(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "envoy":
 		e := envoyStop{poll: 500 * time.Millisecond, client: &http.Client{Timeout: 5 * time.Second}}
-		fs.StringVar(&e.admin, "admin", "http://"+envoyAdminAddress, "loopback Envoy admin URL")
+		admin := envoyAdminAddress
+		if private := os.Getenv("PLATFORM_ENVOY_ADMIN_LISTEN"); private != "" {
+			admin = private // A superseded generation behind a listener owner.
+		}
+		fs.StringVar(&e.admin, "admin", "http://"+admin, "loopback Envoy admin URL")
 		fs.DurationVar(&e.withdrawalMin, "withdrawal-min", 15*time.Second, "minimum time health checks fail before listeners drain")
 		fs.DurationVar(&e.withdrawalMax, "withdrawal-max", 30*time.Second, "maximum time to wait for new ingress connections to stop")
 		fs.DurationVar(&e.quiet, "quiet", 3*time.Second, "period without new ingress connections that confirms withdrawal")

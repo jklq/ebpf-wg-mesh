@@ -50,8 +50,10 @@ func (f *fileStore) list(ctx context.Context, req *platformv1.ListServiceLogsReq
 		limit = defaultLogQueryLimit
 	}
 	limit = min(limit, maxLogQueryLimit)
-	f.mu.Lock()
-	defer f.mu.Unlock()
+	if err := f.acquire(ctx); err != nil {
+		return result, err
+	}
+	defer f.release()
 	paths, err := f.paths()
 	if err != nil {
 		return result, err

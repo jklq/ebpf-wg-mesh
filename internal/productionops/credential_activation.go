@@ -74,6 +74,13 @@ func credentialEnvironmentCheck() string {
 func credentialActivationScript(p deploy.Plan, pl deploy.Placement, restart bool) string {
 	service, directory := shell(unit(p, pl)), cfgDir(p, pl)
 	script := "if ! systemctl is-active --quiet " + service + "; then printf 'inactive\\n'; exit 0; fi\n"
+	if len(p.Release.Programs[pl.Role].Listeners) > 0 {
+		// A handover keeps the old generation serving until the new one is
+		// ready, so it needs no peer gate. The old generation then drains.
+		binary, dir := shell(deploy.ContinuityBinary(p, pl)), shell(deploy.ContinuityDir(p, pl))
+		launch := shell(directory + "/launch.json")
+		return script + "if " + binary + " verify " + dir + " " + launch + " >/dev/null 2>&1; then printf 'current\\n'; exit 0; fi\n" + binary + " activate " + dir + " " + launch + " >/dev/null\n" + binary + " finish " + dir + " >/dev/null\nprintf 'handed-over\\n'\n"
+	}
 	script += credentialIdentityScript(p, pl)
 	if pl.Role == deploy.Database {
 		// SIGHUP does not replace the environment. A receipt is valid only for the
@@ -122,7 +129,7 @@ func (r *Runner) activateCredentials(ctx context.Context, pl deploy.Placement) (
 	if len(status) == 1 && status[0] == "inactive" {
 		return nil // Maintenance never resurrects a stopped or retired unit.
 	}
-	if !(len(status) == 1 && (status[0] == "current" || status[0] == "restarted") || len(status) == 2 && status[0] == "reloaded" && pl.Role == deploy.Database) {
+	if !(len(status) == 1 && (status[0] == "current" || status[0] == "restarted" || status[0] == "handed-over") || len(status) == 2 && status[0] == "reloaded" && pl.Role == deploy.Database) {
 		return fmt.Errorf("invalid credential activation result for %s", pl.Instance)
 	}
 	probe, ok := r.Config.Probes[pl.Role]
@@ -144,6 +151,9 @@ func (r *Runner) activateCredentials(ctx context.Context, pl deploy.Placement) (
 	}
 	if pl.Role != deploy.Database {
 		script := "systemctl is-active --quiet " + shell(unit(r.Plan, pl)) + "\n" + credentialIdentityScript(r.Plan, pl) + credentialEnvironmentCheck() + "\n"
+		if len(r.Plan.Release.Programs[pl.Role].Listeners) > 0 {
+			script = shell(deploy.ContinuityBinary(r.Plan, pl)) + " verify " + shell(deploy.ContinuityDir(r.Plan, pl)) + " " + shell(cfgDir(r.Plan, pl)+"/launch.json") + "\n"
+		}
 		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
 			return fmt.Errorf("running credentials for %s differ: %w", pl.Instance, err)
 		}

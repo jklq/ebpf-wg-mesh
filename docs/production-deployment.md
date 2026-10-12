@@ -218,6 +218,9 @@ bounded: connections, WebSockets or calls that exceed their grace period may be
 cut. A static DNS pool needs explicit traffic withdrawal. The registry currently
 uses its native stop behavior and has no platform withdrawal hook. These paths
 do not establish an unconditional zero-downtime guarantee.
+A role with stable listeners does not restart for changed credentials. Its
+[listener owner](zero-downtime-upgrades.md) hands the sockets to a process with
+the new credentials, then drains the old process, so no peer gate is needed.
 Externally issued wildcard certificates are selected as files and checked for
 identity, key agreement and remaining lifetime; their DNS-01 renewal service is external.
 
@@ -460,6 +463,14 @@ The planner rejects expansion and cleanup in the same transition.
 It also rejects schema downgrades and configuration or protocol version changes
 that prevent replica overlap. Legacy offline conversions cannot satisfy this sequence.
 
+Roles that declare `listeners` replace each replica in place through its
+[listener owner](zero-downtime-upgrades.md): the new process serves new
+connections before the old one drains, so even a single replica has no
+interruption. Replicas whose program, configuration and dependencies are
+unchanged keep running; an unchanged database therefore needs no rolling
+restart and no three-member cluster. The plan's `upgrade` section reports the
+overlap budget and every remaining interruption.
+
 The supplied `controlplane database convert --from-version 41 --backup ...
 --data-loss-cutoff ... --revocations-file ... --console-schema dashboard`
 preserves application/authentication data, imports old revoked certificate serials
@@ -470,7 +481,7 @@ gates; it already stores revocations in SQL. Other source versions require a
 separately provided explicit conversion. These legacy tools remain offline
 administrative operations and do not run during normal rolling upgrades.
 
-Rollback across a schema change uses `platformctl restore --installation ...
+Disaster recovery across an incompatible schema change uses `platformctl restore --installation ...
 --bundle ... --backup ... --data-loss-cutoff ... --recovery-config ...`. Select the intended recovery
 inventory and externally retained credentials. The command records and reports
 the backup's cutoff before restoration. SQL desired state returns to that timestamp;

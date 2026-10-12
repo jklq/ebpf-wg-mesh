@@ -3,6 +3,10 @@ tools:
         amd64:
             url: https://releases.example.com/r43/operations-amd64
             sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    continuity:
+        amd64:
+            url: https://releases.example.com/r43/continuity-amd64
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 version: 1
 id: r43
 configuration: 1
@@ -131,6 +135,10 @@ programs:
                 - cockroachdb
                 - '{instance}'
     console:
+        listeners:
+            - address: '0.0.0.0:3000'
+              env: PORT
+              portOnly: true
         artifacts:
             amd64:
                 url: https://releases.example.com/r43/console
@@ -171,6 +179,15 @@ programs:
                 - console
                 - '{instance}'
     controlplane:
+        listeners:
+            - address: ':9443'
+              env: CONTROLPLANE_INTERNAL_LISTEN
+            - address: ':9444'
+              env: CONTROLPLANE_REGISTRY_AUTH_LISTEN
+            - address: ':18000'
+              env: CONTROLPLANE_INGRESS_XDS_LISTEN
+            - address: '127.0.0.1:9090'
+              env: CONTROLPLANE_HEALTH_LISTEN
         artifacts:
             amd64:
                 url: https://releases.example.com/r43/controlplane
@@ -205,6 +222,15 @@ programs:
                 - controlplane
                 - '{instance}'
     envoy:
+        listeners:
+            - address: ':80'
+              env: PLATFORM_ENVOY_HTTP_LISTEN
+            - address: ':443'
+              env: PLATFORM_ENVOY_HTTPS_LISTEN
+            - address: '127.0.0.1:19000'
+              env: PLATFORM_ENVOY_ADMIN_LISTEN
+            - address: '0.0.0.0:19001'
+              env: PLATFORM_ENVOY_HEALTH_LISTEN
         artifacts:
             amd64:
                 url: https://releases.example.com/r43/envoy
@@ -216,6 +242,9 @@ programs:
             - immediate
             - --drain-time-s
             - "30"
+            - --disable-hot-restart
+            - --concurrency
+            - '1'
         ready:
             - '{tool.operations}'
             - ready
@@ -252,6 +281,9 @@ programs:
                 - envoy
                 - '{instance}'
     registry:
+        listeners:
+            - address: ':5000'
+              env: REGISTRY_HTTP_ADDR
         artifacts:
             amd64:
                 url: https://releases.example.com/r43/registry

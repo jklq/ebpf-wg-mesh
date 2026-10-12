@@ -69,3 +69,13 @@ The durable, user-visible sequence of deployment transitions. Runtime reports ma
 **Domain Binding**:
 A public hostname attached to one service port.
 _Avoid_: Domain, route
+
+## Platform operation
+
+**Platform Release**:
+One immutable version of the platform's programs and their compatibility contract.
+It is independent of an environment release or an application deployment.
+
+**Platform Upgrade**:
+One controlled transition of an installation from its applied platform release to
+another platform release.

@@ -25,7 +25,7 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 		return RunDatabaseStatus(ctx, args[1:], out)
 	}
 	if len(args) == 0 {
-		return fmt.Errorf("usage: platformctl <init-state|plan|apply|reconcile|status|restore> [flags]")
+		return fmt.Errorf("usage: platformctl <init-state|plan|apply|resume|rollback|repair|reconcile|status|restore> [flags]")
 	}
 	fs := flag.NewFlagSet("platformctl "+args[0], flag.ContinueOnError)
 	var manifest, bundle, output, statePath, keyPath, recoveryConfig string
@@ -96,6 +96,19 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 	}
 	defer store.Close()
 	engine := Engine{Store: store, Driver: driver}
+	if args[0] == "repair" {
+		if bundle == "" {
+			return fmt.Errorf("repair requires --bundle with a new immutable release")
+		}
+		r, err := Load[Release](bundle)
+		if err != nil {
+			return err
+		}
+		return engine.Repair(ctx, r)
+	}
+	if args[0] == "rollback" {
+		return engine.Rollback(ctx)
+	}
 	if args[0] == "resume" {
 		if refreshInventory {
 			if approveReport != "" {

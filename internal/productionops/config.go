@@ -206,7 +206,7 @@ func (r *Runner) defaults() {
 	}
 }
 func cfgDir(p deploy.Plan, pl deploy.Placement) string {
-	return "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/" + pl.Instance
+	return deploy.ConfigurationDir(p, pl)
 }
 func dataDir(p deploy.Plan, pl deploy.Placement) string {
 	return "/var/lib/ebpf-wg-mesh/" + p.Installation.ID + "/" + pl.Instance

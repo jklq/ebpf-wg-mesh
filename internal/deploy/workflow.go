@@ -222,10 +222,10 @@ func (p Plan) validateWorkflow() error {
 	for phase, role := range map[string]Role{"database-runtime": Database, "registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy} {
 		steps := groups[phase]
 		for n := 0; n < len(steps); {
-			actions := runtimeActions
-			if role == Builder && mode == upgradeMode && steps[n].Placement != nil && p.previouslyPlaced(*steps[n].Placement) {
-				actions = []string{"builder-drain", "configure", "install", "builder-resume"}
+			if steps[n].Placement == nil {
+				return fmt.Errorf("phase %s requires actor placements", phase)
 			}
+			actions := replicaActions(p, mode, *steps[n].Placement)
 			if n+len(actions) > len(steps) {
 				return fmt.Errorf("phase %s has an incomplete actor sequence", phase)
 			}

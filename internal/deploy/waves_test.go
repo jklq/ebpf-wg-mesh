@@ -19,7 +19,7 @@ func fleetRollingPlan(t *testing.T) (Plan, State, Inventory) {
 		i.Components[role] = component
 	}
 	state := applied(build(t, i, r, State{}, inv, false))
-	i.Release, r.ID = "r44", "r44"
+	i.Release, r = "r44", nextRelease(r, "r44")
 	p := build(t, i, r, state, inv, false)
 	requireComplete(t, p)
 	return p, state, inv

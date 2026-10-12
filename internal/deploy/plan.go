@@ -94,6 +94,9 @@ func previousDeployment(state State) *AppliedDeployment {
 }
 
 type Plan struct {
+	Rollback           bool                 `json:"rollback,omitempty"`
+	SupersedesPlan     string               `json:"supersedesPlan,omitempty"`
+	Upgrade            *UpgradeAssessment   `json:"upgrade,omitempty"`
 	Recovery           bool                 `json:"recovery"`
 	Generation         string               `json:"generation"`
 	Previous           *AppliedDeployment   `json:"previous,omitempty"`
@@ -218,7 +221,7 @@ func BuildPlan(i Installation, r Release, state State, inv Inventory, automatic 
 			if keep {
 				selected[slot] = old
 				p.Placements = append(p.Placements, old)
-				p.Reservations[old.Host] = p.Reservations[old.Host].Add(c.Resources)
+				p.Reservations[old.Host] = p.Reservations[old.Host].Add(ComponentResources(i, r, role))
 			}
 		}
 	}
@@ -271,7 +274,7 @@ func BuildPlan(i Installation, r Release, state State, inv Inventory, automatic 
 			x.Instance = fmt.Sprintf("%s-%d-%s", role, n, Digest([]any{i.ID, x.Host, state.Revision})[:12])
 			selected[x.Slot()] = x
 			p.Placements = append(p.Placements, x)
-			p.Reservations[x.Host] = p.Reservations[x.Host].Add(c.Resources)
+			p.Reservations[x.Host] = p.Reservations[x.Host].Add(ComponentResources(i, r, role))
 		}
 	}
 	// Removed members stay in the applied inventory until decommission completes.
@@ -285,6 +288,9 @@ func BuildPlan(i Installation, r Release, state State, inv Inventory, automatic 
 	}
 	sort.Slice(p.Placements, func(a, b int) bool { return p.Placements[a].Slot() < p.Placements[b].Slot() })
 	p.Availability = assess(i, p.Placements, p.Reservations, inv)
+	if p.RollingUpgrade() {
+		p.assessUpgrade(inv)
+	}
 	if i.OneHostFailure && !p.Availability.OneHostFailure {
 		p.Availability.Warnings = append(p.Availability.Warnings, "one-host-failure target is unmet; inspect failure scenarios")
 	}
@@ -352,7 +358,7 @@ func eligibility(i Installation, r Release, inv Inventory, h Host, c Component, 
 			reasons = append(reasons, "missing declared capability "+cap)
 		}
 	}
-	if !capacity.Sub(reservations[h.ID]).Fits(c.Resources) {
+	if !capacity.Sub(reservations[h.ID]).Fits(ComponentResources(i, r, role)) {
 		reasons = append(reasons, "CPU/RAM/disk after reservations")
 	}
 	if _, ok := r.Programs[role].Artifacts[h.Architecture]; !ok {
