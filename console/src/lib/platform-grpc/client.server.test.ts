@@ -8,15 +8,14 @@ import {
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClient } from "@connectrpc/connect";
-import { Code, ConnectError } from "@connectrpc/connect";
+import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { PlatformService } from "#/lib/platform-gen/platform_pb";
 import {
 	getTransport,
 	isUnprocessed,
-	selectControlPlane,
 	type PlatformRuntimeConfig,
+	selectControlPlane,
 } from "./client.server";
 
 let directory: string;

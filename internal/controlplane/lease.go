@@ -338,7 +338,27 @@ func (m *leaseManager) release(ctx context.Context, claim leaseClaim) error {
 	return err
 }
 
+// assertLeaseTx checks the caller's claim inside its own transaction. It takes
+// no lock: serializable isolation already orders the transaction's writes before
+// any takeover. Waiting behind a lease guard here, while holding a pooled
+// connection, could starve the guard of the connections it needs.
 func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
+	return checkLeaseTx(ctx, tx, "")
+}
+
+// lockLeaseTx holds a shared lock on the claim's lease row until tx ends, so no
+// successor can take over while an external effect runs outside the
+// transaction. The lock is shared because exclusive locks also block plain
+// reads in serializable transactions, which would queue the holder's own
+// product transactions behind it.
+func lockLeaseTx(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `SET LOCAL enable_shared_locking_for_serializable = true`); err != nil {
+		return err
+	}
+	return checkLeaseTx(ctx, tx, " FOR SHARE")
+}
+
+func checkLeaseTx(ctx context.Context, tx *sql.Tx, locking string) error {
 	claim, ok := ctx.Value(leaseContextKey{}).(leaseClaim)
 	if !ok {
 		return nil
@@ -346,7 +366,7 @@ func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 	var valid bool
 	if err := tx.QueryRowContext(ctx, `SELECT holder_id = $2 AND fencing_token = $3
 		   AND expires_at > statement_timestamp()
-		FROM control_plane_leases WHERE name = $1 FOR UPDATE`, claim.name, claim.holder, claim.token).Scan(&valid); err != nil {
+		FROM control_plane_leases WHERE name = $1`+locking, claim.name, claim.holder, claim.token).Scan(&valid); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %s", errLeaseLost, claim.name)
 		}
@@ -367,7 +387,7 @@ func (s *database) withLeaseGuard(ctx context.Context, fn func() error) error {
 		return err
 	}
 	defer tx.Rollback()
-	if err := assertLeaseTx(ctx, tx); err != nil {
+	if err := lockLeaseTx(ctx, tx); err != nil {
 		return err
 	}
 	if err := fn(); err != nil {

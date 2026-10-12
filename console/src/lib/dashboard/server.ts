@@ -7,7 +7,6 @@ import {
 	setCookie,
 } from "@tanstack/react-start/server";
 import type { Pool } from "pg";
-import { FailoverPool } from "#/lib/dashboard/store/failover-pool.server";
 import { isDraining } from "#/lib/dashboard/core/draining.server";
 import {
 	assertDistinctDashboardSecrets,
@@ -30,6 +29,7 @@ import {
 	parseIdentifier,
 } from "#/lib/dashboard/core/utils.server";
 import { createGitHubAppUserClient } from "#/lib/dashboard/github/auth.server";
+import { FailoverPool } from "#/lib/dashboard/store/failover-pool.server";
 import { createPostgresDashboardStore } from "#/lib/dashboard/store/postgres.server";
 import type { GitHubTokenCipher } from "#/lib/dashboard/store/token-crypto.server";
 import {
@@ -90,7 +90,9 @@ function getPool(): Pool {
 			max: 2,
 			idleTimeoutMillis: 30_000,
 		});
-		pool.on("error", () => console.warn("console database idle connection closed"));
+		pool.on("error", () =>
+			console.warn("console database idle connection closed"),
+		);
 	}
 	return pool;
 }
@@ -216,26 +218,30 @@ function readConfig(): RuntimeConfig {
 		(profile === "development" ? "http://localhost:3000" : "");
 	const localIngressBaseURL =
 		process.env.DASHBOARD_LOCAL_INGRESS_BASE_URL?.trim() || undefined;
-	const controlPlaneAddresses = mustEnv("DASHBOARD_CONTROLPLANE_ADDRESSES").split(",").map(address=>address.trim()).filter(Boolean);
-	if (!controlPlaneAddresses.length) throw new Error("control-plane endpoints required");
+	const controlPlaneAddresses = mustEnv("DASHBOARD_CONTROLPLANE_ADDRESSES")
+		.split(",")
+		.map((address) => address.trim())
+		.filter(Boolean);
+	if (!controlPlaneAddresses.length)
+		throw new Error("control-plane endpoints required");
 	const controlPlaneServerName =
 		process.env.DASHBOARD_CONTROLPLANE_SERVER_NAME ?? "controlplane";
 	const devUsers = parseDevUsers(process.env.DASHBOARD_DEV_USERS ?? "");
 	if (profile === "production") {
 		for (const candidate of databaseURLs)
-		for (const controlPlaneAddress of controlPlaneAddresses)
-			assertProductionDashboardConfig({
-				devUsers,
-				publicBaseURL,
-				localDomainSuffix: process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim(),
-				localIngressBaseURL,
-				jwtSecret,
-				jwtSecretPrevious,
-				userAssertionSecret,
-				databaseURL: candidate,
-				controlPlaneAddress,
-				controlPlaneServerName,
-			});
+			for (const controlPlaneAddress of controlPlaneAddresses)
+				assertProductionDashboardConfig({
+					devUsers,
+					publicBaseURL,
+					localDomainSuffix: process.env.DASHBOARD_LOCAL_DOMAIN_SUFFIX?.trim(),
+					localIngressBaseURL,
+					jwtSecret,
+					jwtSecretPrevious,
+					userAssertionSecret,
+					databaseURL: candidate,
+					controlPlaneAddress,
+					controlPlaneServerName,
+				});
 	}
 
 	const admission = readConsoleAuthority(profile);
