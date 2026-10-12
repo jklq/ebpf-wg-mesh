@@ -72,7 +72,6 @@ func TestIngressHandoverRequiresEveryServingObservation(t *testing.T) {
 	}
 	become()
 	assertPending()
-	// A durable withdrawal needs no health report from the removed workload.
 	state.LogIndex++
 	delete(state.Assignments, "a")
 	delete(state.Assignments, "b")

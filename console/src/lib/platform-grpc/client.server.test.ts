@@ -76,7 +76,6 @@ async function replica(refuse = false, owner?: string) {
 			return;
 		}
 		if (refuse) {
-			// A draining replica refuses streams it will never process.
 			refused++;
 			stream.on("error", () => {});
 			stream.close(constants.NGHTTP2_REFUSED_STREAM);
@@ -154,8 +153,6 @@ it("sends a request refused before processing to the next replica, once per repl
 			userAssertionSecret: "unused-by-transport",
 		};
 		const client = createClient(PlatformService, getTransport(runtime));
-		// The surviving replica commits the effect and then reports unavailable;
-		// that outcome must reach the caller instead of another replica.
 		await expect(client.createProject({ name: "mutation" })).rejects.toThrow(
 			"effect committed",
 		);
@@ -298,7 +295,6 @@ it("bounds a silent replica's connection and avoids it for later requests", asyn
 		expect(Date.now() - started).toBeLessThan(4000);
 		expect(surviving.effects()).toBe(1);
 		const next = Date.now();
-		// The rotation would select the silent replica again; it is skipped.
 		await expect(client.createProject({ name: "second" })).rejects.toThrow(
 			"effect committed",
 		);

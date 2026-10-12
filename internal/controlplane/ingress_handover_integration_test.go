@@ -50,8 +50,6 @@ func TestIngressHandoverRetainsPublicationUntilFreshReports(t *testing.T) {
 		t.Fatalf("standby publication = %v", err)
 	}
 
-	// Take over while the former process still believes it owns live state.
-	// A request without a lease token must still fence that process in SQL.
 	if _, err := store.db.ExecContext(ctx, `UPDATE control_plane_leases SET expires_at = statement_timestamp() WHERE name = $1`, singletonLeaseName); err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +92,6 @@ func TestIngressHandoverRetainsPublicationUntilFreshReports(t *testing.T) {
 		}
 	}
 	assertRetained()
-	// Missing health must not let the failover loop withdraw these endpoints.
 	if err := next.liveImplementation.EndSession(allocations[1].AgentID, "fresh-session"); err != nil {
 		t.Fatal(err)
 	}

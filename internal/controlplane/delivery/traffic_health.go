@@ -9,9 +9,6 @@ import (
 	"time"
 )
 
-// Probes supplement stale management presence. A reachable listener is evidence
-// that replacing its allocation would interrupt a working data plane. Envoy
-// independently probes the same endpoints from the traffic-serving path.
 func probeAllocationTraffic(ctx context.Context, allocation AllocationRecord) (bool, error) {
 	var targets []string
 	for _, family := range []struct {
@@ -49,7 +46,7 @@ func probeAllocationTraffic(ctx context.Context, allocation AllocationRecord) (b
 		if err == nil {
 			return true, nil
 		}
-		// Missing local access to the mesh is not workload failure evidence.
+		// Missing local mesh access is not evidence of workload failure.
 		if errors.Is(err, syscall.ENETUNREACH) || errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) {
 			unknown = err
 		}
@@ -60,8 +57,6 @@ func probeAllocationTraffic(ctx context.Context, allocation AllocationRecord) (b
 	return false, unknown
 }
 
-// Keep probe failures outside the SQL transaction and bound fanout across a
-// large agent. An inaccessible local mesh defers replacement just like success.
 func (d *Delivery) allocationsRetainedByTraffic(ctx context.Context, agentID string) map[string]AllocationRecord {
 	var candidates []AllocationRecord
 	retained := make(map[string]AllocationRecord)
@@ -73,9 +68,7 @@ func (d *Delivery) allocationsRetainedByTraffic(ctx context.Context, agentID str
 		if allocation.Healthy {
 			candidates = append(candidates, allocation)
 		} else if _, observed := d.live.Observation(allocation.ID, allocation.DesiredRolloutGeneration); !observed && len(product.DomainHostnamesForService(allocation.ServiceID)) > 0 {
-			// Takeover erased health evidence, not the running workload. Keep
-			// routed allocations until an agent supplies failure evidence or
-			// durable intent explicitly withdraws them.
+			// Takeover loses health evidence; retain routed work until failure or withdrawal is confirmed.
 			retained[allocation.ID] = allocation
 		}
 	}

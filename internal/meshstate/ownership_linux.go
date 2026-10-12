@@ -26,8 +26,6 @@ type Ownership struct {
 	lock          *flock.Flock
 }
 
-// Acquire fences startup, reconciliation and explicit removal before any
-// WireGuard or firewall state can be changed by a second process.
 func Acquire(interfaceName string) (*Ownership, error) {
 	pinDir, err := PinPath(interfaceName)
 	if err != nil {

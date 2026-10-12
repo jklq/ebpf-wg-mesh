@@ -18,11 +18,7 @@ export interface PlatformRuntimeConfig {
 
 const transports = new WeakMap<PlatformRuntimeConfig, Transport>();
 
-// A replica that does not complete TLS within this bound is treated as never
-// having received the request, so a silent host failure costs one bounded
-// attempt instead of the operating system's connect timeout.
 const connectTimeoutMs = 2000;
-// After a failed connection, requests prefer the other replicas for a while.
 const unavailableMs = 5000;
 const connectTimeoutCode = "ERR_CONTROL_PLANE_CONNECT_TIMEOUT";
 
@@ -119,8 +115,6 @@ export function getTransport(runtime: PlatformRuntimeConfig): Transport {
 		]),
 	);
 	const unavailable = new Map<string, number>();
-	// The native transport authenticates and pools HTTP/2 connections. Rotate
-	// requests across peers without a second TLS handshake before every RPC.
 	let nextReplica = 0;
 	const transport: Transport = {
 		unary: (...args) =>
@@ -144,9 +138,7 @@ export function getTransport(runtime: PlatformRuntimeConfig): Transport {
 	return transport;
 }
 
-// A request that a replica provably never processed may go to another replica:
-// HTTP/2 refused its stream, as after a draining replica's GOAWAY, or no
-// connection was established. Every other failure may follow an effect.
+// Retry only failures that prove the request was never processed; other failures may follow an effect.
 async function onReplica<T>(
 	runtime: PlatformRuntimeConfig,
 	signal: AbortSignal | undefined,
@@ -158,8 +150,6 @@ async function onReplica<T>(
 	const addresses = runtime.controlPlaneAddresses;
 	const usable = (address: string) =>
 		!refused.has(address) && (unavailable.get(address) ?? 0) <= Date.now();
-	// Start from the rotation, skipping replicas that recently failed to connect
-	// unless every replica did.
 	let index = start;
 	for (let n = 0; n < addresses.length && !usable(addresses[index]); n++) {
 		index = (index + 1) % addresses.length;
@@ -172,8 +162,7 @@ async function onReplica<T>(
 			return await call(address);
 		} catch (error) {
 			refused.add(address);
-			// Owner redirects are issued before the handler admits the call.
-			// Follow only authenticated addresses from the configured seed set.
+			// Owner redirects precede admission; accept only addresses from the authenticated seed set.
 			const owner =
 				error instanceof ConnectError && error.code === Code.FailedPrecondition
 					? /^not the live owner; reconnect at (.+)$/.exec(

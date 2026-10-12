@@ -16,10 +16,6 @@ import (
 
 const listenerPortsMetadata = continuity.ListenerPortsMetadata
 
-// Each ingress process generation receives a private loopback projection of
-// the same logical routing publication. Authentication and durable membership
-// still use the unchanged ingress identity. Canonical route ports, TLS secrets
-// and publication versions are never rewritten.
 func projection(node *corev3.Node) (string, map[uint32]uint32, error) {
 	id := node.GetId()
 	value := node.GetMetadata().GetFields()[listenerPortsMetadata]
@@ -70,8 +66,6 @@ func (s *Snapshot) forPorts(ports map[uint32]uint32) (*cachev3.Snapshot, error) 
 				if !ok {
 					return nil, fmt.Errorf("ingress projection lacks listener port")
 				}
-				// IPv4/IPv6 public listeners share one dual-stack stable frontend.
-				// Their identical logical routing needs only one private listener.
 				if seen[port] {
 					continue
 				}

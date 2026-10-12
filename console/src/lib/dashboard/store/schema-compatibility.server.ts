@@ -4,8 +4,6 @@ import { tableName } from "./types.server";
 export const currentDashboardSchemaVersion = 3;
 export const minimumDashboardSchemaVersion = 3;
 
-// Legacy schemas have no watermark and therefore admit only their own version.
-// Expansion preserves the oldest compatible binary; a later cleanup raises it.
 export async function validateDashboardSchema(
 	runtime: DashboardStoreRuntimeConfig,
 	db: Queryable,

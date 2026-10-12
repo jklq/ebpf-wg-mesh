@@ -76,15 +76,12 @@ func TestMeshPolicyCatalogShrinkUpdatesLivePolicy(t *testing.T) {
 func TestMeshPolicySurvivesFirewallRestart(t *testing.T) {
 	h := startMeshPolicyHarness(t, true)
 	a, b, c := h.workload("a"), h.workload("b"), h.workload("c")
-	// A flow to an address outside the identity catalog exercises connection
-	// tracking on the return path, not just same-environment policy.
 	flow := persistentExternalFlow(t, h.cfg, a.netns)
 	checkPersistentFlow(t, flow)
 	if err := h.firewall.Close(); err != nil {
 		t.Fatal(err)
 	}
 	checkPersistentFlow(t, flow)
-	// Traffic and isolation must keep working while no manager is alive.
 	for _, endpoint := range b.endpoints() {
 		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
 	}

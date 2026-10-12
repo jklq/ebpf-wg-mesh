@@ -9,14 +9,11 @@ import (
 )
 
 type BootstrapConfig struct {
-	NodeID       string
-	XDSAddresses []string
-	AdminAddress string
-	IdentityDir  string
-	ServerName   string
-	// HealthAddress serves load-balancer health checks on GET /healthz. Envoy
-	// opens it only once live, and admin POST /healthcheck/fail turns it to
-	// 503, withdrawing this ingress before its listeners drain.
+	NodeID        string
+	XDSAddresses  []string
+	AdminAddress  string
+	IdentityDir   string
+	ServerName    string
 	HealthAddress string
 }
 

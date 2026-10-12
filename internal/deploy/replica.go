@@ -5,9 +5,6 @@ import (
 	"fmt"
 )
 
-// Readiness is checked just before replacing each process, so a lost earlier
-// peer cannot be hidden by its durable installation receipt on a retry. Peers
-// in the same rollout wave restart concurrently and are not required.
 func (d *SSHDriver) verifyReplicaPeers(ctx context.Context, p Plan, state State, target Placement) error {
 	seen := map[string]bool{}
 	retired := map[Placement]bool{}
@@ -34,7 +31,6 @@ func (d *SSHDriver) verifyReplicaPeers(ctx context.Context, p Plan, state State,
 				}
 			}
 		}
-		// A new replica that has not yet started cannot be a surviving peer.
 		if !p.previouslyPlaced(pl) && !installed {
 			continue
 		}

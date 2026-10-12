@@ -75,8 +75,6 @@ func (r *Runtime) Close() error {
 	return errors.Join(r.firewall.Close(), r.wireguard.Close())
 }
 
-// Remove is the explicit destructive counterpart to Close. Stop the agent and
-// remove its workloads first; removal deliberately drops network connectivity.
 func Remove(interfaceName string) error {
 	ownership, err := meshstate.Acquire(interfaceName)
 	if err != nil {

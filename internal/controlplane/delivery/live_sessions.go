@@ -90,8 +90,7 @@ func inventoryReconciled(assigned, inventory []string) bool {
 }
 
 func (l *Live) invalidateSessionLocked(agentID string) {
-	// Observations belong to the agent identity and allocation generation.
-	// Replacing the transport fences old reports without erasing running work.
+	// Fence old transport reports without discarding generation-scoped workload observations.
 	if timer, ok := l.timers[agentID]; ok {
 		timer.Stop()
 		delete(l.timers, agentID)

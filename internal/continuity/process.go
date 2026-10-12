@@ -35,8 +35,6 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 	if err = copyConfig(inputs, root, replace); err != nil {
 		return nil, err
 	}
-	// The immutable boot inputs retain public probe addresses. Each process
-	// receives a separate materialized view with its private listener addresses.
 	l = boot
 	c := &child{launch: l, boot: boot, configPath: root, done: make(chan struct{})}
 	env := map[string]string{}
@@ -47,8 +45,6 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 		if env["CONTROLPLANE_LOGS_DIR"] == "" {
 			env["CONTROLPLANE_LOGS_DIR"] = filepath.Join(state, "logs")
 		}
-		// Server certificates and registry trust caches are process-local. SQL
-		// owns authority; the log history and source storage remain shared.
 		env["CONTROLPLANE_STATE_DIR"] = filepath.Join(root, "state")
 		if err := os.MkdirAll(env["CONTROLPLANE_STATE_DIR"], 0700); err != nil {
 			return nil, err
@@ -86,7 +82,6 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 			env[p.Env] = backend
 		}
 	}
-	// Only readiness targets change. Replica addresses, advertised identities,
 	if env["PLATFORM_ENVOY_HTTP_LISTEN"] != "" {
 		path := filepath.Join(root, "envoy.yaml")
 		b, err := os.ReadFile(path)
@@ -124,8 +119,6 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 		}
 		n, _ := strconv.Atoi(adminPort)
 		bootstrap["admin"] = map[string]any{"address": map[string]any{"socket_address": map[string]any{"protocol": "TCP", "address": "127.0.0.1", "port_value": n}}}
-		// The load-balancer health listener is static, so it is projected here
-		// rather than through xDS.
 		if health := env["PLATFORM_ENVOY_HEALTH_LISTEN"]; health != "" {
 			_, healthPort, err := net.SplitHostPort(health)
 			if err != nil {
@@ -153,7 +146,6 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 			return nil, err
 		}
 	}
-	// public URLs and registry authentication continue through stable listeners.
 	probePath := filepath.Join(root, "probe.json")
 	if b, err := os.ReadFile(probePath); err == nil {
 		var p map[string]any
@@ -176,8 +168,6 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 			return nil, err
 		}
 	}
-	// Local spool ownership is per process generation, while the visible file
-	// log store remains shared and serializes mutations across generations.
 	env["PLATFORM_CONTINUITY_ID"] = l.ID
 	argv := make([]string, len(l.Command))
 	for i, v := range l.Command {
@@ -191,14 +181,11 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 	for i, v := range c.stop {
 		c.stop[i] = replace(v)
 	}
-	// Stop preparation marks a draining console by the owner's systemd
-	// invocation; a restarted owner has a new one and never inherits the mark.
 	if invocation := os.Getenv("INVOCATION_ID"); invocation != "" {
 		env["INVOCATION_ID"] = invocation
 	}
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = l.Directory
-	// Keep a small, known parent environment. Private runtime inputs are explicit.
 	cmd.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8"}
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -229,9 +216,7 @@ func start(ctx context.Context, dir string, l Launch) (*child, error) {
 	return c, nil
 }
 
-// A loopback port reservation is released immediately before exec. Verify the
-// actual listening socket belongs to the candidate, so a racing local process
-// cannot establish readiness on the candidate's behalf.
+// Verify socket ownership after releasing the port reservation to prevent false readiness.
 func ownsListeners(c *child) bool {
 	pid := strconv.Itoa(c.cmd.Process.Pid)
 	fds, err := os.ReadDir("/proc/" + pid + "/fd")

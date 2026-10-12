@@ -32,7 +32,6 @@ func (r *credentialRemote) Run(ctx context.Context, i deploy.Installation, h dep
 		if _, err := r.Run(ctx, i, h, script[:probe]); err != nil {
 			return nil, err
 		}
-		// Peers write their own inspection probe; read the one this script names.
 		file := r.probePath
 		if fields := strings.Fields(script[probe+len(shell(r.binary)+" probe "):]); len(fields) > 0 {
 			file = strings.Trim(fields[0], "'")

@@ -197,8 +197,6 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 	if err != nil {
 		return nil, err
 	}
-	// Wave hooks run on the same administration host. Each operation owns its
-	// input files so another replica cannot replace the state it is inspecting.
 	inputDir := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/operations/" + op.ID
 	path := inputDir + "/plan.json"
 	script := "export PLATFORM_INSTALLATION=" + quote(p.Installation.ID) + "\nexport PLATFORM_RECOVERY_GENERATION=" + quote(p.Generation) + "\n" + fileScript(path, payload, "0600") + "export PLATFORM_PLAN=" + quote(path) + "\nexport PLATFORM_OPERATION=" + quote(op.ID) + "\n"
@@ -398,9 +396,6 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 			return false, Evidence{}, nil
 		}
 		if op.Kind == "database-upgrade" {
-			// A later unfinished node can be unavailable on resume. Do not turn
-			// an already verified earlier replica into a new restart just because
-			// the cluster-wide gate is waiting for that later node.
 			if state.Progress != nil {
 				if _, completed := state.Progress.Completed[op.ID]; completed {
 					return true, Evidence{}, nil
@@ -520,8 +515,6 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 				return Binding{}, err
 			}
 			if pl.Role == Builder && p.previouslyPlaced(pl) {
-				// A previously verified builder may need another install on a
-				// retry. Drain again immediately before touching its process.
 				for _, step := range p.Operations {
 					if step.Hook == "builder-drain" && step.Placement != nil && *step.Placement == pl {
 						if _, err := d.runHook(ctx, p, state, step, false); err != nil {

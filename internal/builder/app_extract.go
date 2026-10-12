@@ -281,9 +281,6 @@ func runtimeDigestRef(pushRef, digest string) string {
 	return base + "@" + digest
 }
 
-// The client identity is read for each handshake, so connections opened after a
-// renewal present the new certificate without restarting active builds. The CA
-// bundle is launch configuration: host administration restarts to change it.
 func loadTransportCredentials(cfg config.InternalClientTLSConfig) (credentials.TransportCredentials, error) {
 	caPEM, err := os.ReadFile(cfg.CAFile)
 	if err != nil {
@@ -328,8 +325,7 @@ func (f *clientIdentityFiles) certificate(*tls.CertificateRequestInfo) (*tls.Cer
 			return f.current, nil
 		}
 	}
-	// Files are replaced one at a time. A pair observed between the two
-	// replacements does not match; keep presenting the last loaded identity.
+	// Certificate and key replacements can race; retain the last valid pair.
 	if f.current != nil {
 		return f.current, nil
 	}

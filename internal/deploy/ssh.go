@@ -169,8 +169,6 @@ func toolsScript(p Plan, h Host) (string, error) {
 	return script + fileScript(dir+"/staged", []byte(Digest(p.Release.Tools)), "0600"), nil
 }
 
-// The temporary name is unique per shell, so concurrent operations writing the
-// same file on one host each replace it atomically with complete contents.
 func fileScript(path string, b []byte, mode string) string {
 	next := quote(path) + `".next.$$"`
 	return "mkdir -p " + quote(path[:strings.LastIndex(path, "/")]) + "\nprintf %s " + quote(base64.StdEncoding.EncodeToString(b)) + " | base64 -d > " + next + "\nchmod " + mode + " " + next + "\nmv -f " + next + " " + quote(path) + "\n"
@@ -268,8 +266,6 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	if pl.Role == ControlPlane {
 		env["CONTROLPLANE_PROFILE"] = "production"
 		env["CONTROLPLANE_DASHBOARD_ENABLED"] = "false"
-		// After SIGTERM, readiness fails while the replica still serves so a
-		// balancer in front of registry authorization can withdraw it.
 		env["CONTROLPLANE_SHUTDOWN_WITHDRAWAL_SECONDS"] = "10"
 		var consoleIDs []string
 		for _, console := range p.Placements {
@@ -282,9 +278,6 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	}
 	if pl.Role == Console {
 		env["DASHBOARD_PROFILE"] = "production"
-		// The stop preparation names the draining process in this file so
-		// readiness withdraws before SIGTERM closes the listener; the server
-		// then finishes active requests within this many seconds.
 		env["DASHBOARD_DRAIN_FILE"] = stateDir(i, pl) + "/draining"
 		env["SERVER_SHUTDOWN_TIMEOUT"] = "60"
 	}
@@ -301,7 +294,6 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	argv := append([]string{releaseDir(p, pl) + "/program"}, expandCommand(p, pl, program.Args)...)
 	stop := ""
 	if len(program.Stop) > 0 {
-		// systemd passes the running process as $MAINPID to ExecStop.
 		stop = "ExecStop=" + systemdCommand(expandCommand(p, pl, program.Stop)) + "\n"
 	}
 	resources := ""
@@ -313,17 +305,13 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	}
 	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + ConfigurationDir(p, pl) + "/environment\nEnvironmentFile=-" + ConfigurationDir(p, pl) + "/runtime.env\nEnvironmentFile=" + ConfigurationDir(p, pl) + "/launch.env\nExecStart=" + systemdCommand(argv) + "\n" + stop + "WorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n" + resources + "[Install]\nWantedBy=multi-user.target\n"
 	if len(program.Listeners) > 0 {
-		// The owner holds the public sockets across process generations. Its
-		// stop preparation withdraws the serving generation before systemd
-		// closes them, exactly like a directly supervised process.
 		owner := []string{"PLATFORM_CONFIG_DIR=" + configDir(i, pl), "PLATFORM_CONTINUITY_OWNER=" + ownerDigest(p, pl)}
 		service = "[Unit]\nDescription=Platform listener owner " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nDelegate=yes\nEnvironment=" + systemdCommand(owner) + "\nExecStart=" + systemdCommand([]string{ContinuityBinary(p, pl), "serve", ContinuityDir(p, pl)}) + "\n" + stop + "Restart=always\nRestartSec=1\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"
 	}
 	return environment.String(), service, nil
 }
 
-// systemd does not use a shell for Exec lines. Escape its own specifier and
-// environment expansion as well as quoted argument delimiters.
+// systemd Exec lines have their own specifier and environment expansion, without a shell.
 func systemdCommand(argv []string) string {
 	args := make([]string, 0, len(argv))
 	for _, arg := range argv {
@@ -377,9 +365,7 @@ func installedScript(p Plan, pl Placement, observed Resources) (string, error) {
 	return "printf %s " + quote(checks) + " | sha256sum -c - >/dev/null\n" + launchDigestScript(p, pl) + runningLaunchScript(p, pl) + "\n" + command(expandCommand(p, pl, p.Release.Programs[pl.Role].Ready)) + "\n", nil
 }
 
-// replicaCount tells stop preparation whether peers can take this replica's
-// traffic. It is outside the launch digest: scaling a role rewrites the count
-// on every replica without restarting any of them.
+// Keep replica counts outside the launch digest so scaling does not restart existing replicas.
 func replicaCount(p Plan, pl Placement) []byte {
 	count := 0
 	for _, peer := range p.Placements {
@@ -390,9 +376,7 @@ func replicaCount(p Plan, pl Placement) []byte {
 	return []byte(strconv.Itoa(count) + "\n")
 }
 
-// ownerDigest identifies the listener owner itself. Application releases keep
-// it unchanged and hand over in place; adopting stable listeners, changing their
-// addresses or replacing the owner executable restarts the owner instead.
+// Changing listener addresses or the owner executable requires restarting the owner.
 func ownerDigest(p Plan, pl Placement) string {
 	h, _ := p.Installation.Host(pl.Host)
 	return Digest([]any{p.Release.Tools["continuity"][h.Architecture].SHA256, p.Release.Programs[pl.Role].Listeners})[:24]
@@ -431,13 +415,8 @@ func installContinuityScript(p Plan, pl Placement, observed Resources) (string, 
 	script := "if test -L " + quote(unitPath) + "; then rm " + quote(unitPath) + "; fi\n"
 	script += fileScript(cfg+"/environment", []byte(env), "0600") + fileScript(cfg+"/launch.json", b, "0600")
 	script += fileScript(configDir(p.Installation, pl)+"/replicas", replicaCount(p, pl), "0600")
-	// Owner executables are content-addressed, so a running owner is never
-	// replaced underneath itself.
 	check := "printf %s " + quote(p.Release.Tools["continuity"][h.Architecture].SHA256+"  "+binary+"\n") + " | sha256sum -c - >/dev/null"
 	script += "if ! " + check + " 2>&1; then mkdir -p " + quote(filepath.Dir(binary)) + "\ncp " + quote(toolsDir(p)+"/continuity") + " " + quote(binary) + `".next.$$"` + "\nchmod 0755 " + quote(binary) + `".next.$$"` + "\nmv -f " + quote(binary) + `".next.$$"` + " " + quote(binary) + "\nfi\n" + check + "\n"
-	// A different owner, or a directly supervised process being adopted, stops
-	// through its current unit and drains first. Seeding before the new owner
-	// starts means it never boots an obsolete launch.
 	script += "if ! ( " + runningOwnerScript(p, pl) + " ); then\nsystemctl stop " + unitName + "\n" + fileScript(unitPath, []byte(service), "0644") + "systemctl daemon-reload\n" + command([]string{binary, "seed", dir, cfg + "/launch.json"}) + "\nelse\n" + fileScript(unitPath, []byte(service), "0644") + "systemctl daemon-reload\nfi\n"
 	script += "systemctl enable " + unitName + "\nsystemctl start " + unitName + "\n"
 	script += "n=0\nuntil " + command([]string{binary, "status", dir}) + " >/dev/null 2>&1; do n=$((n+1)); test \"$n\" -lt 100; sleep 0.1; done\n"

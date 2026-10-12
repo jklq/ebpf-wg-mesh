@@ -69,7 +69,6 @@ func TestSetupAdoptsExistingWireGuardAndClosePreservesIt(t *testing.T) {
 	if len(device.Peers) != 1 || device.PublicKey != r.state.privateKey.PublicKey() {
 		t.Fatal("adoption lost device configuration")
 	}
-	// A stale assignment must reconcile in place, including removed routes and addresses.
 	cfg.Addresses = []string{"fd00:44::10/128"}
 	cfg.Peers = nil
 	if err := r2.Update(cfg); err != nil {

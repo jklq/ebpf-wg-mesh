@@ -130,8 +130,6 @@ func (l *Live) Publishing() bool {
 	return l.publicationReadyLocked() == nil
 }
 
-// PublicationContext binds request-driven syncs to the live owner's lease,
-// even when the request itself carries no lease claim.
 func (l *Live) PublicationContext() (context.Context, error) {
 	if l == nil {
 		return nil, ErrNotLiveOwner
@@ -148,9 +146,6 @@ func (l *Live) publicationReadyLocked() error {
 	if !l.serving || !l.publishing || l.ownerCtx == nil || l.ownerCtx.Err() != nil {
 		return ErrNotLiveOwner
 	}
-	// A hello or heartbeat establishes management presence, not workload health.
-	// Every routed serving allocation needs evidence in this ownership period;
-	// explicit unhealthy reports and durable withdrawals may remove endpoints.
 	for _, domain := range l.product.Domains {
 		for _, id := range l.product.AssignmentIDsForService(domain.ServiceID) {
 			assignment := l.product.Assignments[id]

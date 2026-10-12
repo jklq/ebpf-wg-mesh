@@ -9,7 +9,6 @@ import (
 	"ebof-wg-mesh/internal/continuity"
 )
 
-// nextRelease is a later release in which every program ships a new binary.
 func nextRelease(r Release, id string) Release {
 	next := snapshot(r)
 	next.ID = id
@@ -22,9 +21,6 @@ func nextRelease(r Release, id string) Release {
 	return next
 }
 
-// listenerFixture is a single-host installation whose serving roles keep their
-// sockets in a listener owner, upgrading to a release that leaves the database
-// binary unchanged.
 func listenerFixture(t *testing.T) (Installation, Release, State, Inventory) {
 	t.Helper()
 	i, r, inv := fixture(1)
@@ -68,7 +64,6 @@ func TestUpgradeHandsOverListenersAndKeepsAnUnchangedDatabase(t *testing.T) {
 	if !slices.Equal(actions[Builder], []string{"builder-drain", "configure", "install", "builder-resume"}) {
 		t.Fatalf("builder does not drain around its restart: %v", actions[Builder])
 	}
-	// One overlapping copy of the largest changed serving process.
 	if peak := p.Upgrade.Peak["a"]; peak.MemoryMiB != p.Reservations["a"].MemoryMiB+i.Components[ControlPlane].Resources.MemoryMiB {
 		t.Fatalf("overlap budget %+v for reservations %+v", peak, p.Reservations["a"])
 	}

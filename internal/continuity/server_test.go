@@ -20,15 +20,12 @@ import (
 	"time"
 )
 
-// A real executable and real listeners exercise the public process/traffic
-// seam. No readiness result or connection count is supplied by a fake.
 func TestContinuityHelperProcess(t *testing.T) {
 	if os.Getenv("CONTINUITY_HELPER") != "1" {
 		return
 	}
 	address := os.Getenv("HTTP_ADDR")
 	if os.Args[len(os.Args)-1] == "stop" {
-		// Stop preparation records which listener it was given.
 		if err := os.WriteFile(os.Getenv("STOP_FILE"), []byte(address), 0600); err != nil {
 			os.Exit(1)
 		}
@@ -228,8 +225,6 @@ func TestUpgradePreservesConnectionsAndAcknowledgedMutations(t *testing.T) {
 	if len(strings.Fields(string(b))) != int(count.Load()) {
 		t.Fatal("acknowledged writes were lost or replayed")
 	}
-	// Finish drains the superseded generation rather than waiting for its
-	// clients: stop preparation runs against its private listener, then SIGTERM.
 	if err = s.Finish(); err != nil {
 		t.Fatal(err)
 	}

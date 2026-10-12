@@ -24,8 +24,6 @@ import (
 	"ebof-wg-mesh/internal/deploy"
 )
 
-// fakeEnvoyAdmin keeps accepting ingress connections for a while after health
-// checks fail, as a balancer does until its own checks observe the failure.
 type fakeEnvoyAdmin struct {
 	mu           sync.Mutex
 	calls        []string
@@ -82,8 +80,6 @@ func TestEnvoyStopWithdrawsBeforeDrainingAndWaitsForConnections(t *testing.T) {
 	if !slices.Equal(admin.calls, []string{"healthcheck/fail", "drain_listeners"}) {
 		t.Fatalf("admin calls %v", admin.calls)
 	}
-	// New connections arrived for 300ms; listeners must not drain before the
-	// balancer stopped sending them and the quiet period confirmed it.
 	if waited := admin.drainedAt.Sub(admin.failedAt); waited < admin.arrivals+e.quiet-3*e.poll {
 		t.Fatalf("listeners drained %v after health checks failed, while connections still arrived", waited)
 	}
@@ -120,8 +116,6 @@ func TestEnvoyStopBoundsWithdrawalAndToleratesExitedProcess(t *testing.T) {
 }
 
 func TestEnvoyStopMatchesWithdrawalToItsDeployment(t *testing.T) {
-	// No balancer has ever checked this Envoy: failing checks would not move
-	// traffic, so only the listener drain runs.
 	unchecked := &fakeEnvoyAdmin{arrivals: time.Hour, active: 2}
 	server := httptest.NewServer(unchecked)
 	defer server.Close()
@@ -133,8 +127,6 @@ func TestEnvoyStopMatchesWithdrawalToItsDeployment(t *testing.T) {
 	if !slices.Equal(unchecked.calls, []string{"drain_listeners"}) || time.Since(start) > 500*time.Millisecond {
 		t.Fatalf("unchecked Envoy waited for a withdrawal nothing performs: %v in %v", unchecked.calls, time.Since(start))
 	}
-	// A sole Envoy keeps serving and its balancer has nowhere else to go: never
-	// fail health checks or close listeners, only let admitted requests finish.
 	sole := &fakeEnvoyAdmin{arrivals: time.Hour, active: 50, requests: 3, healthChecks: 9}
 	soleServer := httptest.NewServer(sole)
 	defer soleServer.Close()
@@ -162,7 +154,6 @@ func TestStopPreparationReadsTheInstalledReplicaCount(t *testing.T) {
 			t.Fatalf("replicas %q: replicated = %v", count, !want)
 		}
 	}
-	// The sole console is not marked draining: its balancer has no other target.
 	t.Setenv("MAINPID", "4242")
 	t.Setenv("INVOCATION_ID", "0123abcd")
 	if err := os.WriteFile(filepath.Join(dir, "replicas"), []byte("1"), 0o600); err != nil {

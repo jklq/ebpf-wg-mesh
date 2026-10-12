@@ -6,10 +6,6 @@ import (
 	"time"
 )
 
-// Repair replaces an interrupted release with a new immutable release while
-// preserving its topology, authority, schema changes and rollback floor.
-// Native observations decide which transitions remain; journaled attempts are
-// not mistaken for successful routing or ownership changes.
 func (e Engine) Repair(ctx context.Context, r Release) error {
 	state, err := e.Store.Read()
 	if err != nil {

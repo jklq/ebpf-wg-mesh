@@ -187,23 +187,17 @@ type Hook struct {
 	Verify  []string `json:"verify" yaml:"verify"`
 }
 type Program struct {
-	// Listeners are owned by a resident continuity process. Upgrades and
-	// credential changes hand them to a new process generation in place.
 	Listeners []continuity.Listener `json:"listeners,omitempty" yaml:"listeners,omitempty"`
 	Artifacts map[string]Artifact   `json:"artifacts" yaml:"artifacts"`
 	Args      []string              `json:"args" yaml:"args"`
 	Ready     []string              `json:"ready" yaml:"ready"`
-	// Stop runs on the replica's host as systemd ExecStop=, before the process
-	// is signalled. Every stop drains through it: installation, credential
-	// activation, retirement, operator restarts and host shutdown. It must
-	// finish within the unit's stop timeout and tolerate an exited process.
+	// Stop runs as systemd ExecStop before signalling; it must be bounded and tolerate an exited process.
 	Stop   []string `json:"stop,omitempty" yaml:"stop,omitempty"`
 	Drain  Hook     `json:"drain" yaml:"drain"`
 	Retire Hook     `json:"retire" yaml:"retire"`
 }
 
-// SchemaChange separates online expansion/backfill from cleanup in a later
-// release. Hooks must be idempotent and verify their native SQL effects.
+// SchemaChange separates online expansion/backfill from cleanup in a later release.
 type SchemaChange struct {
 	Expand   Hook `json:"expand,omitempty" yaml:"expand,omitempty"`
 	Backfill Hook `json:"backfill,omitempty" yaml:"backfill,omitempty"`

@@ -35,8 +35,6 @@ func openPinnedObjects(spec *ebpf.CollectionSpec, dir string, objs *firewallObje
 	for _, ms := range spec.Maps {
 		ms.Pinning = ebpf.PinByName
 	}
-	// PinByName reopens existing maps and validates their layout. Incompatible
-	// state is an error, never a reason to discard a running data plane.
 	return spec.LoadAndAssign(objs, &ebpf.CollectionOptions{Maps: ebpf.MapOptions{PinPath: maps}})
 }
 
@@ -80,8 +78,7 @@ func (m *Manager) containerPinPath(containerID string) string {
 	return filepath.Join(m.pinDir, "containers", base64.RawURLEncoding.EncodeToString([]byte(containerID)))
 }
 
-// Recover local policies before refreshing the catalog, so a restart cannot
-// overwrite local identity entries with seeds whose veth index is zero.
+// Recover local policies before catalog seeds can overwrite their veth indices.
 func (m *Manager) adoptContainers() error {
 	dirs, err := os.ReadDir(filepath.Join(m.pinDir, "containers"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -101,7 +98,6 @@ func (m *Manager) adoptContainers() error {
 			return err
 		}
 		if len(contents) == 0 {
-			// A crash after mkdir but before the first pin left no kernel state.
 			if err := os.Remove(path); err != nil {
 				return err
 			}
@@ -165,8 +161,6 @@ func (m *Manager) adoptContainers() error {
 			}
 		}
 		if !attached {
-			// Both links detached because the workload's veth was removed while
-			// the agent was stopped. These pins no longer protect a workload.
 			if err := m.removeContainerLocked(r); err != nil {
 				return err
 			}
@@ -196,8 +190,6 @@ func (m *Manager) adoptContainers() error {
 	return nil
 }
 
-// Remove drops the pins, detaching programs and releasing maps once all process
-// handles are closed. The agent must be stopped before explicit removal.
 func Remove(interfaceName string) error {
 	dir, err := pinPath(interfaceName)
 	if err != nil {

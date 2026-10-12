@@ -39,8 +39,6 @@ func (l *Live) applyProductLocked(update journal.Applied) {
 		update.Reset = true
 	}
 	l.product = state
-	// Retained observations stop belonging to live work when an assignment is
-	// removed, moved, or advances its desired generation.
 	for key, obs := range l.observations {
 		a, exists := state.Assignments[key.AllocationID]
 		if !exists || a.AgentID != obs.AgentID || a.DesiredRolloutGeneration != key.Generation {
@@ -201,8 +199,6 @@ func (l *Live) Product() *journal.Projection {
 	return l.product
 }
 
-// IngressState captures durable routes and their health under one lock. A
-// resign or takeover cannot turn an allowed read into an empty configuration.
 func (l *Live) IngressState() (*journal.Projection, map[string]AllocationRecord, error) {
 	if l == nil {
 		return nil, nil, ErrNotLiveOwner
@@ -686,8 +682,6 @@ func (l *Live) OverlayAllocation(rec AllocationRecord) AllocationRecord {
 }
 
 func overlayAllocation(rec AllocationRecord, obs AllocationObservation, hasObs bool) AllocationRecord {
-	// Session reachability controls management and placement, not traffic.
-	// Retain generation-scoped observations while ingress probes the workloads.
 	if rec.RolloutState == AllocationRolloutLost {
 		rec.Phase = "Unavailable"
 		rec.Healthy = false

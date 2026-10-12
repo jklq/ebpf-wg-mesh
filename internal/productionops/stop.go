@@ -21,13 +21,9 @@ import (
 	"time"
 )
 
-// envoyAdminAddress is the loopback admin listener rendered into every ingress
-// bootstrap. Stop preparation and identity inspection run on the same host.
 const envoyAdminAddress = "127.0.0.1:19000"
 
-// prepareStop runs on a replica's host as systemd ExecStop=, before the process
-// is signalled. systemd signals the process afterwards even if preparation
-// fails, so every step is bounded and an exited process is not an error.
+// systemd signals even if ExecStop fails, so preparation must be bounded.
 func prepareStop(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("prepare-stop requires a role")
@@ -73,9 +69,7 @@ func prepareStop(ctx context.Context, args []string) error {
 	}
 }
 
-// replicated reports whether the installer placed other replicas of this role.
-// Withdrawal only helps when a balancer has somewhere else to send traffic; a
-// sole replica would turn the wait into an outage. Unknown counts withdraw.
+// Withdraw only when peers can take traffic; a sole replica would incur an outage.
 func replicated() bool {
 	data, err := os.ReadFile(filepath.Join(os.Getenv("PLATFORM_CONFIG_DIR"), "replicas"))
 	if err != nil {
@@ -96,9 +90,6 @@ func loopbackHTTP(raw string) error {
 	return nil
 }
 
-// markDraining names the systemd invocation being stopped. The console reports
-// not ready only for that invocation, so balancers withdraw it while it still
-// serves, and a restarted process never inherits the marker.
 func markDraining(ctx context.Context, file string, withdrawal time.Duration) error {
 	if pid := os.Getenv("MAINPID"); pid == "" || pid == "0" {
 		return nil
@@ -121,14 +112,9 @@ type envoyStop struct {
 	replicated                   bool
 }
 
-// ingressConnections sums the ingress listeners; healthChecks counts requests to
-// the load-balancer health listener since Envoy started.
 type ingressConnections struct{ total, active, requests, healthChecks int64 }
 
-// Envoy closes its listeners immediately on SIGTERM, so it drains first. A
-// replicated Envoy fails its health checks so balancers withdraw it, waits until
-// new connections stop and lets active ones finish. Withdrawal is skipped when
-// no balancer health-checks this Envoy, because nothing would act on it.
+// Drain before SIGTERM closes Envoy listeners; withdraw only if a balancer checks health.
 func (e envoyStop) run(ctx context.Context) error {
 	if !e.replicated {
 		return e.finishRequests(ctx)
@@ -170,8 +156,6 @@ func (e envoyStop) run(ctx context.Context) error {
 	return e.drainListeners(ctx)
 }
 
-// drainListeners discourages and closes downstream connections, then waits for
-// them to finish. Without skip_exit, Envoy exits by itself after its drain time.
 func (e envoyStop) drainListeners(ctx context.Context) error {
 	if err := e.post(ctx, "/drain_listeners?graceful&skip_exit"); err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) {
@@ -182,10 +166,7 @@ func (e envoyStop) drainListeners(ctx context.Context) error {
 	return e.waitFor(ctx, e.drain, func(c ingressConnections) int64 { return c.active }, "connections")
 }
 
-// finishRequests stops a sole Envoy promptly. It keeps accepting connections,
-// so waiting costs no availability, but only admitted requests are awaited:
-// new connections keep arriving and would hold the restart for the whole
-// drain period without making it any safer.
+// Wait for admitted requests, not connections: new arrivals could hold a sole replica indefinitely.
 func (e envoyStop) finishRequests(ctx context.Context) error {
 	return e.waitFor(ctx, min(e.drain, 10*time.Second), func(c ingressConnections) int64 { return c.requests }, "requests")
 }
@@ -223,8 +204,6 @@ func (e envoyStop) post(ctx context.Context, path string) error {
 	return nil
 }
 
-// Ingress listeners use the ingress_http and ingress_https connection manager
-// prefixes, the health listener ingress_health; the admin interface has none.
 func (e envoyStop) connections(ctx context.Context) (ingressConnections, error) {
 	var c ingressConnections
 	filter := url.QueryEscape(`^http\.ingress_(https?|health)\.downstream_(cx_total|cx_active|rq_active|rq_total)$`)
@@ -277,8 +256,6 @@ func envoyAdminJSON(ctx context.Context, client *http.Client, target string, val
 	return json.NewDecoder(io.LimitReader(res.Body, 8<<20)).Decode(value)
 }
 
-// inspectEnvoyIdentity proves that Envoy's filesystem SDS loaded the installed
-// client certificate: replacing the files alone does not establish that.
 func inspectEnvoyIdentity(ctx context.Context, admin, certFile string) error {
 	if err := loopbackHTTP(admin); err != nil {
 		return err
@@ -308,7 +285,6 @@ func inspectEnvoyIdentity(ctx context.Context, admin, certFile string) error {
 	}
 	for _, tlsContext := range loaded.Certificates {
 		for _, cert := range tlsContext.CertChain {
-			// Envoy prints the serial as hex and may keep a leading zero nibble.
 			if serial, ok := new(big.Int).SetString(cert.SerialNumber, 16); ok && serial.Cmp(leaf.SerialNumber) == 0 {
 				return nil
 			}

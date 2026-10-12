@@ -70,7 +70,6 @@ func TestRolloutWavesRetainCapacityAndVerifyCanaryAndPreviousWave(t *testing.T) 
 			previous = terminals
 		}
 	}
-	// Small roles, database quorums, initial install and restore remain serial.
 	for _, tc := range []struct {
 		role    Role
 		n, want int
@@ -99,8 +98,6 @@ func TestRolloutWavesRetainCapacityAndVerifyCanaryAndPreviousWave(t *testing.T) 
 	}
 }
 
-// waveDriver serializes the fake's maps but releases its lock while installs
-// wait for their wave mate. A serial engine cannot pass this barrier.
 type waveDriver struct {
 	*fakeDriver
 	mu       sync.Mutex
@@ -118,7 +115,6 @@ func (d *waveDriver) Observe(ctx context.Context, p Plan, state State, op Operat
 func (d *waveDriver) Execute(ctx context.Context, p Plan, state State, op Operation) (Binding, error) {
 	if op.Kind == "install" && op.Placement != nil && len(p.waveMates(*op.Placement)) > 0 {
 		key := fmt.Sprint(op.Phase, op.Requires)
-		// Install requirements differ within a wave, so use its head requirements.
 		for _, head := range p.Operations {
 			if head.Phase == op.Phase && head.Placement != nil && head.Placement.Instance == op.Placement.Instance {
 				key = fmt.Sprint(op.Phase, head.Requires)
@@ -144,7 +140,6 @@ func (d *waveDriver) Execute(ctx context.Context, p Plan, state State, op Operat
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if op.ID == d.failedID {
-		// The mate must still finish its chain, especially builder-resume.
 		d.count[op.ID]++
 		return Binding{}, errors.New("one wave replica failed")
 	}

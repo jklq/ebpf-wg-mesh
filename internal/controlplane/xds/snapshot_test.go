@@ -110,7 +110,6 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 	if !bytes.Equal(snapshotBytes(t, rebuilt), snapshotBytes(t, snap)) {
 		t.Fatal("rebuilt snapshot resources differ")
 	}
-	// Older publications must not reuse a version for the new traffic policy.
 	oldInputs := bytes.Replace(snap.Inputs, []byte(`"format":2,`), []byte(`"format":1,`), 1)
 	if _, err := BuildFromInputs(context.Background(), oldInputs, nil); err == nil {
 		t.Fatal("accepted publication with the previous resource format")

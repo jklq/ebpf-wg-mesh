@@ -1,6 +1,4 @@
-// Package schemacompat reads the database-owned compatibility boundary. A
-// future additive schema can admit older binaries; contraction raises the
-// boundary only after those binaries have left the deployment.
+// Package schemacompat reads the database-owned compatibility boundary.
 package schemacompat
 
 import (

@@ -1,6 +1,4 @@
 // Package continuity owns stable TCP listeners and bounded process overlap.
-// It never retries application requests or terminates a connection to complete
-// an upgrade. An unfinished drain is a pending upgrade, not permission to kill.
 package continuity
 
 import (
@@ -25,26 +23,21 @@ type Listener struct {
 	PortOnly bool   `json:"portOnly,omitempty" yaml:"portOnly,omitempty"`
 }
 
-// Launch contains resolved, private inputs. ID fingerprints their contents,
-// rather than filenames. Every launch has its own immutable configuration.
 type Launch struct {
-	ID          string            `json:"id"`
-	Command     []string          `json:"command"`
-	Environment map[string]string `json:"environment"`
-	Directory   string            `json:"directory"`
-	ConfigDir   string            `json:"configDir"`
-	Listeners   []Listener        `json:"listeners"`
-	Ready       []string          `json:"ready"`
-	// Stop prepares a superseded generation for SIGTERM, as systemd ExecStop=
-	// does for the owner: it withdraws and drains with the generation's own
-	// private addresses in its environment.
-	Stop             []string `json:"stop,omitempty"`
-	MemoryMiB        int64    `json:"memoryMiB"`
-	CPUMillis        int64    `json:"cpuMillis"`
-	EnforceResources bool     `json:"enforceResources"`
-	EnvFiles         []string `json:"envFiles,omitempty"`
-	ConfigDigest     string   `json:"configDigest"`
-	ConfigOrigin     string   `json:"configOrigin,omitempty"`
+	ID               string            `json:"id"`
+	Command          []string          `json:"command"`
+	Environment      map[string]string `json:"environment"`
+	Directory        string            `json:"directory"`
+	ConfigDir        string            `json:"configDir"`
+	Listeners        []Listener        `json:"listeners"`
+	Ready            []string          `json:"ready"`
+	Stop             []string          `json:"stop,omitempty"`
+	MemoryMiB        int64             `json:"memoryMiB"`
+	CPUMillis        int64             `json:"cpuMillis"`
+	EnforceResources bool              `json:"enforceResources"`
+	EnvFiles         []string          `json:"envFiles,omitempty"`
+	ConfigDigest     string            `json:"configDigest"`
+	ConfigOrigin     string            `json:"configOrigin,omitempty"`
 }
 
 func Prepare(path string) (Launch, error) {
@@ -133,8 +126,6 @@ func ReadLaunch(path string) (Launch, error) {
 	return l, l.Validate()
 }
 
-// ReadEnvironment reads the deliberately small quoted format emitted by the
-// installer. It does not evaluate shell substitutions or source a shell file.
 func ReadEnvironment(paths ...string) (map[string]string, error) {
 	env := map[string]string{}
 	for _, path := range paths {

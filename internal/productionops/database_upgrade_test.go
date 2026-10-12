@@ -16,8 +16,6 @@ func TestDatabaseRestartRequiresSurvivingRangeQuorums(t *testing.T) {
 		alter             func(*deploy.DatabaseStatus)
 		recovery, allowed bool
 	}{
-		// CockroachDB rolls on quorum, not full convergence: ranges that are
-		// still replicating elsewhere do not block a quorum-safe restart.
 		{"underreplicated elsewhere", func(s *deploy.DatabaseStatus) { s.Replicated = false }, false, true},
 		{"other node lost", func(s *deploy.DatabaseStatus) { s.Live = []string{"a", "c"} }, false, false},
 		{"range cannot survive", func(s *deploy.DatabaseStatus) { s.Ranges[0].Voters = []string{"a", "b"} }, false, false},

@@ -194,7 +194,6 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Shutdown.WithdrawalSeconds < 0 || cfg.Shutdown.GraceSeconds <= 0 {
 		return errors.New("controlplane.shutdown requires a non-negative withdrawal and a positive grace period")
 	}
-	// systemd stops the unit after 120 seconds; background work needs the rest.
 	if cfg.Shutdown.WithdrawalSeconds+cfg.Shutdown.GraceSeconds > 90 {
 		return errors.New("controlplane.shutdown withdrawal and grace must total at most 90 seconds")
 	}

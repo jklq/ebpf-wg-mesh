@@ -29,7 +29,6 @@ func TestEnvoyWithdrawsHealthyEndpoint(t *testing.T) {
 	}
 	docker := func(args ...string) string {
 		t.Helper()
-		// Image pull progress goes to stderr; only stdout is the result.
 		var stderr strings.Builder
 		cmd := exec.CommandContext(ctx, "docker", args...)
 		cmd.Stderr = &stderr
@@ -40,8 +39,6 @@ func TestEnvoyWithdrawsHealthyEndpoint(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	const image = "envoyproxy/envoy:v1.36-latest"
-	// EDS accepts IPs, so resolve the address that reaches this test's servers
-	// from Docker on both Linux and Docker Desktop.
 	lookup := docker("run", "--rm", "--add-host=host.docker.internal:host-gateway",
 		"--entrypoint", "getent", image, "ahostsv4", "host.docker.internal")
 	fields := strings.Fields(lookup)
@@ -145,8 +142,7 @@ func TestEnvoyWithdrawsHealthyEndpoint(t *testing.T) {
 		t.Fatalf("both healthy backends never served traffic: %v; seen %v; xDS %+v", err, seen, server.Status())
 	}
 
-	// Keep the withdrawn endpoint running and healthy through the ACK and
-	// subsequent requests. Waiting for it to fail health checks would hide the bug.
+	// Keep the withdrawn endpoint healthy so health checks cannot hide a withdrawal bug.
 	input.Backends = input.Backends[1:]
 	withdrawn := mustBuild(t, input)
 	server.Publish(ctx, withdrawn)

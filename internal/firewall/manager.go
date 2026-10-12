@@ -700,8 +700,6 @@ func (m *Manager) AttachedCount() int {
 	return len(m.containers)
 }
 
-// Close releases process ownership. Pinned attachments, policy and connection
-// tracking continue serving traffic until a workload exits or Remove is called.
 func (m *Manager) Close() error {
 	if m == nil {
 		return nil
@@ -728,8 +726,6 @@ func (m *Manager) Close() error {
 	if m.wgEgressLink != nil {
 		errs = append(errs, m.wgEgressLink.Close())
 	}
-	// Generated Close expects every object to be initialized. A load failure
-	// already closes the partially assigned collection.
 	if m.objs.TcxIngress != nil {
 		errs = append(errs, m.objs.Close())
 	}
@@ -757,7 +753,6 @@ func closeContainerHandles(r *containerRuntime) error {
 }
 
 func (m *Manager) refreshContainerLinks(r *containerRuntime) error {
-	// Reopening the pins also upgrades programs atomically without detaching.
 	if r.ingressLink != nil {
 		_ = r.ingressLink.Close()
 		r.ingressLink = nil

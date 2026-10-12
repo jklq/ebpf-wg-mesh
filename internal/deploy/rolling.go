@@ -127,9 +127,6 @@ func (p Plan) validateRollingUpgrade() error {
 	return validateCockroachUpgrade(old.Dependencies["cockroachdb"], p.Release.Dependencies["cockroachdb"])
 }
 
-// Only adjacent major versions are admitted here. A skipped Innovation release
-// requires a separately reviewed intermediate release rather than guessing
-// support from an arbitrary version string.
 func validateCockroachUpgrade(from, to string) error {
 	parse := func(v string) ([3]int, error) {
 		var parts [3]int

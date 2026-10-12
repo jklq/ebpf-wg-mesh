@@ -279,7 +279,6 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 	if err = current.databaseCredentials(ctx, false); err != nil {
 		return err
 	}
-	// Restore builder drain intent left by an interrupted earlier activation.
 	for _, pl := range r.Plan.Placements {
 		if pl.Role == deploy.Builder {
 			if err = resumeBuilder(ctx, db, credentialDrainKey, pl.Instance); err != nil {
@@ -290,8 +289,6 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 	if err = current.credentials(ctx, false); err != nil {
 		return err
 	}
-	// A credential handover overlaps one listener process generation per host,
-	// the same budget as an upgrade. Reserve it on the host's agent first.
 	for _, agent := range current.Plan.Placements {
 		if agent.Role != deploy.Agent {
 			continue
@@ -310,8 +307,6 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 			}
 		}
 	}
-	// A deferred restart leaves that replica on valid current credentials; it
-	// must not keep the remaining replicas from activating theirs.
 	var pending []error
 	for _, pl := range current.Plan.Placements {
 		if err = current.activateCredentials(ctx, pl); errors.Is(err, errActivationPending) {
@@ -323,8 +318,7 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 	if err = current.credentials(ctx, true); err != nil {
 		return err
 	}
-	// A timer can run after schedule admission but before the upgrade commits.
-	// It must not release the controller's larger transition reservation.
+	// A renewal timer must not release an in-progress upgrade's larger reservation.
 	if recovery.VerifyFinishedRelease(ctx, db, current.Plan.Installation.ID, current.Plan.Release.ID) == nil {
 		if err = current.releaseOverlapReservations(ctx); err != nil {
 			return err

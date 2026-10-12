@@ -83,7 +83,6 @@ func TestReachableWorkloadSurvivesManagementSessionLoss(t *testing.T) {
 	if !l.AllocationsByAgent("agent")[0].Healthy {
 		t.Fatal("new session erased traffic health")
 	}
-	// A newer assignment cannot borrow readiness from the previous generation.
 	if rec := l.OverlayAllocation(AllocationRecord{ID: "alloc", AgentID: "agent", DesiredRolloutGeneration: 2}); rec.Healthy {
 		t.Fatal("stale observation made new generation healthy")
 	}

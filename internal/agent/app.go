@@ -187,7 +187,6 @@ func (a *App) runConnections(ctx context.Context) error {
 		err := a.runSession(ctx)
 		stable := !a.sessionEstablishedAt.IsZero() && time.Since(a.sessionEstablishedAt) >= stableSessionDuration
 		if after, paced := guidedReconnect(err); paced && ctx.Err() == nil {
-			// The replica ended this session on purpose and paced the fleet.
 			slog.Info("control plane paced reconnection", "agent_id", a.cfg.Node.ID, "error", err, "retry_in", after)
 			delay = initialReconnectDelay
 			if !waitReconnect(ctx, after) {
@@ -234,8 +233,6 @@ func waitReconnect(ctx context.Context, delay time.Duration) bool {
 	}
 }
 
-// jitteredReconnectDelay waits between half and all of the backoff, so agents
-// that lost the same replica do not retry in lockstep.
 func jitteredReconnectDelay(delay time.Duration) time.Duration {
 	half := delay / 2
 	if half <= 0 {

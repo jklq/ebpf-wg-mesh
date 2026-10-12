@@ -109,8 +109,6 @@ func TestRollingFailureKeepsOtherReplicasServingAndResumesTheSameReplica(t *test
 		t.Fatal("interrupted rollout lost its prior deployment and backup", err)
 	}
 	d.pending = ""
-	// A long rollout may outlive the freshness window of its prior recovery
-	// point. It must retain that point instead of capturing mixed versions.
 	d.failObserveHook = "backup"
 	if err := e.Apply(context.Background(), p); err != nil {
 		t.Fatal(err)
@@ -255,9 +253,6 @@ func TestPlanDrainDeadlineIsRecordedAndDigested(t *testing.T) {
 	}
 }
 
-// CockroachDB rolls one node at a time on quorum, so a replicated cluster
-// with one member down still admits the plan; each restart is then gated
-// natively on every range keeping a live voting quorum without its target.
 func TestRollingPlanAdmitsALiveMajorityWithOneMemberDown(t *testing.T) {
 	p, state, inv := rollingPlan(t, false)
 	inv.Database.Live = inv.Database.Live[:2]
@@ -275,7 +270,6 @@ type builderRetryDriver struct {
 
 func (d *builderRetryDriver) Execute(ctx context.Context, p Plan, state State, op Operation) (Binding, error) {
 	if op.ID == d.install {
-		// The native driver drains immediately before every builder install.
 		delete(d.done, d.resume)
 	}
 	return d.fakeDriver.Execute(ctx, p, state, op)

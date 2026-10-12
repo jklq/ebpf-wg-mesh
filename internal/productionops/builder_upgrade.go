@@ -11,7 +11,6 @@ import (
 	"ebof-wg-mesh/internal/sqlretry"
 )
 
-// Drain only this replica, preserving an operator's existing drain intent.
 func (r *Runner) builderUpgrade(ctx context.Context, args []string, verify bool) error {
 	if len(args) != 2 || (args[0] != "builder-drain" && args[0] != "builder-resume") {
 		return fmt.Errorf("builder upgrade requires drain/resume and an instance")
@@ -33,7 +32,6 @@ func (r *Runner) builderUpgrade(ctx context.Context, args []string, verify bool)
 	}
 	if !verify {
 		if args[0] == "builder-drain" {
-			// An interrupted credential restart must not become the operator's intent.
 			if err := resumeBuilder(ctx, db, credentialDrainKey, pl.Instance); err != nil {
 				return err
 			}
@@ -68,10 +66,6 @@ func (r *Runner) builderUpgrade(ctx context.Context, args []string, verify bool)
 	return nil
 }
 
-// builderDrainBlocking reports whether active builds still hold a drained
-// builder's restart. Without a plan drain deadline they hold it indefinitely
-// and nothing is forced off; with one, the restart proceeds once the builder
-// has been drained for that long and the running builds are interrupted.
 func builderDrainBlocking(active int, drainedAt sql.NullTime, now time.Time, deadline time.Duration) bool {
 	if active == 0 {
 		return false
@@ -93,7 +87,6 @@ func (r *Runner) inspectBuilderUpgrade(ctx context.Context, action string) error
 
 const builderDrainTable = `CREATE TABLE IF NOT EXISTS platform_recovery.public.rolling_builder_drains(plan_id STRING NOT NULL,instance STRING NOT NULL,previous_drained BOOL NOT NULL,resumed BOOL NOT NULL DEFAULT FALSE,drained_at TIMESTAMPTZ,PRIMARY KEY(plan_id,instance))`
 
-// Tables created before drained_at was recorded gain the column in place.
 const builderDrainDrainedAt = `ALTER TABLE platform_recovery.public.rolling_builder_drains ADD COLUMN IF NOT EXISTS drained_at TIMESTAMPTZ`
 
 func ensureBuilderDrainTable(ctx context.Context, db *sql.DB) error {
@@ -104,10 +97,7 @@ func ensureBuilderDrainTable(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-// drainBuilder records the builder's drain intent once per key, then drains it.
-// A key that was resumed records the intent again for its next drain. The drain
-// start is recorded once, when the drain begins, so a plan drain deadline is
-// measured from the drain and not from the latest verification retry.
+// Persist drain intent and its start once; retries must not reset the deadline.
 func drainBuilder(ctx context.Context, db *sql.DB, key, instance string) error {
 	if err := ensureBuilderDrainTable(ctx, db); err != nil {
 		return err
@@ -124,7 +114,6 @@ func drainBuilder(ctx context.Context, db *sql.DB, key, instance string) error {
 	})
 }
 
-// resumeBuilder restores the drain intent recorded under key, if still drained.
 func resumeBuilder(ctx context.Context, db *sql.DB, key, instance string) error {
 	if err := ensureBuilderDrainTable(ctx, db); err != nil {
 		return err

@@ -10,8 +10,6 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 )
 
-// A draining live owner hands its lease to a peer before its agents reconnect,
-// so they follow the successor instead of waiting out the old owner's drain.
 func TestDrainingOwnerHandsAgentsToItsSuccessor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
@@ -28,7 +26,6 @@ func TestDrainingOwnerHandsAgentsToItsSuccessor(t *testing.T) {
 		t.Fatalf("owner session: %v", err)
 	}
 
-	// SIGTERM cancels Run's context; Close is deliberately not called here.
 	drainStarted := time.Now()
 	owner.cancel()
 	var err error
@@ -38,9 +35,6 @@ func TestDrainingOwnerHandsAgentsToItsSuccessor(t *testing.T) {
 	if ended := time.Since(drainStarted); ended > 5*time.Second {
 		t.Fatalf("agent session lingered %v on the draining owner", ended)
 	}
-	// Usually the released lease ends the session with ownership guidance; a
-	// session busy planning when the lease moves is shed instead. Both tell the
-	// agent where to go next, and neither quarantines the successor.
 	reason, after, ok := agentv1.ReconnectGuidance(err)
 	if !ok || reason == agentv1.ReasonOwnerNotReady && after <= 0 {
 		t.Fatalf("agent session ended with %v, want reconnect guidance", err)

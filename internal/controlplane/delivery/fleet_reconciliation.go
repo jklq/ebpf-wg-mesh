@@ -234,9 +234,7 @@ func (d *Delivery) failoverServicesFromAgent(ctx context.Context, agentID string
 }
 
 func (d *Delivery) failoverAgent(ctx context.Context, agentID string, cutoff, now time.Time) (ServiceFailoverResult, error) {
-	// Probe outside the transaction, then validate the assignment generation
-	// before using the evidence. A management outage alone cannot evict a
-	// workload that is still accepting traffic.
+	// Probe outside the transaction, then recheck the assignment generation before replacing work.
 	agent, ok := d.live.Agent(agentID)
 	if !ok || agent.LifecycleState != AgentStateUnavailable || agent.LastSeenAt.After(cutoff) {
 		return ServiceFailoverResult{}, nil

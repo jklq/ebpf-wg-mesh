@@ -48,9 +48,7 @@ type agentService struct {
 	registry                *registry.Policy
 	replicaAddresses        []string
 	liveOwner               liveOwner
-	// syncs counts this replica's agent sessions; it paces their reconnection
-	// when ownership moves, so the successor is not hit by all of them at once.
-	syncs atomic.Int64
+	syncs                   atomic.Int64
 
 	credMu    sync.Mutex
 	credCache map[string]map[string]cachedPullCredential // agentID -> allocationID -> credential
@@ -154,7 +152,6 @@ func (s *agentService) requireLiveOwner(ctx context.Context) error {
 		}
 		sessions := int(s.syncs.Load())
 		if strings.TrimSpace(ownerAddr) == "" {
-			// A peer acquires the released lease within its retry interval.
 			return agentv1.WithReconnectGuidance(status.Error(codes.Unavailable, "live owner is not ready"), agentv1.ReasonOwnerNotReady, agentv1.ReconnectDelay(agentv1.OwnerHandoverDelay, sessions))
 		}
 		return agentv1.WithReconnectGuidance(agentv1.LiveOwnerRedirect(ownerAddr), agentv1.ReasonOwnerMoved, agentv1.ReconnectDelay(0, sessions))
@@ -475,8 +472,6 @@ func (s *agentService) sendLoop(ctx context.Context, stream agentv1.AgentControl
 		slog.Info("checking desired state", "agent_id", agentID)
 		next, err := s.sendSyncBatch(ctx, stream, sendMu, agentID, sessionID, clusterID, epoch, sent, helloInventory, helloInit, helloEpoch, first)
 		if err != nil {
-			// Released ownership can surface first as missing live state. Report
-			// the handover so the agent follows it instead of backing off.
 			if ownerErr := s.requireLiveOwner(ctx); ownerErr != nil {
 				return ownerErr
 			}

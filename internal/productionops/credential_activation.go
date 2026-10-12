@@ -12,20 +12,11 @@ import (
 
 const credentialDigestVariable = "PLATFORM_CREDENTIALS_DIGEST"
 
-// credentialDrainKey records builder drain intent for credential restarts. A
-// renewal run restores it before returning; the next run repairs a crash.
 const credentialDrainKey = "credential-activation"
 
-// errActivationPending reports a restart that a drain gate deferred. The process
-// keeps its current credentials and a later renewal retries the activation.
 var errActivationPending = errors.New("credential activation pending")
 
-// launchCredential reports whether a process reads a credential file only at
-// launch. The runtime digest covers launch files alone, so replacing the others
-// does not restart the process: Envoy watches its identity through filesystem
-// SDS, the agent renews and reloads its own client identity for each session,
-// the builder reads its client identity for each handshake, and probe material
-// is read only by host administration. Unknown files are launch files.
+// Only launch credentials trigger restarts; runtime identities reload independently.
 func launchCredential(role deploy.Role, name string) bool {
 	switch name {
 	case "probe.json", "probe-ca.crt", "probe-client.crt", "probe-client.key":
@@ -66,17 +57,10 @@ func credentialEnvironmentCheck() string {
 	return "tr '\\000' '\\n' < /proc/\"$pid\"/environ | grep -Fxq -- \"" + credentialDigestVariable + "=$credential_digest\""
 }
 
-// The environment fingerprints the installed launch credentials. Rewrites of
-// identical bytes do not activate anything; a failed restart remains detectable
-// from the running process, even after another completer takes over. Without
-// restart, a stale non-database process is only reported, so drain gates can
-// run before the restart.
 func credentialActivationScript(p deploy.Plan, pl deploy.Placement, restart bool) string {
 	service, directory := shell(unit(p, pl)), cfgDir(p, pl)
 	script := "if ! systemctl is-active --quiet " + service + "; then printf 'inactive\\n'; exit 0; fi\n"
 	if len(p.Release.Programs[pl.Role].Listeners) > 0 {
-		// A handover keeps the old generation serving until the new one is
-		// ready, so it needs no peer gate. The old generation then drains.
 		binary, dir := shell(deploy.ContinuityBinary(p, pl)), shell(deploy.ContinuityDir(p, pl))
 		launch := shell(directory + "/launch.json")
 		return script + "if " + binary + " verify " + dir + " " + launch + " >/dev/null 2>&1; then printf 'current\\n'; exit 0; fi\n" + binary + " activate " + dir + " " + launch + " >/dev/null\n" + binary + " finish " + dir + " >/dev/null\nprintf 'handed-over\\n'\n"
@@ -98,7 +82,6 @@ func credentialActivationScript(p deploy.Plan, pl deploy.Placement, restart bool
 		if !restart {
 			return script + "printf 'stale\\n'\n"
 		}
-		// The unit's stop preparation drains the process before systemd signals it.
 		script += "systemctl restart " + service + "\nprintf 'restarted\\n'\n"
 	}
 	return script
@@ -116,7 +99,6 @@ func (r *Runner) activateCredentials(ctx context.Context, pl deploy.Placement) (
 			return err
 		}
 		defer func() {
-			// Restore the drain intent after readiness, or as soon as activation fails.
 			resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 			defer cancel()
 			returnErr = errors.Join(returnErr, resume(resumeCtx))
@@ -176,10 +158,6 @@ func (r *Runner) activateCredentials(ctx context.Context, pl deploy.Placement) (
 	return nil
 }
 
-// prepareCredentialRestart runs the drain gates immediately before restarting a
-// replica. Replicated services restart only while their peers are ready, so the
-// drained replica's traffic has somewhere to go; a builder drains and lets its
-// active builds finish. The returned function restores what the gate changed.
 func (r *Runner) prepareCredentialRestart(ctx context.Context, pl deploy.Placement) (func(context.Context) error, error) {
 	switch pl.Role {
 	case deploy.ControlPlane, deploy.Console, deploy.Envoy, deploy.Registry:
@@ -204,8 +182,6 @@ func (r *Runner) prepareCredentialRestart(ctx context.Context, pl deploy.Placeme
 	return func(context.Context) error { return nil }, nil
 }
 
-// A renewal drain lasts one run. If builds outlast the wait, the builder's
-// previous drain intent is restored and the restart is deferred to a later run.
 func (r *Runner) drainBuilderForRestart(ctx context.Context, pl deploy.Placement, wait time.Duration) (func(context.Context) error, error) {
 	db, err := r.db(ctx, false)
 	if err != nil {
@@ -241,8 +217,6 @@ func (r *Runner) drainBuilderForRestart(ctx context.Context, pl deploy.Placement
 	}
 }
 
-// Envoy reloads its identity through filesystem SDS without a restart. Verify
-// that the running process actually serves the installed certificate.
 func (r *Runner) verifyEnvoyIdentity(ctx context.Context, pl deploy.Placement) error {
 	script := "systemctl is-active --quiet " + shell(unit(r.Plan, pl)) + "\n" + shell(operationsBinary(r.Plan)) + " envoy-identity " + shell("http://"+envoyAdminAddress) + " " + shell(cfgDir(r.Plan, pl)+"/ingress/current/client.crt") + "\n"
 	loadCtx, cancel := context.WithTimeout(ctx, 30*time.Second)

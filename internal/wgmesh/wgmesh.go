@@ -80,8 +80,7 @@ func Setup(cfg config.WireGuard) (_ *Runtime, retErr error) {
 	return r, nil
 }
 
-// Read the kernel's state so adoption uses the same incremental reconciliation
-// as a running process. ReplacePeers would discard existing peer sessions.
+// Reconcile adopted kernel state incrementally; ReplacePeers would discard existing sessions.
 func stateFromDevice(device *wgtypes.Device, addresses []netlink.Addr) wireGuardState {
 	state := wireGuardState{
 		privateKey: device.PrivateKey,

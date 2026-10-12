@@ -128,7 +128,6 @@ func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	s.firstContact = hook
 }
 
-// Additional stream interceptors run before authorization, outermost first.
 func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.CertificateRevocations, streams ...grpc.StreamServerInterceptor) *grpc.Server {
 	if tlsConfig == nil {
 		panic("xDS requires mTLS configuration")

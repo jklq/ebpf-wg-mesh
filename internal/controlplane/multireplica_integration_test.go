@@ -164,8 +164,6 @@ func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 	}
 }
 
-// A product transaction holds a pooled connection while it checks the lease.
-// If it queued behind a guard's lock, the guard could starve for connections.
 func TestProductTransactionsDoNotWaitBehindLeaseGuard(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)

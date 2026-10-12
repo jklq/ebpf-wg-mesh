@@ -99,7 +99,6 @@ func snapshotConfig(dir string, l Launch) (string, error) {
 	if digest, err := directoryDigest(stage); err != nil || digest != l.ConfigDigest {
 		return "", fmt.Errorf("configuration changed during snapshot; serving generation retained")
 	}
-	// Every directory entry and file is durable before publishing the boot view.
 	if err = filepath.WalkDir(stage, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err

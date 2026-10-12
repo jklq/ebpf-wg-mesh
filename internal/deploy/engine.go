@@ -13,8 +13,7 @@ import (
 )
 
 type Driver interface {
-	// Replica operations in one rollout wave may call Observe and Execute
-	// concurrently, with independent immutable snapshots of State.
+	// Observe and Execute may run concurrently with independent immutable State snapshots.
 	Inventory(context.Context, Installation, Release, State) (Inventory, error)
 	// Observe must discover uncertain provider outcomes and verify native
 	// membership/drain/backup completion before an operation is considered done.
@@ -111,9 +110,6 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 	return e.Store.Write(state)
 }
 
-// step applies one operation. Concurrent wave chains hold the state lock while
-// they inspect and record progress, and release it through unlocked for driver
-// calls; sequential operations pass nil and keep exclusive access.
 func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, unlocked func(func())) error {
 	contract, _ := ContractForHook(op.Hook)
 	for _, dependency := range op.Requires {
@@ -146,9 +142,7 @@ func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, un
 
 	if _, ok := state.Progress.Completed[op.ID]; ok {
 		critical := op.Kind == "hook" && contract.Reobserve
-		// This point protects the previous release before replacement. Once
-		// the database rollout starts, keep that exact point rather than
-		// pairing a fresh mixed-version backup with the previous release.
+		// Retain the pre-upgrade recovery point; a mixed-version backup cannot protect the old release.
 		if op.Phase == "pre-backup" {
 			for _, step := range p.Operations {
 				if step.Phase == "database-runtime" && step.Kind != "configure" && state.Progress.Started[step.ID] {
@@ -156,9 +150,7 @@ func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, un
 				}
 			}
 		}
-		// Once cleanup starts, the previous compatibility boundary has been
-		// superseded. All replica installs and retirements already preceded it;
-		// replaying the old overlap gate would make that cleanup unresumable.
+		// Cleanup supersedes the old compatibility boundary; replaying its overlap gate would block resume.
 		if op.Phase == "schema-overlap" {
 			for _, step := range p.Operations {
 				if step.Kind == "schema-contract" && state.Progress.Started[step.ID] {
@@ -190,8 +182,7 @@ func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, un
 			return fmt.Errorf("purchase outcome for %s is unknown after discovery; resolve the provider binding before resuming, never blindly repeat a purchase", op.Host)
 		}
 		state.Progress.Started[op.ID] = true
-		// An install retry can drain a builder that already resumed. Its
-		// matching resume must run again after this install verifies.
+		// An install retry may drain an already resumed builder, so its resume must run again.
 		if op.Kind == "install" && op.Placement != nil && op.Placement.Role == Builder {
 			for _, step := range p.Operations {
 				if step.Hook == "builder-resume" && step.Placement != nil && *step.Placement == *op.Placement {
@@ -301,7 +292,6 @@ func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, un
 	return nil
 }
 
-// Driver calls see a private snapshot while concurrent chains record progress.
 func (e Engine) observe(ctx context.Context, p Plan, state *State, op Operation, unlocked func(func())) (done bool, evidence Evidence, err error) {
 	if unlocked == nil {
 		return e.Driver.Observe(ctx, p, *state, op)
@@ -320,9 +310,6 @@ func (e Engine) execute(ctx context.Context, p Plan, state *State, op Operation,
 	return binding, err
 }
 
-// Only these fields change during a replica wave. The plan, release and
-// evidence are immutable; sharing them avoids copying the entire fleet plan
-// and historical receipts before every remote call.
 func waveState(state State) State {
 	state.Bindings = maps.Clone(state.Bindings)
 	state.Deleted = maps.Clone(state.Deleted)
@@ -335,9 +322,6 @@ func waveState(state State) State {
 	return state
 }
 
-// concurrentChains returns the per-replica chains of a rollout wave starting at
-// operation i: chain heads share their requirements and each later operation
-// requires only its chain's previous one. Anything else is a single operation.
 func concurrentChains(ops []Operation, i int) [][]Operation {
 	head := ops[i]
 	if head.Placement == nil {
@@ -363,9 +347,6 @@ func concurrentChains(ops []Operation, i int) [][]Operation {
 	return chains
 }
 
-// applyWave restarts a bounded wave concurrently. Successful chains finish,
-// including restoring builder admission, even if another chain fails. The next
-// wave only starts after every chain verifies successfully.
 func (e Engine) applyWave(ctx context.Context, p Plan, state *State, wave [][]Operation) error {
 	var mu sync.Mutex
 	unlocked := func(call func()) {

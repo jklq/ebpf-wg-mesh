@@ -1,8 +1,6 @@
 import { readFileSync } from "node:fs";
 
-// Host administration writes the systemd invocation it is stopping to this file
-// before SIGTERM, so balancers withdraw the replica while it still serves. A
-// restarted process has a new invocation and never inherits the marker.
+// The marker names a systemd invocation so a restarted process cannot inherit it.
 export function isDraining(
 	env: NodeJS.ProcessEnv = process.env,
 	read: (file: string) => string = (file) => readFileSync(file, "utf8"),

@@ -118,7 +118,6 @@ func TestRenderBootstrapHealthListenerWithdrawsThroughAdmin(t *testing.T) {
 	if len(listeners) != 1 || listeners[0].GetName() != "ingress_health" || listeners[0].GetAddress().GetSocketAddress().GetPortValue() != 19001 {
 		t.Fatalf("health listener = %v", listeners)
 	}
-	// Manual health-check failure must be honored instead of passed upstream.
 	if !strings.Contains(out, "pass_through_mode: false") || !strings.Contains(out, "exact: /healthz") {
 		t.Fatalf("health check filter does not answer /healthz itself:\n%s", out)
 	}

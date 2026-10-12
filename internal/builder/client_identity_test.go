@@ -114,7 +114,6 @@ func TestBuilderPresentsRenewedClientIdentityWithoutRestart(t *testing.T) {
 	if serial := handshake(); serial != 3 {
 		t.Fatalf("new connection presented serial %d instead of the renewed identity", serial)
 	}
-	// Replacement of the certificate before its key must not break handshakes.
 	nextCert, _ := issue(4, "builder", x509.ExtKeyUsageClientAuth)
 	write("client.crt", nextCert)
 	if serial := handshake(); serial != 3 {

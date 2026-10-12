@@ -41,7 +41,6 @@ func TestBuilderRollingDrainKeepsActiveWorkAndOperatorIntent(t *testing.T) {
 	if err := writePrivate(r.Config.Database.URLFile, []byte(u.String())); err != nil {
 		t.Fatal(err)
 	}
-	// Inspect real TLS SQL connectivity using the old process environment.
 	bad := *u
 	bad.Host = "127.0.0.1:1"
 	control := *u
@@ -101,8 +100,6 @@ func TestBuilderRollingDrainKeepsActiveWorkAndOperatorIntent(t *testing.T) {
 		if err := db.QueryRow(`SELECT drained FROM builder_workers WHERE id=$1`, id).Scan(&drained); err != nil || drained != originallyDrained {
 			t.Fatal("operator intent was lost", err)
 		}
-		// A later install retry must drain again and retain the current intent,
-		// without overwriting it with the temporary drain on a pending retry.
 		if _, err := db.Exec(`UPDATE builder_workers SET drained=$2 WHERE id=$1`, id, !originallyDrained); err != nil {
 			t.Fatal(err)
 		}

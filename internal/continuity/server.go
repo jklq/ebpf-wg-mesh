@@ -52,8 +52,6 @@ type Server struct {
 
 func New(dir string) *Server { return &Server{dir: dir} }
 
-// Run is independently supervised by systemd. Updater loss does not close its
-// listeners, cancel a candidate launch, or disturb either serving generation.
 func (s *Server) Run(ctx context.Context) error {
 	s.ctx = ctx
 	if err := os.MkdirAll(s.dir, 0700); err != nil {
@@ -99,8 +97,7 @@ func (s *Server) Run(ctx context.Context) error {
 			http.Error(w, "invalid launch", 400)
 			return
 		}
-		// The controller may disappear after requesting a transition. Ownership
-		// of that transition belongs to the runtime, not the request context.
+		// The runtime owns the transition even if the requesting controller disappears.
 		activation, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		if err := s.Activate(activation, l); err != nil {
@@ -164,9 +161,6 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// Seed installs an offline boot target only while the ownership lock is free.
-// Explicit maintenance and restore use it after stopping previous processes,
-// so a newly started owner never boots an incompatible obsolete application.
 func (s *Server) Seed(l Launch) error {
 	if err := l.Validate(); err != nil {
 		return err
@@ -255,8 +249,7 @@ func (s *Server) activate(ctx context.Context, l Launch) error {
 	if c.exited.Load() {
 		return errors.New("candidate exited before traffic handover")
 	}
-	// Hold the selection mutex through durable publication. New connections
-	// cannot choose a generation whose boot configuration was not fsynced.
+	// Publish durably before allowing connections to select this generation.
 	if err = save(filepath.Join(s.dir, "active.json"), c.boot); err != nil {
 		terminate(c)
 		return err
@@ -281,9 +274,7 @@ func (s *Server) activate(ctx context.Context, l Launch) error {
 	return nil
 }
 
-// Admission is reserved for explicit maintenance/recovery pause transitions.
-// It intentionally terminates old sessions; upgrades and credential
-// handover never call it. Require a provisioned authority file before acting.
+// Admission terminates sessions for maintenance/recovery; upgrades must not call it.
 func (s *Server) Admission(ctx context.Context, l Launch) error {
 	if err := l.Validate(); err != nil {
 		return err
@@ -381,9 +372,6 @@ func (s *Server) serve(ln net.Listener, index int) {
 	}
 }
 
-// Finish retires the superseded generation the way every stop does: its stop
-// preparation withdraws and drains it, then SIGTERM lets it finish admitted
-// work. Clients reconnect to the active generation; nothing is replayed.
 func (s *Server) Finish() error {
 	s.transition.Lock()
 	defer s.transition.Unlock()
@@ -396,11 +384,9 @@ func (s *Server) Finish() error {
 	if len(c.stop) > 0 && !c.exited.Load() {
 		ctx, cancel := context.WithTimeout(context.Background(), stopPreparation)
 		cmd := exec.CommandContext(ctx, c.stop[0], c.stop[1:]...)
-		// Without MAINPID, console preparation leaves the shared drain mark
-		// alone: the active generation keeps reporting ready.
+		// Omitting MAINPID keeps stop preparation from marking the active console as draining.
 		cmd.Env = c.cmd.Env
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
-		// Like systemd, signal the process even when preparation fails.
 		_ = cmd.Run()
 		cancel()
 	}
@@ -420,8 +406,6 @@ func (s *Server) watch(c *child) {
 		s.mu.Unlock()
 		return
 	}
-	// A failed candidate after handover restores new connections to the old
-	// healthy process. Already accepted operations are never replayed.
 	if s.old != nil && !s.old.exited.Load() {
 		if err := save(filepath.Join(s.dir, "active.json"), s.old.boot); err == nil {
 			s.active, s.old = s.old, nil
@@ -477,8 +461,6 @@ func (s *Server) close() {
 	}
 }
 
-// These match the platform units: stop preparation and the process's own
-// SIGTERM handling both finish within systemd's 120-second stop timeout.
 const (
 	stopPreparation = 100 * time.Second
 	stopGrace       = 110 * time.Second

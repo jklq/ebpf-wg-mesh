@@ -15,8 +15,6 @@ import (
 	"time"
 )
 
-// Exercise the real health-check filter, admin counters and listener drain
-// while a request is in flight. Docker is only an isolated Envoy process.
 func TestEnvoyStopFinishesAnAdmittedRequestBeforeReturning(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("Docker is required for the native Envoy drain test")

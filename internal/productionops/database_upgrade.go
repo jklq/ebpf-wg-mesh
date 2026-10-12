@@ -32,9 +32,6 @@ func (r *Runner) upgradeInventory(ctx context.Context, convergence bool) (deploy
 	return r.inspectDatabase(ctx, plan, convergence)
 }
 
-// Check health immediately before the restart, including on retries. Recovery
-// of this same stopped node may proceed while it is unavailable; another dead
-// member or a range without a surviving voting quorum still blocks admission.
 func (r *Runner) prepareDatabaseUpgrade(ctx context.Context, args []string) error {
 	pl, err := r.upgradePlacement(args)
 	if err != nil {
@@ -61,7 +58,6 @@ func (r *Runner) prepareDatabaseUpgrade(ctx context.Context, args []string) erro
 		}
 	}
 	if recovering {
-		// Only the journaled current replica can recover without full health.
 		var state deploy.State
 		if err := privateJSON(os.Getenv("PLATFORM_DEPLOYMENT_STATE"), &state); err != nil {
 			return err
@@ -99,8 +95,7 @@ func validateUpgradeClusterVersion(version string, status deploy.DatabaseStatus,
 		return nil
 	}
 	if version == cockroachMajor(to) && len(status.Versions) == len(status.Members) {
-		// A retry after finalization may repair a desired-version node. Never
-		// admit an old binary into an already finalized newer cluster.
+		// After major-version finalization, never admit an old database binary.
 		for _, build := range status.Versions {
 			if strings.TrimPrefix(build, "v") != strings.TrimPrefix(to, "v") {
 				return fmt.Errorf("finalized CockroachDB cluster contains an old binary")
@@ -111,11 +106,6 @@ func validateUpgradeClusterVersion(version string, status deploy.DatabaseStatus,
 	return fmt.Errorf("previous CockroachDB major version has not finalized")
 }
 
-// A restart follows CockroachDB's native rolling-upgrade rule: the target is
-// live, a majority of members is live, and every range keeps a live voting
-// quorum without the target. Transient under-replication or a member that is
-// already down does not block a restart that preserves quorum; the restarted
-// node must still fully converge before the next node is touched.
 func databaseRestartHealth(status deploy.DatabaseStatus, target string, recovering bool) error {
 	if len(status.Members) < 3 || !slices.Contains(status.Members, target) || len(status.Ranges) == 0 {
 		return fmt.Errorf("rolling database restart requires at least three observed members and voting ranges; expand the cluster first")
@@ -210,7 +200,6 @@ func (r *Runner) finalizeDatabaseUpgrade(ctx context.Context, verify bool) error
 	if verify {
 		return fmt.Errorf("CockroachDB major-version finalization is pending")
 	}
-	// Finalize explicitly after all nodes pass readiness and replication gates.
 	_, err = db.ExecContext(ctx, "SET CLUSTER SETTING version = '"+desired+"'")
 	return err
 }
@@ -220,8 +209,6 @@ func (r *Runner) verifySurvivingSQLClients(ctx context.Context, excluded string)
 		if pl.Role != deploy.ControlPlane && pl.Role != deploy.Console {
 			continue
 		}
-		// Inspect the actual running environment as well as credentials. A
-		// rewritten file cannot establish failover for an older running process.
 		script := "pid=$(systemctl show --value -p MainPID " + shell(unit(r.Plan, pl)) + ")\ntest \"$pid\" -gt 1\n"
 		script += shell(operationsBinary(r.Plan)) + " sql-failover " + shell(string(pl.Role)) + " " + shell(excluded) + " < /proc/$pid/environ\n"
 		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {

@@ -11,10 +11,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// ReplayRetiredJournals adopts only journals whose OS ownership lock is free.
-// It shares the normal decoding and acknowledgement protocol. A crash after
-// writing the sink leaves the cursor uncommitted, so stable log IDs deduplicate
-// a retry. Journals belonging to live generations are never opened or reset.
+// ReplayRetiredJournals skips live owners; stable log IDs deduplicate writes after a crash.
 func ReplayRetiredJournals(ctx context.Context, store flushStore, own string, budget int64) error {
 	if store == nil || !store.Enabled() {
 		return nil

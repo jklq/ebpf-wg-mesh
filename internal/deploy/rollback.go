@@ -6,9 +6,7 @@ import (
 	"time"
 )
 
-// Rollback reverses software handovers, never database writes. Schema-changing
-// plans require forward repair: restoring a backup would discard acknowledged
-// mutations made after that snapshot and is not an upgrade rollback.
+// Rollback reverses software handovers, not database writes; schema changes require forward repair.
 func (e Engine) Rollback(ctx context.Context) error {
 	state, err := e.Store.Read()
 	if err != nil {
@@ -28,8 +26,6 @@ func (e Engine) Rollback(ctx context.Context) error {
 	if old.Release.Schema != failed.Release.Schema || old.Release.ConsoleSchema != failed.Release.ConsoleSchema {
 		return fmt.Errorf("expanded schemas must be repaired forward; rollback never restores or deletes acknowledged data")
 	}
-	// The synthetic predecessor describes every process that may have started.
-	// It is embedded in the reverse plan, without marking that release applied.
 	observed := snapshot(state)
 	observed.Progress = nil
 	observed.Policy = &failed.Installation

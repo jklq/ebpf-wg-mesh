@@ -282,12 +282,6 @@ func (p Plan) validateWorkflow() error {
 	return nil
 }
 
-// Stateless roles restart in waves once they are large enough for parallel
-// restarts to matter. One canary replica verifies first; then each wave keeps
-// three quarters of the role serving (agents keep their workloads running, so
-// a tenth of them restart together), with at most 16 replicas per wave to
-// bound host-administration fan-out and peer reconnections. Roles of up to
-// three replicas, databases and other phases keep one strict sequence.
 const maxRolloutWave = 16
 
 var rolloutRoles = map[string]Role{"registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy}
@@ -300,8 +294,6 @@ func rolloutWave(role Role, replicas int) int {
 	return min(max(limit, 1), maxRolloutWave)
 }
 
-// rolloutWaves groups a phase's steps into waves of per-replica chains. Chains
-// in one wave depend only on the previous wave and may run concurrently.
 func rolloutWaves(mode workflowMode, phase string, steps []Operation) [][][]Operation {
 	sequential := make([][][]Operation, len(steps))
 	for n, op := range steps {
@@ -333,8 +325,6 @@ func rolloutWaves(mode workflowMode, phase string, steps []Operation) [][][]Oper
 	return waves
 }
 
-// waveMates are the replicas restarting concurrently with pl. Their readiness
-// is expected to dip; peers outside the wave must still be ready.
 func (p Plan) waveMates(pl Placement) map[string]bool {
 	heads := map[string][]string{}
 	for _, op := range p.Operations {

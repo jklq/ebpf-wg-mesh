@@ -38,9 +38,7 @@ type leaseManager struct {
 	onFenced      func()
 	watchMu       sync.Mutex
 	watchers      map[string]map[*leaseWatcher]struct{}
-	// resigning names leases this process is releasing. Their singleton work is
-	// already stopping, so sessions must treat them as moving to a successor.
-	resigning map[string]bool
+	resigning     map[string]bool
 }
 
 type leaseWatcher struct {
@@ -248,8 +246,6 @@ func (m *leaseManager) hold(ctx context.Context, name string) (context.Context, 
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
-			// Sessions learn of the handover before singleton work clears live
-			// state, so they leave with ownership guidance, not a state error.
 			m.setResigning(name, true)
 			m.notifyChanged(name)
 			close(stop)
@@ -338,19 +334,12 @@ func (m *leaseManager) release(ctx context.Context, claim leaseClaim) error {
 	return err
 }
 
-// assertLeaseTx checks the caller's claim inside its own transaction. It takes
-// no lock: serializable isolation already orders the transaction's writes before
-// any takeover. Waiting behind a lease guard here, while holding a pooled
-// connection, could starve the guard of the connections it needs.
+// Serializable isolation fences product writes without a lock that could exhaust the connection pool.
 func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 	return checkLeaseTx(ctx, tx, "")
 }
 
-// lockLeaseTx holds a shared lock on the claim's lease row until tx ends, so no
-// successor can take over while an external effect runs outside the
-// transaction. The lock is shared because exclusive locks also block plain
-// reads in serializable transactions, which would queue the holder's own
-// product transactions behind it.
+// Use a shared lock to fence takeover without blocking the holder's own product transactions.
 func lockLeaseTx(ctx context.Context, tx *sql.Tx) error {
 	if _, err := tx.ExecContext(ctx, `SET LOCAL enable_shared_locking_for_serializable = true`); err != nil {
 		return err

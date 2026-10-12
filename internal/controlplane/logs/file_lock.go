@@ -8,9 +8,7 @@ import (
 	"time"
 )
 
-// The process mutex covers flock ownership, since an OS file lock by itself
-// does not serialize goroutines sharing its descriptor. Metadata is refreshed
-// under the same lock; unchanged segments do not need to be decoded again.
+// flock alone does not serialize goroutines sharing a descriptor; keep the process mutex too.
 func (f *fileStore) acquire(ctx context.Context) error {
 	f.mu.Lock()
 	if f.closed {
@@ -52,8 +50,6 @@ func (f *fileStore) refresh(ctx context.Context) error {
 		}
 		s, ok := previous[path]
 		if !ok || s.size != info.Size() || !s.modified.Equal(info.ModTime()) {
-			// No writer can append while this lock is held. Repair every changed
-			// segment, including an interrupted writer from another generation.
 			if err = repairFileTail(path); err != nil {
 				return err
 			}

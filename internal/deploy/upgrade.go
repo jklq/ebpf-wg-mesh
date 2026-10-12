@@ -5,17 +5,12 @@ import (
 	"slices"
 )
 
-// UpgradeAssessment reports what a rolling upgrade costs and what it cannot
-// hide. Peak covers one overlapping process per host; limitations are the
-// interruptions an operator accepts by applying the plan.
 type UpgradeAssessment struct {
 	Peak         map[string]Resources `json:"peak"`
 	StagingBytes map[string]int64     `json:"stagingBytes"`
 	Limitations  []string             `json:"limitations,omitempty"`
 }
 
-// listenerOwner is the resident continuity process for a role with stable
-// listeners. Temporary overlap is accounted separately in UpgradeAssessment.
 var listenerOwner = Resources{50, 32, 1}
 
 func ComponentResources(i Installation, r Release, role Role) Resources {
@@ -26,15 +21,12 @@ func ComponentResources(i Installation, r Release, role Role) Resources {
 	return resources
 }
 
-// RollingUpgrade reports whether the plan replaces the applied release.
 func (p Plan) RollingUpgrade() bool {
 	_, mode := p.workflow()
 	return mode == upgradeMode
 }
 
-// preserveRuntime reports whether an upgrade can leave a replica's process
-// untouched. Listener roles always hand over: their configuration lives in a
-// per-release directory that later credential activation addresses.
+// Listener roles always hand over because credential activation uses per-release configuration.
 func preserveRuntime(p Plan, pl Placement) bool {
 	if p.Previous == nil || len(p.Release.Programs[pl.Role].Listeners) > 0 || !p.previouslyPlaced(pl) {
 		return false
@@ -49,7 +41,6 @@ func preserveRuntime(p Plan, pl Placement) bool {
 	if pl.Role == Builder && Digest(old.Release.Images) != Digest(p.Release.Images) {
 		return false
 	}
-	// Stop preparation reads the replica count written at install.
 	count := func(placements []Placement) int {
 		return len(slices.DeleteFunc(slices.Clone(placements), func(other Placement) bool { return other.Role != pl.Role }))
 	}
@@ -62,7 +53,6 @@ func preserveRuntime(p Plan, pl Placement) bool {
 		return false
 	}
 	if pl.Role == Agent || pl.Role == Builder {
-		// Their units carry the host reservation as cgroup protection.
 		reserve := previous.Reserve
 		for _, other := range old.Placements {
 			if other.Host == pl.Host {
@@ -93,8 +83,6 @@ func (p *Plan) assessUpgrade(inv Inventory) {
 		handover := len(prog.Listeners) > 0 && p.previouslyPlaced(pl) && Digest(prog.Listeners) == Digest(old.Programs[pl.Role].Listeners) && old.Tools["continuity"][h.Architecture].SHA256 == p.Release.Tools["continuity"][h.Architecture].SHA256
 		switch {
 		case handover:
-			// One transition per host at a time: a single extra copy of the
-			// largest changed serving process, beside the resident owner.
 			peak := p.Reservations[pl.Host].Add(p.Previous.Installation.Components[pl.Role].Resources)
 			current := u.Peak[pl.Host]
 			u.Peak[pl.Host] = Resources{max(current.CPUMillis, peak.CPUMillis), max(current.MemoryMiB, peak.MemoryMiB), max(current.DiskGiB, peak.DiskGiB)}
@@ -148,8 +136,6 @@ func (p *Plan) assessUpgrade(inv Inventory) {
 	}
 }
 
-// ConfigurationDir keeps the candidate's credentials and configuration away
-// from the serving generation, including during failed or interrupted staging.
 func ConfigurationDir(p Plan, pl Placement) string {
 	dir := configDir(p.Installation, pl)
 	if len(p.Release.Programs[pl.Role].Listeners) > 0 {
@@ -162,8 +148,6 @@ func ContinuityDir(p Plan, pl Placement) string {
 	return stateDir(p.Installation, pl) + "/continuity"
 }
 
-// ContinuityBinary is content-addressed so that a running owner's executable
-// is never replaced in place.
 func ContinuityBinary(p Plan, pl Placement) string {
 	h, _ := p.Installation.Host(pl.Host)
 	return "/opt/ebpf-wg-mesh/" + p.Installation.ID + "/runtime/continuity-" + p.Release.Tools["continuity"][h.Architecture].SHA256[:16]

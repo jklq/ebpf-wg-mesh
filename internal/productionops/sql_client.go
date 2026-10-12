@@ -15,8 +15,7 @@ import (
 	"ebof-wg-mesh/internal/deploy"
 )
 
-// Input is the NUL-separated running process environment. Never print it: SQL
-// URLs and the rest of the environment contain component credentials.
+// Input is a NUL-separated process environment containing credentials; never print it.
 func inspectSQLFailover(ctx context.Context, role deploy.Role, excluded string, input io.Reader) error {
 	data, err := io.ReadAll(io.LimitReader(input, 2<<20))
 	if err != nil {

@@ -11,9 +11,6 @@ var runtimeActions = []string{"configure", "install"}
 var statelessRetirementActions = []string{"drain", "stop", "retire"}
 var databaseRetirementActions = []string{"database-remove", "retire"}
 
-// replicaActions is the actor sequence for one replica. A previously placed
-// builder drains its queue around the restart; a replica with stable listeners
-// hands them to the new process and then drains the old one.
 func replicaActions(p Plan, mode workflowMode, pl Placement) []string {
 	actions := runtimeActions
 	if len(p.Release.Programs[pl.Role].Listeners) > 0 {
@@ -68,15 +65,6 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		add("prior-tools", "stage-tools", h.ID, "previous", nil)
 	}
 	if upgrade {
-		// CockroachDB rolls one node at a time on its own quorum rules, so a
-		// binary upgrade starts with a live majority; each restart then has
-		// to preserve a live voting quorum for every range (checked natively
-		// before the restart), and the next node waits for full convergence.
-		// Demanding a perfectly converged, all-live cluster here would refuse
-		// upgrades on replicated installations with one member down or ranges
-		// still replicating, which CockroachDB itself tolerates.
-		// Unchanged database nodes keep running, so only a database runtime
-		// change needs a cluster that can survive one restarting node.
 		restarts := slices.ContainsFunc(p.Placements, func(pl Placement) bool { return pl.Role == Database && !preserveRuntime(*p, pl) })
 		if restarts && (len(inv.Database.Members) < 3 || len(inv.Database.Live)*2 <= len(inv.Database.Members)) {
 			return fmt.Errorf("rolling release requires at least three database members with a live majority; expand or repair the cluster before applying an upgrade")

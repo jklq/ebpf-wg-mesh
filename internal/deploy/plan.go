@@ -117,11 +117,7 @@ type Plan struct {
 	Unmet              []Requirement        `json:"unmet"`
 	Availability       Availability         `json:"availability"`
 	Automatic          bool                 `json:"automatic"`
-	// DrainDeadlineSeconds optionally bounds how long an upgrade waits for
-	// a drained builder's active builds to finish before the restart
-	// proceeds and interrupts them. Zero (the default) waits indefinitely:
-	// nothing is forced off. Operators turn it on per plan; it is part of
-	// the plan digest, so a resumed plan keeps the deadline it started with.
+	// DrainDeadlineSeconds interrupts active builds after the deadline; zero waits indefinitely.
 	DrainDeadlineSeconds int `json:"drainDeadlineSeconds,omitempty"`
 }
 

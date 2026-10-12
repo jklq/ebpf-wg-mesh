@@ -19,11 +19,6 @@ import (
 
 var errStreamShed = errors.New("control-plane replica is draining")
 
-// replicaDrain withdraws one replica before its transports close. Every client
-// holds all replica addresses, so long-lived streams end when draining begins
-// and reconnect to a peer, while admitted unary calls finish on this replica.
-// Streams end evenly over a spread that grows with their number, so peers are
-// not hit by every reconnection at once; a few streams end immediately.
 type replicaDrain struct {
 	draining atomic.Bool
 	mu       sync.Mutex
@@ -41,8 +36,6 @@ func newReplicaDrain() *replicaDrain {
 	return &replicaDrain{streams: map[*drainedStream]struct{}{}, shed: make(chan struct{})}
 }
 
-// withdraw fails readiness and refuses new streams before ownership is released.
-// Existing streams stay connected until the handover or subsequent shedding.
 func (d *replicaDrain) withdraw() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -52,8 +45,6 @@ func (d *replicaDrain) withdraw() {
 	d.spread = agentv1.ReconnectSpread(len(d.streams))
 }
 
-// begin sheds streams after ownership has been handed over. The returned
-// channel closes once every stream has been asked to end.
 func (d *replicaDrain) begin() <-chan struct{} {
 	d.withdraw()
 	d.shedOnce.Do(func() {
@@ -81,7 +72,6 @@ func (d *replicaDrain) begin() <-chan struct{} {
 
 func (d *replicaDrain) active() bool { return d.draining.Load() }
 
-// refusal paces clients that arrive after shedding started like the shed ones.
 func (d *replicaDrain) refusal() error {
 	d.mu.Lock()
 	spread := d.spread
@@ -111,7 +101,6 @@ func (d *replicaDrain) streamInterceptor(srv any, ss grpc.ServerStream, _ *grpc.
 	}()
 	err := handler(srv, drainingStream{ServerStream: ss, ctx: ctx})
 	if errors.Is(context.Cause(ctx), errStreamShed) && ss.Context().Err() == nil {
-		// The client did not leave; tell it to resume on another replica now.
 		return agentv1.WithReconnectGuidance(status.Error(codes.Unavailable, errStreamShed.Error()), agentv1.ReasonReplicaDraining, 0)
 	}
 	return err
@@ -124,11 +113,6 @@ type drainingStream struct {
 
 func (s drainingStream) Context() context.Context { return s.ctx }
 
-// drainTransports runs when the process is asked to stop. Readiness reports the
-// drain and streams are shed; the singleton lease is handed over, so agents
-// follow the successor. With peers to take its traffic, the replica keeps
-// serving for the withdrawal period while external balancers withdraw it. Then
-// listeners close and admitted calls get the grace period.
 func (s *Server) drainTransports(ctx context.Context, handover func()) {
 	withdrawal := time.Duration(s.cfg.Shutdown.WithdrawalSeconds) * time.Second
 	if len(s.cfg.ReplicaAddresses) < 2 {
@@ -163,7 +147,6 @@ func (s *Server) drainTransports(ctx context.Context, handover func()) {
 	}
 	graceCtx, cancel := context.WithTimeout(ctx, grace)
 	defer cancel()
-	// Shed streams keep their connections busy; close listeners after they end.
 	select {
 	case <-shed:
 	case <-graceCtx.Done():
@@ -174,7 +157,6 @@ func (s *Server) drainTransports(ctx context.Context, handover func()) {
 			continue
 		}
 		wg.Go(func() {
-			// Shutdown sends HTTP/2 GOAWAY, so clients open new streams on peers.
 			if err := server.Shutdown(graceCtx); err != nil {
 				slog.Warn("control-plane calls did not finish within the drain grace period", "error", err)
 			}

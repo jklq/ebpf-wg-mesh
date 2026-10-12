@@ -9,8 +9,6 @@ import (
 	"ebof-wg-mesh/internal/deploy"
 )
 
-// overlapReservation is the agent capacity held back so a host can run one
-// overlapping process generation during an upgrade.
 func overlapReservation(p deploy.Plan, pl deploy.Placement) deploy.Resources {
 	h, _ := p.Previous.Installation.Host(pl.Host)
 	old := h.Reserve
@@ -23,8 +21,7 @@ func overlapReservation(p deploy.Plan, pl deploy.Placement) deploy.Resources {
 	return deploy.Resources{CPUMillis: max(peak.CPUMillis-old.CPUMillis, 0), MemoryMiB: max(peak.MemoryMiB-old.MemoryMiB, 0)}
 }
 
-// This changes only admission capacity. It does not cordon, relocate or kill
-// allocations to manufacture upgrade headroom on a resource-constrained host.
+// Reserve admission capacity without evicting serving allocations to make room.
 func (r *Runner) reserveOverlap(ctx context.Context, db *sql.DB, pl deploy.Placement, reserve deploy.Resources) error {
 	return adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
 		var cpu, ram int64

@@ -508,8 +508,6 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	// Cancelling ctx asks the replica to drain before its background work stops;
-	// Close still stops everything immediately.
 	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.runMu.Lock()
 	if s.closed {
@@ -580,8 +578,6 @@ func (s *Server) Run(ctx context.Context) error {
 		}()
 	}
 	leaseDone, leaseStopped := make(chan error, 1), make(chan struct{})
-	// The drain resigns the singleton lease before ending sessions, so agents
-	// reconnect to its successor instead of a replica that is going away.
 	leaseCtx, resign := context.WithCancel(runCtx)
 	defer resign()
 	go func() {
@@ -847,7 +843,6 @@ func (s *Server) Close() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		err := s.internalHTTP.Shutdown(shutdownCtx)
 		cancel()
-		// A drain may already have closed the listener.
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			if errors.Is(err, context.DeadlineExceeded) {
 				closeErr := s.internalHTTP.Close()

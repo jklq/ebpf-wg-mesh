@@ -702,8 +702,6 @@ func TestManagementLossKeepsServingTrafficUntilListenerFails(t *testing.T) {
 	requireNodeLossReplacement(t, store, serviceID, originalID, "node-1", "node-2")
 }
 
-// The report describes a previously healthy workload. Closing its real listener
-// gives failover traffic failure evidence independent of management presence.
 func reportStoppedListener(t *testing.T, store *persistence, serviceID string) {
 	t.Helper()
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
