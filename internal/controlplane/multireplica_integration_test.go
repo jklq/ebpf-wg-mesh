@@ -164,6 +164,37 @@ func TestLeaseTakeoverFencesFormerOwner(t *testing.T) {
 	}
 }
 
+// A product transaction holds a pooled connection while it checks the lease.
+// If it queued behind a guard's lock, the guard could starve for connections.
+func TestProductTransactionsDoNotWaitBehindLeaseGuard(t *testing.T) {
+	ctx := context.Background()
+	store := openTestStore(t)
+	claim, acquired, err := newLeaseManager(store.database, time.Minute, time.Millisecond).acquire(ctx, "guard-pool-test")
+	if err != nil || !acquired {
+		t.Fatalf("acquire = (%v, %v)", acquired, err)
+	}
+	leaseCtx := context.WithValue(ctx, leaseContextKey{}, claim)
+	entered, release := make(chan struct{}), make(chan struct{})
+	guardDone := make(chan error, 1)
+	go func() {
+		guardDone <- store.withLeaseGuard(leaseCtx, func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	txCtx, cancel := context.WithTimeout(leaseCtx, 5*time.Second)
+	defer cancel()
+	if err := store.withProductTx(txCtx, func(context.Context, *sql.Tx) error { return nil }); err != nil {
+		t.Fatalf("product transaction behind an active guard: %v", err)
+	}
+	close(release)
+	if err := <-guardDone; err != nil {
+		t.Fatalf("lease guard: %v", err)
+	}
+}
+
 func TestLeaseGuardSerializesExternalEffectWithTakeover(t *testing.T) {
 	ctx := context.Background()
 	store := openTestStore(t)
