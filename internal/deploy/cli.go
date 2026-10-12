@@ -30,8 +30,9 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 	fs := flag.NewFlagSet("platformctl "+args[0], flag.ContinueOnError)
 	var manifest, bundle, output, statePath, keyPath, recoveryConfig string
 	var watch, refreshInventory bool
-	var interval time.Duration
+	var interval, drainDeadline time.Duration
 	var backup, cutoff, approveReport string
+	fs.DurationVar(&drainDeadline, "drain-deadline", 0, "plan only: after this long, a drained builder restarts even if builds are still running (default: wait indefinitely)")
 	fs.StringVar(&statePath, "state", envDefault("PLATFORMCTL_STATE", "/var/lib/ebpf-wg-mesh/deployment/state.enc"), "encrypted state outside the platform database")
 	fs.StringVar(&keyPath, "key-file", os.Getenv("PLATFORMCTL_KEY_FILE"), "private file containing 32 raw key bytes; retain with recovery credentials")
 	fs.StringVar(&manifest, "installation", "", "typed installation YAML")
@@ -233,6 +234,9 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 		fmt.Fprintf(out, "restoring %s; data-loss cutoff %s\n", backup, t.Format(time.RFC3339))
 		return engine.Apply(ctx, p)
 	}
+	if drainDeadline != 0 && args[0] != "plan" {
+		return fmt.Errorf("--drain-deadline applies to platformctl plan; the deadline is recorded in the plan")
+	}
 	if watch && (args[0] != "reconcile" || interval < time.Second) {
 		return fmt.Errorf("--watch requires reconcile and an interval of at least one second")
 	}
@@ -272,6 +276,14 @@ func Run(ctx context.Context, args []string, out io.Writer, driver Driver) error
 			return err
 		}
 		if args[0] == "plan" {
+			if drainDeadline != 0 {
+				seconds := int(drainDeadline / time.Second)
+				if seconds < 1 {
+					return fmt.Errorf("--drain-deadline must be at least one second")
+				}
+				p.DrainDeadlineSeconds = seconds
+				p.ID = p.digest()
+			}
 			raw, err := json.MarshalIndent(p, "", "  ")
 			if err != nil {
 				return err

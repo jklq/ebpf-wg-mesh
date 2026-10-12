@@ -22,6 +22,7 @@
   "registryService": "registry.example.com",
   "sourceConfig": "/etc/platform/source-archives.json",
   "monitorTokenFile": "/etc/platform/monitor-token",
+  "ingressHealthListen": "0.0.0.0:19001",
   "probes": {
     "cockroachdb": {"url": "https://{socketHost}:8080/health", "caFile": "{configDir}/certs/ca.crt", "status": 200},
     "controlplane": {

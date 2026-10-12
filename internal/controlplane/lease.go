@@ -38,6 +38,9 @@ type leaseManager struct {
 	onFenced      func()
 	watchMu       sync.Mutex
 	watchers      map[string]map[*leaseWatcher]struct{}
+	// resigning names leases this process is releasing. Their singleton work is
+	// already stopping, so sessions must treat them as moving to a successor.
+	resigning map[string]bool
 }
 
 type leaseWatcher struct {
@@ -132,6 +135,9 @@ func (m *leaseManager) Lookup(ctx context.Context, name string) (held bool, adve
 	}
 	addr = strings.TrimSpace(addr)
 	if holder == m.holderID {
+		if m.isResigning(name) {
+			return false, "", nil
+		}
 		return true, addr, nil
 	}
 	if addr == "" || addr == m.advertise {
@@ -196,6 +202,7 @@ func (m *leaseManager) hold(ctx context.Context, name string) (context.Context, 
 	if err != nil {
 		return nil, nil, err
 	}
+	m.setResigning(name, false)
 	m.notifyChanged(name)
 	leaseCtx, cancel := context.WithCancel(context.WithValue(ctx, leaseContextKey{}, claim))
 	stop := make(chan struct{})
@@ -241,6 +248,10 @@ func (m *leaseManager) hold(ctx context.Context, name string) (context.Context, 
 	var once sync.Once
 	release := func() {
 		once.Do(func() {
+			// Sessions learn of the handover before singleton work clears live
+			// state, so they leave with ownership guidance, not a state error.
+			m.setResigning(name, true)
+			m.notifyChanged(name)
 			close(stop)
 			cancel()
 			<-done
@@ -249,6 +260,21 @@ func (m *leaseManager) hold(ctx context.Context, name string) (context.Context, 
 		})
 	}
 	return leaseCtx, release, nil
+}
+
+func (m *leaseManager) setResigning(name string, resigning bool) {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	if m.resigning == nil {
+		m.resigning = map[string]bool{}
+	}
+	m.resigning[name] = resigning
+}
+
+func (m *leaseManager) isResigning(name string) bool {
+	m.watchMu.Lock()
+	defer m.watchMu.Unlock()
+	return m.resigning[name]
 }
 
 func jitter(base time.Duration) time.Duration {

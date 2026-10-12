@@ -195,6 +195,9 @@ func (i Installation) Validate(r Release) error {
 		if !hookValid(p.Drain) || !hookValid(p.Retire) {
 			return fmt.Errorf("%s requires observed drain and retirement protocols", role)
 		}
+		if len(p.Stop) > 0 && strings.TrimSpace(p.Stop[0]) == "" {
+			return fmt.Errorf("%s stop preparation requires an executable", role)
+		}
 		if role == Database && len(c.Storage) == 0 {
 			return fmt.Errorf("database requires durable storage")
 		}

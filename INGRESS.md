@@ -55,7 +55,9 @@ and reloads the certificate, key, and trust bundle without a restart (see
 delivery, transfer the complete generation first, then atomically replace that
 host's `current` symlink; never update the active certificate and key in place.
 Retain the previous generation until Envoy reports successful SDS reload, then
-prune older unreferenced generations.
+prune older unreferenced generations. Production renewal never restarts Envoy for
+an identity change. It checks Envoy's admin `/certs` until the running process
+lists the installed certificate's serial number.
 
 For CA rotation, run `signing-keys rotate-start --scope internal-ca`, provision
 the overlap bundle to every ingress and internal client, and renew their leaves.
@@ -74,6 +76,32 @@ and a one-minute grace). The Envoy xDS cluster uses one ADS request per
 connection, so a closed stream reconnects with the newly loaded credentials
 instead of reusing a revoked HTTP/2 connection.
 
+## Load-balancer health and draining
+
+Envoy closes its listeners immediately on shutdown, so a drain must begin before
+the process is signalled (see
+[Envoy draining](https://www.envoyproxy.io/docs/envoy/v1.36.0/intro/arch_overview/operations/draining)).
+With `--health-address`, the bootstrap adds a static health listener that answers
+`GET /healthz` with the HTTP health check filter. Envoy opens this listener only
+after it is live with its initial configuration. Configure the load balancer to
+check it. Production uses `ingressHealthListen`, which defaults to
+`0.0.0.0:19001`.
+
+The production unit runs `operations prepare-stop envoy` as `ExecStop=` before
+every stop. It posts `/healthcheck/fail`, so the health listener returns 503 and
+each response closes its connection. It waits until no new ingress connections
+arrive. It then posts `/drain_listeners?graceful&skip_exit` and waits for active
+downstream connections to finish before systemd sends SIGTERM. Run Envoy with
+`--drain-strategy immediate` and a `--drain-time-s` shorter than that wait.
+
+Withdrawal waits apply when the installed role has peers and this Envoy has
+received health checks. With no observed checks, stop preparation proceeds
+directly to the listener drain. A sole Envoy keeps serving until SIGTERM and
+waits only for active requests, capped at ten seconds. This avoids a withdrawal
+outage with nowhere else to send traffic. Drain waits remain bounded; long-lived
+connections that outlast them can be closed at shutdown. Replicated ingress
+still needs a correctly configured balancer and enough surviving capacity.
+
 ## Membership and retirement
 
 Provisioning records the node as active before releasing credentials. Every
@@ -86,7 +114,9 @@ it ACKs it.
 
 For permanent removal, remove the instance from the load balancer or DNS traffic
 pool, wait for that removal to propagate and existing downstream requests to
-finish, and stop Envoy. Only then retire it:
+finish, and stop Envoy. In production the stop preparation performs the
+health-check withdrawal and drain. Static DNS pools still need explicit removal.
+Only then retire it:
 
 ```sh
 controlplane ingress-nodes list --db-url "$CONTROLPLANE_DATABASE_URL"

@@ -183,7 +183,7 @@ func (r *Runner) databaseCredentials(ctx context.Context, verify bool) error {
 				script += remoteFile(path, b)
 			}
 		}
-		activation := credentialRuntimeEnvironment(files, nil)
+		activation := credentialRuntimeEnvironment(deploy.Database, files, nil)
 		if verify {
 			script += verifyRemoteFile(cfgDir(r.Plan, pl)+"/runtime.env", activation)
 		} else {

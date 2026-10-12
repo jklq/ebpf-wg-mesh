@@ -158,11 +158,66 @@ scheduler-managed console. Shared SQL owns console authentication, platform
 signing-key state and certificate revocations. Individual console mTLS identities
 are admitted through `CONTROLPLANE_CONSOLE_CALLER_IDS`. Installed replicas do not
 need a controller to remain operational. The reference operations service installs independent hourly certificate renewal.
-Renewal compares credential contents with the credentials loaded by each process;
-rewriting identical files leaves it running. Changed credentials restart only the
-affected non-database units, followed by readiness checks. Database certificates
-use SIGHUP, with a reload receipt bound to the current systemd invocation so
-interrupted activation remains retryable.
+Renewal compares the launch credentials of each process with the credentials it
+loaded; rewriting identical files leaves it running. Credentials that a process
+reloads live never restart it: Envoy watches its ingress identity through
+filesystem SDS, the agent reloads its own client identity for each session, and
+the builder reads its client identity for each handshake. Renewal then checks
+Envoy's admin interface until the running Envoy serves the installed
+certificate. Changed launch credentials restart only the affected non-database
+units, through the graceful restart gates below, followed by readiness checks.
+Database certificates use SIGHUP, with a reload receipt bound to the current
+systemd invocation so interrupted activation remains retryable.
+
+### Graceful restarts
+
+Every stop drains the replica first, whatever starts it: installation,
+credential activation, retirement, an operator's `systemctl restart`, or host
+shutdown. A release program can declare `stop`, a command that systemd runs as
+`ExecStop=` on the replica's host before it signals the process. The stop
+preparation and the process's own SIGTERM handling must finish within the
+unit's 120-second stop timeout.
+
+| Component | Stop behavior |
+| --- | --- |
+| Envoy | A replicated Envoy whose health listener has received checks first fails that listener (`ingressHealthListen`, default `0.0.0.0:19001`, `GET /healthz`). Withdrawal takes between `--withdrawal-min` and `--withdrawal-max`, ending once new ingress connections stop. It then starts a graceful listener drain and waits up to `--drain` for active connections to finish. With no observed health checks it skips withdrawal. A sole Envoy keeps accepting traffic and only waits for active requests, for at most ten seconds. Envoy closes its listeners immediately on SIGTERM ([Envoy draining](https://www.envoyproxy.io/docs/envoy/v1.36.0/intro/arch_overview/operations/draining)), so a replicated ingress must drain before the signal. |
+| Console | With peers, `prepare-stop console` writes the stopping systemd invocation to the drain file. `/readyz` reports `draining` for that invocation during `--withdrawal`. A sole console skips withdrawal. On SIGTERM the server stops accepting connections and finishes active requests within `SERVER_SHUTDOWN_TIMEOUT` seconds. |
+| Control plane | On SIGTERM, readiness reports `draining` and new streams are refused. The replica releases its singleton lease before shedding its remaining streams. Agent ownership changes carry reconnect reasons and fleet-sized retry delays; other streams are shed over a window capped at ten seconds. Production keeps serving unary calls and registry authorization for `CONTROLPLANE_SHUTDOWN_WITHDRAWAL_SECONDS` (10), skipping this wait when there are no peers. Listeners then close with HTTP/2 GOAWAY, and admitted calls get `CONTROLPLANE_SHUTDOWN_GRACE_SECONDS` (30) to finish. |
+| Builder | Builders drain before every restart that renewal or an upgrade initiates. An upgrade waits for active builds to finish. A renewal waits up to two minutes. If builds are still running after that, the renewal restores the previous drain setting, keeps the builder on its current credentials and retries on the next run. |
+
+Credential activation restarts a control plane, console, Envoy or registry replica
+only while its online peers pass readiness. A gate that cannot pass defers that
+replica's restart without blocking the other replicas, and the renewal job
+reports the deferred restarts. A role with a single replica still has a service
+interruption, shortened by its drain.
+The installer maintains `{configDir}/replicas` outside the process launch digest,
+so changing a role's replica count updates stop behavior without restarting an
+otherwise current process. Unknown counts retain the replicated withdrawal path.
+
+Console RPCs use pooled, authenticated HTTP/2 connections across the configured
+replicas. An owner redirect can select another configured peer, and a request
+refused before processing can be retried there. Connection setup is bounded to
+two seconds, and a replica that failed to connect is skipped for five seconds,
+so a silent host failure does not stall requests. Ambiguous failures are returned
+without replaying mutations. Builders retain grpc-go's transparent retries for
+unprocessed requests; `WithDisableRetry` disables configured retries, not those
+safe transport retries.
+
+Agents follow the reconnect guidance a control plane attaches when it ends or
+refuses a session. They wait the given delay with their backoff reset. Only a
+draining replica is avoided; a peer that reports no live owner yet, or redirects
+to the new owner, stays eligible. The control plane sizes the delay from the
+sessions it is shedding (about 250 per second, within ten seconds), so a large
+fleet reaches the successor gradually while a small one reconnects at once.
+Failure backoff is jittered between half and all of its interval.
+
+These gates require external balancers to act on readiness and surviving peers
+to carry the remaining load. A historical health check is only a signal that a
+balancer may exist, not proof of its present configuration. Stop timeouts remain
+bounded: connections, WebSockets or calls that exceed their grace period may be
+cut. A static DNS pool needs explicit traffic withdrawal. The registry currently
+uses its native stop behavior and has no platform withdrawal hook. These paths
+do not establish an unconditional zero-downtime guarantee.
 Externally issued wildcard certificates are selected as files and checked for
 identity, key agreement and remaining lifetime; their DNS-01 renewal service is external.
 
@@ -233,7 +288,7 @@ quarantine. A mask with a live or starting process does not establish a fence.
 | `rolling-prepare` | Stop prior completion and credential-renewal jobs before the upgrade. Keep runtime mutations and workload schedulers active. |
 | `database-upgrade` | Verify replication, surviving range quorums, and SQL failover before each node restart. Verify SQL readiness, membership, and the pinned version after restart. |
 | `database-finalize` | Verify every node's pinned version and replication health. Finalize a major-version upgrade only after these checks. |
-| `builder-drain` / `builder-resume` | Drain one builder. Let active builds finish before restart. Restore its previous operator drain setting after readiness verification. |
+| `builder-drain` / `builder-resume` | Drain one builder. Let active builds finish before restart. Restore its previous operator drain setting after readiness verification. Restore a drain left by an interrupted credential restart before recording that setting. |
 | `schema-verify` | Verify both schemas and their compatibility boundaries before replica upgrades and after the schema change. |
 | `storage-verify` | Return a map of storage names to `{hosts, verified}`; verify actual shared backing storage and durability. |
 | `production-verify` | Check actual persistence, TLS, authorization, credentials, secret/keyring coverage and declared traffic/network paths. Topology limitations remain a separate assessment. |
@@ -284,20 +339,28 @@ Expanding a single-node cluster uses native join/replication procedures. Tempora
 outages never reduce membership. A removal requires native decommission, zero
 remaining replicas and replication verification before infrastructure deletion.
 
-Release upgrades replace one replica at a time. The deployment first protects
+Release upgrades replace replicas in verified steps. The deployment first protects
 release dependencies and verifies a complete backup. It then restarts each
 database node and verifies its SQL readiness, membership, version, and replication.
 Each other component follows the same configure, restart, and readiness sequence.
-The next replica waits for successful verification of the current replica.
+Databases restart strictly one at a time. Other roles verify one canary first,
+then use bounded waves when enough replicas exist: up to one quarter of a role,
+or one tenth of agents, capped at sixteen concurrent replicas. Fewer than eight
+replicas (twenty for agents) remain serial. Every wave waits for all replicas in
+the preceding wave to verify; builders must also restore their admission.
 
 Normal upgrades keep mutations and workload schedulers active. Before each restart,
-the installer verifies the readiness of other component peers. A builder
+the installer verifies the readiness of component peers outside the current
+wave. A builder
 first drains its own work queue and lets active builds finish. Its previous
-operator drain state returns after readiness verification. The installer
-retires obsolete placements after the replacement replicas pass verification.
+operator drain state returns after readiness verification. Each restart drains
+the replica as described in [graceful restarts](#graceful-restarts). The
+installer retires obsolete placements after the replacement replicas pass
+verification.
 
 An interrupted upgrade resumes its original plan. Verified replicas keep their
-processes, and an unready replica blocks later replicas. The previous deployment
+processes, and an unready replica blocks later waves and phases. Healthy chains
+in its current wave still finish, including builder admission restoration. The previous deployment
 and backup remain in installer state until the full plan completes. Single
 replicas still have a service interruption during restart. Rolling database
 restarts require at least three observed members and a live majority for

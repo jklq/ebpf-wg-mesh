@@ -171,12 +171,21 @@ func compileWorkflow(p Plan, definition []workflowPhase, mode workflowMode, grou
 				}
 				steps = []Operation{{Kind: "hook", Host: p.AdministrationHost, Hook: phase.Hook}}
 			}
-			for _, op := range steps {
-				op.Phase, op.Requires = phase.Name, append([]string(nil), dependencies...)
-				op.ID = ""
-				op.ID = Digest(op)[:24]
-				operations = append(operations, op)
-				dependencies = []string{op.ID}
+			for _, wave := range rolloutWaves(mode, phase.Name, steps) {
+				var terminals []string
+				for _, chain := range wave {
+					requires := dependencies
+					for _, op := range chain {
+						op.Phase, op.Requires = phase.Name, append([]string(nil), requires...)
+						op.ID = ""
+						op.ID = Digest(op)[:24]
+						operations = append(operations, op)
+						requires = []string{op.ID}
+					}
+					terminals = append(terminals, requires...)
+				}
+				slices.Sort(terminals)
+				dependencies = terminals
 			}
 			last[phase.Name] = dependencies
 			completed[phase.Name], advanced = true, true
@@ -271,4 +280,77 @@ func (p Plan) validateWorkflow() error {
 		}
 	}
 	return nil
+}
+
+// Stateless roles restart in waves once they are large enough for parallel
+// restarts to matter. One canary replica verifies first; then each wave keeps
+// three quarters of the role serving (agents keep their workloads running, so
+// a tenth of them restart together), with at most 16 replicas per wave to
+// bound host-administration fan-out and peer reconnections. Roles of up to
+// three replicas, databases and other phases keep one strict sequence.
+const maxRolloutWave = 16
+
+var rolloutRoles = map[string]Role{"registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy}
+
+func rolloutWave(role Role, replicas int) int {
+	limit := replicas / 4
+	if role == Agent {
+		limit = replicas / 10
+	}
+	return min(max(limit, 1), maxRolloutWave)
+}
+
+// rolloutWaves groups a phase's steps into waves of per-replica chains. Chains
+// in one wave depend only on the previous wave and may run concurrently.
+func rolloutWaves(mode workflowMode, phase string, steps []Operation) [][][]Operation {
+	sequential := make([][][]Operation, len(steps))
+	for n, op := range steps {
+		sequential[n] = [][]Operation{{op}}
+	}
+	role, stateless := rolloutRoles[phase]
+	if !stateless || mode&(upgradeMode|changeMode|automaticMode) == 0 {
+		return sequential
+	}
+	var chains [][]Operation
+	for _, op := range steps {
+		if op.Placement == nil || op.Placement.Role != role {
+			return sequential
+		}
+		if n := len(chains); n > 0 && chains[n-1][0].Placement.Instance == op.Placement.Instance {
+			chains[n-1] = append(chains[n-1], op)
+			continue
+		}
+		chains = append(chains, []Operation{op})
+	}
+	size := rolloutWave(role, len(chains))
+	if size == 1 {
+		return sequential
+	}
+	waves := [][][]Operation{chains[:1]}
+	for rest := chains[1:]; len(rest) > 0; rest = rest[min(size, len(rest)):] {
+		waves = append(waves, rest[:min(size, len(rest))])
+	}
+	return waves
+}
+
+// waveMates are the replicas restarting concurrently with pl. Their readiness
+// is expected to dip; peers outside the wave must still be ready.
+func (p Plan) waveMates(pl Placement) map[string]bool {
+	heads := map[string][]string{}
+	for _, op := range p.Operations {
+		if op.Placement == nil || op.Placement.Role != pl.Role || rolloutRoles[op.Phase] != pl.Role {
+			continue
+		}
+		if _, seen := heads[op.Placement.Instance]; !seen {
+			heads[op.Placement.Instance] = op.Requires
+		}
+	}
+	mates := map[string]bool{}
+	own, ok := heads[pl.Instance]
+	for instance, requires := range heads {
+		if ok && instance != pl.Instance && slices.Equal(requires, own) {
+			mates[instance] = true
+		}
+	}
+	return mates
 }

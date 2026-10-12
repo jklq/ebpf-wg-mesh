@@ -111,16 +111,21 @@ func validateUpgradeClusterVersion(version string, status deploy.DatabaseStatus,
 	return fmt.Errorf("previous CockroachDB major version has not finalized")
 }
 
+// A restart follows CockroachDB's native rolling-upgrade rule: the target is
+// live, a majority of members is live, and every range keeps a live voting
+// quorum without the target. Transient under-replication or a member that is
+// already down does not block a restart that preserves quorum; the restarted
+// node must still fully converge before the next node is touched.
 func databaseRestartHealth(status deploy.DatabaseStatus, target string, recovering bool) error {
 	if len(status.Members) < 3 || !slices.Contains(status.Members, target) || len(status.Ranges) == 0 {
 		return fmt.Errorf("rolling database restart requires at least three observed members and voting ranges; expand the cluster first")
 	}
-	if !recovering && (!status.Replicated || !slices.Contains(status.Live, target)) {
-		return fmt.Errorf("database restart waits for full replication health")
-	}
-	for _, member := range status.Members {
-		if member != target && !slices.Contains(status.Live, member) {
-			return fmt.Errorf("database member %s is unavailable; another restart is unsafe", member)
+	if !recovering {
+		if !slices.Contains(status.Live, target) {
+			return fmt.Errorf("database restart waits for its target node to be live")
+		}
+		if len(status.Live)*2 <= len(status.Members) {
+			return fmt.Errorf("database restart waits for a live majority of members")
 		}
 	}
 	for _, row := range status.Ranges {

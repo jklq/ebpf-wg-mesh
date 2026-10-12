@@ -114,12 +114,21 @@ type Plan struct {
 	Unmet              []Requirement        `json:"unmet"`
 	Availability       Availability         `json:"availability"`
 	Automatic          bool                 `json:"automatic"`
+	// DrainDeadlineSeconds optionally bounds how long an upgrade waits for
+	// a drained builder's active builds to finish before the restart
+	// proceeds and interrupts them. Zero (the default) waits indefinitely:
+	// nothing is forced off. Operators turn it on per plan; it is part of
+	// the plan digest, so a resumed plan keeps the deadline it started with.
+	DrainDeadlineSeconds int `json:"drainDeadlineSeconds,omitempty"`
 }
 
 func (p Plan) digest() string { p.ID = ""; return Digest(p) }
 func (p Plan) Validate() error {
 	if p.Version != 1 || p.ID != p.digest() {
 		return fmt.Errorf("plan integrity mismatch")
+	}
+	if p.DrainDeadlineSeconds < 0 {
+		return fmt.Errorf("plan drain deadline must not be negative")
 	}
 	if err := p.Installation.Validate(p.Release); err != nil {
 		return err

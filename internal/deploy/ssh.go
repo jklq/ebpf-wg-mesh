@@ -161,8 +161,12 @@ func toolsScript(p Plan, h Host) (string, error) {
 	}
 	return script + fileScript(dir+"/staged", []byte(Digest(p.Release.Tools)), "0600"), nil
 }
+
+// The temporary name is unique per shell, so concurrent operations writing the
+// same file on one host each replace it atomically with complete contents.
 func fileScript(path string, b []byte, mode string) string {
-	return "mkdir -p " + quote(path[:strings.LastIndex(path, "/")]) + "\nprintf %s " + quote(base64.StdEncoding.EncodeToString(b)) + " | base64 -d > " + quote(path+".next") + "\nchmod " + mode + " " + quote(path+".next") + "\nmv -f " + quote(path+".next") + " " + quote(path) + "\n"
+	next := quote(path) + `".next.$$"`
+	return "mkdir -p " + quote(path[:strings.LastIndex(path, "/")]) + "\nprintf %s " + quote(base64.StdEncoding.EncodeToString(b)) + " | base64 -d > " + next + "\nchmod " + mode + " " + next + "\nmv -f " + next + " " + quote(path) + "\n"
 }
 func stageScript(p Plan, pl Placement) (string, error) {
 	i := p.Installation
@@ -253,6 +257,9 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	if pl.Role == ControlPlane {
 		env["CONTROLPLANE_PROFILE"] = "production"
 		env["CONTROLPLANE_DASHBOARD_ENABLED"] = "false"
+		// After SIGTERM, readiness fails while the replica still serves so a
+		// balancer in front of registry authorization can withdraw it.
+		env["CONTROLPLANE_SHUTDOWN_WITHDRAWAL_SECONDS"] = "10"
 		var consoleIDs []string
 		for _, console := range p.Placements {
 			if console.Role == Console {
@@ -264,6 +271,11 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	}
 	if pl.Role == Console {
 		env["DASHBOARD_PROFILE"] = "production"
+		// The stop preparation names the draining process in this file so
+		// readiness withdraws before SIGTERM closes the listener; the server
+		// then finishes active requests within this many seconds.
+		env["DASHBOARD_DRAIN_FILE"] = stateDir(i, pl) + "/draining"
+		env["SERVER_SHUTDOWN_TIMEOUT"] = "60"
 	}
 	keys := make([]string, 0, len(env))
 	for k := range env {
@@ -274,12 +286,12 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 	for _, k := range keys {
 		environment.WriteString(k + "=\"" + strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(env[k]) + "\"\n")
 	}
-	argv := append([]string{releaseDir(p, pl) + "/program"}, expandCommand(p, pl, p.Release.Programs[pl.Role].Args)...)
-	// systemd does not use a shell for ExecStart. Escape its own specifier and
-	// environment expansion as well as quoted argument delimiters.
-	var execArgs []string
-	for _, arg := range argv {
-		execArgs = append(execArgs, "\""+strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%", "$", "$$").Replace(arg)+"\"")
+	program := p.Release.Programs[pl.Role]
+	argv := append([]string{releaseDir(p, pl) + "/program"}, expandCommand(p, pl, program.Args)...)
+	stop := ""
+	if len(program.Stop) > 0 {
+		// systemd passes the running process as $MAINPID to ExecStop.
+		stop = "ExecStop=" + systemdCommand(expandCommand(p, pl, program.Stop)) + "\n"
 	}
 	resources := ""
 	if pl.Role == Agent {
@@ -288,8 +300,18 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 		// cannot reset the live agent's cgroup to unprotected defaults.
 		resources = fmt.Sprintf("MemoryMin=%dM\nMemoryLow=%dM\nCPUWeight=10000\n", reserve.MemoryMiB, reserve.MemoryMiB)
 	}
-	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nEnvironmentFile=" + configDir(i, pl) + "/launch.env\nExecStart=" + strings.Join(execArgs, " ") + "\nWorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n" + resources + "[Install]\nWantedBy=multi-user.target\n"
+	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + configDir(i, pl) + "/environment\nEnvironmentFile=-" + configDir(i, pl) + "/runtime.env\nEnvironmentFile=" + configDir(i, pl) + "/launch.env\nExecStart=" + systemdCommand(argv) + "\n" + stop + "WorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n" + resources + "[Install]\nWantedBy=multi-user.target\n"
 	return environment.String(), service, nil
+}
+
+// systemd does not use a shell for Exec lines. Escape its own specifier and
+// environment expansion as well as quoted argument delimiters.
+func systemdCommand(argv []string) string {
+	args := make([]string, 0, len(argv))
+	for _, arg := range argv {
+		args = append(args, "\""+strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "%", "%%", "$", "$$").Replace(arg)+"\"")
+	}
+	return strings.Join(args, " ")
 }
 
 func launchDigestScript(p Plan, pl Placement) string {
@@ -310,6 +332,7 @@ func installScript(p Plan, pl Placement, observed Resources) (string, error) {
 	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
 	script := "if test -L " + quote(unitPath) + "; then rm " + quote(unitPath) + "; fi\n"
 	script += fileScript(cfg+"/environment", []byte(env), "0600") + fileScript(unitPath, []byte(service), "0644")
+	script += fileScript(cfg+"/replicas", replicaCount(p, pl), "0600")
 	script += launchDigestScript(p, pl)
 	script += "printf 'PLATFORM_LAUNCH_DIGEST=\"%s\"\\n' \"$launch_digest\" > " + quote(cfg+"/launch.env.next") + "\nchmod 0600 " + quote(cfg+"/launch.env.next") + "\nmv -f " + quote(cfg+"/launch.env.next") + " " + quote(cfg+"/launch.env") + "\nsystemctl daemon-reload\nsystemctl enable " + quote(unit(p.Installation, pl)) + "\n"
 	// A slow or interrupted startup must be allowed to converge. Only a process
@@ -326,8 +349,21 @@ func installedScript(p Plan, pl Placement, observed Resources) (string, error) {
 	cfg := configDir(p.Installation, pl)
 	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
 	h, _ := p.Installation.Host(pl.Host)
-	checks := fmt.Sprintf("%x  %s\n%x  %s\n%s  %s\n", sha256.Sum256([]byte(env)), cfg+"/environment", sha256.Sum256([]byte(service)), unitPath, p.Release.Programs[pl.Role].Artifacts[h.Architecture].SHA256, releaseDir(p, pl)+"/program")
+	checks := fmt.Sprintf("%x  %s\n%x  %s\n%s  %s\n%x  %s\n", sha256.Sum256([]byte(env)), cfg+"/environment", sha256.Sum256([]byte(service)), unitPath, p.Release.Programs[pl.Role].Artifacts[h.Architecture].SHA256, releaseDir(p, pl)+"/program", sha256.Sum256(replicaCount(p, pl)), cfg+"/replicas")
 	return "printf %s " + quote(checks) + " | sha256sum -c - >/dev/null\n" + launchDigestScript(p, pl) + runningLaunchScript(p, pl) + "\n" + command(expandCommand(p, pl, p.Release.Programs[pl.Role].Ready)) + "\n", nil
+}
+
+// replicaCount tells stop preparation whether peers can take this replica's
+// traffic. It is outside the launch digest: scaling a role rewrites the count
+// on every replica without restarting any of them.
+func replicaCount(p Plan, pl Placement) []byte {
+	count := 0
+	for _, peer := range p.Placements {
+		if peer.Role == pl.Role {
+			count++
+		}
+	}
+	return []byte(strconv.Itoa(count) + "\n")
 }
 
 func fingerprint(p Plan, pl Placement) string {

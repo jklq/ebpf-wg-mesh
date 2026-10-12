@@ -125,7 +125,8 @@ func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	s.firstContact = hook
 }
 
-func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.CertificateRevocations) *grpc.Server {
+// Additional stream interceptors run before authorization, outermost first.
+func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.CertificateRevocations, streams ...grpc.StreamServerInterceptor) *grpc.Server {
 	if tlsConfig == nil {
 		panic("xDS requires mTLS configuration")
 	}
@@ -148,7 +149,7 @@ func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.Certifi
 		}
 	}
 	s.revocations = revocations
-	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.StreamInterceptor(s.secureStream), grpc.UnaryInterceptor(s.secureUnary),
+	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.ChainStreamInterceptor(append(streams[:len(streams):len(streams)], s.secureStream)...), grpc.UnaryInterceptor(s.secureUnary),
 		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Hour, MaxConnectionAgeGrace: time.Minute}))
 	discoveryv3.RegisterAggregatedDiscoveryServiceServer(grpcServer, s.xds)
 	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, s.xds)

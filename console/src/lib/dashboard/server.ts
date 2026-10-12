@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-start/server";
 import type { Pool } from "pg";
 import { FailoverPool } from "#/lib/dashboard/store/failover-pool.server";
+import { isDraining } from "#/lib/dashboard/core/draining.server";
 import {
 	assertDistinctDashboardSecrets,
 	assertProductionDashboardConfig,
@@ -105,6 +106,9 @@ export async function checkDashboardReadiness(): Promise<{
 	};
 	failed?: Array<string>;
 }> {
+	if (isDraining()) {
+		return { status: "not_ready", failed: ["draining"] };
+	}
 	try {
 		getConfig();
 	} catch {

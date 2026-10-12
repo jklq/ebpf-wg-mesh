@@ -3,6 +3,7 @@ package productionops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -277,11 +278,24 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 	if err = current.databaseCredentials(ctx, false); err != nil {
 		return err
 	}
+	// Restore builder drain intent left by an interrupted earlier activation.
+	for _, pl := range r.Plan.Placements {
+		if pl.Role == deploy.Builder {
+			if err = resumeBuilder(ctx, db, credentialDrainKey, pl.Instance); err != nil {
+				return err
+			}
+		}
+	}
 	if err = current.credentials(ctx, false); err != nil {
 		return err
 	}
+	// A deferred restart leaves that replica on valid current credentials; it
+	// must not keep the remaining replicas from activating theirs.
+	var pending []error
 	for _, pl := range current.Plan.Placements {
-		if err = current.activateCredentials(ctx, pl); err != nil {
+		if err = current.activateCredentials(ctx, pl); errors.Is(err, errActivationPending) {
+			pending = append(pending, err)
+		} else if err != nil {
 			return err
 		}
 	}
@@ -289,7 +303,10 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 		return err
 	}
 	if len(offline) > 0 {
-		return fmt.Errorf("online credentials renewed; unavailable hosts require later inspection: %v", offline)
+		pending = append(pending, fmt.Errorf("unavailable hosts require later inspection: %v", offline))
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("online credentials renewed; %w", errors.Join(pending...))
 	}
 	return nil
 }

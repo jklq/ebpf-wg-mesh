@@ -43,6 +43,9 @@ type Config struct {
 	RegistryService     string                      `json:"registryService"`
 	SourceConfig        string                      `json:"sourceConfig,omitempty"`
 	MonitorTokenFile    string                      `json:"monitorTokenFile,omitempty"`
+	// IngressHealthListen is Envoy's load-balancer health check listener. Stop
+	// preparation fails it before draining, so balancers withdraw the ingress.
+	IngressHealthListen string `json:"ingressHealthListen,omitempty"`
 }
 type DatabaseConfig struct {
 	Binary               string `json:"binary"`

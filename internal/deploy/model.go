@@ -186,8 +186,13 @@ type Program struct {
 	Artifacts map[string]Artifact `json:"artifacts" yaml:"artifacts"`
 	Args      []string            `json:"args" yaml:"args"`
 	Ready     []string            `json:"ready" yaml:"ready"`
-	Drain     Hook                `json:"drain" yaml:"drain"`
-	Retire    Hook                `json:"retire" yaml:"retire"`
+	// Stop runs on the replica's host as systemd ExecStop=, before the process
+	// is signalled. Every stop drains through it: installation, credential
+	// activation, retirement, operator restarts and host shutdown. It must
+	// finish within the unit's stop timeout and tolerate an exited process.
+	Stop   []string `json:"stop,omitempty" yaml:"stop,omitempty"`
+	Drain  Hook     `json:"drain" yaml:"drain"`
+	Retire Hook     `json:"retire" yaml:"retire"`
 }
 
 // SchemaChange separates online expansion/backfill from cleanup in a later

@@ -351,7 +351,8 @@ func (r *Runner) lifecycle(ctx context.Context, args []string, verify bool) erro
 			}
 		}
 		// Stopping an ingress closes public traffic before permanent membership
-		// retirement. Existing workload containers remain owned by their agent.
+		// retirement; its stop preparation withdraws and drains it first.
+		// Existing workload containers remain owned by their agent.
 		if !verify {
 			_, err = r.remote(ctx, p, pl, "systemctl disable --now "+shell(unit(p, pl))+"\n")
 			return err

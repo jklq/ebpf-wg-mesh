@@ -225,12 +225,47 @@ func TestCleanupInterruptionResumesAfterTheOverlapBoundaryIsSuperseded(t *testin
 	}
 }
 
-func TestRollingPlanRejectsAnUnhealthyClusterBeforeItStarts(t *testing.T) {
+func TestRollingPlanRejectsAClusterWithoutALiveMajorityBeforeItStarts(t *testing.T) {
+	p, state, inv := rollingPlan(t, false)
+	inv.Database.Live = inv.Database.Live[:1]
+	if _, err := BuildPlan(p.Installation, p.Release, state, inv, false, testNow); err == nil {
+		t.Fatal("plan admitted a rolling upgrade with no live database majority")
+	}
+}
+
+func TestPlanDrainDeadlineIsRecordedAndDigested(t *testing.T) {
+	p, _, _ := rollingPlan(t, false)
+	if p.DrainDeadlineSeconds != 0 {
+		t.Fatal("plans wait indefinitely unless the operator sets a drain deadline")
+	}
+	bounded := snapshot(p)
+	bounded.DrainDeadlineSeconds = 600
+	bounded.ID = bounded.digest()
+	if err := bounded.Validate(); err != nil {
+		t.Fatal("plan with a drain deadline does not validate:", err)
+	}
+	if bounded.ID == p.ID {
+		t.Fatal("drain deadline is not part of the plan identity; a resume could change it")
+	}
+	negative := snapshot(bounded)
+	negative.DrainDeadlineSeconds = -1
+	negative.ID = negative.digest()
+	if err := negative.Validate(); err == nil {
+		t.Fatal("negative drain deadline accepted")
+	}
+}
+
+// CockroachDB rolls one node at a time on quorum, so a replicated cluster
+// with one member down still admits the plan; each restart is then gated
+// natively on every range keeping a live voting quorum without its target.
+func TestRollingPlanAdmitsALiveMajorityWithOneMemberDown(t *testing.T) {
 	p, state, inv := rollingPlan(t, false)
 	inv.Database.Live = inv.Database.Live[:2]
-	if _, err := BuildPlan(p.Installation, p.Release, state, inv, false, testNow); err == nil {
-		t.Fatal("plan admitted another restart with a failed database member")
+	admitted, err := BuildPlan(p.Installation, p.Release, state, inv, false, testNow)
+	if err != nil {
+		t.Fatal("plan refused a quorum-admissible database upgrade:", err)
 	}
+	requireComplete(t, admitted)
 }
 
 type builderRetryDriver struct {

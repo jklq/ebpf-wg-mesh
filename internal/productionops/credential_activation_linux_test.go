@@ -2,6 +2,7 @@ package productionops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -31,8 +32,13 @@ func (r *credentialRemote) Run(ctx context.Context, i deploy.Installation, h dep
 		if _, err := r.Run(ctx, i, h, script[:probe]); err != nil {
 			return nil, err
 		}
+		// Peers write their own inspection probe; read the one this script names.
+		file := r.probePath
+		if fields := strings.Fields(script[probe+len(shell(r.binary)+" probe "):]); len(fields) > 0 {
+			file = strings.Trim(fields[0], "'")
+		}
 		var p Probe
-		path := r.path(h, r.probePath)
+		path := r.path(h, file)
 		if err := privateJSON(path, &p); err != nil {
 			return nil, err
 		}
@@ -105,10 +111,10 @@ func (f credentialFixture) write(t *testing.T, name, value string) {
 func (f credentialFixture) install(t *testing.T, key string) string {
 	t.Helper()
 	files := map[string][]byte{"client.key": []byte(key)}
-	if _, err := f.runner.remote(context.Background(), f.runner.Plan, f.pl, remoteFile(cfgDir(f.runner.Plan, f.pl)+"/runtime.env", credentialRuntimeEnvironment(files, nil))); err != nil {
+	if _, err := f.runner.remote(context.Background(), f.runner.Plan, f.pl, remoteFile(cfgDir(f.runner.Plan, f.pl)+"/runtime.env", credentialRuntimeEnvironment(f.pl.Role, files, nil))); err != nil {
 		t.Fatal(err)
 	}
-	env := credentialRuntimeEnvironment(files, nil)
+	env := credentialRuntimeEnvironment(f.pl.Role, files, nil)
 	return strings.Trim(strings.TrimPrefix(strings.TrimSpace(string(env)), credentialDigestVariable+"="), "\"")
 }
 
@@ -196,6 +202,29 @@ func TestCredentialActivationRetriesChangedMaterial(t *testing.T) {
 				t.Fatal("activation repeated after the new credentials were loaded", actions)
 			}
 		})
+	}
+}
+
+func TestCredentialRestartWaitsForReadyPeers(t *testing.T) {
+	f := newCredentialFixture(t, deploy.Console)
+	f.runner.Plan.Placements = append(f.runner.Plan.Placements, deploy.Placement{Role: deploy.Console, Host: "a", Instance: "peer"})
+	f.write(t, "pid", credentialProcess(t, f.install(t, "old private material")))
+	f.write(t, "replacement-pid", credentialProcess(t, f.install(t, "renewed private material")))
+	f.write(t, "not-ready", "")
+	if err := f.runner.activateCredentials(context.Background(), f.pl); !errors.Is(err, errActivationPending) {
+		t.Fatalf("activation with an unready peer returned %v", err)
+	}
+	if actions := f.actions(t); len(actions) != 0 {
+		t.Fatal("replica restarted while its peer could not take its traffic", actions)
+	}
+	if err := os.Remove(filepath.Join(f.root, "not-ready")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.runner.activateCredentials(context.Background(), f.pl); err != nil {
+		t.Fatal(err)
+	}
+	if actions := f.actions(t); len(actions) != 1 || actions[0] != "restart" {
+		t.Fatal("deferred activation did not restart once its peer was ready", actions)
 	}
 }
 

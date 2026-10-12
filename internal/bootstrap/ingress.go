@@ -17,6 +17,7 @@ func RunIngressBootstrap(args []string) error {
 	fs.StringVar(&cfg.IdentityDir, "identity-dir", "", "identity directory as mounted in Envoy")
 	fs.StringVar(&cfg.ServerName, "server-name", "", "control plane certificate SAN to verify")
 	fs.StringVar(&cfg.AdminAddress, "admin-address", "127.0.0.1:19000", "Envoy admin listener")
+	fs.StringVar(&cfg.HealthAddress, "health-address", "", "optional load-balancer health check listener, e.g. 0.0.0.0:19001")
 	fs.StringVar(&addresses, "xds-addresses", "", "comma-separated xDS replica addresses")
 	if err := fs.Parse(args); err != nil {
 		return err

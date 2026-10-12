@@ -90,6 +90,7 @@ type Server struct {
 	runDone         chan struct{}
 	runStarted      bool
 	closed          bool
+	drain           *replicaDrain
 }
 
 func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, error) {
@@ -327,9 +328,10 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	failover := newServiceFailoverReconciler(delivery,
 		time.Duration(cfg.Failover.ReconcileIntervalSeconds)*time.Second,
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
+	drain := newReplicaDrain()
 	internal := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(internalAuth.UnaryServerInterceptor(), recoveryUnary(admission.Paused)),
-		grpc.ChainStreamInterceptor(internalAuth.StreamServerInterceptor(), recoveryStreams(admission.Paused)),
+		grpc.ChainStreamInterceptor(drain.streamInterceptor, internalAuth.StreamServerInterceptor(), recoveryStreams(admission.Paused)),
 	)
 	agentv1.RegisterAgentControlServer(internal, newAgentService(
 		store.fleet, delivery, logStore, notifier, authority, dashboard,
@@ -358,7 +360,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		_ = internalLn.Close()
 		return nil, fmt.Errorf("listen xds: %w", err)
 	}
-	xdsGRPC := xdsServer.GRPCServer(authority.XDSConfig(), authority.Revocations())
+	xdsGRPC := xdsServer.GRPCServer(authority.XDSConfig(), authority.Revocations(), drain.streamInterceptor)
 	var registryLn net.Listener
 	var registryHTTP *http.Server
 	if registryAuth != nil {
@@ -416,6 +418,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		internalHTTP:    internalHTTP,
 		registryLn:      registryLn,
 		runDone:         make(chan struct{}),
+		drain:           drain,
 	}
 	if listen := strings.TrimSpace(cfg.Health.Listen); listen != "" {
 		_, shutdown, err := health.ListenAndServe(ctx, listen, server.readyReport)
@@ -489,6 +492,9 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 	if s == nil || s.signKeys == nil || !s.signKeys.Ready(ctx, s.signingScopes) {
 		failed = append(failed, "signing_keys")
 	}
+	if s != nil && s.drain != nil && s.drain.active() {
+		failed = append(failed, "draining")
+	}
 	if len(failed) > 0 {
 		return health.Report{Status: health.StatusNotReady, Failed: failed, Authority: &s.recoveryAuthority}
 	}
@@ -496,7 +502,9 @@ func (s *Server) readyReport(ctx context.Context) health.Report {
 }
 
 func (s *Server) Run(ctx context.Context) error {
-	runCtx, cancel := context.WithCancel(ctx)
+	// Cancelling ctx asks the replica to drain before its background work stops;
+	// Close still stops everything immediately.
+	runCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.runMu.Lock()
 	if s.closed {
 		s.runMu.Unlock()
@@ -557,7 +565,11 @@ func (s *Server) Run(ctx context.Context) error {
 			done <- err
 		}()
 	}
-	leaseDone := make(chan error, 1)
+	leaseDone, leaseStopped := make(chan error, 1), make(chan struct{})
+	// The drain resigns the singleton lease before ending sessions, so agents
+	// reconnect to its successor instead of a replica that is going away.
+	leaseCtx, resign := context.WithCancel(runCtx)
+	defer resign()
 	go func() {
 		advertise := strings.TrimSpace(s.cfg.AdvertiseAddr)
 		if advertise == "" {
@@ -565,12 +577,18 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		s.leases.SetAdvertise(advertise)
 		s.leases.SetFenceHooks(func() { s.store.publication.SetPublishing(false) }, func() { s.store.publication.SetPublishing(true) })
-		err := s.leases.Run(runCtx, singletonLeaseName, s.runSingletonJobs)
+		err := s.leases.Run(leaseCtx, singletonLeaseName, s.runSingletonJobs)
 		leaseDone <- err
+		close(leaseStopped)
 		errCh <- err
 	}()
 	var result error
 	select {
+	case <-ctx.Done():
+		s.drainTransports(runCtx, func() {
+			resign()
+			<-leaseStopped
+		})
 	case <-runCtx.Done():
 	case result = <-errCh:
 	}
@@ -810,7 +828,8 @@ func (s *Server) Close() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		err := s.internalHTTP.Shutdown(shutdownCtx)
 		cancel()
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		// A drain may already have closed the listener.
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			if errors.Is(err, context.DeadlineExceeded) {
 				closeErr := s.internalHTTP.Close()
 				if errors.Is(closeErr, http.ErrServerClosed) {
@@ -833,7 +852,7 @@ func (s *Server) Close() error {
 	}
 	if s.registryHTTP != nil {
 		err := s.registryHTTP.Close()
-		if !errors.Is(err, http.ErrServerClosed) {
+		if !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			errs = append(errs, err)
 		}
 	}

@@ -41,6 +41,8 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &agentBootstrapTokens, "agent-bootstrap-tokens", "CONTROLPLANE_AGENT_BOOTSTRAP_TOKENS", "", "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ServerCertValidityHours, "internal-server-cert-validity-hours", "CONTROLPLANE_INTERNAL_SERVER_CERT_VALIDITY_HOURS", 24*30, "")
 	intFlag(fs, &cfg.InternalGRPC.TLS.ClientCertValidityHours, "internal-client-cert-validity-hours", "CONTROLPLANE_INTERNAL_CLIENT_CERT_VALIDITY_HOURS", 24, "")
+	intFlag(fs, &cfg.Shutdown.WithdrawalSeconds, "shutdown-withdrawal-seconds", "CONTROLPLANE_SHUTDOWN_WITHDRAWAL_SECONDS", 0, "seconds readiness fails while the replica still serves after SIGTERM")
+	intFlag(fs, &cfg.Shutdown.GraceSeconds, "shutdown-grace-seconds", "CONTROLPLANE_SHUTDOWN_GRACE_SECONDS", 30, "seconds admitted calls may finish after the listeners close")
 	intFlag(fs, &cfg.Database.MaxOpenConns, "db-max-open-conns", "CONTROLPLANE_DB_MAX_OPEN_CONNS", 8, "")
 	intFlag(fs, &cfg.Database.MaxIdleConns, "db-max-idle-conns", "CONTROLPLANE_DB_MAX_IDLE_CONNS", 2, "")
 	intFlag(fs, &cfg.Logs.ClickHouse.MaxOpenConns, "logs-clickhouse-max-open-conns", "CONTROLPLANE_LOGS_CLICKHOUSE_MAX_OPEN_CONNS", 2, "")

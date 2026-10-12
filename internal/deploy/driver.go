@@ -197,13 +197,16 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 	if err != nil {
 		return nil, err
 	}
-	path := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/plan.json"
+	// Wave hooks run on the same administration host. Each operation owns its
+	// input files so another replica cannot replace the state it is inspecting.
+	inputDir := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/operations/" + op.ID
+	path := inputDir + "/plan.json"
 	script := "export PLATFORM_INSTALLATION=" + quote(p.Installation.ID) + "\nexport PLATFORM_RECOVERY_GENERATION=" + quote(p.Generation) + "\n" + fileScript(path, payload, "0600") + "export PLATFORM_PLAN=" + quote(path) + "\nexport PLATFORM_OPERATION=" + quote(op.ID) + "\n"
 	statePayload, err := json.Marshal(state)
 	if err != nil {
 		return nil, err
 	}
-	statePath := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/installer-state.json"
+	statePath := inputDir + "/installer-state.json"
 	script += fileScript(statePath, statePayload, "0600") + "export PLATFORM_DEPLOYMENT_STATE=" + quote(statePath) + "\nexport PLATFORM_OPERATIONS_CONFIG=" + quote(p.Installation.OperationsConfig) + "\n"
 	if state.LastBackup.Backup != "" {
 		script += "export PLATFORM_BACKUP=" + quote(state.LastBackup.Backup) + "\nexport PLATFORM_DATA_LOSS_CUTOFF=" + quote(state.LastBackup.DataLossCutoff.Format(time.RFC3339Nano)) + "\n"

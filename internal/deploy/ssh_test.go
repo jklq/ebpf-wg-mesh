@@ -12,7 +12,7 @@ import (
 
 func installedEnvironment(t *testing.T, script string) string {
 	t.Helper()
-	pattern := regexp.MustCompile(`printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > '[^']+/environment.next'`)
+	pattern := regexp.MustCompile(`printf %s '([A-Za-z0-9+/=]+)' \| base64 -d > '[^']+/environment'"\.next\.\$\$"`)
 	match := pattern.FindStringSubmatch(script)
 	if len(match) != 2 {
 		t.Fatal("missing installed environment")
@@ -135,5 +135,45 @@ func TestNativeAddressSubstitutionsPreserveBareIdentityAndIPv6Sockets(t *testing
 	p.Installation = i
 	if actual := expand(p, pl, "{socketHost}:8080"); actual != "192.0.2.1:8080" {
 		t.Fatal(actual)
+	}
+}
+
+func TestUnitsDrainThroughReleaseStopPreparation(t *testing.T) {
+	i, r, inv := fixture(1)
+	envoy := r.Programs[Envoy]
+	envoy.Stop = []string{"/opt/platformops", "prepare-stop", "envoy", "--withdrawal-max=30s", "100%$HOME"}
+	r.Programs[Envoy] = envoy
+	console := r.Programs[Console]
+	console.Stop = []string{"/opt/platformops", "prepare-stop", "console", "{stateDir}/draining"}
+	r.Programs[Console] = console
+	p := build(t, i, r, State{}, inv, false)
+	requireComplete(t, p)
+	units := map[Role]string{}
+	environments := map[Role]string{}
+	for _, pl := range p.Placements {
+		env, service, err := unitConfiguration(p, pl, i.Hosts[0].Capacity)
+		if err != nil {
+			t.Fatal(err)
+		}
+		units[pl.Role], environments[pl.Role] = service, env
+	}
+	stop := regexp.MustCompile(`(?m)^ExecStop=(.*)$`).FindStringSubmatch(units[Envoy])
+	if len(stop) != 2 || !strings.Contains(stop[1], `"prepare-stop" "envoy" "--withdrawal-max=30s" "100%%$$HOME"`) {
+		t.Fatalf("Envoy unit does not drain before SIGTERM:\n%s", units[Envoy])
+	}
+	for _, pl := range p.Placements {
+		if pl.Role == Console && !strings.Contains(units[Console], `"`+stateDir(i, pl)+`/draining"`) {
+			t.Fatalf("console stop preparation does not name its state directory:\n%s", units[Console])
+		}
+		if pl.Role == Console && !strings.Contains(environments[Console], `DASHBOARD_DRAIN_FILE="`+stateDir(i, pl)+`/draining"`) {
+			t.Fatal("console does not read the drain file its stop preparation writes")
+		}
+	}
+	if strings.Contains(units[ControlPlane], "ExecStop=") || !strings.Contains(environments[ControlPlane], `CONTROLPLANE_SHUTDOWN_WITHDRAWAL_SECONDS="10"`) {
+		t.Fatal("control plane must drain itself on SIGTERM with a production withdrawal period")
+	}
+	r.Programs[Envoy] = Program{Artifacts: envoy.Artifacts, Ready: envoy.Ready, Drain: envoy.Drain, Retire: envoy.Retire, Stop: []string{" "}}
+	if err := i.Validate(r); err == nil {
+		t.Fatal("stop preparation without an executable accepted")
 	}
 }

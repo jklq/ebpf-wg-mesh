@@ -142,6 +142,12 @@ programs:
             - console
             - '{instance}'
             - '{configDir}/probe.json'
+        stop:
+            - '{tool.operations}'
+            - prepare-stop
+            - console
+            - --withdrawal=15s
+            - '{stateDir}/draining'
         drain:
             command:
                 - '{tool.operations}'
@@ -206,12 +212,23 @@ programs:
         args:
             - --config-path
             - '{configDir}/envoy.yaml'
+            - --drain-strategy
+            - immediate
+            - --drain-time-s
+            - "30"
         ready:
             - '{tool.operations}'
             - ready
             - envoy
             - '{instance}'
             - '{configDir}/probe.json'
+        stop:
+            - '{tool.operations}'
+            - prepare-stop
+            - envoy
+            - --withdrawal-min=15s
+            - --withdrawal-max=30s
+            - --drain=60s
         drain:
             command:
                 - '{tool.operations}'
