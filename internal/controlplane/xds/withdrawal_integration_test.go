@@ -29,9 +29,13 @@ func TestEnvoyWithdrawsHealthyEndpoint(t *testing.T) {
 	}
 	docker := func(args ...string) string {
 		t.Helper()
-		out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+		// Image pull progress goes to stderr; only stdout is the result.
+		var stderr strings.Builder
+		cmd := exec.CommandContext(ctx, "docker", args...)
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
 		if err != nil {
-			t.Fatalf("docker %v: %v\n%s", args, err, out)
+			t.Fatalf("docker %v: %v\n%s%s", args, err, out, stderr.String())
 		}
 		return strings.TrimSpace(string(out))
 	}
