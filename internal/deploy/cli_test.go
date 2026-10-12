@@ -3,6 +3,7 @@ package deploy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -118,5 +119,50 @@ func TestRecoveryAfterPermanentHostLossRecordsCutoffAndResumes(t *testing.T) {
 	final, err := store.Read()
 	if err != nil || final.Progress != nil || final.Policy.ManagementHost != "rescue" || final.LastRestore == nil || final.LastRestore.DataLossCutoff != cutoff {
 		t.Fatal("recovery did not complete on the alternative inventory", err)
+	}
+}
+
+func TestPlanCommandRecordsTheDrainDeadlineInThePlan(t *testing.T) {
+	i, r, inv := fixture(3)
+	dir := t.TempDir()
+	manifest, bundle, keyFile := filepath.Join(dir, "production.yaml"), filepath.Join(dir, "release.yaml"), filepath.Join(dir, "key")
+	for path, value := range map[string]any{manifest: i, bundle: r} {
+		data, err := yaml.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	store, key, statePath := testStore(t)
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	driver := fake(inv)
+	output := filepath.Join(dir, "plan.json")
+	args := []string{"--installation", manifest, "--bundle", bundle, "--state", statePath, "--key-file", keyFile}
+	if err := Run(context.Background(), append([]string{"reconcile", "--drain-deadline", "10m"}, args...), &bytes.Buffer{}, driver); err == nil {
+		t.Fatal("drain deadline accepted outside plan, where it would be silently dropped")
+	}
+	if err := Run(context.Background(), append([]string{"plan", "--drain-deadline", "10m", "--output", output}, args...), &bytes.Buffer{}, driver); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p Plan
+	if err := json.Unmarshal(data, &p); err != nil {
+		t.Fatal(err)
+	}
+	if p.DrainDeadlineSeconds != 600 {
+		t.Fatalf("drain deadline = %d seconds, want 600", p.DrainDeadlineSeconds)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatal("planned drain deadline does not survive plan integrity:", err)
 	}
 }

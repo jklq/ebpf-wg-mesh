@@ -3,6 +3,7 @@ package deploy
 import (
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -21,6 +22,28 @@ func durable(path string) bool {
 }
 func hookValid(h Hook) bool { return len(h.Command) > 0 && len(h.Verify) > 0 }
 func (i Installation) Validate(r Release) error {
+	for role, program := range r.Programs {
+		for _, a := range program.Artifacts {
+			if a.Bytes < 0 || a.UnpackedBytes < 0 {
+				return fmt.Errorf("artifact sizes cannot be negative")
+			}
+		}
+		if len(program.Listeners) > 0 {
+			if role != ControlPlane && role != Console && role != Registry && role != Envoy {
+				return fmt.Errorf("stable listener transitions are unsupported for %s", role)
+			}
+			if len(r.Tools["continuity"]) == 0 {
+				return fmt.Errorf("stable listeners require the pinned continuity tool")
+			}
+			seen := map[string]bool{}
+			for _, ln := range program.Listeners {
+				if _, _, err := net.SplitHostPort(ln.Address); err != nil || ln.Env == "" || seen[ln.Address] {
+					return fmt.Errorf("invalid stable listener for %s", role)
+				}
+				seen[ln.Address] = true
+			}
+		}
+	}
 	for _, path := range i.OperationsInputs {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("operations inputs must be clean absolute paths")
@@ -194,6 +217,9 @@ func (i Installation) Validate(r Release) error {
 		}
 		if !hookValid(p.Drain) || !hookValid(p.Retire) {
 			return fmt.Errorf("%s requires observed drain and retirement protocols", role)
+		}
+		if len(p.Stop) > 0 && strings.TrimSpace(p.Stop[0]) == "" {
+			return fmt.Errorf("%s stop preparation requires an executable", role)
 		}
 		if role == Database && len(c.Storage) == 0 {
 			return fmt.Errorf("database requires durable storage")

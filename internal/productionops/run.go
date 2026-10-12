@@ -154,6 +154,15 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		_, err = io.Copy(out, strings.NewReader(string(b)))
 		return err
 	}
+	if args[0] == "prepare-stop" {
+		return prepareStop(ctx, args[1:])
+	}
+	if args[0] == "envoy-identity" {
+		if len(args) != 3 {
+			return fmt.Errorf("envoy-identity requires the admin URL and installed certificate")
+		}
+		return inspectEnvoyIdentity(ctx, args[1], args[2])
+	}
 	if args[0] == "ready" {
 		if len(args) != 4 {
 			return fmt.Errorf("ready requires role, instance and probe file")

@@ -13,6 +13,8 @@ import (
 	"os"
 	"strings"
 
+	"ebof-wg-mesh/internal/continuity"
+
 	"go.yaml.in/yaml/v3"
 )
 
@@ -175,19 +177,29 @@ type Installation struct {
 // are release-owned, idempotent commands with independent observation commands.
 // They bridge native database/admin protocols without adding a second scheduler.
 type Artifact struct {
-	URL    string `json:"url" yaml:"url"`
-	SHA256 string `json:"sha256" yaml:"sha256"`
+	Bytes         int64  `json:"bytes,omitempty" yaml:"bytes,omitempty"`
+	UnpackedBytes int64  `json:"unpackedBytes,omitempty" yaml:"unpackedBytes,omitempty"`
+	URL           string `json:"url" yaml:"url"`
+	SHA256        string `json:"sha256" yaml:"sha256"`
 }
 type Hook struct {
 	Command []string `json:"command" yaml:"command"`
 	Verify  []string `json:"verify" yaml:"verify"`
 }
 type Program struct {
-	Artifacts map[string]Artifact `json:"artifacts" yaml:"artifacts"`
-	Args      []string            `json:"args" yaml:"args"`
-	Ready     []string            `json:"ready" yaml:"ready"`
-	Drain     Hook                `json:"drain" yaml:"drain"`
-	Retire    Hook                `json:"retire" yaml:"retire"`
+	// Listeners are owned by a resident continuity process. Upgrades and
+	// credential changes hand them to a new process generation in place.
+	Listeners []continuity.Listener `json:"listeners,omitempty" yaml:"listeners,omitempty"`
+	Artifacts map[string]Artifact   `json:"artifacts" yaml:"artifacts"`
+	Args      []string              `json:"args" yaml:"args"`
+	Ready     []string              `json:"ready" yaml:"ready"`
+	// Stop runs on the replica's host as systemd ExecStop=, before the process
+	// is signalled. Every stop drains through it: installation, credential
+	// activation, retirement, operator restarts and host shutdown. It must
+	// finish within the unit's stop timeout and tolerate an exited process.
+	Stop   []string `json:"stop,omitempty" yaml:"stop,omitempty"`
+	Drain  Hook     `json:"drain" yaml:"drain"`
+	Retire Hook     `json:"retire" yaml:"retire"`
 }
 
 // SchemaChange separates online expansion/backfill from cleanup in a later

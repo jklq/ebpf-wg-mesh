@@ -60,7 +60,7 @@ func (r *Runner) yieldReservations(ctx context.Context, db *sql.DB, pl deploy.Pl
 	old := oldHost.Reserve
 	for _, previous := range r.Plan.Previous.Placements {
 		if previous.Host == pl.Host {
-			old = old.Add(r.Plan.Previous.Installation.Components[previous.Role].Resources)
+			old = old.Add(deploy.ComponentResources(r.Plan.Previous.Installation, r.Plan.Previous.Release, previous.Role))
 		}
 	}
 	next := r.Plan.Reservations[pl.Host]

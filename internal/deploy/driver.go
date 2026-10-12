@@ -197,13 +197,16 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 	if err != nil {
 		return nil, err
 	}
-	path := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/plan.json"
+	// Wave hooks run on the same administration host. Each operation owns its
+	// input files so another replica cannot replace the state it is inspecting.
+	inputDir := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/operations/" + op.ID
+	path := inputDir + "/plan.json"
 	script := "export PLATFORM_INSTALLATION=" + quote(p.Installation.ID) + "\nexport PLATFORM_RECOVERY_GENERATION=" + quote(p.Generation) + "\n" + fileScript(path, payload, "0600") + "export PLATFORM_PLAN=" + quote(path) + "\nexport PLATFORM_OPERATION=" + quote(op.ID) + "\n"
 	statePayload, err := json.Marshal(state)
 	if err != nil {
 		return nil, err
 	}
-	statePath := "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/installer-state.json"
+	statePath := inputDir + "/installer-state.json"
 	script += fileScript(statePath, statePayload, "0600") + "export PLATFORM_DEPLOYMENT_STATE=" + quote(statePath) + "\nexport PLATFORM_OPERATIONS_CONFIG=" + quote(p.Installation.OperationsConfig) + "\n"
 	if state.LastBackup.Backup != "" {
 		script += "export PLATFORM_BACKUP=" + quote(state.LastBackup.Backup) + "\nexport PLATFORM_DATA_LOSS_CUTOFF=" + quote(state.LastBackup.DataLossCutoff.Format(time.RFC3339Nano)) + "\n"
@@ -240,6 +243,37 @@ func (d *SSHDriver) runHook(ctx context.Context, p Plan, state State, op Operati
 	return d.Remote.Run(ctx, p.Installation, h, script+command(expandCommand(commandPlan, pl, argv))+"\n")
 }
 func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operation) (bool, Evidence, error) {
+	if op.Kind == "upgrade-preflight" {
+		h, _, found, err := d.discover(ctx, p.Installation, state, op.Host)
+		if err != nil {
+			return false, Evidence{}, err
+		}
+		if !found {
+			return false, Evidence{}, fmt.Errorf("upgrade host unavailable")
+		}
+		script := "needed=1048576\n"
+		unpacked := map[string]bool{}
+		add := func(a Artifact, path string) {
+			script += "if ! test -f " + quote(path) + " || ! printf %s " + quote(a.SHA256+"  "+path+"\n") + " | sha256sum -c - >/dev/null 2>&1; then needed=$((needed+" + fmt.Sprint(a.Bytes) + ")); fi\n"
+			if a.UnpackedBytes > 0 && !unpacked[a.SHA256] {
+				unpacked[a.SHA256] = true
+				script += "if ! test -f " + quote("/var/lib/ebpf-wg-mesh/bundles/"+a.SHA256+"/.complete") + "; then needed=$((needed+" + fmt.Sprint(a.UnpackedBytes) + ")); fi\n"
+			}
+		}
+		for _, pl := range p.Placements {
+			if pl.Host == op.Host && !preserveRuntime(p, pl) {
+				add(p.Release.Programs[pl.Role].Artifacts[h.Architecture], releaseDir(p, pl)+"/program")
+			}
+		}
+		for name, tools := range p.Release.Tools {
+			add(tools[h.Architecture], toolsDir(p)+"/"+name)
+		}
+		script += "for path in /opt /var/lib; do available=$(df -B1 --output=avail \"$path\" | tail -n 1 | tr -d ' '); test \"$available\" -ge \"$needed\"; inodes=$(df -i --output=iavail \"$path\" | tail -n 1 | tr -d ' '); test \"$inodes\" -ge 128; done\n"
+		if _, err = d.Remote.Run(ctx, p.Installation, h, script); err != nil {
+			return false, Evidence{}, fmt.Errorf("insufficient observed staging storage/inodes on %s: %w", op.Host, err)
+		}
+		return true, Evidence{}, nil
+	}
 	if op.Kind == "retain" {
 		return true, Evidence{}, nil
 	}
@@ -299,12 +333,23 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 		return false, Evidence{}, fmt.Errorf("operation %s requires placement", op.Kind)
 	}
 	pl := *op.Placement
+	if op.Kind == "finish" {
+		out, err := d.Remote.Run(ctx, p.Installation, h, command([]string{ContinuityBinary(p, pl), "status", ContinuityDir(p, pl)})+"\n")
+		if err != nil {
+			return false, Evidence{}, nil
+		}
+		var status struct{ Active, Draining string }
+		if err = json.Unmarshal(out, &status); err != nil {
+			return false, Evidence{}, err
+		}
+		return status.Active != "" && status.Draining == "", Evidence{}, nil
+	}
 	if op.Kind == "stage" || op.Kind == "configure" {
 		marker := "staged"
 		if op.Kind == "configure" {
 			marker = "configured"
 		}
-		script := "test \"$(cat " + quote(configDir(p.Installation, pl)+"/"+marker) + ")\" = " + quote(p.ID+"/"+op.ID) + "\n"
+		script := "test \"$(cat " + quote(ConfigurationDir(p, pl)+"/"+marker) + ")\" = " + quote(p.ID+"/"+op.ID) + "\n"
 		if op.Kind == "stage" {
 			artifact := p.Release.Programs[pl.Role].Artifacts[h.Architecture]
 			script += "printf %s " + quote(artifact.SHA256+"  "+releaseDir(p, pl)+"/program\n") + " | sha256sum -c - >/dev/null\n"
@@ -314,7 +359,7 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 				if err != nil {
 					return false, Evidence{}, err
 				}
-				script += "printf %s " + quote(fmt.Sprintf("%x  %s\n", sha256.Sum256(value), configDir(p.Installation, pl)+"/"+path)) + " | sha256sum -c - >/dev/null\n"
+				script += "printf %s " + quote(fmt.Sprintf("%x  %s\n", sha256.Sum256(value), ConfigurationDir(p, pl)+"/"+path)) + " | sha256sum -c - >/dev/null\n"
 			}
 		}
 		_, err := d.Remote.Run(ctx, p.Installation, h, script)
@@ -425,6 +470,8 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 	pl := *op.Placement
 	var script string
 	switch op.Kind {
+	case "finish":
+		script = command([]string{ContinuityBinary(p, pl), "finish", ContinuityDir(p, pl)}) + "\n"
 	case "stage":
 		if restorationPlan(p) {
 			script, err = d.stageRecovered(ctx, p, state, h, &pl)
@@ -434,13 +481,13 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 		if err != nil {
 			return Binding{}, err
 		}
-		script += fileScript(configDir(p.Installation, pl)+"/staged", []byte(p.ID+"/"+op.ID), "0600")
+		script += fileScript(ConfigurationDir(p, pl)+"/staged", []byte(p.ID+"/"+op.ID), "0600")
 	case "configure":
 		script, err = configurationScript(p, pl)
 		if err != nil {
 			return Binding{}, err
 		}
-		script += fileScript(configDir(p.Installation, pl)+"/configured", []byte(p.ID+"/"+op.ID), "0600")
+		script += fileScript(ConfigurationDir(p, pl)+"/configured", []byte(p.ID+"/"+op.ID), "0600")
 	case "install", "database-join", "database-upgrade":
 		probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		out, probeErr := d.Remote.Run(probeCtx, p.Installation, h, hostProbe)

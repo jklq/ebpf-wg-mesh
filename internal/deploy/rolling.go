@@ -46,7 +46,7 @@ func (p Plan) validateRollingSteps(groups map[string][]Operation) error {
 				installs++
 			}
 		}
-		if installs != 1 {
+		if installs != 1 && !(installs == 0 && preserveRuntime(p, pl)) {
 			return fmt.Errorf("rolling replica %s requires exactly one verified install", pl.Instance)
 		}
 	}

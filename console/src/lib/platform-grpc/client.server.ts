@@ -1,4 +1,4 @@
-import { ConnectError, type Transport } from "@connectrpc/connect";
+import { Code, ConnectError, type Transport } from "@connectrpc/connect";
 import { connect as connectTLS } from "node:tls";
 import { createConnectTransport } from "@connectrpc/connect-node";
 
@@ -18,15 +18,25 @@ export interface PlatformRuntimeConfig {
 
 const transports = new WeakMap<PlatformRuntimeConfig, Transport>();
 
+// A replica that does not complete TLS within this bound is treated as never
+// having received the request, so a silent host failure costs one bounded
+// attempt instead of the operating system's connect timeout.
+const connectTimeoutMs = 2000;
+// After a failed connection, requests prefer the other replicas for a while.
+const unavailableMs = 5000;
+const connectTimeoutCode = "ERR_CONTROL_PLANE_CONNECT_TIMEOUT";
+
 // Choose a verified reachable replica before submitting the RPC. Never replay a
 // submitted mutation: a transport error after sending may have external effects.
 export async function selectControlPlane(
 	runtime: PlatformRuntimeConfig,
 	signal?: AbortSignal,
+	excluded: ReadonlySet<string> = new Set(),
 ): Promise<string> {
 	let failure: unknown;
 	for (const address of runtime.controlPlaneAddresses) {
 		if (signal?.aborted) throw signal.reason;
+		if (excluded.has(address)) continue;
 		try {
 			const target = new URL(`https://${address}`);
 			await new Promise<void>((resolve, reject) => {
@@ -84,22 +94,146 @@ export function getTransport(runtime: PlatformRuntimeConfig): Transport {
 					cert: runtime.controlPlaneCert,
 					key: runtime.controlPlaneKey,
 					servername: runtime.controlPlaneServerName,
+					createConnection: (authority: URL) => {
+						const socket = connectTLS({
+							host: authority.hostname.replace(/^\[|\]$/g, ""),
+							port: Number(authority.port || 443),
+							servername: runtime.controlPlaneServerName,
+							ca: runtime.controlPlaneCA,
+							cert: runtime.controlPlaneCert,
+							key: runtime.controlPlaneKey,
+							ALPNProtocols: ["h2"],
+						});
+						socket.setTimeout(connectTimeoutMs, () =>
+							socket.destroy(
+								Object.assign(new Error("control-plane connection timed out"), {
+									code: connectTimeoutCode,
+								}),
+							),
+						);
+						socket.once("secureConnect", () => socket.setTimeout(0));
+						return socket;
+					},
 				},
 			}),
 		]),
 	);
+	const unavailable = new Map<string, number>();
+	// The native transport authenticates and pools HTTP/2 connections. Rotate
+	// requests across peers without a second TLS handshake before every RPC.
+	let nextReplica = 0;
 	const transport: Transport = {
-		async unary(...args) {
-			const address = await selectControlPlane(runtime, args[1]);
-			return candidates.get(address)!.unary(...args);
-		},
-		async stream(...args) {
-			const address = await selectControlPlane(runtime, args[1]);
-			return candidates.get(address)!.stream(...args);
-		},
+		unary: (...args) =>
+			onReplica(
+				runtime,
+				args[1],
+				nextReplica++ % candidates.size,
+				unavailable,
+				(address) => candidates.get(address)!.unary(...args),
+			),
+		stream: (...args) =>
+			onReplica(
+				runtime,
+				args[1],
+				nextReplica++ % candidates.size,
+				unavailable,
+				(address) => candidates.get(address)!.stream(...args),
+			),
 	};
 	transports.set(runtime, transport);
 	return transport;
+}
+
+// A request that a replica provably never processed may go to another replica:
+// HTTP/2 refused its stream, as after a draining replica's GOAWAY, or no
+// connection was established. Every other failure may follow an effect.
+async function onReplica<T>(
+	runtime: PlatformRuntimeConfig,
+	signal: AbortSignal | undefined,
+	start: number,
+	unavailable: Map<string, number>,
+	call: (address: string) => Promise<T>,
+): Promise<T> {
+	const refused = new Set<string>();
+	const addresses = runtime.controlPlaneAddresses;
+	const usable = (address: string) =>
+		!refused.has(address) && (unavailable.get(address) ?? 0) <= Date.now();
+	// Start from the rotation, skipping replicas that recently failed to connect
+	// unless every replica did.
+	let index = start;
+	for (let n = 0; n < addresses.length && !usable(addresses[index]); n++) {
+		index = (index + 1) % addresses.length;
+	}
+	for (;;) {
+		if (signal?.aborted) throw signal.reason;
+		const address = runtime.controlPlaneAddresses[index];
+		if (!address) throw new Error("control-plane endpoints required");
+		try {
+			return await call(address);
+		} catch (error) {
+			refused.add(address);
+			// Owner redirects are issued before the handler admits the call.
+			// Follow only authenticated addresses from the configured seed set.
+			const owner =
+				error instanceof ConnectError && error.code === Code.FailedPrecondition
+					? /^not the live owner; reconnect at (.+)$/.exec(
+							error.rawMessage,
+						)?.[1]
+					: undefined;
+			if (
+				owner &&
+				runtime.controlPlaneAddresses.includes(owner) &&
+				!refused.has(owner)
+			) {
+				index = runtime.controlPlaneAddresses.indexOf(owner);
+				continue;
+			}
+			if (!isUnprocessed(error)) {
+				throw error;
+			}
+			unavailable.set(address, Date.now() + unavailableMs);
+			if (refused.size >= addresses.length) {
+				throw error;
+			}
+			const next = addresses.findIndex((_, n) =>
+				usable(addresses[(index + 1 + n) % addresses.length]),
+			);
+			if (next >= 0) {
+				index = (index + 1 + next) % addresses.length;
+			} else {
+				do {
+					index = (index + 1) % addresses.length;
+				} while (refused.has(addresses[index]));
+			}
+		}
+	}
+}
+
+const unprocessedCodes = new Set([
+	connectTimeoutCode,
+	"ECONNREFUSED",
+	"ERR_HTTP2_GOAWAY_SESSION",
+	"ERR_HTTP2_INVALID_SESSION",
+]);
+
+export function isUnprocessed(error: unknown): boolean {
+	for (let cause = error, depth = 0; cause && depth < 8; depth++) {
+		if (
+			cause instanceof ConnectError &&
+			((cause.code === Code.Unavailable &&
+				cause.rawMessage ===
+					"http/2 stream closed with error code REFUSED_STREAM (0x7)") ||
+				(cause.code === Code.Internal &&
+					cause.rawMessage ===
+						"Stream closed with error code NGHTTP2_REFUSED_STREAM"))
+		) {
+			return true;
+		}
+		const code = (cause as { code?: unknown }).code;
+		if (typeof code === "string" && unprocessedCodes.has(code)) return true;
+		cause = (cause as { cause?: unknown }).cause;
+	}
+	return false;
 }
 
 export function userAssertionMetadata(

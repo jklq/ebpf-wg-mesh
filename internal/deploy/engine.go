@@ -2,13 +2,19 @@ package deploy
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
 	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Driver interface {
+	// Replica operations in one rollout wave may call Observe and Execute
+	// concurrently, with independent immutable snapshots of State.
 	Inventory(context.Context, Installation, Release, State) (Inventory, error)
 	// Observe must discover uncertain provider outcomes and verify native
 	// membership/drain/backup completion before an operation is considered done.
@@ -76,189 +82,20 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 			}
 		}
 	}
-	for _, op := range p.Operations {
-		contract, _ := ContractForHook(op.Hook)
-		for _, dependency := range op.Requires {
-			if _, verified := state.Progress.Completed[dependency]; !verified {
-				return fmt.Errorf("operation %s requires verified dependency %s", op.ID, dependency)
-			}
-		}
-		if contract.Activation {
-			if err := e.verifyActivationGates(ctx, p, state, contract); err != nil {
-				if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
-					return fmt.Errorf("activation verification unresolved: %v; pause also unresolved: %w", err, pauseErr)
-				}
-				return fmt.Errorf("activation verification is unresolved; automation remains paused: %w", err)
-			}
-		}
-		if op.Hook == "recovery-approve" {
-			if err := e.recoveryApproval(ctx, p, &state, op); err != nil {
+	for i := 0; i < len(p.Operations); {
+		wave := concurrentChains(p.Operations, i)
+		if len(wave) < 2 {
+			if err := e.step(ctx, p, &state, p.Operations[i], nil); err != nil {
 				return err
 			}
+			i++
 			continue
 		}
-		if restorationPlan(p) {
-			if err := requireRecoveryStep(p, state, op); err != nil {
-				return err
-			}
-		}
-		if err := ctx.Err(); err != nil {
+		if err := e.applyWave(ctx, p, &state, wave); err != nil {
 			return err
 		}
-
-		if _, ok := state.Progress.Completed[op.ID]; ok {
-			critical := op.Kind == "hook" && contract.Reobserve
-			// This point protects the previous release before replacement. Once
-			// the database rollout starts, keep that exact point rather than
-			// pairing a fresh mixed-version backup with the previous release.
-			if op.Phase == "pre-backup" {
-				for _, step := range p.Operations {
-					if step.Phase == "database-runtime" && step.Kind != "configure" && state.Progress.Started[step.ID] {
-						critical = false
-					}
-				}
-			}
-			// Once cleanup starts, the previous compatibility boundary has been
-			// superseded. All replica installs and retirements already preceded it;
-			// replaying the old overlap gate would make that cleanup unresumable.
-			if op.Phase == "schema-overlap" {
-				for _, step := range p.Operations {
-					if step.Kind == "schema-contract" && state.Progress.Started[step.ID] {
-						critical = false
-					}
-				}
-			}
-			if !critical && !contains([]string{"install", "database-join", "database-upgrade", "stage", "configure", "stage-tools"}, op.Kind) {
-				continue
-			}
-			if !critical {
-				done, _, err := e.Driver.Observe(ctx, p, state, op)
-				if err != nil {
-					return err
-				}
-				if done {
-					continue
-				}
-			}
-			delete(state.Progress.Completed, op.ID)
-		}
-
-		done, evidence, err := e.Driver.Observe(ctx, p, state, op)
-		if err != nil {
-			return fmt.Errorf("observe %s/%s: %w", op.Kind, op.ID, err)
-		}
-		if !done {
-			if op.Kind == "purchase" && state.Progress.Started[op.ID] {
-				return fmt.Errorf("purchase outcome for %s is unknown after discovery; resolve the provider binding before resuming, never blindly repeat a purchase", op.Host)
-			}
-			state.Progress.Started[op.ID] = true
-			// An install retry can drain a builder that already resumed. Its
-			// matching resume must run again after this install verifies.
-			if op.Kind == "install" && op.Placement != nil && op.Placement.Role == Builder {
-				for _, step := range p.Operations {
-					if step.Hook == "builder-resume" && step.Placement != nil && *step.Placement == *op.Placement {
-						delete(state.Progress.Completed, step.ID)
-					}
-				}
-			}
-			if err := e.Store.Write(state); err != nil {
-				return err
-			}
-			binding, err := e.Driver.Execute(ctx, p, state, op)
-			if err != nil {
-				if activationHook(op.Hook) {
-					if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
-						return fmt.Errorf("resume failed: %w; pause verification also failed: %v", err, pauseErr)
-					}
-				}
-				return fmt.Errorf("execute %s/%s: %w", op.Kind, op.ID, err)
-			}
-			if binding.ServerID != "" {
-				state.Bindings[op.Host] = binding
-				if err := e.Store.Write(state); err != nil {
-					return err
-				}
-			}
-			done, evidence, err = e.Driver.Observe(ctx, p, state, op)
-			if err != nil || !done {
-				if activationHook(op.Hook) {
-					if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
-						return fmt.Errorf("resume observation unresolved: %v; pause also unresolved: %w", err, pauseErr)
-					}
-				}
-				if err != nil {
-					return fmt.Errorf("verify %s/%s: %w", op.Kind, op.ID, err)
-				}
-				return fmt.Errorf("%s/%s is pending; resume this plan after native convergence", op.Kind, op.ID)
-			}
-		}
-		if _, declared := ContractForHook(op.Hook); declared {
-			if err := validateHookState(op.Hook, p, state, evidence, time.Now()); err != nil {
-				if contract.Activation {
-					if pauseErr := e.pauseBeforeRetry(ctx, p, state); pauseErr != nil {
-						return fmt.Errorf("%w; pause unresolved: %v", err, pauseErr)
-					}
-				}
-				return fmt.Errorf("verification contract %s: %w", op.Hook, err)
-			}
-		}
-
-		if op.Kind == "purchase" && state.Bindings[op.Host].ServerID == "" {
-			inv, err := e.Driver.Inventory(ctx, p.Installation, p.Release, state)
-			if err != nil {
-				return err
-			}
-			h, _ := p.Installation.Host(op.Host)
-			id := inv.Hosts[op.Host].ServerID
-			if id == "" {
-				return fmt.Errorf("discovered purchase has no binding")
-			}
-			state.Bindings[op.Host] = Binding{Provider: h.Binding.Provider, ServerID: id}
-		}
-
-		if op.Hook == "backup" {
-			state.LastBackup = evidence
-		}
-		if op.Hook == "recovery-verify" {
-			state.LastRestore = &evidence
-		}
-
-		if op.Kind == "retain" && op.Placement != nil {
-			found := false
-			for _, pl := range state.Retained {
-				if pl.Instance == op.Placement.Instance {
-					found = true
-				}
-			}
-			if !found {
-				state.Retained = append(state.Retained, *op.Placement)
-			}
-		}
-		if op.Kind == "retire" && op.Placement != nil {
-			out := state.Retained[:0]
-			for _, pl := range state.Retained {
-				if pl.Instance != op.Placement.Instance {
-					out = append(out, pl)
-				}
-			}
-			state.Retained = out
-		}
-		if restorationPlan(p) {
-			if err := recordRecoveryEvidence(p, &state, op, evidence, time.Now()); err != nil {
-				return fmt.Errorf("%s: %w", op.Hook, err)
-			}
-			state.Recovery.Phase = op.Hook
-		}
-		state.Progress.Completed[op.ID] = evidence
-		if op.Kind == "delete" {
-			if state.Deleted == nil {
-				state.Deleted = map[string]bool{}
-			}
-			state.Deleted[op.Host] = true
-			delete(state.Bindings, op.Host)
-		}
-		if err := e.Store.Write(state); err != nil {
-			return err
+		for _, chain := range wave {
+			i += len(chain)
 		}
 	}
 	state.Policy = &p.Installation
@@ -272,6 +109,287 @@ func (e Engine) Apply(ctx context.Context, p Plan) error {
 	state.Progress = nil
 	state.Revision++
 	return e.Store.Write(state)
+}
+
+// step applies one operation. Concurrent wave chains hold the state lock while
+// they inspect and record progress, and release it through unlocked for driver
+// calls; sequential operations pass nil and keep exclusive access.
+func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, unlocked func(func())) error {
+	contract, _ := ContractForHook(op.Hook)
+	for _, dependency := range op.Requires {
+		if _, verified := state.Progress.Completed[dependency]; !verified {
+			return fmt.Errorf("operation %s requires verified dependency %s", op.ID, dependency)
+		}
+	}
+	if contract.Activation {
+		if err := e.verifyActivationGates(ctx, p, *state, contract); err != nil {
+			if pauseErr := e.pauseBeforeRetry(ctx, p, *state); pauseErr != nil {
+				return fmt.Errorf("activation verification unresolved: %v; pause also unresolved: %w", err, pauseErr)
+			}
+			return fmt.Errorf("activation verification is unresolved; automation remains paused: %w", err)
+		}
+	}
+	if op.Hook == "recovery-approve" {
+		if err := e.recoveryApproval(ctx, p, state, op); err != nil {
+			return err
+		}
+		return nil
+	}
+	if restorationPlan(p) {
+		if err := requireRecoveryStep(p, *state, op); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	if _, ok := state.Progress.Completed[op.ID]; ok {
+		critical := op.Kind == "hook" && contract.Reobserve
+		// This point protects the previous release before replacement. Once
+		// the database rollout starts, keep that exact point rather than
+		// pairing a fresh mixed-version backup with the previous release.
+		if op.Phase == "pre-backup" {
+			for _, step := range p.Operations {
+				if step.Phase == "database-runtime" && step.Kind != "configure" && state.Progress.Started[step.ID] {
+					critical = false
+				}
+			}
+		}
+		// Once cleanup starts, the previous compatibility boundary has been
+		// superseded. All replica installs and retirements already preceded it;
+		// replaying the old overlap gate would make that cleanup unresumable.
+		if op.Phase == "schema-overlap" {
+			for _, step := range p.Operations {
+				if step.Kind == "schema-contract" && state.Progress.Started[step.ID] {
+					critical = false
+				}
+			}
+		}
+		if !critical && !contains([]string{"install", "database-join", "database-upgrade", "stage", "configure", "stage-tools", "upgrade-preflight", "finish"}, op.Kind) {
+			return nil
+		}
+		if !critical {
+			done, _, err := e.observe(ctx, p, state, op, unlocked)
+			if err != nil {
+				return err
+			}
+			if done {
+				return nil
+			}
+		}
+		delete(state.Progress.Completed, op.ID)
+	}
+
+	done, evidence, err := e.observe(ctx, p, state, op, unlocked)
+	if err != nil {
+		return fmt.Errorf("observe %s/%s: %w", op.Kind, op.ID, err)
+	}
+	if !done {
+		if op.Kind == "purchase" && state.Progress.Started[op.ID] {
+			return fmt.Errorf("purchase outcome for %s is unknown after discovery; resolve the provider binding before resuming, never blindly repeat a purchase", op.Host)
+		}
+		state.Progress.Started[op.ID] = true
+		// An install retry can drain a builder that already resumed. Its
+		// matching resume must run again after this install verifies.
+		if op.Kind == "install" && op.Placement != nil && op.Placement.Role == Builder {
+			for _, step := range p.Operations {
+				if step.Hook == "builder-resume" && step.Placement != nil && *step.Placement == *op.Placement {
+					delete(state.Progress.Completed, step.ID)
+				}
+			}
+		}
+		if err := e.Store.Write(*state); err != nil {
+			return err
+		}
+		binding, err := e.execute(ctx, p, state, op, unlocked)
+		if err != nil {
+			if activationHook(op.Hook) {
+				if pauseErr := e.pauseBeforeRetry(ctx, p, *state); pauseErr != nil {
+					return fmt.Errorf("resume failed: %w; pause verification also failed: %v", err, pauseErr)
+				}
+			}
+			return fmt.Errorf("execute %s/%s: %w", op.Kind, op.ID, err)
+		}
+		if binding.ServerID != "" {
+			state.Bindings[op.Host] = binding
+			if err := e.Store.Write(*state); err != nil {
+				return err
+			}
+		}
+		done, evidence, err = e.observe(ctx, p, state, op, unlocked)
+		if err != nil || !done {
+			if activationHook(op.Hook) {
+				if pauseErr := e.pauseBeforeRetry(ctx, p, *state); pauseErr != nil {
+					return fmt.Errorf("resume observation unresolved: %v; pause also unresolved: %w", err, pauseErr)
+				}
+			}
+			if err != nil {
+				return fmt.Errorf("verify %s/%s: %w", op.Kind, op.ID, err)
+			}
+			return fmt.Errorf("%s/%s is pending; resume this plan after native convergence", op.Kind, op.ID)
+		}
+	}
+	if _, declared := ContractForHook(op.Hook); declared {
+		if err := validateHookState(op.Hook, p, *state, evidence, time.Now()); err != nil {
+			if contract.Activation {
+				if pauseErr := e.pauseBeforeRetry(ctx, p, *state); pauseErr != nil {
+					return fmt.Errorf("%w; pause unresolved: %v", err, pauseErr)
+				}
+			}
+			return fmt.Errorf("verification contract %s: %w", op.Hook, err)
+		}
+	}
+
+	if op.Kind == "purchase" && state.Bindings[op.Host].ServerID == "" {
+		inv, err := e.Driver.Inventory(ctx, p.Installation, p.Release, *state)
+		if err != nil {
+			return err
+		}
+		h, _ := p.Installation.Host(op.Host)
+		id := inv.Hosts[op.Host].ServerID
+		if id == "" {
+			return fmt.Errorf("discovered purchase has no binding")
+		}
+		state.Bindings[op.Host] = Binding{Provider: h.Binding.Provider, ServerID: id}
+	}
+
+	if op.Hook == "backup" {
+		state.LastBackup = evidence
+	}
+	if op.Hook == "recovery-verify" {
+		state.LastRestore = &evidence
+	}
+
+	if op.Kind == "retain" && op.Placement != nil {
+		found := false
+		for _, pl := range state.Retained {
+			if pl.Instance == op.Placement.Instance {
+				found = true
+			}
+		}
+		if !found {
+			state.Retained = append(state.Retained, *op.Placement)
+		}
+	}
+	if op.Kind == "retire" && op.Placement != nil {
+		out := state.Retained[:0]
+		for _, pl := range state.Retained {
+			if pl.Instance != op.Placement.Instance {
+				out = append(out, pl)
+			}
+		}
+		state.Retained = out
+	}
+	if restorationPlan(p) {
+		if err := recordRecoveryEvidence(p, state, op, evidence, time.Now()); err != nil {
+			return fmt.Errorf("%s: %w", op.Hook, err)
+		}
+		state.Recovery.Phase = op.Hook
+	}
+	state.Progress.Completed[op.ID] = evidence
+	if op.Kind == "delete" {
+		if state.Deleted == nil {
+			state.Deleted = map[string]bool{}
+		}
+		state.Deleted[op.Host] = true
+		delete(state.Bindings, op.Host)
+	}
+	if err := e.Store.Write(*state); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Driver calls see a private snapshot while concurrent chains record progress.
+func (e Engine) observe(ctx context.Context, p Plan, state *State, op Operation, unlocked func(func())) (done bool, evidence Evidence, err error) {
+	if unlocked == nil {
+		return e.Driver.Observe(ctx, p, *state, op)
+	}
+	view := waveState(*state)
+	unlocked(func() { done, evidence, err = e.Driver.Observe(ctx, p, view, op) })
+	return done, evidence, err
+}
+
+func (e Engine) execute(ctx context.Context, p Plan, state *State, op Operation, unlocked func(func())) (binding Binding, err error) {
+	if unlocked == nil {
+		return e.Driver.Execute(ctx, p, *state, op)
+	}
+	view := waveState(*state)
+	unlocked(func() { binding, err = e.Driver.Execute(ctx, p, view, op) })
+	return binding, err
+}
+
+// Only these fields change during a replica wave. The plan, release and
+// evidence are immutable; sharing them avoids copying the entire fleet plan
+// and historical receipts before every remote call.
+func waveState(state State) State {
+	state.Bindings = maps.Clone(state.Bindings)
+	state.Deleted = maps.Clone(state.Deleted)
+	state.Placements = slices.Clone(state.Placements)
+	state.Retained = slices.Clone(state.Retained)
+	progress := *state.Progress
+	progress.Started = maps.Clone(progress.Started)
+	progress.Completed = maps.Clone(progress.Completed)
+	state.Progress = &progress
+	return state
+}
+
+// concurrentChains returns the per-replica chains of a rollout wave starting at
+// operation i: chain heads share their requirements and each later operation
+// requires only its chain's previous one. Anything else is a single operation.
+func concurrentChains(ops []Operation, i int) [][]Operation {
+	head := ops[i]
+	if head.Placement == nil {
+		return nil
+	}
+	var chains [][]Operation
+	position := map[string]int{}
+	for _, op := range ops[i:] {
+		if op.Phase != head.Phase || op.Placement == nil {
+			break
+		}
+		chain, known := position[op.Placement.Instance]
+		switch {
+		case !known && slices.Equal(op.Requires, head.Requires):
+			position[op.Placement.Instance] = len(chains)
+			chains = append(chains, []Operation{op})
+		case known && chain == len(chains)-1 && len(op.Requires) == 1 && op.Requires[0] == chains[chain][len(chains[chain])-1].ID:
+			chains[chain] = append(chains[chain], op)
+		default:
+			return chains
+		}
+	}
+	return chains
+}
+
+// applyWave restarts a bounded wave concurrently. Successful chains finish,
+// including restoring builder admission, even if another chain fails. The next
+// wave only starts after every chain verifies successfully.
+func (e Engine) applyWave(ctx context.Context, p Plan, state *State, wave [][]Operation) error {
+	var mu sync.Mutex
+	unlocked := func(call func()) {
+		mu.Unlock()
+		defer mu.Lock()
+		call()
+	}
+	errs := make([]error, len(wave))
+	var wg sync.WaitGroup
+	for n, chain := range wave {
+		wg.Go(func() {
+			for _, op := range chain {
+				mu.Lock()
+				err := e.step(ctx, p, state, op, unlocked)
+				mu.Unlock()
+				if err != nil {
+					errs[n] = err
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 func validateRecoveryEvidence(e Evidence, installation, target string, now time.Time) error {

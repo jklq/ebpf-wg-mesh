@@ -169,7 +169,11 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 					// Switch after all generation files have been uploaded below.
 					files[".ingress-current-target"] = []byte(link)
 				}
-				bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{NodeID: pl.Instance, IdentityDir: identityDir, ServerName: r.Config.InternalServerName, XDSAddresses: strings.Split(r.controlPlaneAddresses("18000"), ","), AdminAddress: "127.0.0.1:19000"})
+				health := r.Config.IngressHealthListen
+				if health == "" {
+					health = "0.0.0.0:19001"
+				}
+				bootstrap, err := xds.RenderBootstrap(xds.BootstrapConfig{NodeID: pl.Instance, IdentityDir: identityDir, ServerName: r.Config.InternalServerName, XDSAddresses: strings.Split(r.controlPlaneAddresses("18000"), ","), AdminAddress: envoyAdminAddress, HealthAddress: health})
 				if err != nil {
 					return err
 				}
@@ -418,7 +422,7 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 		files["probe.json"], _ = json.Marshal(probe)
 		ingressTarget := files[".ingress-current-target"]
 		delete(files, ".ingress-current-target")
-		files["runtime.env"] = credentialRuntimeEnvironment(files, env)
+		files["runtime.env"] = credentialRuntimeEnvironment(pl.Role, files, env)
 		var script string
 		for _, name := range sortedFiles(files) {
 			path := cfgDir(r.Plan, pl) + "/" + name
@@ -601,13 +605,20 @@ func (r *Runner) reservations(ctx context.Context, verify bool) error {
 			continue
 		}
 		h, _ := r.Plan.Installation.Host(pl.Host)
-		reserve := deploy.Resources{} // Already enforced by the native agent cgroups.
+		reserve := deploy.Resources{} // Additional capacity beyond native agent cgroups.
+		if r.Plan.Upgrade != nil {
+			reserve = overlapReservation(r.Plan, pl)
+		}
 		hostType := "stable"
 		if h.Reliability == "intermittent" {
 			hostType = "intermittent"
 		}
 		if !verify {
-			if err = r.yieldReservations(ctx, db, pl); err != nil {
+			err = r.yieldReservations(ctx, db, pl)
+			if err == nil && reserve != (deploy.Resources{}) {
+				err = r.reserveOverlap(ctx, db, pl, reserve)
+			}
+			if err != nil {
 				return err
 			}
 			err = adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {

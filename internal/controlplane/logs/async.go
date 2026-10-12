@@ -30,7 +30,8 @@ const (
 // AsyncIngesterConfig bounds the control-plane log ingest path.
 type AsyncIngesterConfig struct {
 	// SpoolDir holds the durable ingest journal. Required when the store is enabled.
-	SpoolDir string
+	SpoolDir     string
+	TryOwnership bool
 	// QueueBytes caps the journal's retained size; past it whole batches
 	// shed with owed gap rows. Defaults to 64 MiB.
 	QueueBytes int64
@@ -128,6 +129,7 @@ func NewAsyncIngester(store flushStore, cfg AsyncIngesterConfig) (*AsyncIngester
 			Dir:          cfg.SpoolDir,
 			MaxBytes:     queueBytes,
 			RejectOnFull: true,
+			TryOwnership: cfg.TryOwnership,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("open log ingest journal: %w", err)

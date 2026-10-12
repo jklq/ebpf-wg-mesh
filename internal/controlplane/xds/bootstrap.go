@@ -14,6 +14,10 @@ type BootstrapConfig struct {
 	AdminAddress string
 	IdentityDir  string
 	ServerName   string
+	// HealthAddress serves load-balancer health checks on GET /healthz. Envoy
+	// opens it only once live, and admin POST /healthcheck/fail turns it to
+	// 503, withdrawing this ingress before its listeners drain.
+	HealthAddress string
 }
 
 func RenderBootstrap(cfg BootstrapConfig) (string, error) {
@@ -48,6 +52,47 @@ func RenderBootstrap(cfg BootstrapConfig) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	listeners := ""
+	if strings.TrimSpace(cfg.HealthAddress) != "" {
+		healthHost, healthPort, err := splitHostPort(cfg.HealthAddress, "health address")
+		if err != nil {
+			return "", err
+		}
+		listeners = fmt.Sprintf(`  listeners:
+  - name: ingress_health
+    address:
+      socket_address:
+        address: %s
+        port_value: %d
+    filter_chains:
+    - filters:
+      - name: envoy.filters.network.http_connection_manager
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+          stat_prefix: ingress_health
+          route_config:
+            virtual_hosts:
+            - name: health
+              domains: ["*"]
+              routes:
+              - match:
+                  prefix: /
+                direct_response:
+                  status: 404
+          http_filters:
+          - name: envoy.filters.http.health_check
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.health_check.v3.HealthCheck
+              pass_through_mode: false
+              headers:
+              - name: ":path"
+                string_match:
+                  exact: /healthz
+          - name: envoy.filters.http.router
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+`, yamlScalar(healthHost), healthPort)
+	}
 	return fmt.Sprintf(`node:
   id: %s
   cluster: ingress
@@ -71,7 +116,7 @@ dynamic_resources:
     - envoy_grpc:
         cluster_name: xds_cluster
 static_resources:
-  clusters:
+%s  clusters:
   - name: xds_cluster
     connect_timeout: 5s
     type: STRICT_DNS
@@ -116,6 +161,7 @@ static_resources:
 %s`,
 		yamlScalar(nodeID),
 		yamlScalar(adminHost), adminPort,
+		listeners,
 		yamlScalar(cfg.ServerName), yamlScalar(filepath.Join(cfg.IdentityDir, "client-sds.json")), sanType, yamlScalar(cfg.ServerName), yamlScalar(filepath.Join(cfg.IdentityDir, "ca-sds.json")),
 		xdsEndpoints.String(),
 	), nil

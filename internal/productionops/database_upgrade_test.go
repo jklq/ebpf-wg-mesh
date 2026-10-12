@@ -6,7 +6,7 @@ import (
 	"ebof-wg-mesh/internal/deploy"
 )
 
-func TestDatabaseRestartRequiresSurvivingRangeQuorumsAndFullHealth(t *testing.T) {
+func TestDatabaseRestartRequiresSurvivingRangeQuorums(t *testing.T) {
 	healthy := deploy.DatabaseStatus{Members: []string{"a", "b", "c"}, Live: []string{"a", "b", "c"}, Replicated: true, Ranges: []deploy.RangeStatus{{ID: "1", Voters: []string{"a", "b", "c"}}}}
 	if err := databaseRestartHealth(healthy, "a", false); err != nil {
 		t.Fatal(err)
@@ -16,9 +16,13 @@ func TestDatabaseRestartRequiresSurvivingRangeQuorumsAndFullHealth(t *testing.T)
 		alter             func(*deploy.DatabaseStatus)
 		recovery, allowed bool
 	}{
-		{"underreplicated", func(s *deploy.DatabaseStatus) { s.Replicated = false }, false, false},
+		// CockroachDB rolls on quorum, not full convergence: ranges that are
+		// still replicating elsewhere do not block a quorum-safe restart.
+		{"underreplicated elsewhere", func(s *deploy.DatabaseStatus) { s.Replicated = false }, false, true},
 		{"other node lost", func(s *deploy.DatabaseStatus) { s.Live = []string{"a", "c"} }, false, false},
 		{"range cannot survive", func(s *deploy.DatabaseStatus) { s.Ranges[0].Voters = []string{"a", "b"} }, false, false},
+		{"target is down", func(s *deploy.DatabaseStatus) { s.Live = []string{"b", "c"} }, false, false},
+		{"no live majority", func(s *deploy.DatabaseStatus) { s.Live = []string{"a"} }, false, false},
 		{"current stopped node can recover", func(s *deploy.DatabaseStatus) { s.Live = []string{"b", "c"}; s.Replicated = false }, true, true},
 		{"two stopped nodes cannot advance", func(s *deploy.DatabaseStatus) { s.Live = []string{"c"}; s.Replicated = false }, true, false},
 	} {

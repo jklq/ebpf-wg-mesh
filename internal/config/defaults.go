@@ -182,6 +182,9 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Failover.UnhealthyThresholdSeconds <= 0 {
 		cfg.Failover.UnhealthyThresholdSeconds = 30
 	}
+	if cfg.Shutdown.GraceSeconds <= 0 {
+		cfg.Shutdown.GraceSeconds = 30
+	}
 	if cfg.Mesh.InterfaceName == "" {
 		cfg.Mesh.InterfaceName = "wg0"
 	}

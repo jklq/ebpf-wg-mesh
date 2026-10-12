@@ -121,7 +121,8 @@ func (a *App) followLiveOwner(err error) error {
 		return fmt.Errorf("%w: %w", errReplicaRPC, errOwnerQuarantined)
 	}
 	a.controlPlaneAddr = owner
-	return errRedirectOwner
+	// Keep the replica's status so its reconnect guidance remains readable.
+	return fmt.Errorf("%w: %w", errRedirectOwner, err)
 }
 
 func (a *App) replicaAttemptError(address string, err error) error {
@@ -130,6 +131,10 @@ func (a *App) replicaAttemptError(address string, err error) error {
 	}
 	if redirectErr := a.followLiveOwner(err); redirectErr != nil {
 		return redirectErr
+	}
+	// The replica is healthy while ownership moves; avoid only a draining one.
+	if reason, _, ok := agentv1.ReconnectGuidance(err); ok && reason != agentv1.ReasonReplicaDraining {
+		return err
 	}
 	if !isReplicaRetryable(err) {
 		return err
@@ -238,4 +243,11 @@ func ownerAddrFromMessage(msg string) (string, bool) {
 
 func controlPlaneUnavailableError(address string, err error) error {
 	return fmt.Errorf("control plane replica %s unavailable: %w", address, err)
+}
+
+// guidedReconnect reports the delay a replica asked for before reconnecting. It
+// spreads a fleet's reconnections and replaces the failure backoff.
+func guidedReconnect(err error) (time.Duration, bool) {
+	_, after, ok := agentv1.ReconnectGuidance(err)
+	return after, ok && after > 0
 }

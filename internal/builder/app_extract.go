@@ -2,6 +2,7 @@ package builder
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"crypto/x509"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 
 	"ebof-wg-mesh/internal/config"
 
@@ -279,31 +281,57 @@ func runtimeDigestRef(pushRef, digest string) string {
 	return base + "@" + digest
 }
 
+// The client identity is read for each handshake, so connections opened after a
+// renewal present the new certificate without restarting active builds. The CA
+// bundle is launch configuration: host administration restarts to change it.
 func loadTransportCredentials(cfg config.InternalClientTLSConfig) (credentials.TransportCredentials, error) {
 	caPEM, err := os.ReadFile(cfg.CAFile)
 	if err != nil {
 		return nil, fmt.Errorf("read ca file: %w", err)
 	}
-	certPEM, err := os.ReadFile(cfg.CertFile)
-	if err != nil {
-		return nil, fmt.Errorf("read cert file: %w", err)
-	}
-	keyPEM, err := os.ReadFile(cfg.KeyFile)
-	if err != nil {
-		return nil, fmt.Errorf("read key file: %w", err)
-	}
-	cert, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("load x509 key pair: %w", err)
-	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(caPEM) {
 		return nil, errors.New("append control plane CA: no certificates added")
 	}
+	identity := &clientIdentityFiles{certFile: cfg.CertFile, keyFile: cfg.KeyFile}
+	if _, err := identity.certificate(nil); err != nil {
+		return nil, err
+	}
 	return credentials.NewTLS(&tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      roots,
-		ServerName:   cfg.ServerName,
-		MinVersion:   tls.VersionTLS13,
+		GetClientCertificate: identity.certificate,
+		RootCAs:              roots,
+		ServerName:           cfg.ServerName,
+		MinVersion:           tls.VersionTLS13,
 	}), nil
+}
+
+type clientIdentityFiles struct {
+	certFile, keyFile string
+	mu                sync.Mutex
+	certPEM, keyPEM   []byte
+	current           *tls.Certificate
+}
+
+func (f *clientIdentityFiles) certificate(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	certPEM, certErr := os.ReadFile(f.certFile)
+	keyPEM, keyErr := os.ReadFile(f.keyFile)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if certErr == nil && keyErr == nil && f.current != nil && bytes.Equal(certPEM, f.certPEM) && bytes.Equal(keyPEM, f.keyPEM) {
+		return f.current, nil
+	}
+	err := errors.Join(certErr, keyErr)
+	if err == nil {
+		var cert tls.Certificate
+		if cert, err = tls.X509KeyPair(certPEM, keyPEM); err == nil {
+			f.certPEM, f.keyPEM, f.current = certPEM, keyPEM, &cert
+			return f.current, nil
+		}
+	}
+	// Files are replaced one at a time. A pair observed between the two
+	// replacements does not match; keep presenting the last loaded identity.
+	if f.current != nil {
+		return f.current, nil
+	}
+	return nil, fmt.Errorf("load client identity: %w", err)
 }

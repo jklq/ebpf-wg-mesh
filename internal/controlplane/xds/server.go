@@ -74,6 +74,9 @@ type Server struct {
 }
 
 type nodeState struct {
+	seeded   bool
+	identity string
+	ports    map[uint32]uint32
 	streams  int
 	applied  map[string]string
 	nacks    int64
@@ -90,7 +93,7 @@ func NewServer(ctx context.Context) *Server {
 		streamCtxs: make(map[int64]context.Context),
 		nodes:      make(map[string]*nodeState),
 	}
-	s.cache = cachev3.NewSnapshotCache(true, cachev3.IDHash{}, xdslog.LoggerFuncs{
+	s.cache = cachev3.NewSnapshotCache(true, projectionHash{}, xdslog.LoggerFuncs{
 		DebugFunc: func(format string, args ...interface{}) { slog.Debug(fmt.Sprintf(format, args...)) },
 		InfoFunc:  func(format string, args ...interface{}) { slog.Info(fmt.Sprintf(format, args...)) },
 		WarnFunc:  func(format string, args ...interface{}) { slog.Warn(fmt.Sprintf(format, args...)) },
@@ -125,7 +128,8 @@ func (s *Server) SetFirstContactHook(hook func(context.Context) error) {
 	s.firstContact = hook
 }
 
-func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.CertificateRevocations) *grpc.Server {
+// Additional stream interceptors run before authorization, outermost first.
+func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.CertificateRevocations, streams ...grpc.StreamServerInterceptor) *grpc.Server {
 	if tlsConfig == nil {
 		panic("xDS requires mTLS configuration")
 	}
@@ -148,7 +152,7 @@ func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.Certifi
 		}
 	}
 	s.revocations = revocations
-	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.StreamInterceptor(s.secureStream), grpc.UnaryInterceptor(s.secureUnary),
+	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.ChainStreamInterceptor(append(streams[:len(streams):len(streams)], s.secureStream)...), grpc.UnaryInterceptor(s.secureUnary),
 		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Hour, MaxConnectionAgeGrace: time.Minute}))
 	discoveryv3.RegisterAggregatedDiscoveryServiceServer(grpcServer, s.xds)
 	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, s.xds)
@@ -172,9 +176,15 @@ func (s *Server) Publish(ctx context.Context, snapshot *Snapshot) {
 	s.current = snapshot
 	s.published = time.Now().UTC()
 	for nodeID := range s.nodes {
-		if err := s.cache.SetSnapshot(ctx, nodeID, snapshot.CacheSnapshot()); err != nil {
+		projected, err := snapshot.forPorts(s.nodes[nodeID].ports)
+		if err != nil {
+			slog.Error("xds listener projection", "error", err)
+			continue
+		}
+		if err := s.cache.SetSnapshot(ctx, nodeID, projected); err != nil {
 			slog.Warn("xds set snapshot failed", "node", nodeID, "error", err)
 		}
+		s.nodes[nodeID].seeded = true
 	}
 }
 
@@ -194,7 +204,20 @@ func (s *Server) Status() Status {
 		for typ, version := range state.applied {
 			applied[typ] = version
 		}
-		status.Nodes[nodeID] = NodeStatus{
+		identity := state.identity
+		if identity == "" {
+			identity = nodeID
+		}
+		if previous, ok := status.Nodes[identity]; ok {
+			for typ, version := range applied {
+				if previous.Applied[typ] != version {
+					delete(applied, typ)
+				}
+			}
+			status.Nodes[identity] = NodeStatus{Applied: applied, NACKs: previous.NACKs + state.nacks, LastNACK: state.lastNACK}
+			continue
+		}
+		status.Nodes[identity] = NodeStatus{
 			Applied:  applied,
 			NACKs:    state.nacks,
 			LastNACK: state.lastNACK,
@@ -217,18 +240,28 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 	if req == nil {
 		return nil
 	}
-	nodeID := req.GetNode().GetId()
+	nodeID, _, err := projection(req.GetNode())
+	if err != nil {
+		return err
+	}
+	identity := req.GetNode().GetId()
 	s.mu.Lock()
 	ctx := s.streamCtxs[streamID]
 	if nodeID == "" {
 		// Envoy sends node only on the first request of a stream.
 		nodeID = s.streams[streamID]
+		if state := s.nodes[nodeID]; state != nil {
+			identity = state.identity
+			if identity == "" {
+				identity = nodeID
+			}
+		}
 	}
 	s.mu.Unlock()
 	if ctx == nil {
 		return fmt.Errorf("xds request on untracked stream %d", streamID)
 	}
-	if err := s.authorizeNode(ctx, nodeID); err != nil {
+	if err := s.authorizeNode(ctx, identity); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -236,6 +269,11 @@ func (s *Server) onStreamRequest(streamID int64, req *discoveryv3.DiscoveryReque
 	s.mu.Unlock()
 	if previous != "" && previous != nodeID {
 		return status.Error(codes.PermissionDenied, "xDS stream node identity cannot change")
+	}
+	if req.GetNode() != nil {
+		if err := s.ensureProjection(req.GetNode()); err != nil {
+			return err
+		}
 	}
 	s.observe(ctx, streamID, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
 	return s.atFirstContact(ctx, nodeID)
@@ -245,8 +283,14 @@ func (s *Server) onFetchRequest(ctx context.Context, req *discoveryv3.DiscoveryR
 	if req == nil {
 		return nil
 	}
-	nodeID := req.GetNode().GetId()
-	if err := s.authorizeNode(ctx, nodeID); err != nil {
+	nodeID, _, err := projection(req.GetNode())
+	if err != nil {
+		return err
+	}
+	if err := s.authorizeNode(ctx, req.GetNode().GetId()); err != nil {
+		return err
+	}
+	if err := s.ensureProjection(req.GetNode()); err != nil {
 		return err
 	}
 	s.observe(ctx, 0, nodeID, req.GetTypeUrl(), req.GetVersionInfo(), req.GetErrorDetail())
@@ -339,13 +383,17 @@ func (s *authorizedStream) SendMsg(message any) error {
 func (s *Server) atFirstContact(ctx context.Context, nodeID string) error {
 	s.mu.Lock()
 	state := s.nodes[nodeID]
+	identity := nodeID
+	if state != nil && state.identity != "" {
+		identity = state.identity
+	}
 	registered := state != nil && state.registered
 	s.mu.Unlock()
 	if registered {
 		return nil
 	}
 	if s.nodeStore != nil {
-		if err := s.nodeStore.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: nodeID}}); err != nil {
+		if err := s.nodeStore.UpsertNodeObservations(ctx, []NodeObservation{{NodeID: identity}}); err != nil {
 			return fmt.Errorf("register xds node %s: %w", nodeID, err)
 		}
 	}
@@ -372,10 +420,14 @@ func (s *Server) observe(ctx context.Context, streamID int64, nodeID, typeURL, v
 	if !ok {
 		state = &nodeState{applied: make(map[string]string)}
 		s.nodes[nodeID] = state
-		if s.current != nil {
-			if err := s.cache.SetSnapshot(ctx, nodeID, s.current.CacheSnapshot()); err != nil {
-				slog.Warn("xds seed snapshot failed", "node", nodeID, "error", err)
+	}
+	if s.current != nil && !state.seeded {
+		projected, err := s.current.forPorts(state.ports)
+		if err == nil {
+			if err = s.cache.SetSnapshot(ctx, nodeID, projected); err != nil {
+				slog.Error("xds projected snapshot", "error", err)
 			}
+			state.seeded = true
 		}
 	}
 	if streamID != 0 {

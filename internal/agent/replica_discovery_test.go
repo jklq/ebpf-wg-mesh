@@ -119,3 +119,41 @@ func TestFollowLiveOwnerDoesNotRefreshQuarantine(t *testing.T) {
 		t.Fatalf("pin after cooldown = %q", app.controlPlaneAddr)
 	}
 }
+
+func TestOwnershipHandoverGuidanceDoesNotQuarantineHealthyReplicas(t *testing.T) {
+	a := &App{}
+	notReady := agentv1.WithReconnectGuidance(status.Error(codes.Unavailable, "live owner is not ready"), agentv1.ReasonOwnerNotReady, 1500*time.Millisecond)
+	err := a.replicaAttemptError("successor:9443", fmt.Errorf("sync: %w", notReady))
+	if a.ownerQuarantined("successor:9443") {
+		t.Fatal("replica about to become the live owner was quarantined")
+	}
+	if after, ok := guidedReconnect(err); !ok || after != 1500*time.Millisecond {
+		t.Fatalf("handover guidance lost: %v, %v", after, ok)
+	}
+	draining := agentv1.WithReconnectGuidance(status.Error(codes.Unavailable, "control-plane replica is draining"), agentv1.ReasonReplicaDraining, 0)
+	if err := a.replicaAttemptError("old:9443", draining); !isReplicaRetryable(err) || !a.ownerQuarantined("old:9443") {
+		t.Fatal("draining replica must be avoided and the next replica tried at once")
+	}
+	moved := agentv1.WithReconnectGuidance(agentv1.LiveOwnerRedirect("successor:9443"), agentv1.ReasonOwnerMoved, 700*time.Millisecond)
+	err = a.replicaAttemptError("old:9443", moved)
+	if !errors.Is(err, errRedirectOwner) || a.controlPlaneAddr != "successor:9443" {
+		t.Fatalf("redirect not followed: %v", err)
+	}
+	if after, ok := guidedReconnect(err); !ok || after != 700*time.Millisecond {
+		t.Fatal("redirect lost its pacing delay")
+	}
+}
+
+func TestReconnectBackoffIsJittered(t *testing.T) {
+	seen := map[time.Duration]bool{}
+	for range 50 {
+		d := jitteredReconnectDelay(4 * time.Second)
+		if d < 2*time.Second || d > 4*time.Second {
+			t.Fatalf("jittered delay %v outside [2s, 4s]", d)
+		}
+		seen[d] = true
+	}
+	if len(seen) < 10 {
+		t.Fatal("agents that lost the same replica would still retry in lockstep")
+	}
+}

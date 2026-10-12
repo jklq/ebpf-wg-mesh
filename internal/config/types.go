@@ -192,6 +192,14 @@ type ControlPlaneFailoverConfig struct {
 	UnhealthyThresholdSeconds int
 }
 
+// ControlPlaneShutdownConfig bounds a replica's drain after SIGTERM. Readiness
+// fails for WithdrawalSeconds while the replica still serves, then admitted
+// calls have GraceSeconds to finish before background work stops.
+type ControlPlaneShutdownConfig struct {
+	WithdrawalSeconds int
+	GraceSeconds      int
+}
+
 const (
 	SourceArchiveProviderFile = "file"
 	SourceArchiveProviderS3   = "s3"
@@ -263,6 +271,7 @@ type ControlPlaneConfig struct {
 	Registry         RegistryConfig
 	Builder          ControlPlaneBuilderConfig
 	Failover         ControlPlaneFailoverConfig
+	Shutdown         ControlPlaneShutdownConfig
 	Mesh             ControlPlaneMeshConfig
 }
 

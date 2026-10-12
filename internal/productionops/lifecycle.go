@@ -90,7 +90,11 @@ func (r *Runner) installAdmission(ctx context.Context, paused, checkpoints, rest
 				// unchanged file alone cannot prove that an interrupted restart ran.
 				live, err := r.participantAdmission(ctx, p, pl)
 				if err != nil || live != admitted {
-					script += "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then systemctl restart " + shell(unit(p, pl)) + "; fi\n"
+					activation := "systemctl restart " + shell(unit(p, pl))
+					if len(p.Release.Programs[pl.Role].Listeners) > 0 {
+						activation = shell(deploy.ContinuityBinary(p, pl)) + " admission " + shell(deploy.ContinuityDir(p, pl)) + " " + shell(cfgDir(p, pl)+"/launch.json")
+					}
+					script += "if systemctl is-active --quiet " + shell(unit(p, pl)) + "; then " + activation + "; fi\n"
 				}
 			}
 			if _, err := r.remote(ctx, p, pl, script); err != nil {
@@ -146,16 +150,19 @@ func (r *Runner) participantPlans(paused bool) []deploy.Plan {
 	if paused && !r.Plan.Recovery && r.Plan.Previous != nil {
 		old := r.Plan.Previous
 		prior := deploy.Plan{Installation: old.Installation, Release: old.Release, Previous: old, Generation: r.Plan.Generation}
-		for _, pl := range old.Placements {
+		prior.Placements = append([]deploy.Placement(nil), old.Placements...)
+		candidate := r.Plan
+		candidate.Placements = nil
+		for _, pl := range r.Plan.Placements {
 			shared := false
-			for _, current := range r.Plan.Placements {
+			for _, current := range old.Placements {
 				shared = shared || (current.Host == pl.Host && current.Instance == pl.Instance)
 			}
 			if !shared {
-				prior.Placements = append(prior.Placements, pl)
+				candidate.Placements = append(candidate.Placements, pl)
 			}
 		}
-		return []deploy.Plan{prior, r.Plan}
+		return []deploy.Plan{prior, candidate}
 	}
 	return []deploy.Plan{r.Plan}
 }
@@ -351,7 +358,8 @@ func (r *Runner) lifecycle(ctx context.Context, args []string, verify bool) erro
 			}
 		}
 		// Stopping an ingress closes public traffic before permanent membership
-		// retirement. Existing workload containers remain owned by their agent.
+		// retirement; its stop preparation withdraws and drains it first.
+		// Existing workload containers remain owned by their agent.
 		if !verify {
 			_, err = r.remote(ctx, p, pl, "systemctl disable --now "+shell(unit(p, pl))+"\n")
 			return err

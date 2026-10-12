@@ -3,6 +3,7 @@ package productionops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/recovery"
 )
 
 func (r *Runner) completionHosts() ([]string, error) {
@@ -277,19 +279,62 @@ func (r *Runner) renewCredentials(ctx context.Context) error {
 	if err = current.databaseCredentials(ctx, false); err != nil {
 		return err
 	}
+	// Restore builder drain intent left by an interrupted earlier activation.
+	for _, pl := range r.Plan.Placements {
+		if pl.Role == deploy.Builder {
+			if err = resumeBuilder(ctx, db, credentialDrainKey, pl.Instance); err != nil {
+				return err
+			}
+		}
+	}
 	if err = current.credentials(ctx, false); err != nil {
 		return err
 	}
+	// A credential handover overlaps one listener process generation per host,
+	// the same budget as an upgrade. Reserve it on the host's agent first.
+	for _, agent := range current.Plan.Placements {
+		if agent.Role != deploy.Agent {
+			continue
+		}
+		extra := deploy.Resources{}
+		for _, pl := range current.Plan.Placements {
+			if pl.Host == agent.Host && len(current.Plan.Release.Programs[pl.Role].Listeners) > 0 {
+				budget := current.Plan.Installation.Components[pl.Role].Resources
+				extra.CPUMillis = max(extra.CPUMillis, budget.CPUMillis)
+				extra.MemoryMiB = max(extra.MemoryMiB, budget.MemoryMiB)
+			}
+		}
+		if extra.MemoryMiB > 0 {
+			if err = current.reserveOverlap(ctx, db, agent, extra); err != nil {
+				return err
+			}
+		}
+	}
+	// A deferred restart leaves that replica on valid current credentials; it
+	// must not keep the remaining replicas from activating theirs.
+	var pending []error
 	for _, pl := range current.Plan.Placements {
-		if err = current.activateCredentials(ctx, pl); err != nil {
+		if err = current.activateCredentials(ctx, pl); errors.Is(err, errActivationPending) {
+			pending = append(pending, err)
+		} else if err != nil {
 			return err
 		}
 	}
 	if err = current.credentials(ctx, true); err != nil {
 		return err
 	}
+	// A timer can run after schedule admission but before the upgrade commits.
+	// It must not release the controller's larger transition reservation.
+	if recovery.VerifyFinishedRelease(ctx, db, current.Plan.Installation.ID, current.Plan.Release.ID) == nil {
+		if err = current.releaseOverlapReservations(ctx); err != nil {
+			return err
+		}
+	}
 	if len(offline) > 0 {
-		return fmt.Errorf("online credentials renewed; unavailable hosts require later inspection: %v", offline)
+		pending = append(pending, fmt.Errorf("unavailable hosts require later inspection: %v", offline))
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("online credentials renewed; %w", errors.Join(pending...))
 	}
 	return nil
 }

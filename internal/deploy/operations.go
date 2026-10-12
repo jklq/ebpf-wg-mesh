@@ -1,12 +1,29 @@
 package deploy
 
-import "fmt"
+import (
+	"fmt"
+	"slices"
+)
 
 // Actor sequences and the phase graph describe ordering; algorithms select
 // applicable hosts, membership changes and retirement actions.
 var runtimeActions = []string{"configure", "install"}
 var statelessRetirementActions = []string{"drain", "stop", "retire"}
 var databaseRetirementActions = []string{"database-remove", "retire"}
+
+// replicaActions is the actor sequence for one replica. A previously placed
+// builder drains its queue around the restart; a replica with stable listeners
+// hands them to the new process and then drains the old one.
+func replicaActions(p Plan, mode workflowMode, pl Placement) []string {
+	actions := runtimeActions
+	if len(p.Release.Programs[pl.Role].Listeners) > 0 {
+		actions = []string{"configure", "install", "finish"}
+	}
+	if pl.Role == Builder && mode == upgradeMode && p.previouslyPlaced(pl) {
+		actions = []string{"builder-drain", "configure", "install", "builder-resume"}
+	}
+	return actions
+}
 
 func (p *Plan) buildOperations(state State, inv Inventory) error {
 	groups := map[string][]Operation{}
@@ -23,6 +40,9 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		selected[pl.Slot()] = pl
 	}
 	for _, h := range p.Installation.Hosts {
+		if upgrade && inv.Hosts[h.ID].Online {
+			add("stage", "upgrade-preflight", h.ID, "", nil)
+		}
 		if h.Purchase != nil && state.Bindings[h.ID].ServerID == "" && inv.Hosts[h.ID].ServerID == "" {
 			if p.Automatic {
 				p.Unmet = append(p.Unmet, Requirement{"purchase-requires-plan", h.ID, "infrastructure purchases require an applied plan"})
@@ -48,8 +68,18 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		add("prior-tools", "stage-tools", h.ID, "previous", nil)
 	}
 	if upgrade {
-		if len(inv.Database.Members) < 3 || !inv.Database.Replicated || len(inv.Database.Live) != len(inv.Database.Members) {
-			return fmt.Errorf("rolling release requires at least three healthy database members with verified replication; expand or repair the cluster before applying an upgrade")
+		// CockroachDB rolls one node at a time on its own quorum rules, so a
+		// binary upgrade starts with a live majority; each restart then has
+		// to preserve a live voting quorum for every range (checked natively
+		// before the restart), and the next node waits for full convergence.
+		// Demanding a perfectly converged, all-live cluster here would refuse
+		// upgrades on replicated installations with one member down or ranges
+		// still replicating, which CockroachDB itself tolerates.
+		// Unchanged database nodes keep running, so only a database runtime
+		// change needs a cluster that can survive one restarting node.
+		restarts := slices.ContainsFunc(p.Placements, func(pl Placement) bool { return pl.Role == Database && !preserveRuntime(*p, pl) })
+		if restarts && (len(inv.Database.Members) < 3 || len(inv.Database.Live)*2 <= len(inv.Database.Members)) {
+			return fmt.Errorf("rolling release requires at least three database members with a live majority; expand or repair the cluster before applying an upgrade")
 		}
 		if err := p.validateRollingUpgrade(); err != nil {
 			return err
@@ -68,6 +98,9 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		}
 	}
 	for _, pl := range p.Placements {
+		if upgrade && preserveRuntime(*p, pl) {
+			continue
+		}
 		if p.Automatic && (pl.Role == Database || pl.Role == Builder || (pl.Role == Agent && !inv.Hosts[pl.Host].Online)) {
 			continue
 		}
@@ -76,11 +109,11 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		if pl.Role == Database {
 			phase = "database-runtime"
 		}
-		builderUpgrade := upgrade && pl.Role == Builder && p.previouslyPlaced(pl)
-		if builderUpgrade {
-			add(phase, "hook", p.AdministrationHost, "builder-drain", &pl)
-		}
-		for _, action := range runtimeActions {
+		for _, action := range replicaActions(*p, mode, pl) {
+			if action == "builder-drain" || action == "builder-resume" {
+				add(phase, "hook", p.AdministrationHost, action, &pl)
+				continue
+			}
 			kind := action
 			if action == "install" && upgrade && pl.Role == Database {
 				for _, old := range state.Placements {
@@ -97,9 +130,6 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 				hook = "database-upgrade"
 			}
 			add(phase, kind, pl.Host, hook, &pl)
-		}
-		if builderUpgrade {
-			add(phase, "hook", p.AdministrationHost, "builder-resume", &pl)
 		}
 	}
 	for _, old := range append(append([]Placement{}, state.Placements...), state.Retained...) {

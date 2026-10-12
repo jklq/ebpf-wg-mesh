@@ -421,6 +421,11 @@ func (r *Runner) finalize(ctx context.Context, verify bool) error {
 		if err := r.admitReservations(ctx); err != nil {
 			return err
 		}
+		if r.Plan.Upgrade != nil {
+			if err := r.releaseOverlapReservations(ctx); err != nil {
+				return err
+			}
+		}
 		_, err := r.nativeRecovery(ctx, "finalize")
 		return err
 	}

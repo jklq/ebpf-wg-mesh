@@ -43,6 +43,9 @@ type Config struct {
 	RegistryService     string                      `json:"registryService"`
 	SourceConfig        string                      `json:"sourceConfig,omitempty"`
 	MonitorTokenFile    string                      `json:"monitorTokenFile,omitempty"`
+	// IngressHealthListen is Envoy's load-balancer health check listener. Stop
+	// preparation fails it before draining, so balancers withdraw the ingress.
+	IngressHealthListen string `json:"ingressHealthListen,omitempty"`
 }
 type DatabaseConfig struct {
 	Binary               string `json:"binary"`
@@ -203,7 +206,7 @@ func (r *Runner) defaults() {
 	}
 }
 func cfgDir(p deploy.Plan, pl deploy.Placement) string {
-	return "/etc/ebpf-wg-mesh/" + p.Installation.ID + "/" + pl.Instance
+	return deploy.ConfigurationDir(p, pl)
 }
 func dataDir(p deploy.Plan, pl deploy.Placement) string {
 	return "/var/lib/ebpf-wg-mesh/" + p.Installation.ID + "/" + pl.Instance

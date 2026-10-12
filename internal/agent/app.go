@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -185,6 +186,15 @@ func (a *App) runConnections(ctx context.Context) error {
 	for {
 		err := a.runSession(ctx)
 		stable := !a.sessionEstablishedAt.IsZero() && time.Since(a.sessionEstablishedAt) >= stableSessionDuration
+		if after, paced := guidedReconnect(err); paced && ctx.Err() == nil {
+			// The replica ended this session on purpose and paced the fleet.
+			slog.Info("control plane paced reconnection", "agent_id", a.cfg.Node.ID, "error", err, "retry_in", after)
+			delay = initialReconnectDelay
+			if !waitReconnect(ctx, after) {
+				return nil
+			}
+			continue
+		}
 		switch {
 		case err == nil:
 			return nil
@@ -205,16 +215,33 @@ func (a *App) runConnections(ctx context.Context) error {
 			slog.Warn("agent session ended; reconnecting", "agent_id", a.cfg.Node.ID, "error", err, "retry_in", delay)
 		}
 
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if !waitReconnect(ctx, jitteredReconnectDelay(delay)) {
 			return nil
-		case <-timer.C:
 		}
 
 		delay = nextReconnectDelay(delay)
 	}
+}
+
+func waitReconnect(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// jitteredReconnectDelay waits between half and all of the backoff, so agents
+// that lost the same replica do not retry in lockstep.
+func jitteredReconnectDelay(delay time.Duration) time.Duration {
+	half := delay / 2
+	if half <= 0 {
+		return delay
+	}
+	return half + rand.N(half+1)
 }
 
 // nextReconnectDelay advances the reconnect backoff after a failed session. The
@@ -280,6 +307,9 @@ func (a *App) runSession(ctx context.Context) error {
 		previousPin := a.controlPlaneAddr
 		err = a.replicaAttemptError(address, err)
 		if errors.Is(err, errRedirectOwner) || errors.Is(err, errRotateSession) {
+			return err
+		}
+		if _, paced := guidedReconnect(err); paced {
 			return err
 		}
 		if !shouldWalkNextReplica(err) {
