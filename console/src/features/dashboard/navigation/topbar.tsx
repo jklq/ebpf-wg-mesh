@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { Link } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	History,
@@ -28,21 +29,27 @@ export function Topbar({
 }) {
 	return (
 		<div {...stylex.props(styles.toolbar)}>
-			<a href="/dashboard" {...stylex.props(styles.brand)} title="Projects">
+			<Link
+				to="/dashboard"
+				search={{ workspace: state.workspace?.id }}
+				{...stylex.props(styles.brand)}
+				title="Projects"
+			>
 				<Zap size={15} {...stylex.props(styles.brandIcon)} />
 				<span {...stylex.props(styles.brandName)}>mesh</span>
-			</a>
+			</Link>
 
 			{state.project && (
 				<div {...stylex.props(styles.breadcrumb)}>
 					{state.workspace && (
 						<>
-							<a
-								href={`/dashboard?workspace=${encodeURIComponent(state.workspace.id)}`}
+							<Link
+								to="/dashboard"
+								search={{ workspace: state.workspace.id }}
 								{...stylex.props(styles.workspaceLink)}
 							>
 								{state.workspace.name}
-							</a>
+							</Link>
 							<span {...stylex.props(styles.separator)}>/</span>
 						</>
 					)}
@@ -77,8 +84,8 @@ export function Topbar({
 			<div {...stylex.props(styles.spacer)} />
 
 			{!state.project && (
-				<a
-					href="/deleted"
+				<Link
+					to="/deleted"
 					{...stylex.props([
 						buttonStyles.base,
 						buttonStyles.ghost,
@@ -87,12 +94,12 @@ export function Topbar({
 					title="Recently deleted"
 				>
 					<History size={13} /> Recently deleted
-				</a>
+				</Link>
 			)}
 
 			{state.canManageFleet && (
-				<a
-					href="/fleet"
+				<Link
+					to="/fleet"
 					{...stylex.props([
 						buttonStyles.base,
 						buttonStyles.ghost,
@@ -101,7 +108,7 @@ export function Topbar({
 					title="Agent fleet"
 				>
 					<Server size={13} /> Fleet
-				</a>
+				</Link>
 			)}
 
 			<Button type="button" variant="ghost" onClick={onRefresh}>

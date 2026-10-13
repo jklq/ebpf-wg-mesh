@@ -198,7 +198,7 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, offer BuilderOffer) (Buil
 		if globalRunning >= scheduler.MaxConcurrentGlobal {
 			return nil
 		}
-		candidates, err := listClaimCandidatesTx(ctx, tx, 20)
+		candidates, err := listClaimCandidatesTx(ctx, tx, 20, scheduler.MaxConcurrentPerProject)
 		if err != nil {
 			return err
 		}
@@ -220,11 +220,19 @@ func (d *Delivery) ClaimNextBuild(ctx context.Context, offer BuilderOffer) (Buil
 	return rec, nil
 }
 
-func listClaimCandidatesTx(ctx context.Context, tx *sql.Tx, limit int) ([]string, error) {
+func listClaimCandidatesTx(ctx context.Context, tx *sql.Tx, limit, maxConcurrentPerProject int) ([]string, error) {
 	rows, err := tx.QueryContext(ctx,
 		`SELECT b.id
 		   FROM build_runs b
+		   JOIN services candidate_service ON candidate_service.id = b.service_id
+		   JOIN environments candidate_environment ON candidate_environment.id = candidate_service.environment_id
 		  WHERE b.state = $1
+		    AND (
+		        SELECT count(*) FROM build_runs running
+		        JOIN services running_service ON running_service.id = running.service_id
+		        JOIN environments running_environment ON running_environment.id = running_service.environment_id
+		        WHERE running.state = $3 AND running_environment.project_id = candidate_environment.project_id
+		    ) < $4
 		    AND NOT EXISTS (
 		        SELECT 1 FROM services s
 		         JOIN environments e ON e.id = s.environment_id
@@ -234,7 +242,7 @@ func listClaimCandidatesTx(ctx context.Context, tx *sql.Tx, limit int) ([]string
 		    )
 		  ORDER BY b.queued_at ASC, b.id ASC
 		  LIMIT $2`,
-		BuildStateQueued, limit,
+		BuildStateQueued, limit, BuildStateRunning, maxConcurrentPerProject,
 	)
 	if err != nil {
 		return nil, err

@@ -1,5 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
-import { useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import { History, Settings, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { DeleteResourceDialog } from "#/components/delete-resource-dialog";
@@ -53,6 +53,7 @@ export function ProjectSettingsPage({
 			setPendingDelete(undefined);
 			if (pendingDelete.kind === "project") {
 				await router.navigate({ to: "/deleted" });
+				await router.invalidate();
 				return;
 			}
 			await router.invalidate();
@@ -69,8 +70,8 @@ export function ProjectSettingsPage({
 			icon={<Settings size={15} />}
 			back={{ href: `/projects/${project.id}`, label: project.name }}
 			actions={
-				<a
-					href="/deleted"
+				<Link
+					to="/deleted"
 					{...stylex.props([
 						buttonStyles.base,
 						buttonStyles.ghost,
@@ -78,7 +79,7 @@ export function ProjectSettingsPage({
 					])}
 				>
 					<History size={13} /> Recently deleted
-				</a>
+				</Link>
 			}
 		>
 			<div>

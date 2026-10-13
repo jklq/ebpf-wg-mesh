@@ -1,27 +1,12 @@
 import * as stylex from "@stylexjs/stylex";
+import { SkeletonChip, SkeletonShimmer } from "#/components/ui/skeleton";
 import { NODE_H, NODE_W } from "#/features/dashboard/canvas/layout";
 import { colors, shape, sizes, space } from "#/styles/tokens.stylex";
 
-const skeletonShimmer = stylex.keyframes({
-	from: { transform: "translateX(-120%)" },
-	to: { transform: "translateX(120%)" },
-});
+export { SkeletonChip, SkeletonShimmer } from "#/components/ui/skeleton";
 
 const styles = stylex.create({
 	dimensions: (width: number, height: number) => ({ width, height }),
-	shimmer: {
-		position: "absolute",
-		inset: "0rem",
-		animation: `${skeletonShimmer} 1.25s ease-in-out infinite`,
-		backgroundImage:
-			"linear-gradient(to right in oklab, transparent 0%, rgba(212,205,197,0.08) 50%, transparent 100%)",
-	},
-	chip: {
-		position: "relative",
-		display: "inline-block",
-		overflow: "hidden",
-		backgroundColor: "rgba(80,76,71,0.42)",
-	},
 	page: {
 		display: "flex",
 		height: "100dvh",
@@ -167,20 +152,6 @@ const styles = stylex.create({
 	},
 	commitChip: { height: "0.625rem", width: "42px" },
 });
-export function SkeletonShimmer() {
-	return <span {...stylex.props(styles.shimmer)} />;
-}
-export function SkeletonChip({
-	styles: overrides,
-}: {
-	styles?: stylex.StyleXStyles;
-}) {
-	return (
-		<span {...stylex.props([styles.chip, overrides])}>
-			<SkeletonShimmer />
-		</span>
-	);
-}
 export function DashboardCanvasSkeleton({
 	showTopbar = false,
 }: {

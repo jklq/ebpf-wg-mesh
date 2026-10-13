@@ -23,6 +23,7 @@ export function CreateWorkspaceDialog({ onClose }: { onClose: () => void }) {
 				to: "/dashboard",
 				search: { workspace: workspace.id },
 			});
+			await router.invalidate();
 		} catch (cause) {
 			setError(formatError(cause));
 			setBusy(false);

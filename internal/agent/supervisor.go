@@ -20,10 +20,13 @@ type workloadSupervisor struct {
 	store               *localStateStore
 	applyNodeConfig     func(context.Context, *agentv1.AssignedNodeConfig) error
 
-	reconcileMu sync.Mutex
-	trigger     chan struct{}
-	reports     chan struct{}
-	ready       atomic.Bool
+	reconcileMu     sync.Mutex
+	cancelMu        sync.Mutex
+	cancelReconcile context.CancelFunc
+	updatesWaiting  int
+	trigger         chan struct{}
+	reports         chan struct{}
+	ready           atomic.Bool
 }
 
 func newWorkloadSupervisor(agentID string, runtime Runtime, store *localStateStore, applyNodeConfig func(context.Context, *agentv1.AssignedNodeConfig) error) *workloadSupervisor {
@@ -54,13 +57,16 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 		s.ready.Store(true)
 	}
 
-	if desired, err := s.store.desiredState(); err != nil {
+	desired, err := s.store.desiredState()
+	if err != nil {
 		return err
-	} else if desired != nil {
-		s.reconcile(ctx, "startup-restore")
 	}
-
-	go s.run(ctx)
+	go func() {
+		if desired != nil {
+			s.reconcile(ctx, "startup-restore")
+		}
+		s.run(ctx)
+	}()
 	if source, ok := s.runtime.(RuntimeEventSource); ok && !s.recoveryPaused {
 		events, eventErrors := source.ReconcileEvents(ctx)
 		go runtimeEventReconcileLoop(ctx, events, eventErrors, func() {
@@ -95,7 +101,7 @@ func (s *workloadSupervisor) AcceptDesired(clusterID, sessionID string, state *a
 	if s.recoveryPaused && !s.recoveryCheckpoints {
 		return false, errors.New("host administration has not authorized recovery checkpoints")
 	}
-	s.reconcileMu.Lock()
+	s.lockUpdate()
 	defer s.reconcileMu.Unlock()
 	changed, err := s.store.acceptDesired(clusterID, sessionID, state)
 	if err != nil {
@@ -113,7 +119,7 @@ func (s *workloadSupervisor) AcceptDiff(clusterID, sessionID string, diff *agent
 	if s.recoveryPaused {
 		return false, errors.New("incremental updates remain paused during recovery")
 	}
-	s.reconcileMu.Lock()
+	s.lockUpdate()
 	defer s.reconcileMu.Unlock()
 	changed, err := s.store.acceptAllocationDiff(clusterID, sessionID, diff)
 	if err != nil {
@@ -131,7 +137,7 @@ func (s *workloadSupervisor) AcceptNodeConfig(clusterID, sessionID string, updat
 	if s.recoveryPaused && !s.recoveryCheckpoints {
 		return false, errors.New("host administration has not authorized recovery checkpoints")
 	}
-	s.reconcileMu.Lock()
+	s.lockUpdate()
 	defer s.reconcileMu.Unlock()
 	changed, err := s.store.acceptNodeConfigUpdate(clusterID, sessionID, update)
 	if err != nil {
@@ -149,7 +155,7 @@ func (s *workloadSupervisor) AcceptCredentials(clusterID, sessionID string, cred
 	if s.recoveryPaused && !s.recoveryCheckpoints {
 		return false, errors.New("host administration has not authorized recovery checkpoints")
 	}
-	s.reconcileMu.Lock()
+	s.lockUpdate()
 	defer s.reconcileMu.Unlock()
 	return s.store.acceptPullCredentials(clusterID, sessionID, creds)
 }
@@ -158,8 +164,8 @@ func (s *workloadSupervisor) AcceptReplicas(clusterID, sessionID string, replica
 	if s.recoveryPaused && !s.recoveryCheckpoints {
 		return false, errors.New("host administration has not authorized recovery checkpoints")
 	}
-	s.reconcileMu.Lock()
-	defer s.reconcileMu.Unlock()
+	// Discovery addresses do not change runtime desired state or report
+	// generations. Persist them independently so churn cannot interrupt pulls.
 	return s.store.acceptReplicaEndpoints(clusterID, sessionID, replicas)
 }
 
@@ -170,9 +176,24 @@ func (s *workloadSupervisor) RestartManagedDashboard(ctx context.Context, state 
 	if !ok {
 		return errors.New("runtime cannot restart the managed dashboard after certificate renewal")
 	}
-	s.reconcileMu.Lock()
+	s.lockUpdate()
 	defer s.reconcileMu.Unlock()
 	return restarter.RestartManagedDashboard(ctx, state)
+}
+
+// Updates interrupt slow runtime work before waiting for its lock. Tracking
+// waiting updates also closes the race before a reconciliation registers its cancel.
+func (s *workloadSupervisor) lockUpdate() {
+	s.cancelMu.Lock()
+	s.updatesWaiting++
+	if s.cancelReconcile != nil {
+		s.cancelReconcile()
+	}
+	s.cancelMu.Unlock()
+	s.reconcileMu.Lock()
+	s.cancelMu.Lock()
+	s.updatesWaiting--
+	s.cancelMu.Unlock()
 }
 
 func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
@@ -181,6 +202,20 @@ func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
 	}
 	s.reconcileMu.Lock()
 	defer s.reconcileMu.Unlock()
+	s.cancelMu.Lock()
+	if s.updatesWaiting > 0 {
+		s.cancelMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancelReconcile = cancel
+	s.cancelMu.Unlock()
+	defer func() {
+		s.cancelMu.Lock()
+		s.cancelReconcile = nil
+		cancel()
+		s.cancelMu.Unlock()
+	}()
 	desired, err := s.store.desiredState()
 	if err != nil {
 		slog.Error("load desired state for reconciliation", "agent_id", s.agentID, "source", source, "error", err)
@@ -200,6 +235,9 @@ func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
 	}
 	allowCleanup := summary.Initialization == initializationReady && !s.recoveryPaused
 	report, err := s.runtime.ReconcileWithCleanup(ctx, desired, allowCleanup)
+	if ctx.Err() != nil {
+		return
+	}
 	if err != nil {
 		slog.Error("runtime reconciliation failed", "agent_id", s.agentID, "cursor", desired.GetReconciliationCursor(), "source", source, "error", err)
 		return

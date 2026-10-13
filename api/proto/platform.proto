@@ -696,6 +696,8 @@ message ListProjectsRequest {
   bool include_deleted = 1;
   // Empty lists projects across every workspace the caller belongs to.
   string workspace_id = 2;
+  // Include lightweight environment and service summaries for the overview.
+  bool include_summaries = 3;
 }
 
 message ListWorkspacesRequest {}
@@ -776,6 +778,25 @@ message RemoveWorkspaceMemberRequest {
 
 message ListProjectsResponse {
   repeated Project projects = 1;
+  repeated ProjectSummary summaries = 2;
+}
+
+message ProjectSummary {
+  Project project = 1;
+  int32 environment_count = 2;
+  ProjectEnvironmentSummary landing_environment = 3;
+  repeated ProjectServiceSummary services = 4;
+}
+
+message ProjectEnvironmentSummary {
+  string id = 1;
+  string name = 2;
+}
+
+message ProjectServiceSummary {
+  string id = 1;
+  string name = 2;
+  bool online = 3;
 }
 
 message GetProjectRequest {

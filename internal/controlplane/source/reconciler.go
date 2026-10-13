@@ -58,7 +58,6 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 	}
 	const maxRetryDelay = 30 * time.Second
 	retryDelay := 250 * time.Millisecond
-	idleDelay := time.Second
 	for {
 		processed, err := r.ProcessNext(ctx)
 		if err != nil {
@@ -77,15 +76,13 @@ func (r *GitHubReconciler) Run(ctx context.Context) error {
 		}
 		retryDelay = 250 * time.Millisecond
 		if processed {
-			idleDelay = time.Second
 			continue
 		}
-		if !r.coordinator.waitForWork(ctx, jitter(idleDelay)) {
+		// EnqueueTx signals before its caller commits. A worker can consume
+		// that wakeup before the work is visible, so keep the fallback poll
+		// short rather than backing off while a release waits for its build.
+		if !r.coordinator.waitForWork(ctx, time.Second) {
 			return nil
-		}
-		idleDelay *= 2
-		if idleDelay > maxRetryDelay {
-			idleDelay = maxRetryDelay
 		}
 	}
 }

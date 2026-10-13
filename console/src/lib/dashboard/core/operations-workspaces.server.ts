@@ -86,52 +86,33 @@ export async function loadWorkspaceOverview(
 	projects: Array<DashboardProjectSummary>;
 }> {
 	const shell = await loadWorkspaceShell(runtime, requestedWorkspaceId);
-	const projects = await runtime.platform
-		.call(PlatformService.method.listProjects, shell.user, {
+	const response = await runtime.platform.call(
+		PlatformService.method.listProjects,
+		shell.user,
+		{
 			workspaceId: shell.workspace.id,
-		})
-		.then((response) => response.projects ?? []);
-	const summaries = await Promise.all(
-		projects.map((project) => summarizeProject(runtime, shell, project)),
+			includeSummaries: true,
+		},
+	);
+	const summaries: Array<DashboardProjectSummary> = (
+		response.summaries ?? []
+	).flatMap((summary) =>
+		summary.project
+			? [
+					{
+						project: summary.project,
+						environmentCount: summary.environmentCount,
+						landingEnvironment: summary.landingEnvironment,
+						services: summary.services ?? [],
+					},
+				]
+			: [],
 	);
 	return {
 		shell,
 		projects: summaries.sort((a, b) =>
 			(b.project.createdAt ?? "").localeCompare(a.project.createdAt ?? ""),
 		),
-	};
-}
-
-async function summarizeProject(
-	runtime: DashboardRuntime,
-	shell: DashboardWorkspaceShell,
-	project: DashboardProject,
-): Promise<DashboardProjectSummary> {
-	const environments = await runtime.platform
-		.call(PlatformService.method.listEnvironments, shell.user, {
-			projectId: project.id,
-		})
-		.then((response) => response.environments ?? []);
-	const landing =
-		environments.find((entry) => entry.isProduction) ?? environments[0];
-	const services = landing
-		? await runtime.platform
-				.call(PlatformService.method.listServices, shell.user, {
-					environmentId: landing.id,
-				})
-				.then((response) => response.services ?? [])
-		: [];
-	return {
-		project,
-		environmentCount: environments.length,
-		landingEnvironment: landing
-			? { id: landing.id, name: landing.name }
-			: undefined,
-		services: services.map((service) => ({
-			id: service.id,
-			name: service.name,
-			online: (service.readyReplicaCount ?? 0) > 0,
-		})),
 	};
 }
 

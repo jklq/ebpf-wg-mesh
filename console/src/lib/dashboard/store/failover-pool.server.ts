@@ -39,8 +39,9 @@ export class FailoverPool extends Pool {
 	}
 	private async connectCandidate(): Promise<PoolClient> {
 		let failure: unknown;
+		const start = this.preferred;
 		for (let offset = 0; offset < this.candidates.length; offset++) {
-			const index = (this.preferred + offset) % this.candidates.length;
+			const index = (start + offset) % this.candidates.length;
 			try {
 				const client = await this.candidates[index].connect();
 				this.preferred = index;

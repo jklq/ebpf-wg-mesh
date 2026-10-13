@@ -213,7 +213,13 @@ func (r *ContainerdRuntime) ReconcileWithCleanup(ctx context.Context, state *age
 		}
 	}
 	for _, svc := range state.GetServices() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		cond := r.reconcileService(ctx, svc, pinned)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		report.Services = append(report.Services, cond)
 	}
 	return report, nil
@@ -470,6 +476,9 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 	livenessSvc := protoCloneDesiredWithHealth(svc, check)
 	ipv4Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv4, livenessSvc)
 	ipv6Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv6, livenessSvc)
+	if ctx.Err() != nil {
+		return "", false
+	}
 	if ipv4Probe.healthy || ipv6Probe.healthy {
 		return "", false
 	}

@@ -14,7 +14,6 @@ import {
 	roleLabel,
 	workspaceRoles,
 } from "#/features/workspace/roles";
-import { WorkspaceShell } from "#/features/workspace/workspace-shell";
 import type {
 	DashboardWorkspaceInvitation,
 	DashboardWorkspaceMember,
@@ -89,7 +88,7 @@ export function PeoplePage({
 	};
 
 	return (
-		<WorkspaceShell shell={shell} section="people">
+		<>
 			<WorkspacePageHeader
 				title="People"
 				lede={`${members.length} ${members.length === 1 ? "person has" : "people have"} access to ${workspace.name}`}
@@ -251,7 +250,7 @@ export function PeoplePage({
 			{creatingWorkspace && (
 				<CreateWorkspaceDialog onClose={() => setCreatingWorkspace(false)} />
 			)}
-		</WorkspaceShell>
+		</>
 	);
 }
 

@@ -11,6 +11,45 @@ const secret = "console-platform-assertion-secret-over-32-bytes";
 const user = { id: "user-1", email: "user@example.com" };
 
 describe("authenticated generated platform adapter", () => {
+	it("cancels the backend long poll when its caller disconnects", async () => {
+		const request = new AbortController();
+		let started!: () => void;
+		const entered = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		let backendCancelled = false;
+		const platform = createAuthenticatedPlatform(
+			createRouterTransport((router) =>
+				router.service(P.PlatformService, {
+					getServiceStatus(_request, context) {
+						started();
+						return new Promise<never>((_resolve, reject) => {
+							context.signal.addEventListener(
+								"abort",
+								() => {
+									backendCancelled = true;
+									reject(context.signal.reason);
+								},
+								{ once: true },
+							);
+						});
+					},
+				}),
+			),
+			secret,
+		);
+		const pending = platform.call(
+			P.PlatformService.method.getServiceStatus,
+			user,
+			{ serviceId: "service-1", waitIndex: "1", waitTimeoutSeconds: 300 },
+			{ signal: request.signal },
+		);
+		await entered;
+		request.abort();
+		await expect(pending).rejects.toMatchObject({ grpcCode: Code.Canceled });
+		expect(backendCancelled).toBe(true);
+	});
+
 	it("authenticates the exact generated request and preserves int64s, timestamps and selected oneofs", async () => {
 		const updatedAt = new Date("2026-09-30T12:00:00Z");
 		const controlPlane = createRouterTransport((router) =>

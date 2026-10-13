@@ -53,7 +53,8 @@ const (
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 	diskEnforcementInterval = 15 * time.Second
-	// reportRepublishQuietPeriod defers report publication to stream-quiet points.
+	// reportRepublishQuietPeriod coalesces report updates without postponing
+	// publication indefinitely while updates continue to arrive.
 	reportRepublishQuietPeriod = 250 * time.Millisecond
 )
 
@@ -568,9 +569,14 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 	}
 	reportRepublish := make(chan struct{}, 1)
 	var republishTimer *time.Timer
-	scheduleReportRepublish := func() {
+	defer func() {
 		if republishTimer != nil {
 			republishTimer.Stop()
+		}
+	}()
+	scheduleReportRepublish := func() {
+		if republishTimer != nil {
+			return
 		}
 		republishTimer = time.AfterFunc(reportRepublishQuietPeriod, func() {
 			select {
@@ -618,6 +624,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 				slog.Warn("refresh managed dashboard identity", "agent_id", a.cfg.Node.ID, "error", err)
 			}
 		case <-reportRepublish:
+			republishTimer = nil
 			if handshake || !authorityConfirmed {
 				continue
 			}

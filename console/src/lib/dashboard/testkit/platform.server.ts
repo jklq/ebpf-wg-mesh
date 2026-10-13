@@ -228,13 +228,46 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					user: user(ctx),
 					...toPlatformJson(P.ListProjectsRequestSchema, request),
 				});
+				const projects = platform.projects.filter(
+					(entry) =>
+						(request.includeDeleted || !entry.deletion) &&
+						(!request.workspaceId || entry.workspaceId === request.workspaceId),
+				);
 				return fromPlatformJson(P.ListProjectsResponseSchema, {
-					projects: platform.projects.filter(
-						(entry) =>
-							(request.includeDeleted || !entry.deletion) &&
-							(!request.workspaceId ||
-								entry.workspaceId === request.workspaceId),
-					),
+					projects,
+					summaries: request.includeSummaries
+						? projects.map((project) => {
+								const environments = platform.environments.filter(
+									(environment) =>
+										environment.projectId === project.id &&
+										!environment.deletion,
+								);
+								const landing =
+									environments.find(
+										(environment) => environment.isProduction,
+									) ?? environments[0];
+								return {
+									project,
+									environmentCount: environments.length,
+									landingEnvironment: landing
+										? { id: landing.id, name: landing.name }
+										: undefined,
+									services: landing
+										? platform.services
+												.filter(
+													(service) =>
+														service.environmentId === landing.id &&
+														!service.deletion,
+												)
+												.map((service) => ({
+													id: service.id,
+													name: service.name,
+													online: (service.readyReplicaCount ?? 0) > 0,
+												}))
+										: [],
+								};
+							})
+						: [],
 				});
 			},
 			getProject(request) {
