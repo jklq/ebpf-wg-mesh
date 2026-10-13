@@ -19,7 +19,7 @@ export async function loadProjectSettingsFromSession(
 	projectId: string,
 ): Promise<DashboardProjectSettings> {
 	const session = await requireSession(runtime);
-	const [project, environments] = await Promise.all([
+	const [project, environments, workspaces] = await Promise.all([
 		runtime.platform.call(PlatformService.method.getProject, session.user, {
 			projectId: projectId,
 		}),
@@ -28,9 +28,13 @@ export async function loadProjectSettingsFromSession(
 				projectId: projectId,
 			})
 			.then((response) => response.environments ?? []),
+		runtime.platform
+			.call(PlatformService.method.listWorkspaces, session.user, {})
+			.then((response) => response.workspaces ?? []),
 	]);
 	return {
 		project,
+		workspaces,
 		environments: await Promise.all(
 			sortEnvironments(environments).map(async (environment) => ({
 				environment,

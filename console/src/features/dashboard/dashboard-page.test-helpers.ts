@@ -123,7 +123,6 @@ export function emptyState(): DashboardHomeState {
 		services: [],
 		servicesRevision: "1",
 		selectedServiceId: null,
-		environment: undefined,
 		githubAccount: {
 			providerSubject: "1",
 			login: "octocat",

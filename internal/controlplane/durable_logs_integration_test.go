@@ -88,7 +88,7 @@ func TestDurableLogsRetryDedupTruncationAndPagination(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("projects: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestDurableLogsProducerAndIngestGapsSurfaceInReads(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("projects: %v", err)
 	}
@@ -314,11 +314,11 @@ func TestDurableLogsRetentionAndSafeDeletion(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projectsA) != 1 {
 		t.Fatalf("projects A: %v", err)
 	}
-	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), false)
+	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), "", false)
 	if err != nil || len(projectsB) != 1 {
 		t.Fatalf("projects B: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestDurableLogsSurviveClickHouseOutage(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("projects: %v", err)
 	}
@@ -584,11 +584,11 @@ func TestDurableLogGapsAttributeToAllocationOwner(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projectsA) != 1 {
 		t.Fatalf("projects A: %v", err)
 	}
-	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), false)
+	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), "", false)
 	if err != nil || len(projectsB) != 1 {
 		t.Fatalf("projects B: %v", err)
 	}
@@ -728,7 +728,7 @@ func TestDurableLogsGapPagination(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("projects: %v", err)
 	}

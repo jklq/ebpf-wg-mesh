@@ -411,7 +411,7 @@ func seedReplicaFixture(t *testing.T, store *persistence, ctx context.Context, a
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -453,7 +453,7 @@ func TestDesiredStateForAgentIncludesVolumeBoundService(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -496,7 +496,7 @@ func TestCreateScheduledVolumeRejectsDuplicateName(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("user-1"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("user-1"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -520,7 +520,7 @@ func TestDeleteVolumeRejectsReferencedService(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -555,7 +555,7 @@ func TestConcurrentDeleteVolumeAndCreateServiceStayConsistent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

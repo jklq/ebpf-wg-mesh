@@ -1,6 +1,9 @@
 // Package authz is the single owner of user authorization in the control plane. It
-// mints unforgeable scope values proving a dashboard user may access a project,
-// environment, service, volume, domain binding, or the operator fleet surface.
+// mints unforgeable scope values proving a dashboard user may access a workspace,
+// project, environment, service, volume, domain binding, or the operator fleet surface.
+//
+// Workspace membership is the only user grant: a member's workspace role applies to
+// every project in that workspace.
 //
 // The entry pattern is: request-adjacent methods take an authz.User and mint the scope
 // they need first; everything downstream takes the scope and derives resource IDs from it
@@ -25,28 +28,42 @@ import (
 type Access int
 
 const (
-	// Read allows viewer, editor, and owner roles.
+	// Read allows viewer, member, and admin roles.
 	Read Access = iota + 1
-	// Write allows editor and owner roles.
+	// Write allows member and admin roles.
 	Write
+	// Manage allows the admin role: workspace settings, members, and invitations.
+	Manage
 )
 
-// Role is a project membership role.
+// Role is a workspace membership role.
 type Role string
 
 const (
-	RoleOwner  Role = "owner"
-	RoleEditor Role = "editor"
+	RoleAdmin  Role = "admin"
+	RoleMember Role = "member"
 	RoleViewer Role = "viewer"
 )
+
+// ParseRole validates a stored or requested role name.
+func ParseRole(value string) (Role, error) {
+	switch role := Role(value); role {
+	case RoleAdmin, RoleMember, RoleViewer:
+		return role, nil
+	default:
+		return "", fmt.Errorf("authz: unknown role %q", value)
+	}
+}
 
 // Allows reports whether the role satisfies the required access.
 func (r Role) Allows(need Access) bool {
 	switch need {
 	case Read:
-		return r == RoleOwner || r == RoleEditor || r == RoleViewer
+		return r == RoleAdmin || r == RoleMember || r == RoleViewer
 	case Write:
-		return r == RoleOwner || r == RoleEditor
+		return r == RoleAdmin || r == RoleMember
+	case Manage:
+		return r == RoleAdmin
 	default:
 		return false
 	}
@@ -85,7 +102,22 @@ func (o Operator) UserID() string { return o.user.id }
 
 func (o Operator) User() User { return o.user }
 
-// Project proves membership in a user project with at least the minted access.
+// Workspace proves membership in a workspace with at least the minted access.
+type Workspace struct {
+	user User
+	id   string
+	role Role
+}
+
+func (w Workspace) ID() string { return w.id }
+
+func (w Workspace) UserID() string { return w.user.id }
+
+func (w Workspace) User() User { return w.user }
+
+func (w Workspace) Role() Role { return w.role }
+
+// Project proves workspace membership for a user project with at least the minted access.
 type Project struct {
 	user User
 	id   string
@@ -198,7 +230,7 @@ func NewAuthorizer(q Querier) *Authorizer {
 	return &Authorizer{q: q}
 }
 
-func validNeed(need Access) bool { return need == Read || need == Write }
+func validNeed(need Access) bool { return need == Read || need == Write || need == Manage }
 
 // check validates the Authorize inputs that must never reach SQL: an empty user ID, and
 // an invalid need (a caller bug that Allows would otherwise hide as a denial).
@@ -227,6 +259,26 @@ func (a *Authorizer) AuthorizeOperator(ctx context.Context, user User) (Operator
 	return Operator{user: user}, nil
 }
 
+// AuthorizeWorkspace proves user holds at least need access on a workspace.
+func (a *Authorizer) AuthorizeWorkspace(ctx context.Context, user User, workspaceID string, need Access) (Workspace, error) {
+	if err := check(user, need); err != nil {
+		return Workspace{}, err
+	}
+	var role Role
+	if err := a.q.QueryRowContext(ctx, `SELECT role FROM workspace_memberships
+		 WHERE workspace_id = $1 AND user_id = $2`,
+		workspaceID, user.id).Scan(&role); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Workspace{}, deny("workspace")
+		}
+		return Workspace{}, err
+	}
+	if !role.Allows(need) {
+		return Workspace{}, deny("workspace")
+	}
+	return Workspace{user: user, id: workspaceID, role: role}, nil
+}
+
 // AuthorizeProject proves user holds at least need access on a user project.
 func (a *Authorizer) AuthorizeProject(ctx context.Context, user User, projectID string, need Access) (Project, error) {
 	if err := check(user, need); err != nil {
@@ -235,7 +287,7 @@ func (a *Authorizer) AuthorizeProject(ctx context.Context, user User, projectID 
 	var role Role
 	if err := a.q.QueryRowContext(ctx, `SELECT m.role
 		  FROM projects p
-		  JOIN project_memberships m ON m.project_id = p.id
+		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE p.id = $1 AND m.user_id = $2 AND p.kind = $3`,
 		projectID, user.id, UserProjectKind).Scan(&role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -259,7 +311,7 @@ func (a *Authorizer) AuthorizeEnvironment(ctx context.Context, user User, enviro
 	if err := a.q.QueryRowContext(ctx, `SELECT e.project_id, m.role
 		  FROM environments e
 		  JOIN projects p ON p.id = e.project_id
-		  JOIN project_memberships m ON m.project_id = e.project_id
+		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE e.id = $1 AND m.user_id = $2 AND p.kind = $3`,
 		environmentID, user.id, UserProjectKind).Scan(&projectID, &role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -284,7 +336,7 @@ func (a *Authorizer) AuthorizeService(ctx context.Context, user User, serviceID 
 		  FROM services s
 		  JOIN environments e ON e.id = s.environment_id
 		  JOIN projects p ON p.id = e.project_id
-		  JOIN project_memberships m ON m.project_id = e.project_id
+		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE s.id = $1 AND m.user_id = $2 AND p.kind = $3`,
 		serviceID, user.id, UserProjectKind).Scan(&environmentID, &projectID, &role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -310,7 +362,7 @@ func (a *Authorizer) AuthorizeVolume(ctx context.Context, user User, volumeID st
 		  FROM volumes v
 		  JOIN environments e ON e.id = v.environment_id
 		  JOIN projects p ON p.id = e.project_id
-		  JOIN project_memberships m ON m.project_id = e.project_id
+		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE v.id = $1 AND m.user_id = $2 AND p.kind = $3`,
 		volumeID, user.id, UserProjectKind).Scan(&environmentID, &projectID, &role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -339,7 +391,7 @@ func (a *Authorizer) AuthorizeDomainBinding(ctx context.Context, user User, host
 		  JOIN services s ON s.id = d.service_id
 		  JOIN environments e ON e.id = s.environment_id
 		  JOIN projects p ON p.id = e.project_id
-		  JOIN project_memberships m ON m.project_id = e.project_id
+		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE d.hostname = $1 AND m.user_id = $2 AND p.kind = $3`,
 		hostname, user.id, UserProjectKind).Scan(&serviceID, &environmentID, &projectID, &role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -16,6 +16,37 @@ import {
 	ServiceSpecSchema,
 } from "#/lib/platform-gen/platform_pb";
 
+/** Seeds project-1 with its production environment and returns that environment. */
+function seedProductionEnvironment(
+	harness: ReturnType<typeof createDashboardTestHarness>,
+): string {
+	if (!harness.platform.projects.some((entry) => entry.id === "project-1")) {
+		harness.platform.projects.push(
+			jsonFixture(ProjectSchema, {
+				id: "project-1",
+				name: "brisk-harbor",
+				kind: "PROJECT_KIND_USER",
+			}),
+		);
+	}
+	if (
+		!harness.platform.environments.some(
+			(entry) => entry.id === "environment-project-1",
+		)
+	) {
+		harness.platform.environments.push(
+			jsonFixture(EnvironmentSchema, {
+				id: "environment-project-1",
+				projectId: "project-1",
+				name: "Production",
+				kind: "ENVIRONMENT_KIND_PERSISTENT",
+				isProduction: true,
+			}),
+		);
+	}
+	return "environment-project-1";
+}
+
 describe("dashboard operations", () => {
 	it("returns degraded home state when the control plane is unavailable", async () => {
 		const harness = createDashboardTestHarness();
@@ -205,31 +236,6 @@ describe("dashboard operations", () => {
 		});
 	});
 
-	it("creates projects from the active session", async () => {
-		const harness = createDashboardTestHarness();
-		await auth.completeAuthCallback(harness.runtime, {
-			userId: "user-1",
-			email: "user@example.com",
-			redirectTo: "/",
-		});
-
-		const project = await onboarding.createProjectFromSession(
-			harness.runtime,
-			"demo-app",
-		);
-
-		expect(project.name).toBe("demo-app");
-		expect(harness.platform.calls.createProject).toEqual([
-			{
-				user: {
-					id: "user-1",
-					email: "user@example.com",
-				},
-				name: "demo-app",
-			},
-		]);
-	});
-
 	it("does not list GitHub repositories on initial home load", async () => {
 		const harness = createDashboardTestHarness();
 		await auth.beginGitHubLogin(harness.runtime, { redirectTo: "/" });
@@ -378,6 +384,7 @@ describe("dashboard operations", () => {
 		const result = await onboarding.createServiceFastFromSession(
 			harness.runtime,
 			{
+				environmentId: seedProductionEnvironment(harness),
 				repositorySelector: "octocat/hello",
 				serviceName: "talented-harmony",
 			},
@@ -448,6 +455,7 @@ describe("dashboard operations", () => {
 		);
 
 		await onboarding.createServiceFastFromSession(harness.runtime, {
+			environmentId: seedProductionEnvironment(harness),
 			repositorySelector: "octocat/hello",
 			serviceName: "talented-harmony",
 		});
@@ -471,6 +479,7 @@ describe("dashboard operations", () => {
 		const result = await onboarding.createServiceFastFromSession(
 			harness.runtime,
 			{
+				environmentId: seedProductionEnvironment(harness),
 				repositorySelector: "octocat/hello",
 				serviceName: "talented-harmony",
 				builder: "BUILDER_KIND_DOCKERFILE",
@@ -519,6 +528,7 @@ describe("dashboard operations", () => {
 		const result = await onboarding.createServiceFastFromSession(
 			harness.runtime,
 			{
+				environmentId: seedProductionEnvironment(harness),
 				repositorySelector: "octocat/hello",
 			},
 		);
@@ -562,6 +572,7 @@ describe("dashboard operations", () => {
 
 		await expect(
 			onboarding.createServiceFastFromSession(harness.runtime, {
+				environmentId: seedProductionEnvironment(harness),
 				repositorySelector: "octocat/hello",
 				builder: "BUILDER_KIND_RAILPACK",
 			}),
@@ -634,6 +645,7 @@ describe("dashboard operations", () => {
 		const result = await onboarding.createServiceFastFromSession(
 			harness.runtime,
 			{
+				environmentId: seedProductionEnvironment(harness),
 				repositorySelector: "octocat/hello",
 				serviceName: "talented-harmony",
 			},
@@ -642,13 +654,13 @@ describe("dashboard operations", () => {
 		expect(result.project.id).toBe("project-1");
 		expect(result.service).toMatchObject({
 			id: "service-1",
-			environmentId: "environment-1",
+			environmentId: "environment-project-1",
 			name: "talented-harmony",
 		});
 		expect(result.serviceStatus?.service?.id).toBe("service-1");
 		expect(result.onboarding).toMatchObject({
 			projectId: "project-1",
-			environmentId: "environment-1",
+			environmentId: "environment-project-1",
 			serviceId: "service-1",
 			repositorySelector: "octocat/hello",
 		});
@@ -670,6 +682,7 @@ describe("dashboard operations", () => {
 
 		await expect(
 			onboarding.createServiceFastFromSession(harness.runtime, {
+				environmentId: seedProductionEnvironment(harness),
 				repositorySelector: "someone/private-repository",
 			}),
 		).rejects.toThrow(

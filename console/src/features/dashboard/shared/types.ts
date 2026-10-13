@@ -14,6 +14,7 @@ export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
 
 export type ConfirmRepositoryFn = (input: {
 	data: {
+		environmentId: string;
 		repositorySelector: string;
 		serviceName?: string;
 		trackedRef?: string;

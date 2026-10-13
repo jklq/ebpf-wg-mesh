@@ -236,6 +236,7 @@ export function userAssertionMetadata(
 		"x-platform-user-assertion": createPlatformUserAssertion({
 			secret: runtime.userAssertionSecret,
 			userId: user.id,
+			email: user.email,
 		}),
 	};
 }

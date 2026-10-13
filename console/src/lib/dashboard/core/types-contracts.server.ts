@@ -9,6 +9,7 @@ import type {
 	DashboardRollingStrategy,
 	DashboardServicePosition,
 	DashboardUser,
+	DashboardUserProfile,
 	GitHubUserRepository,
 	StoredDashboardGitHubAccount,
 } from "./types-models.server";
@@ -61,6 +62,10 @@ export interface DashboardStore {
 		expectedTokenVersion: number;
 		leaseID: string;
 	}): Promise<void>;
+	/** Profiles for known user IDs; unknown IDs are omitted. */
+	listUserProfiles(
+		userIDs: Array<string>,
+	): Promise<Array<DashboardUserProfile>>;
 	getOnboardingDraft(userID: string): Promise<DashboardOnboardingDraft>;
 	saveOnboardingDraft(
 		userID: string,

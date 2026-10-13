@@ -36,7 +36,7 @@ func TestLiveOwnerTakeoverStartsUnknown(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestNonOwnerRedirectsAgentThenOwnerAdmitsAndSchedules(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := owner.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := owner.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

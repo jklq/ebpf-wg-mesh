@@ -7,6 +7,7 @@ import { PageShell } from "#/components/layout/page-shell";
 import { Button, buttonStyles } from "#/components/ui/button";
 import { textStyles } from "#/components/ui/text";
 import { LogRetentionForm } from "#/features/project-settings/log-retention";
+import { MoveProjectForm } from "#/features/project-settings/move-project";
 import { SettingsCard } from "#/features/project-settings/settings-card";
 import { VolumeRow } from "#/features/project-settings/volume-row";
 import {
@@ -85,6 +86,13 @@ export function ProjectSettingsPage({
 				<h1 {...stylex.props(styles.title)}>{project.name}</h1>
 				<p {...stylex.props(styles.projectId)}>{project.id}</p>
 			</div>
+
+			<SettingsCard
+				title="Workspace"
+				lede="The workspace decides who can access this project."
+			>
+				<MoveProjectForm project={project} workspaces={settings.workspaces} />
+			</SettingsCard>
 
 			<SettingsCard
 				title="Log retention"

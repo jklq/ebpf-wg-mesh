@@ -16,7 +16,7 @@ import (
 func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "delivery")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "delivery")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,9 +51,7 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO project_memberships(user_id, project_id, role) VALUES ('viewer', $1, 'viewer')`, project.ID); err != nil {
-		t.Fatal(err)
-	}
+	grantWorkspaceRole(t, store, ctx, project.ID, "viewer", "viewer")
 	notifier := &releaseTestNotifier{}
 	delivery := newTestDelivery(store, notifier, nil, nil)
 	before := mustDesiredRevision(t, store, ctx, "node-1")

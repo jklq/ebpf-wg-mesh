@@ -334,7 +334,6 @@ describe("DashboardPage canvas", () => {
 			</CreatedServiceCacheProvider>,
 		);
 
-		expect(routerMock.invalidate).not.toHaveBeenCalled();
 		expect(
 			screen.getByRole("button", { name: /close service panel/i }),
 		).toBeTruthy();

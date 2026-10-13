@@ -276,6 +276,7 @@ export async function storeCall<A>(
 				"getGitHubAccount",
 				"listProjects",
 				"getUser",
+				"listUserProfiles",
 			].includes(operation)
 		) {
 			throw new Error("recovery pauses console mutations");

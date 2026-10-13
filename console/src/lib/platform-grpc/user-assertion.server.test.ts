@@ -14,6 +14,7 @@ describe("createPlatformUserAssertion", () => {
 		const token = createPlatformUserAssertion({
 			secret,
 			userId: "user-1",
+			email: "user@example.com",
 			now: new Date("2026-08-11T12:00:00Z"),
 			id: "assertion-1",
 		});
@@ -30,6 +31,7 @@ describe("createPlatformUserAssertion", () => {
 			iss: PlatformUserAssertionIssuer,
 			aud: PlatformUserAssertionAudience,
 			sub: "user-1",
+			email: "user@example.com",
 			iat: 1_786_449_600,
 			exp: 1_786_449_600 + PlatformUserAssertionMaxAgeSeconds,
 			jti: "assertion-1",
@@ -43,12 +45,17 @@ describe("createPlatformUserAssertion", () => {
 
 	it("rejects weak keys and invalid subjects", () => {
 		expect(() =>
-			createPlatformUserAssertion({ secret: "short", userId: "user-1" }),
+			createPlatformUserAssertion({
+				secret: "short",
+				userId: "user-1",
+				email: "user@example.com",
+			}),
 		).toThrow("at least 32 bytes");
 		expect(() =>
 			createPlatformUserAssertion({
 				secret: "a-distinct-test-user-assertion-secret",
 				userId: " user-1",
+				email: "user@example.com",
 			}),
 		).toThrow("invalid user assertion subject");
 	});

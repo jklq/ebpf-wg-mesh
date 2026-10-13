@@ -28,13 +28,24 @@ export function Topbar({
 }) {
 	return (
 		<div {...stylex.props(styles.toolbar)}>
-			<div {...stylex.props(styles.brand)}>
+			<a href="/dashboard" {...stylex.props(styles.brand)} title="Projects">
 				<Zap size={15} {...stylex.props(styles.brandIcon)} />
 				<span {...stylex.props(styles.brandName)}>mesh</span>
-			</div>
+			</a>
 
 			{state.project && (
 				<div {...stylex.props(styles.breadcrumb)}>
+					{state.workspace && (
+						<>
+							<a
+								href={`/dashboard?workspace=${encodeURIComponent(state.workspace.id)}`}
+								{...stylex.props(styles.workspaceLink)}
+							>
+								{state.workspace.name}
+							</a>
+							<span {...stylex.props(styles.separator)}>/</span>
+						</>
+					)}
 					<ProjectSwitcher state={state} />
 					{state.environment && (
 						<>
@@ -133,6 +144,19 @@ const styles = stylex.create({
 		display: "flex",
 		alignItems: "center",
 		gap: "0.625rem",
+		textDecoration: "none",
+	},
+	workspaceLink: {
+		maxWidth: "180px",
+		overflow: "hidden",
+		textOverflow: "ellipsis",
+		whiteSpace: "nowrap",
+		fontSize: "13px",
+		color: {
+			default: colors.muted,
+			":hover": { default: null, "@media (hover: hover)": colors.ink },
+		},
+		textDecoration: "none",
 	},
 	brandIcon: { color: colors.accent },
 	brandName: {

@@ -1,8 +1,6 @@
 import { requireSession } from "#/lib/dashboard/core/auth.server";
 import {
 	type DashboardRuntime,
-	loadOnboardingDraft,
-	nextGeneratedProjectName,
 	nextGeneratedServiceName,
 	optionalPlatformResult,
 	saveOnboardingDraft,
@@ -14,7 +12,6 @@ import {
 	type DashboardBuildRecipe,
 	type DashboardEnvironment,
 	type DashboardGitHubAccount,
-	type DashboardProject,
 	type DashboardRepositoryInspection,
 	type DashboardServiceStatus,
 	DashboardValidationError,
@@ -48,24 +45,6 @@ export async function loadGitHubCatalogFromSession(
 		githubAccount: publicGitHubAccount(catalog.githubAccount),
 		repositories: catalog.repositories,
 	};
-}
-
-export async function createProjectFromSession(
-	runtime: DashboardRuntime,
-	name: string,
-): Promise<DashboardProject> {
-	const session = await requireSession(runtime);
-	const projectName = name.trim();
-	if (projectName === "") {
-		throw new DashboardValidationError({
-			message: "project name is required",
-		});
-	}
-	return runtime.platform.call(
-		PlatformService.method.createProject,
-		session.user,
-		{ name: projectName },
-	);
 }
 
 export async function createEnvironmentFromSession(
@@ -169,6 +148,7 @@ export async function releaseEnvironmentFromSession(
 export async function createServiceFastFromSession(
 	runtime: DashboardRuntime,
 	input: {
+		environmentId: string;
 		repositorySelector: string;
 		serviceName?: string;
 		trackedRef?: string;
@@ -186,33 +166,16 @@ export async function createServiceFastFromSession(
 		session.user.id,
 		selector,
 	);
-	const currentDraft = await loadOnboardingDraft(runtime, session.user.id);
-	const projects = await runtime.platform
-		.call(PlatformService.method.listProjects, session.user, {})
-		.then((response) => response.projects ?? []);
-	const project =
-		(currentDraft.projectId
-			? projects.find((entry) => entry.id === currentDraft.projectId)
-			: undefined) ??
-		(await runtime.platform.call(
-			PlatformService.method.createProject,
-			session.user,
-			{ name: nextGeneratedProjectName(projects, runtime.randomUUID()) },
-		));
-	const environments = await runtime.platform
-		.call(PlatformService.method.listEnvironments, session.user, {
-			projectId: project.id,
-		})
-		.then((response) => response.environments ?? []);
-	const environment =
-		environments.find((entry) => entry.id === currentDraft.environmentId) ??
-		environments.find((entry) => entry.isProduction) ??
-		environments[0];
-	if (!environment) {
-		throw new DashboardValidationError({
-			message: "Project has no production environment.",
-		});
-	}
+	const environment = await runtime.platform.call(
+		PlatformService.method.getEnvironment,
+		session.user,
+		{ environmentId: input.environmentId },
+	);
+	const project = await runtime.platform.call(
+		PlatformService.method.getProject,
+		session.user,
+		{ projectId: environment.projectId },
+	);
 	const inspection = await runtime.platform.call(
 		PlatformService.method.linkGitHubRepository,
 		session.user,

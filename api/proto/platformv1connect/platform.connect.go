@@ -38,6 +38,45 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// PlatformServiceListWorkspacesProcedure is the fully-qualified name of the PlatformService's
+	// ListWorkspaces RPC.
+	PlatformServiceListWorkspacesProcedure = "/platform.v1.PlatformService/ListWorkspaces"
+	// PlatformServiceGetWorkspaceProcedure is the fully-qualified name of the PlatformService's
+	// GetWorkspace RPC.
+	PlatformServiceGetWorkspaceProcedure = "/platform.v1.PlatformService/GetWorkspace"
+	// PlatformServiceCreateWorkspaceProcedure is the fully-qualified name of the PlatformService's
+	// CreateWorkspace RPC.
+	PlatformServiceCreateWorkspaceProcedure = "/platform.v1.PlatformService/CreateWorkspace"
+	// PlatformServiceRenameWorkspaceProcedure is the fully-qualified name of the PlatformService's
+	// RenameWorkspace RPC.
+	PlatformServiceRenameWorkspaceProcedure = "/platform.v1.PlatformService/RenameWorkspace"
+	// PlatformServiceDeleteWorkspaceProcedure is the fully-qualified name of the PlatformService's
+	// DeleteWorkspace RPC.
+	PlatformServiceDeleteWorkspaceProcedure = "/platform.v1.PlatformService/DeleteWorkspace"
+	// PlatformServiceListWorkspaceMembersProcedure is the fully-qualified name of the PlatformService's
+	// ListWorkspaceMembers RPC.
+	PlatformServiceListWorkspaceMembersProcedure = "/platform.v1.PlatformService/ListWorkspaceMembers"
+	// PlatformServiceInviteWorkspaceMemberProcedure is the fully-qualified name of the
+	// PlatformService's InviteWorkspaceMember RPC.
+	PlatformServiceInviteWorkspaceMemberProcedure = "/platform.v1.PlatformService/InviteWorkspaceMember"
+	// PlatformServiceRevokeWorkspaceInvitationProcedure is the fully-qualified name of the
+	// PlatformService's RevokeWorkspaceInvitation RPC.
+	PlatformServiceRevokeWorkspaceInvitationProcedure = "/platform.v1.PlatformService/RevokeWorkspaceInvitation"
+	// PlatformServiceAcceptWorkspaceInvitationProcedure is the fully-qualified name of the
+	// PlatformService's AcceptWorkspaceInvitation RPC.
+	PlatformServiceAcceptWorkspaceInvitationProcedure = "/platform.v1.PlatformService/AcceptWorkspaceInvitation"
+	// PlatformServiceDeclineWorkspaceInvitationProcedure is the fully-qualified name of the
+	// PlatformService's DeclineWorkspaceInvitation RPC.
+	PlatformServiceDeclineWorkspaceInvitationProcedure = "/platform.v1.PlatformService/DeclineWorkspaceInvitation"
+	// PlatformServiceUpdateWorkspaceMemberRoleProcedure is the fully-qualified name of the
+	// PlatformService's UpdateWorkspaceMemberRole RPC.
+	PlatformServiceUpdateWorkspaceMemberRoleProcedure = "/platform.v1.PlatformService/UpdateWorkspaceMemberRole"
+	// PlatformServiceRemoveWorkspaceMemberProcedure is the fully-qualified name of the
+	// PlatformService's RemoveWorkspaceMember RPC.
+	PlatformServiceRemoveWorkspaceMemberProcedure = "/platform.v1.PlatformService/RemoveWorkspaceMember"
+	// PlatformServiceMoveProjectProcedure is the fully-qualified name of the PlatformService's
+	// MoveProject RPC.
+	PlatformServiceMoveProjectProcedure = "/platform.v1.PlatformService/MoveProject"
 	// PlatformServiceCreateProjectProcedure is the fully-qualified name of the PlatformService's
 	// CreateProject RPC.
 	PlatformServiceCreateProjectProcedure = "/platform.v1.PlatformService/CreateProject"
@@ -218,6 +257,19 @@ const (
 
 // PlatformServiceClient is a client for the platform.v1.PlatformService service.
 type PlatformServiceClient interface {
+	ListWorkspaces(context.Context, *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error)
+	GetWorkspace(context.Context, *connect.Request[platformv1.GetWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error)
+	CreateWorkspace(context.Context, *connect.Request[platformv1.CreateWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error)
+	RenameWorkspace(context.Context, *connect.Request[platformv1.RenameWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error)
+	DeleteWorkspace(context.Context, *connect.Request[platformv1.DeleteWorkspaceRequest]) (*connect.Response[emptypb.Empty], error)
+	ListWorkspaceMembers(context.Context, *connect.Request[platformv1.ListWorkspaceMembersRequest]) (*connect.Response[platformv1.ListWorkspaceMembersResponse], error)
+	InviteWorkspaceMember(context.Context, *connect.Request[platformv1.InviteWorkspaceMemberRequest]) (*connect.Response[platformv1.WorkspaceInvitation], error)
+	RevokeWorkspaceInvitation(context.Context, *connect.Request[platformv1.RevokeWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error)
+	AcceptWorkspaceInvitation(context.Context, *connect.Request[platformv1.AcceptWorkspaceInvitationRequest]) (*connect.Response[platformv1.Workspace], error)
+	DeclineWorkspaceInvitation(context.Context, *connect.Request[platformv1.DeclineWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error)
+	UpdateWorkspaceMemberRole(context.Context, *connect.Request[platformv1.UpdateWorkspaceMemberRoleRequest]) (*connect.Response[platformv1.WorkspaceMember], error)
+	RemoveWorkspaceMember(context.Context, *connect.Request[platformv1.RemoveWorkspaceMemberRequest]) (*connect.Response[emptypb.Empty], error)
+	MoveProject(context.Context, *connect.Request[platformv1.MoveProjectRequest]) (*connect.Response[platformv1.Project], error)
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
 	ListProjects(context.Context, *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error)
 	GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error)
@@ -277,6 +329,84 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 	baseURL = strings.TrimRight(baseURL, "/")
 	platformServiceMethods := platformv1.File_platform_proto.Services().ByName("PlatformService").Methods()
 	return &platformServiceClient{
+		listWorkspaces: connect.NewClient[platformv1.ListWorkspacesRequest, platformv1.ListWorkspacesResponse](
+			httpClient,
+			baseURL+PlatformServiceListWorkspacesProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListWorkspaces")),
+			connect.WithClientOptions(opts...),
+		),
+		getWorkspace: connect.NewClient[platformv1.GetWorkspaceRequest, platformv1.Workspace](
+			httpClient,
+			baseURL+PlatformServiceGetWorkspaceProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("GetWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		createWorkspace: connect.NewClient[platformv1.CreateWorkspaceRequest, platformv1.Workspace](
+			httpClient,
+			baseURL+PlatformServiceCreateWorkspaceProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("CreateWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		renameWorkspace: connect.NewClient[platformv1.RenameWorkspaceRequest, platformv1.Workspace](
+			httpClient,
+			baseURL+PlatformServiceRenameWorkspaceProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RenameWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		deleteWorkspace: connect.NewClient[platformv1.DeleteWorkspaceRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceDeleteWorkspaceProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("DeleteWorkspace")),
+			connect.WithClientOptions(opts...),
+		),
+		listWorkspaceMembers: connect.NewClient[platformv1.ListWorkspaceMembersRequest, platformv1.ListWorkspaceMembersResponse](
+			httpClient,
+			baseURL+PlatformServiceListWorkspaceMembersProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListWorkspaceMembers")),
+			connect.WithClientOptions(opts...),
+		),
+		inviteWorkspaceMember: connect.NewClient[platformv1.InviteWorkspaceMemberRequest, platformv1.WorkspaceInvitation](
+			httpClient,
+			baseURL+PlatformServiceInviteWorkspaceMemberProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("InviteWorkspaceMember")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeWorkspaceInvitation: connect.NewClient[platformv1.RevokeWorkspaceInvitationRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceRevokeWorkspaceInvitationProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RevokeWorkspaceInvitation")),
+			connect.WithClientOptions(opts...),
+		),
+		acceptWorkspaceInvitation: connect.NewClient[platformv1.AcceptWorkspaceInvitationRequest, platformv1.Workspace](
+			httpClient,
+			baseURL+PlatformServiceAcceptWorkspaceInvitationProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("AcceptWorkspaceInvitation")),
+			connect.WithClientOptions(opts...),
+		),
+		declineWorkspaceInvitation: connect.NewClient[platformv1.DeclineWorkspaceInvitationRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceDeclineWorkspaceInvitationProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("DeclineWorkspaceInvitation")),
+			connect.WithClientOptions(opts...),
+		),
+		updateWorkspaceMemberRole: connect.NewClient[platformv1.UpdateWorkspaceMemberRoleRequest, platformv1.WorkspaceMember](
+			httpClient,
+			baseURL+PlatformServiceUpdateWorkspaceMemberRoleProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("UpdateWorkspaceMemberRole")),
+			connect.WithClientOptions(opts...),
+		),
+		removeWorkspaceMember: connect.NewClient[platformv1.RemoveWorkspaceMemberRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceRemoveWorkspaceMemberProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RemoveWorkspaceMember")),
+			connect.WithClientOptions(opts...),
+		),
+		moveProject: connect.NewClient[platformv1.MoveProjectRequest, platformv1.Project](
+			httpClient,
+			baseURL+PlatformServiceMoveProjectProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("MoveProject")),
+			connect.WithClientOptions(opts...),
+		),
 		createProject: connect.NewClient[platformv1.CreateProjectRequest, platformv1.Project](
 			httpClient,
 			baseURL+PlatformServiceCreateProjectProcedure,
@@ -558,6 +688,19 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 
 // platformServiceClient implements PlatformServiceClient.
 type platformServiceClient struct {
+	listWorkspaces              *connect.Client[platformv1.ListWorkspacesRequest, platformv1.ListWorkspacesResponse]
+	getWorkspace                *connect.Client[platformv1.GetWorkspaceRequest, platformv1.Workspace]
+	createWorkspace             *connect.Client[platformv1.CreateWorkspaceRequest, platformv1.Workspace]
+	renameWorkspace             *connect.Client[platformv1.RenameWorkspaceRequest, platformv1.Workspace]
+	deleteWorkspace             *connect.Client[platformv1.DeleteWorkspaceRequest, emptypb.Empty]
+	listWorkspaceMembers        *connect.Client[platformv1.ListWorkspaceMembersRequest, platformv1.ListWorkspaceMembersResponse]
+	inviteWorkspaceMember       *connect.Client[platformv1.InviteWorkspaceMemberRequest, platformv1.WorkspaceInvitation]
+	revokeWorkspaceInvitation   *connect.Client[platformv1.RevokeWorkspaceInvitationRequest, emptypb.Empty]
+	acceptWorkspaceInvitation   *connect.Client[platformv1.AcceptWorkspaceInvitationRequest, platformv1.Workspace]
+	declineWorkspaceInvitation  *connect.Client[platformv1.DeclineWorkspaceInvitationRequest, emptypb.Empty]
+	updateWorkspaceMemberRole   *connect.Client[platformv1.UpdateWorkspaceMemberRoleRequest, platformv1.WorkspaceMember]
+	removeWorkspaceMember       *connect.Client[platformv1.RemoveWorkspaceMemberRequest, emptypb.Empty]
+	moveProject                 *connect.Client[platformv1.MoveProjectRequest, platformv1.Project]
 	createProject               *connect.Client[platformv1.CreateProjectRequest, platformv1.Project]
 	listProjects                *connect.Client[platformv1.ListProjectsRequest, platformv1.ListProjectsResponse]
 	getProject                  *connect.Client[platformv1.GetProjectRequest, platformv1.Project]
@@ -604,6 +747,71 @@ type platformServiceClient struct {
 	listServiceArtifacts        *connect.Client[platformv1.ListServiceArtifactsRequest, platformv1.ListServiceArtifactsResponse]
 	listAgents                  *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
 	listBuildAttempts           *connect.Client[platformv1.ListBuildAttemptsRequest, platformv1.ListBuildAttemptsResponse]
+}
+
+// ListWorkspaces calls platform.v1.PlatformService.ListWorkspaces.
+func (c *platformServiceClient) ListWorkspaces(ctx context.Context, req *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error) {
+	return c.listWorkspaces.CallUnary(ctx, req)
+}
+
+// GetWorkspace calls platform.v1.PlatformService.GetWorkspace.
+func (c *platformServiceClient) GetWorkspace(ctx context.Context, req *connect.Request[platformv1.GetWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return c.getWorkspace.CallUnary(ctx, req)
+}
+
+// CreateWorkspace calls platform.v1.PlatformService.CreateWorkspace.
+func (c *platformServiceClient) CreateWorkspace(ctx context.Context, req *connect.Request[platformv1.CreateWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return c.createWorkspace.CallUnary(ctx, req)
+}
+
+// RenameWorkspace calls platform.v1.PlatformService.RenameWorkspace.
+func (c *platformServiceClient) RenameWorkspace(ctx context.Context, req *connect.Request[platformv1.RenameWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return c.renameWorkspace.CallUnary(ctx, req)
+}
+
+// DeleteWorkspace calls platform.v1.PlatformService.DeleteWorkspace.
+func (c *platformServiceClient) DeleteWorkspace(ctx context.Context, req *connect.Request[platformv1.DeleteWorkspaceRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.deleteWorkspace.CallUnary(ctx, req)
+}
+
+// ListWorkspaceMembers calls platform.v1.PlatformService.ListWorkspaceMembers.
+func (c *platformServiceClient) ListWorkspaceMembers(ctx context.Context, req *connect.Request[platformv1.ListWorkspaceMembersRequest]) (*connect.Response[platformv1.ListWorkspaceMembersResponse], error) {
+	return c.listWorkspaceMembers.CallUnary(ctx, req)
+}
+
+// InviteWorkspaceMember calls platform.v1.PlatformService.InviteWorkspaceMember.
+func (c *platformServiceClient) InviteWorkspaceMember(ctx context.Context, req *connect.Request[platformv1.InviteWorkspaceMemberRequest]) (*connect.Response[platformv1.WorkspaceInvitation], error) {
+	return c.inviteWorkspaceMember.CallUnary(ctx, req)
+}
+
+// RevokeWorkspaceInvitation calls platform.v1.PlatformService.RevokeWorkspaceInvitation.
+func (c *platformServiceClient) RevokeWorkspaceInvitation(ctx context.Context, req *connect.Request[platformv1.RevokeWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.revokeWorkspaceInvitation.CallUnary(ctx, req)
+}
+
+// AcceptWorkspaceInvitation calls platform.v1.PlatformService.AcceptWorkspaceInvitation.
+func (c *platformServiceClient) AcceptWorkspaceInvitation(ctx context.Context, req *connect.Request[platformv1.AcceptWorkspaceInvitationRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return c.acceptWorkspaceInvitation.CallUnary(ctx, req)
+}
+
+// DeclineWorkspaceInvitation calls platform.v1.PlatformService.DeclineWorkspaceInvitation.
+func (c *platformServiceClient) DeclineWorkspaceInvitation(ctx context.Context, req *connect.Request[platformv1.DeclineWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.declineWorkspaceInvitation.CallUnary(ctx, req)
+}
+
+// UpdateWorkspaceMemberRole calls platform.v1.PlatformService.UpdateWorkspaceMemberRole.
+func (c *platformServiceClient) UpdateWorkspaceMemberRole(ctx context.Context, req *connect.Request[platformv1.UpdateWorkspaceMemberRoleRequest]) (*connect.Response[platformv1.WorkspaceMember], error) {
+	return c.updateWorkspaceMemberRole.CallUnary(ctx, req)
+}
+
+// RemoveWorkspaceMember calls platform.v1.PlatformService.RemoveWorkspaceMember.
+func (c *platformServiceClient) RemoveWorkspaceMember(ctx context.Context, req *connect.Request[platformv1.RemoveWorkspaceMemberRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.removeWorkspaceMember.CallUnary(ctx, req)
+}
+
+// MoveProject calls platform.v1.PlatformService.MoveProject.
+func (c *platformServiceClient) MoveProject(ctx context.Context, req *connect.Request[platformv1.MoveProjectRequest]) (*connect.Response[platformv1.Project], error) {
+	return c.moveProject.CallUnary(ctx, req)
 }
 
 // CreateProject calls platform.v1.PlatformService.CreateProject.
@@ -838,6 +1046,19 @@ func (c *platformServiceClient) ListBuildAttempts(ctx context.Context, req *conn
 
 // PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
+	ListWorkspaces(context.Context, *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error)
+	GetWorkspace(context.Context, *connect.Request[platformv1.GetWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error)
+	CreateWorkspace(context.Context, *connect.Request[platformv1.CreateWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error)
+	RenameWorkspace(context.Context, *connect.Request[platformv1.RenameWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error)
+	DeleteWorkspace(context.Context, *connect.Request[platformv1.DeleteWorkspaceRequest]) (*connect.Response[emptypb.Empty], error)
+	ListWorkspaceMembers(context.Context, *connect.Request[platformv1.ListWorkspaceMembersRequest]) (*connect.Response[platformv1.ListWorkspaceMembersResponse], error)
+	InviteWorkspaceMember(context.Context, *connect.Request[platformv1.InviteWorkspaceMemberRequest]) (*connect.Response[platformv1.WorkspaceInvitation], error)
+	RevokeWorkspaceInvitation(context.Context, *connect.Request[platformv1.RevokeWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error)
+	AcceptWorkspaceInvitation(context.Context, *connect.Request[platformv1.AcceptWorkspaceInvitationRequest]) (*connect.Response[platformv1.Workspace], error)
+	DeclineWorkspaceInvitation(context.Context, *connect.Request[platformv1.DeclineWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error)
+	UpdateWorkspaceMemberRole(context.Context, *connect.Request[platformv1.UpdateWorkspaceMemberRoleRequest]) (*connect.Response[platformv1.WorkspaceMember], error)
+	RemoveWorkspaceMember(context.Context, *connect.Request[platformv1.RemoveWorkspaceMemberRequest]) (*connect.Response[emptypb.Empty], error)
+	MoveProject(context.Context, *connect.Request[platformv1.MoveProjectRequest]) (*connect.Response[platformv1.Project], error)
 	CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error)
 	ListProjects(context.Context, *connect.Request[platformv1.ListProjectsRequest]) (*connect.Response[platformv1.ListProjectsResponse], error)
 	GetProject(context.Context, *connect.Request[platformv1.GetProjectRequest]) (*connect.Response[platformv1.Project], error)
@@ -893,6 +1114,84 @@ type PlatformServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	platformServiceMethods := platformv1.File_platform_proto.Services().ByName("PlatformService").Methods()
+	platformServiceListWorkspacesHandler := connect.NewUnaryHandler(
+		PlatformServiceListWorkspacesProcedure,
+		svc.ListWorkspaces,
+		connect.WithSchema(platformServiceMethods.ByName("ListWorkspaces")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceGetWorkspaceHandler := connect.NewUnaryHandler(
+		PlatformServiceGetWorkspaceProcedure,
+		svc.GetWorkspace,
+		connect.WithSchema(platformServiceMethods.ByName("GetWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceCreateWorkspaceHandler := connect.NewUnaryHandler(
+		PlatformServiceCreateWorkspaceProcedure,
+		svc.CreateWorkspace,
+		connect.WithSchema(platformServiceMethods.ByName("CreateWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceRenameWorkspaceHandler := connect.NewUnaryHandler(
+		PlatformServiceRenameWorkspaceProcedure,
+		svc.RenameWorkspace,
+		connect.WithSchema(platformServiceMethods.ByName("RenameWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceDeleteWorkspaceHandler := connect.NewUnaryHandler(
+		PlatformServiceDeleteWorkspaceProcedure,
+		svc.DeleteWorkspace,
+		connect.WithSchema(platformServiceMethods.ByName("DeleteWorkspace")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceListWorkspaceMembersHandler := connect.NewUnaryHandler(
+		PlatformServiceListWorkspaceMembersProcedure,
+		svc.ListWorkspaceMembers,
+		connect.WithSchema(platformServiceMethods.ByName("ListWorkspaceMembers")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceInviteWorkspaceMemberHandler := connect.NewUnaryHandler(
+		PlatformServiceInviteWorkspaceMemberProcedure,
+		svc.InviteWorkspaceMember,
+		connect.WithSchema(platformServiceMethods.ByName("InviteWorkspaceMember")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceRevokeWorkspaceInvitationHandler := connect.NewUnaryHandler(
+		PlatformServiceRevokeWorkspaceInvitationProcedure,
+		svc.RevokeWorkspaceInvitation,
+		connect.WithSchema(platformServiceMethods.ByName("RevokeWorkspaceInvitation")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceAcceptWorkspaceInvitationHandler := connect.NewUnaryHandler(
+		PlatformServiceAcceptWorkspaceInvitationProcedure,
+		svc.AcceptWorkspaceInvitation,
+		connect.WithSchema(platformServiceMethods.ByName("AcceptWorkspaceInvitation")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceDeclineWorkspaceInvitationHandler := connect.NewUnaryHandler(
+		PlatformServiceDeclineWorkspaceInvitationProcedure,
+		svc.DeclineWorkspaceInvitation,
+		connect.WithSchema(platformServiceMethods.ByName("DeclineWorkspaceInvitation")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceUpdateWorkspaceMemberRoleHandler := connect.NewUnaryHandler(
+		PlatformServiceUpdateWorkspaceMemberRoleProcedure,
+		svc.UpdateWorkspaceMemberRole,
+		connect.WithSchema(platformServiceMethods.ByName("UpdateWorkspaceMemberRole")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceRemoveWorkspaceMemberHandler := connect.NewUnaryHandler(
+		PlatformServiceRemoveWorkspaceMemberProcedure,
+		svc.RemoveWorkspaceMember,
+		connect.WithSchema(platformServiceMethods.ByName("RemoveWorkspaceMember")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceMoveProjectHandler := connect.NewUnaryHandler(
+		PlatformServiceMoveProjectProcedure,
+		svc.MoveProject,
+		connect.WithSchema(platformServiceMethods.ByName("MoveProject")),
+		connect.WithHandlerOptions(opts...),
+	)
 	platformServiceCreateProjectHandler := connect.NewUnaryHandler(
 		PlatformServiceCreateProjectProcedure,
 		svc.CreateProject,
@@ -1171,6 +1470,32 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 	)
 	return "/platform.v1.PlatformService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case PlatformServiceListWorkspacesProcedure:
+			platformServiceListWorkspacesHandler.ServeHTTP(w, r)
+		case PlatformServiceGetWorkspaceProcedure:
+			platformServiceGetWorkspaceHandler.ServeHTTP(w, r)
+		case PlatformServiceCreateWorkspaceProcedure:
+			platformServiceCreateWorkspaceHandler.ServeHTTP(w, r)
+		case PlatformServiceRenameWorkspaceProcedure:
+			platformServiceRenameWorkspaceHandler.ServeHTTP(w, r)
+		case PlatformServiceDeleteWorkspaceProcedure:
+			platformServiceDeleteWorkspaceHandler.ServeHTTP(w, r)
+		case PlatformServiceListWorkspaceMembersProcedure:
+			platformServiceListWorkspaceMembersHandler.ServeHTTP(w, r)
+		case PlatformServiceInviteWorkspaceMemberProcedure:
+			platformServiceInviteWorkspaceMemberHandler.ServeHTTP(w, r)
+		case PlatformServiceRevokeWorkspaceInvitationProcedure:
+			platformServiceRevokeWorkspaceInvitationHandler.ServeHTTP(w, r)
+		case PlatformServiceAcceptWorkspaceInvitationProcedure:
+			platformServiceAcceptWorkspaceInvitationHandler.ServeHTTP(w, r)
+		case PlatformServiceDeclineWorkspaceInvitationProcedure:
+			platformServiceDeclineWorkspaceInvitationHandler.ServeHTTP(w, r)
+		case PlatformServiceUpdateWorkspaceMemberRoleProcedure:
+			platformServiceUpdateWorkspaceMemberRoleHandler.ServeHTTP(w, r)
+		case PlatformServiceRemoveWorkspaceMemberProcedure:
+			platformServiceRemoveWorkspaceMemberHandler.ServeHTTP(w, r)
+		case PlatformServiceMoveProjectProcedure:
+			platformServiceMoveProjectHandler.ServeHTTP(w, r)
 		case PlatformServiceCreateProjectProcedure:
 			platformServiceCreateProjectHandler.ServeHTTP(w, r)
 		case PlatformServiceListProjectsProcedure:
@@ -1271,6 +1596,58 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 
 // UnimplementedPlatformServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedPlatformServiceHandler struct{}
+
+func (UnimplementedPlatformServiceHandler) ListWorkspaces(context.Context, *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListWorkspaces is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) GetWorkspace(context.Context, *connect.Request[platformv1.GetWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetWorkspace is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) CreateWorkspace(context.Context, *connect.Request[platformv1.CreateWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CreateWorkspace is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RenameWorkspace(context.Context, *connect.Request[platformv1.RenameWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RenameWorkspace is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) DeleteWorkspace(context.Context, *connect.Request[platformv1.DeleteWorkspaceRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeleteWorkspace is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) ListWorkspaceMembers(context.Context, *connect.Request[platformv1.ListWorkspaceMembersRequest]) (*connect.Response[platformv1.ListWorkspaceMembersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListWorkspaceMembers is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) InviteWorkspaceMember(context.Context, *connect.Request[platformv1.InviteWorkspaceMemberRequest]) (*connect.Response[platformv1.WorkspaceInvitation], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.InviteWorkspaceMember is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RevokeWorkspaceInvitation(context.Context, *connect.Request[platformv1.RevokeWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RevokeWorkspaceInvitation is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) AcceptWorkspaceInvitation(context.Context, *connect.Request[platformv1.AcceptWorkspaceInvitationRequest]) (*connect.Response[platformv1.Workspace], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.AcceptWorkspaceInvitation is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) DeclineWorkspaceInvitation(context.Context, *connect.Request[platformv1.DeclineWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.DeclineWorkspaceInvitation is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) UpdateWorkspaceMemberRole(context.Context, *connect.Request[platformv1.UpdateWorkspaceMemberRoleRequest]) (*connect.Response[platformv1.WorkspaceMember], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.UpdateWorkspaceMemberRole is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RemoveWorkspaceMember(context.Context, *connect.Request[platformv1.RemoveWorkspaceMemberRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RemoveWorkspaceMember is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) MoveProject(context.Context, *connect.Request[platformv1.MoveProjectRequest]) (*connect.Response[platformv1.Project], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.MoveProject is not implemented"))
+}
 
 func (UnimplementedPlatformServiceHandler) CreateProject(context.Context, *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CreateProject is not implemented"))

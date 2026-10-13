@@ -207,7 +207,7 @@ func compositeKey(left string, right int64) string {
 	return left + "/" + strconv.FormatInt(right, 10)
 }
 
-const projectJSON = `jsonb_build_object('id', id, 'name', name, 'kind', kind, 'system_key', system_key, 'owner_user_id', owner_user_id, 'created_at', created_at)`
+const projectJSON = `jsonb_build_object('id', id, 'name', name, 'kind', kind, 'system_key', system_key, 'created_at', created_at)`
 const serviceJSON = `jsonb_build_object(
 	'id', id,
 	'environment_id', environment_id,

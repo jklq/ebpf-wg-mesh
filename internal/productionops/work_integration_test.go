@@ -14,7 +14,7 @@ import (
 func testNativeWorkQuarantine(t *testing.T, ctx context.Context, r *Runner, db *sql.DB) {
 	t.Helper()
 	for _, statement := range []string{
-		`INSERT INTO projects(id,name,kind,owner_user_id,created_at) VALUES('work-project','work','user','operator',now())`,
+		`INSERT INTO projects(id,name,kind,created_at) VALUES('work-project','work','user',now())`,
 		`INSERT INTO environments(id,project_id,name,kind,auto_deploy,network_identity,created_at,updated_at) VALUES('work-environment','work-project','work','user',false,800,now(),now())`,
 		`INSERT INTO services(id,environment_id,name,current_spec_revision,created_at,updated_at) VALUES('work-service','work-environment','work',1,now(),now())`,
 		`INSERT INTO builder_workers(id,name,current_build_id,last_heartbeat_at,created_at,updated_at) VALUES('old-builder','old','leased-build',now(),now(),now())`,

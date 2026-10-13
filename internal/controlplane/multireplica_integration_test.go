@@ -373,7 +373,7 @@ func TestNonOwnerReplicaDoesNotServeOwnerLocalAllocations(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := owner.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := owner.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -408,7 +408,7 @@ func TestReplicaRecoversAfterJournalCompaction(t *testing.T) {
 	if _, err := upsertTestAgent(t, storeA, ctx, &agentv1.AgentHello{AgentId: "agent-a", Name: "agent-a"}); err != nil {
 		t.Fatal(err)
 	}
-	project, err := storeA.catalog.createProject(ctx, testUser("owner"), "replica-compact")
+	project, err := storeA.catalog.createProject(ctx, testUser("owner"), "", "replica-compact")
 	if err != nil {
 		t.Fatal(err)
 	}

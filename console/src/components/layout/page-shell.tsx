@@ -7,7 +7,7 @@ import { colors, sizes, space } from "#/styles/tokens.stylex";
 export function PageShell({
 	title,
 	icon,
-	back = { href: "/", label: "Services" },
+	back = { href: "/dashboard", label: "Projects" },
 	actions,
 	children,
 	width = "standard",

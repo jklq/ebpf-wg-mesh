@@ -41,7 +41,7 @@ func TestBuilderServiceCompleteBuildNotifiesAllocatedAgentOnSuccess(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestBuilderServiceCompleteBuildSkipsNotifyOnFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestBuilderServiceReportBuildLogsWritesTrustedBuildRows(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -267,7 +267,7 @@ func TestBuilderServiceReportBuildLogsNoOps(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestBuildOperationsRetriesPreparationWithoutLosingLease(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestSourceSummaryIsMetadataOnlyAndBuilderDownloadStreams(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

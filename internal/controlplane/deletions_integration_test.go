@@ -23,7 +23,7 @@ func deletionFixture(t *testing.T, store *persistence, owner, projectName string
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser(owner), false)
+	projects, err := store.catalog.listProjects(ctx, testUser(owner), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %#v: %v", projects, err)
 	}
@@ -95,11 +95,11 @@ func TestDeletionProjectTombstoneRestoreLifecycle(t *testing.T) {
 		t.Fatalf("repeat delete project: %v", err)
 	}
 
-	hidden, err := store.catalog.listProjects(ctx, testUser("owner"), false)
+	hidden, err := store.catalog.listProjects(ctx, testUser("owner"), "", false)
 	if err != nil || len(hidden) != 0 {
 		t.Fatalf("default project listing shows tombstones: %#v: %v", hidden, err)
 	}
-	shown, err := store.catalog.listProjects(ctx, testUser("owner"), true)
+	shown, err := store.catalog.listProjects(ctx, testUser("owner"), "", true)
 	if err != nil || len(shown) != 1 {
 		t.Fatalf("recovery listing hides tombstones: %#v: %v", shown, err)
 	}
@@ -541,7 +541,7 @@ func TestDeletionGCCollectsExpiredAcrossKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doomed, err := store.catalog.createProject(ctx, testUser("owner"), "doomed")
+	doomed, err := store.catalog.createProject(ctx, testUser("owner"), "", "doomed")
 	if err != nil {
 		t.Fatal(err)
 	}

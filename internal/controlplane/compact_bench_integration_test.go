@@ -153,7 +153,7 @@ func TestCompactControlPlaneResourceProbe(t *testing.T) {
 		t.Fatal(err)
 	}
 	store := cp.server.store
-	projects, err := store.catalog.listProjects(ctx, testUser("compact"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("compact"), "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

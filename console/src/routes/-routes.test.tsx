@@ -189,6 +189,7 @@ describe("dashboard routes", () => {
 
 		await waitFor(() =>
 			expect(submitted).toEqual({
+				environmentId: "environment-1",
 				repositorySelector: "octocat/hello",
 			}),
 		);
@@ -303,7 +304,13 @@ function homeState(
 		},
 		repositories: [],
 		projects: [],
-
+		environment: jsonFixture(EnvironmentSchema, {
+			id: "environment-1",
+			projectId: "project-1",
+			name: "Production",
+			kind: "ENVIRONMENT_KIND_PERSISTENT",
+			isProduction: true,
+		}),
 		environments: [],
 		services: [],
 		servicesRevision: "0",

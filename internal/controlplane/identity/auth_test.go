@@ -36,6 +36,9 @@ func TestInternalAuthAllowsDashboardPlatformCallsWithDelegatedUser(t *testing.T)
 	if user.UserID != "user-1" {
 		t.Fatalf("unexpected delegated user ID %q", user.UserID)
 	}
+	if user.Email != "user-1@example.com" {
+		t.Fatalf("delegated email = %q, want normalized address", user.Email)
+	}
 }
 
 func TestInternalAuthRejectsMissingDelegatedUserOnPlatformCall(t *testing.T) {
@@ -281,7 +284,7 @@ func signedUserAssertionWith(t *testing.T, userID, secret string, mutate func(*j
 	if mutate != nil {
 		mutate(&claims)
 	}
-	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(secret))
+	token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, userAssertionClaims{RegisteredClaims: claims, Email: " User-1@Example.com"}).SignedString([]byte(secret))
 	if err != nil {
 		t.Fatalf("sign user assertion: %v", err)
 	}

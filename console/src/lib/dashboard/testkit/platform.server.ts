@@ -47,6 +47,8 @@ type Calls = {
 export interface FakePlatformGateway extends PlatformGateway {
 	calls: Calls;
 	projects: PlatformJson<typeof P.ProjectSchema>[];
+	workspaces: PlatformJson<typeof P.WorkspaceSchema>[];
+	workspaceMembers: PlatformJson<typeof P.WorkspaceMemberSchema>[];
 	environments: PlatformJson<typeof P.EnvironmentSchema>[];
 	services: DashboardServiceRecord[];
 	servicesIndex: number;
@@ -94,6 +96,15 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			updateService: [],
 		},
 		projects: [],
+		workspaces: [
+			jsonFixture(P.WorkspaceSchema, {
+				id: "workspace-personal",
+				name: "My Projects",
+				personal: true,
+				role: "WORKSPACE_ROLE_ADMIN",
+			}),
+		],
+		workspaceMembers: [],
 		environments: [],
 		services: [],
 		servicesIndex: 1,
@@ -194,6 +205,23 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			},
 		});
 		router.service(P.PlatformService, {
+			listWorkspaces() {
+				return fromPlatformJson(P.ListWorkspacesResponseSchema, {
+					workspaces: platform.workspaces,
+				});
+			},
+			getWorkspace(request) {
+				const result = platform.workspaces.find(
+					(entry) => entry.id === request.workspaceId,
+				);
+				if (!result) throw new ConnectError("workspace", Code.NotFound);
+				return fromPlatformJson(P.WorkspaceSchema, result);
+			},
+			listWorkspaceMembers() {
+				return fromPlatformJson(P.ListWorkspaceMembersResponseSchema, {
+					members: platform.workspaceMembers,
+				});
+			},
 			listProjects(request, ctx) {
 				fail("listProjects");
 				platform.calls.listProjects.push({
@@ -202,7 +230,10 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 				});
 				return fromPlatformJson(P.ListProjectsResponseSchema, {
 					projects: platform.projects.filter(
-						(entry) => request.includeDeleted || !entry.deletion,
+						(entry) =>
+							(request.includeDeleted || !entry.deletion) &&
+							(!request.workspaceId ||
+								entry.workspaceId === request.workspaceId),
 					),
 				});
 			},
@@ -219,6 +250,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 					id: `project-${platform.calls.createProject.length}`,
 					name: request.name,
 					kind: "PROJECT_KIND_USER",
+					workspaceId: request.workspaceId || "workspace-personal",
 				});
 				platform.projects.push(next);
 				platform.environments.push(

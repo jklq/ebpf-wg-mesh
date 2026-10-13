@@ -46,7 +46,7 @@ func TestRecoveryReplacesTrustWithoutOverlapAndProtectsUnreachableRanges(t *test
 	}
 	for _, statement := range []string{
 		`INSERT INTO agent_registrations(id,name,local_store_id,region,failure_domain,workload_ipv4_subnet,workload_ipv6_subnet,wireguard_ipv6,created_at,updated_at) VALUES ('survivor','survivor','store','region','domain','10.0.0.0/24','fd00:1::/64','fd00:44::11/64',now(),now())`,
-		`INSERT INTO projects(id,name,kind,owner_user_id,created_at) VALUES ('project','project','user','operator',now())`,
+		`INSERT INTO projects(id,name,kind,created_at) VALUES ('project','project','user',now())`,
 		`INSERT INTO environments(id,project_id,name,kind,auto_deploy,network_identity,created_at,updated_at) VALUES ('environment','project','environment','user',false,1,now(),now())`,
 		`INSERT INTO services(id,environment_id,name,current_spec_revision,created_at,updated_at) VALUES ('service','environment','service',1,now(),now())`,
 		`INSERT INTO service_revisions(service_id,spec_revision,spec_json,created_at) VALUES ('service',1,'{}',now())`,

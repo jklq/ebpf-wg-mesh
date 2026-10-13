@@ -129,6 +129,45 @@ export interface DashboardUser {
 	email: string;
 }
 
+export interface DashboardUserProfile extends DashboardUser {
+	githubLogin?: string;
+}
+
+export type DashboardWorkspace = PlatformJson<typeof Protocol.WorkspaceSchema>;
+export type DashboardWorkspaceInvitation = PlatformJson<
+	typeof Protocol.WorkspaceInvitationSchema
+>;
+export type DashboardWorkspaceRole = Exclude<
+	Protocol.WorkspaceRoleJson,
+	"WORKSPACE_ROLE_UNSPECIFIED"
+>;
+
+/** The signed-in user's workspaces, with the one being viewed. */
+export interface DashboardWorkspaceShell {
+	user: DashboardUser;
+	githubLogin?: string;
+	workspace: DashboardWorkspace;
+	workspaces: Array<DashboardWorkspace>;
+	invitations: Array<DashboardWorkspaceInvitation>;
+	canManageFleet: boolean;
+}
+
+export interface DashboardProjectSummary {
+	project: DashboardProject;
+	environmentCount: number;
+	/** The environment a project opens on; absent when it has none. */
+	landingEnvironment?: { id: string; name: string };
+	services: Array<{ id: string; name: string; online: boolean }>;
+}
+
+export interface DashboardWorkspaceMember {
+	userId: string;
+	role: DashboardWorkspaceRole;
+	joinedAt?: string;
+	email?: string;
+	githubLogin?: string;
+}
+
 export type DashboardDeletableKind = "project" | "environment" | "volume";
 
 export type DashboardRestorableKind =
@@ -158,6 +197,8 @@ export interface DashboardDeletedResource {
 
 export interface DashboardProjectSettings {
 	project: DashboardProject;
+	/** Every workspace the user belongs to, for moving the project. */
+	workspaces: Array<DashboardWorkspace>;
 	environments: Array<{
 		environment: DashboardEnvironment;
 		volumes: Array<DashboardVolume>;
@@ -230,8 +271,10 @@ export interface DashboardHomeState {
 	localIngressBaseURL?: string;
 	ingressTargetHost: string;
 	localDomainSuffix?: string;
+	/** The workspace that owns the open project. */
+	workspace?: DashboardWorkspace;
 	project?: DashboardProject;
-	/** Every live project, for switching. */
+	/** Live projects in the open project's workspace, for switching. */
 	projects: Array<DashboardProject>;
 	environments: Array<DashboardEnvironment>;
 	environment?: DashboardEnvironment;

@@ -80,6 +80,8 @@ type ProjectRecord struct {
 	Deletion  *DeletionInfo
 	// LogRetentionDays overrides the platform log-retention default. Zero means the default.
 	LogRetentionDays int32
+	// WorkspaceID owns a user project. Managed projects have none.
+	WorkspaceID string
 }
 
 type EnvironmentKind string

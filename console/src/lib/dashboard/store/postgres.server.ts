@@ -186,6 +186,29 @@ export function createPostgresDashboardStore(
 			});
 		},
 
+		async listUserProfiles(userIDs) {
+			if (userIDs.length === 0) return [];
+			const result = await query<{
+				id: string;
+				email: string;
+				provider_login: string | null;
+			}>(
+				db,
+				"listUserProfiles",
+				`SELECT u.id, u.email, a.provider_login
+				   FROM ${tableName(runtime, "users")} u
+				   LEFT JOIN ${tableName(runtime, "accounts")} a
+				     ON a.user_id = u.id AND a.provider = 'github'
+				  WHERE u.id = ANY($1)`,
+				[userIDs],
+			);
+			return result.rows.map((row) => ({
+				id: row.id,
+				email: row.email,
+				githubLogin: row.provider_login || undefined,
+			}));
+		},
+
 		async getGitHubAccount(userID) {
 			const result = await query<GitHubAccountRow>(
 				db,

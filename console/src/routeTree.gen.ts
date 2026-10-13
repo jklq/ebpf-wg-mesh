@@ -17,7 +17,10 @@ import { Route as LivezRouteImport } from './routes/livez'
 import { Route as HealthzRouteImport } from './routes/healthz'
 import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DeletedRouteImport } from './routes/deleted'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WorkspaceSettingsRouteImport } from './routes/workspace/settings'
+import { Route as WorkspacePeopleRouteImport } from './routes/workspace/people'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
 import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/environment-services'
@@ -67,9 +70,24 @@ const DeletedRoute = DeletedRouteImport.update({
   path: '/deleted',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkspaceSettingsRoute = WorkspaceSettingsRouteImport.update({
+  id: '/workspace/settings',
+  path: '/workspace/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkspacePeopleRoute = WorkspacePeopleRouteImport.update({
+  id: '/workspace/people',
+  path: '/workspace/people',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WebhooksGithubRoute = WebhooksGithubRouteImport.update({
@@ -118,6 +136,7 @@ const ProjectsProjectIdSettingsRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/dashboard': typeof DashboardRoute
   '/deleted': typeof DeletedRoute
   '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
@@ -132,11 +151,14 @@ export interface FileRoutesByFullPath {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/workspace/people': typeof WorkspacePeopleRoute
+  '/workspace/settings': typeof WorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/dashboard': typeof DashboardRoute
   '/deleted': typeof DeletedRoute
   '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
@@ -151,12 +173,15 @@ export interface FileRoutesByTo {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/workspace/people': typeof WorkspacePeopleRoute
+  '/workspace/settings': typeof WorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/dashboard': typeof DashboardRoute
   '/deleted': typeof DeletedRoute
   '/fleet': typeof FleetRoute
   '/healthz': typeof HealthzRoute
@@ -171,6 +196,8 @@ export interface FileRoutesById {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/workspace/people': typeof WorkspacePeopleRoute
+  '/workspace/settings': typeof WorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
 }
@@ -178,6 +205,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/dashboard'
     | '/deleted'
     | '/fleet'
     | '/healthz'
@@ -192,11 +220,14 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/workspace/people'
+    | '/workspace/settings'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/dashboard'
     | '/deleted'
     | '/fleet'
     | '/healthz'
@@ -211,11 +242,14 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/workspace/people'
+    | '/workspace/settings'
     | '/projects/$projectId/settings'
     | '/projects/$projectId'
   id:
     | '__root__'
     | '/'
+    | '/dashboard'
     | '/deleted'
     | '/fleet'
     | '/healthz'
@@ -230,12 +264,15 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/workspace/people'
+    | '/workspace/settings'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  DashboardRoute: typeof DashboardRoute
   DeletedRoute: typeof DeletedRoute
   FleetRoute: typeof FleetRoute
   HealthzRoute: typeof HealthzRoute
@@ -250,6 +287,8 @@ export interface RootRouteChildren {
   EventsEnvironmentServicesRoute: typeof EventsEnvironmentServicesRoute
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
+  WorkspacePeopleRoute: typeof WorkspacePeopleRoute
+  WorkspaceSettingsRoute: typeof WorkspaceSettingsRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
 }
@@ -312,11 +351,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DeletedRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workspace/settings': {
+      id: '/workspace/settings'
+      path: '/workspace/settings'
+      fullPath: '/workspace/settings'
+      preLoaderRoute: typeof WorkspaceSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/workspace/people': {
+      id: '/workspace/people'
+      path: '/workspace/people'
+      fullPath: '/workspace/people'
+      preLoaderRoute: typeof WorkspacePeopleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/webhooks/github': {
@@ -380,6 +440,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  DashboardRoute: DashboardRoute,
   DeletedRoute: DeletedRoute,
   FleetRoute: FleetRoute,
   HealthzRoute: HealthzRoute,
@@ -394,6 +455,8 @@ const rootRouteChildren: RootRouteChildren = {
   EventsEnvironmentServicesRoute: EventsEnvironmentServicesRoute,
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,
+  WorkspacePeopleRoute: WorkspacePeopleRoute,
+  WorkspaceSettingsRoute: WorkspaceSettingsRoute,
   ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
 }

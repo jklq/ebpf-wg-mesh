@@ -68,12 +68,37 @@ var currentSchema = []string{
 			storage_id TEXT NOT NULL,
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
+	`CREATE TABLE workspaces (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			personal_user_id TEXT NULL,
+			created_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE UNIQUE INDEX idx_workspaces_personal ON workspaces(personal_user_id) WHERE personal_user_id IS NOT NULL`,
+	`CREATE TABLE workspace_memberships (
+			workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL,
+			role TEXT NOT NULL CHECK (role IN ('admin', 'member', 'viewer')),
+			created_at TIMESTAMPTZ NOT NULL,
+			PRIMARY KEY (workspace_id, user_id)
+		)`,
+	`CREATE INDEX idx_workspace_memberships_user ON workspace_memberships(user_id, workspace_id)`,
+	`CREATE TABLE workspace_invitations (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			email TEXT NOT NULL,
+			role TEXT NOT NULL CHECK (role IN ('admin', 'member', 'viewer')),
+			invited_by_user_id TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL,
+			UNIQUE (workspace_id, email)
+		)`,
+	`CREATE INDEX idx_workspace_invitations_email ON workspace_invitations(email)`,
 	`CREATE TABLE projects (
 			id TEXT PRIMARY KEY,
 			name TEXT NOT NULL,
 			kind TEXT NOT NULL,
 			system_key TEXT NULL,
-			owner_user_id TEXT NOT NULL,
+			workspace_id TEXT NULL REFERENCES workspaces(id),
 			created_at TIMESTAMPTZ NOT NULL,
 			deleted_at TIMESTAMPTZ NULL,
 			deleted_by_user_id TEXT NOT NULL DEFAULT '',
@@ -81,17 +106,10 @@ var currentSchema = []string{
 			log_retention_days INT NOT NULL DEFAULT 0
 		)`,
 	`CREATE INDEX idx_projects_delete_expires ON projects(delete_expires_at, id) WHERE deleted_at IS NOT NULL`,
-	`CREATE UNIQUE INDEX idx_projects_owner_name
-			ON projects(owner_user_id, name) WHERE kind = 'user'`,
+	`CREATE UNIQUE INDEX idx_projects_workspace_name
+			ON projects(workspace_id, name) WHERE kind = 'user'`,
 	`CREATE UNIQUE INDEX idx_projects_system_key
 			ON projects(system_key) WHERE system_key IS NOT NULL`,
-	`CREATE TABLE project_memberships (
-			user_id TEXT NOT NULL,
-			project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-			role TEXT NOT NULL,
-			PRIMARY KEY (user_id, project_id)
-		)`,
-	`CREATE INDEX idx_project_memberships_user ON project_memberships(user_id, project_id)`,
 	`CREATE TABLE platform_operators (
 			user_id TEXT PRIMARY KEY,
 			created_at TIMESTAMPTZ NOT NULL

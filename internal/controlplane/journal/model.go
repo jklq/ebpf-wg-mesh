@@ -6,12 +6,11 @@ import (
 )
 
 type Project struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Kind        string    `json:"kind"`
-	SystemKey   *string   `json:"system_key"`
-	OwnerUserID string    `json:"owner_user_id"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	Kind      string    `json:"kind"`
+	SystemKey *string   `json:"system_key"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type ServiceIntent struct {

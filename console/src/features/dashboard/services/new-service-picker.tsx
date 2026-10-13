@@ -84,7 +84,8 @@ export function NewServicePicker({
 	const handleConfirm = async (selectorOverride?: string) => {
 		if (submittingRef.current) return;
 		const selector = (selectorOverride ?? repoSelector).trim();
-		if (!selector) return;
+		const environmentId = state.environment?.id;
+		if (!selector || !environmentId) return;
 		submittingRef.current = true;
 		// Commit the picker close and pending node before starting server work.
 		flushSync(() => {
@@ -95,7 +96,7 @@ export function NewServicePicker({
 		let result: CreateServiceFastResult;
 		try {
 			result = await confirmRepository({
-				data: { repositorySelector: selector },
+				data: { environmentId, repositorySelector: selector },
 			});
 		} catch (e) {
 			const message = formatError(e);

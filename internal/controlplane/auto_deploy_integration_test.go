@@ -17,7 +17,7 @@ func TestEnvironmentAutoDeployDefaultsAndAuthorization(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,10 +65,8 @@ func TestEnvironmentAutoDeployDefaultsAndAuthorization(t *testing.T) {
 		t.Fatalf("expected production auto-deploy override on, got %#v", productionEnabled)
 	}
 
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO project_memberships(user_id, project_id, role)
-		VALUES ('editor', $1, 'editor'), ('viewer', $1, 'viewer')`, project.ID); err != nil {
-		t.Fatal(err)
-	}
+	grantWorkspaceRole(t, store, ctx, project.ID, "editor", "member")
+	grantWorkspaceRole(t, store, ctx, project.ID, "viewer", "viewer")
 	if _, err := store.catalog.updateEnvironmentAutoDeploy(ctx, testUser("editor"), staging.ID, false); err != nil {
 		t.Fatalf("editor could not update auto-deploy: %v", err)
 	}

@@ -222,9 +222,11 @@ func resetTestStore(t *testing.T, store *persistence) {
 		"envelope_keys",
 		"volume_destructions",
 		"volumes",
-		"project_memberships",
 		"environments",
 		"projects",
+		"workspace_invitations",
+		"workspace_memberships",
+		"workspaces",
 		"agent_administration",
 		"agent_registrations",
 		"workload_ipv4_prefix_allocator",
@@ -408,4 +410,17 @@ func cloneURL(source *url.URL) (*url.URL, error) {
 	}
 	clone.RawQuery = query.Encode()
 	return &clone, nil
+}
+
+// grantWorkspaceRole gives userID role in the workspace that owns projectID,
+// bypassing invitations.
+func grantWorkspaceRole(t *testing.T, store *persistence, ctx context.Context, projectID, userID, role string) {
+	t.Helper()
+	if _, err := store.db.ExecContext(ctx,
+		`INSERT INTO workspace_memberships(workspace_id, user_id, role, created_at)
+		 SELECT workspace_id, $2, $3, now() FROM projects WHERE id = $1
+		 ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = excluded.role`,
+		projectID, userID, role); err != nil {
+		t.Fatal(err)
+	}
 }

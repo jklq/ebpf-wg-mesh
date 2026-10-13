@@ -30,6 +30,71 @@ func toConnectError(err error) error {
 	return connect.NewError(connect.Code(uint32(status.Code(err))), err)
 }
 
+func (a connectPlatformService) ListWorkspaces(ctx context.Context, req *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error) {
+	result, err := a.service.ListWorkspaces(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) GetWorkspace(ctx context.Context, req *connect.Request[platformv1.GetWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	result, err := a.service.GetWorkspace(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) CreateWorkspace(ctx context.Context, req *connect.Request[platformv1.CreateWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	result, err := a.service.CreateWorkspace(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RenameWorkspace(ctx context.Context, req *connect.Request[platformv1.RenameWorkspaceRequest]) (*connect.Response[platformv1.Workspace], error) {
+	result, err := a.service.RenameWorkspace(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) DeleteWorkspace(ctx context.Context, req *connect.Request[platformv1.DeleteWorkspaceRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.DeleteWorkspace(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) ListWorkspaceMembers(ctx context.Context, req *connect.Request[platformv1.ListWorkspaceMembersRequest]) (*connect.Response[platformv1.ListWorkspaceMembersResponse], error) {
+	result, err := a.service.ListWorkspaceMembers(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) InviteWorkspaceMember(ctx context.Context, req *connect.Request[platformv1.InviteWorkspaceMemberRequest]) (*connect.Response[platformv1.WorkspaceInvitation], error) {
+	result, err := a.service.InviteWorkspaceMember(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RevokeWorkspaceInvitation(ctx context.Context, req *connect.Request[platformv1.RevokeWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.RevokeWorkspaceInvitation(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) AcceptWorkspaceInvitation(ctx context.Context, req *connect.Request[platformv1.AcceptWorkspaceInvitationRequest]) (*connect.Response[platformv1.Workspace], error) {
+	result, err := a.service.AcceptWorkspaceInvitation(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) DeclineWorkspaceInvitation(ctx context.Context, req *connect.Request[platformv1.DeclineWorkspaceInvitationRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.DeclineWorkspaceInvitation(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) UpdateWorkspaceMemberRole(ctx context.Context, req *connect.Request[platformv1.UpdateWorkspaceMemberRoleRequest]) (*connect.Response[platformv1.WorkspaceMember], error) {
+	result, err := a.service.UpdateWorkspaceMemberRole(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RemoveWorkspaceMember(ctx context.Context, req *connect.Request[platformv1.RemoveWorkspaceMemberRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.RemoveWorkspaceMember(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) MoveProject(ctx context.Context, req *connect.Request[platformv1.MoveProjectRequest]) (*connect.Response[platformv1.Project], error) {
+	result, err := a.service.MoveProject(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) CreateProject(ctx context.Context, req *connect.Request[platformv1.CreateProjectRequest]) (*connect.Response[platformv1.Project], error) {
 	result, err := a.service.CreateProject(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

@@ -202,6 +202,16 @@ export function createDashboardTestHarness(
 			onboardingDrafts.set(user.id, defaultOnboardingDraft());
 			return { user, disposition: "signup" as const };
 		},
+		async listUserProfiles(userIDs) {
+			return userIDs.flatMap((id) => {
+				const user = users.get(id);
+				if (!user) return [];
+				const account = [...githubAccounts.values()].find(
+					(entry) => entry.user.id === id,
+				);
+				return [{ ...user, githubLogin: account?.login }];
+			});
+		},
 		async getGitHubAccount(
 			userID,
 		): Promise<StoredDashboardGitHubAccount | null> {

@@ -233,7 +233,7 @@ func TestVolumeDeletionDestroysDataOnlyAfterGrace(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
-	project, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	project, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +288,7 @@ func TestEnvironmentCollectionDestroysPinnedVolumes(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	seedReplicaFixture(t, store, ctx, []string{"node-a"})
-	project, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	project, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil {
 		t.Fatal(err)
 	}

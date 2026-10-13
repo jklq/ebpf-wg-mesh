@@ -29,7 +29,7 @@ func TestServiceEnvRoundTripsEncryptedAtRest(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "env")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestServiceEnvValidation(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "env")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestServiceEnvDesiredStateMerge(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "env")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +194,7 @@ func TestAgentSyncDecryptsOnlyRenderedAllocations(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "scoped-sync")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "scoped-sync")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestAgentSyncKeepsRevisionEnvAcrossCoexistingDeployments(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "overlapping-env")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "overlapping-env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestServiceEnvRollbackRestoresDeployedValues(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	userID := "owner"
-	project, err := store.catalog.createProject(ctx, testUser(userID), "env")
+	project, err := store.catalog.createProject(ctx, testUser(userID), "", "env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -403,7 +403,7 @@ func TestServiceEnvDuplicateEnvironmentReencrypts(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "env")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "env")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -456,7 +456,7 @@ func TestServiceEnvSurvivesRolledBackKeyMint(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "env")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "env")
 	if err != nil {
 		t.Fatal(err)
 	}

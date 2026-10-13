@@ -7,7 +7,14 @@ const slideDown = stylex.keyframes({
 });
 
 import { Link } from "@tanstack/react-router";
-import { Check, ChevronDown, History, Layers, Settings } from "lucide-react";
+import {
+	Check,
+	ChevronDown,
+	History,
+	Layers,
+	LayoutGrid,
+	Settings,
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import type { DashboardHomeState } from "#/lib/dashboard/core/types.server";
@@ -104,6 +111,16 @@ export function ProjectSwitcher({ state }: { state: DashboardHomeState }) {
 						})}
 					</div>
 					<div {...stylex.props(styles.menuFooter)}>
+						<Link
+							to="/dashboard"
+							search={{ workspace: project.workspaceId || undefined }}
+							role="menuitem"
+							{...stylex.props(menuLink.root)}
+							onClick={() => setOpen(false)}
+						>
+							<LayoutGrid size={13} {...stylex.props(styles.menuIcon)} />
+							All projects
+						</Link>
 						<Link
 							to="/projects/$projectId/settings"
 							params={{ projectId: project.id }}

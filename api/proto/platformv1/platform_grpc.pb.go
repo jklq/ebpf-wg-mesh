@@ -20,6 +20,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	PlatformService_ListWorkspaces_FullMethodName              = "/platform.v1.PlatformService/ListWorkspaces"
+	PlatformService_GetWorkspace_FullMethodName                = "/platform.v1.PlatformService/GetWorkspace"
+	PlatformService_CreateWorkspace_FullMethodName             = "/platform.v1.PlatformService/CreateWorkspace"
+	PlatformService_RenameWorkspace_FullMethodName             = "/platform.v1.PlatformService/RenameWorkspace"
+	PlatformService_DeleteWorkspace_FullMethodName             = "/platform.v1.PlatformService/DeleteWorkspace"
+	PlatformService_ListWorkspaceMembers_FullMethodName        = "/platform.v1.PlatformService/ListWorkspaceMembers"
+	PlatformService_InviteWorkspaceMember_FullMethodName       = "/platform.v1.PlatformService/InviteWorkspaceMember"
+	PlatformService_RevokeWorkspaceInvitation_FullMethodName   = "/platform.v1.PlatformService/RevokeWorkspaceInvitation"
+	PlatformService_AcceptWorkspaceInvitation_FullMethodName   = "/platform.v1.PlatformService/AcceptWorkspaceInvitation"
+	PlatformService_DeclineWorkspaceInvitation_FullMethodName  = "/platform.v1.PlatformService/DeclineWorkspaceInvitation"
+	PlatformService_UpdateWorkspaceMemberRole_FullMethodName   = "/platform.v1.PlatformService/UpdateWorkspaceMemberRole"
+	PlatformService_RemoveWorkspaceMember_FullMethodName       = "/platform.v1.PlatformService/RemoveWorkspaceMember"
+	PlatformService_MoveProject_FullMethodName                 = "/platform.v1.PlatformService/MoveProject"
 	PlatformService_CreateProject_FullMethodName               = "/platform.v1.PlatformService/CreateProject"
 	PlatformService_ListProjects_FullMethodName                = "/platform.v1.PlatformService/ListProjects"
 	PlatformService_GetProject_FullMethodName                  = "/platform.v1.PlatformService/GetProject"
@@ -72,6 +85,19 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PlatformServiceClient interface {
+	ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error)
+	GetWorkspace(ctx context.Context, in *GetWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
+	CreateWorkspace(ctx context.Context, in *CreateWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
+	RenameWorkspace(ctx context.Context, in *RenameWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error)
+	DeleteWorkspace(ctx context.Context, in *DeleteWorkspaceRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	ListWorkspaceMembers(ctx context.Context, in *ListWorkspaceMembersRequest, opts ...grpc.CallOption) (*ListWorkspaceMembersResponse, error)
+	InviteWorkspaceMember(ctx context.Context, in *InviteWorkspaceMemberRequest, opts ...grpc.CallOption) (*WorkspaceInvitation, error)
+	RevokeWorkspaceInvitation(ctx context.Context, in *RevokeWorkspaceInvitationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	AcceptWorkspaceInvitation(ctx context.Context, in *AcceptWorkspaceInvitationRequest, opts ...grpc.CallOption) (*Workspace, error)
+	DeclineWorkspaceInvitation(ctx context.Context, in *DeclineWorkspaceInvitationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	UpdateWorkspaceMemberRole(ctx context.Context, in *UpdateWorkspaceMemberRoleRequest, opts ...grpc.CallOption) (*WorkspaceMember, error)
+	RemoveWorkspaceMember(ctx context.Context, in *RemoveWorkspaceMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	MoveProject(ctx context.Context, in *MoveProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error)
 	ListProjects(ctx context.Context, in *ListProjectsRequest, opts ...grpc.CallOption) (*ListProjectsResponse, error)
 	GetProject(ctx context.Context, in *GetProjectRequest, opts ...grpc.CallOption) (*Project, error)
@@ -126,6 +152,136 @@ type platformServiceClient struct {
 
 func NewPlatformServiceClient(cc grpc.ClientConnInterface) PlatformServiceClient {
 	return &platformServiceClient{cc}
+}
+
+func (c *platformServiceClient) ListWorkspaces(ctx context.Context, in *ListWorkspacesRequest, opts ...grpc.CallOption) (*ListWorkspacesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWorkspacesResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListWorkspaces_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetWorkspace(ctx context.Context, in *GetWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Workspace)
+	err := c.cc.Invoke(ctx, PlatformService_GetWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) CreateWorkspace(ctx context.Context, in *CreateWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Workspace)
+	err := c.cc.Invoke(ctx, PlatformService_CreateWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RenameWorkspace(ctx context.Context, in *RenameWorkspaceRequest, opts ...grpc.CallOption) (*Workspace, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Workspace)
+	err := c.cc.Invoke(ctx, PlatformService_RenameWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DeleteWorkspace(ctx context.Context, in *DeleteWorkspaceRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_DeleteWorkspace_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) ListWorkspaceMembers(ctx context.Context, in *ListWorkspaceMembersRequest, opts ...grpc.CallOption) (*ListWorkspaceMembersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWorkspaceMembersResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListWorkspaceMembers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) InviteWorkspaceMember(ctx context.Context, in *InviteWorkspaceMemberRequest, opts ...grpc.CallOption) (*WorkspaceInvitation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceInvitation)
+	err := c.cc.Invoke(ctx, PlatformService_InviteWorkspaceMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RevokeWorkspaceInvitation(ctx context.Context, in *RevokeWorkspaceInvitationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_RevokeWorkspaceInvitation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) AcceptWorkspaceInvitation(ctx context.Context, in *AcceptWorkspaceInvitationRequest, opts ...grpc.CallOption) (*Workspace, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Workspace)
+	err := c.cc.Invoke(ctx, PlatformService_AcceptWorkspaceInvitation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) DeclineWorkspaceInvitation(ctx context.Context, in *DeclineWorkspaceInvitationRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_DeclineWorkspaceInvitation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) UpdateWorkspaceMemberRole(ctx context.Context, in *UpdateWorkspaceMemberRoleRequest, opts ...grpc.CallOption) (*WorkspaceMember, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WorkspaceMember)
+	err := c.cc.Invoke(ctx, PlatformService_UpdateWorkspaceMemberRole_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RemoveWorkspaceMember(ctx context.Context, in *RemoveWorkspaceMemberRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_RemoveWorkspaceMember_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) MoveProject(ctx context.Context, in *MoveProjectRequest, opts ...grpc.CallOption) (*Project, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Project)
+	err := c.cc.Invoke(ctx, PlatformService_MoveProject_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *platformServiceClient) CreateProject(ctx context.Context, in *CreateProjectRequest, opts ...grpc.CallOption) (*Project, error) {
@@ -592,6 +748,19 @@ func (c *platformServiceClient) ListBuildAttempts(ctx context.Context, in *ListB
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
 type PlatformServiceServer interface {
+	ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error)
+	GetWorkspace(context.Context, *GetWorkspaceRequest) (*Workspace, error)
+	CreateWorkspace(context.Context, *CreateWorkspaceRequest) (*Workspace, error)
+	RenameWorkspace(context.Context, *RenameWorkspaceRequest) (*Workspace, error)
+	DeleteWorkspace(context.Context, *DeleteWorkspaceRequest) (*emptypb.Empty, error)
+	ListWorkspaceMembers(context.Context, *ListWorkspaceMembersRequest) (*ListWorkspaceMembersResponse, error)
+	InviteWorkspaceMember(context.Context, *InviteWorkspaceMemberRequest) (*WorkspaceInvitation, error)
+	RevokeWorkspaceInvitation(context.Context, *RevokeWorkspaceInvitationRequest) (*emptypb.Empty, error)
+	AcceptWorkspaceInvitation(context.Context, *AcceptWorkspaceInvitationRequest) (*Workspace, error)
+	DeclineWorkspaceInvitation(context.Context, *DeclineWorkspaceInvitationRequest) (*emptypb.Empty, error)
+	UpdateWorkspaceMemberRole(context.Context, *UpdateWorkspaceMemberRoleRequest) (*WorkspaceMember, error)
+	RemoveWorkspaceMember(context.Context, *RemoveWorkspaceMemberRequest) (*emptypb.Empty, error)
+	MoveProject(context.Context, *MoveProjectRequest) (*Project, error)
 	CreateProject(context.Context, *CreateProjectRequest) (*Project, error)
 	ListProjects(context.Context, *ListProjectsRequest) (*ListProjectsResponse, error)
 	GetProject(context.Context, *GetProjectRequest) (*Project, error)
@@ -648,6 +817,45 @@ type PlatformServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedPlatformServiceServer struct{}
 
+func (UnimplementedPlatformServiceServer) ListWorkspaces(context.Context, *ListWorkspacesRequest) (*ListWorkspacesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWorkspaces not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetWorkspace(context.Context, *GetWorkspaceRequest) (*Workspace, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWorkspace not implemented")
+}
+func (UnimplementedPlatformServiceServer) CreateWorkspace(context.Context, *CreateWorkspaceRequest) (*Workspace, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateWorkspace not implemented")
+}
+func (UnimplementedPlatformServiceServer) RenameWorkspace(context.Context, *RenameWorkspaceRequest) (*Workspace, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenameWorkspace not implemented")
+}
+func (UnimplementedPlatformServiceServer) DeleteWorkspace(context.Context, *DeleteWorkspaceRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeleteWorkspace not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListWorkspaceMembers(context.Context, *ListWorkspaceMembersRequest) (*ListWorkspaceMembersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWorkspaceMembers not implemented")
+}
+func (UnimplementedPlatformServiceServer) InviteWorkspaceMember(context.Context, *InviteWorkspaceMemberRequest) (*WorkspaceInvitation, error) {
+	return nil, status.Error(codes.Unimplemented, "method InviteWorkspaceMember not implemented")
+}
+func (UnimplementedPlatformServiceServer) RevokeWorkspaceInvitation(context.Context, *RevokeWorkspaceInvitationRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeWorkspaceInvitation not implemented")
+}
+func (UnimplementedPlatformServiceServer) AcceptWorkspaceInvitation(context.Context, *AcceptWorkspaceInvitationRequest) (*Workspace, error) {
+	return nil, status.Error(codes.Unimplemented, "method AcceptWorkspaceInvitation not implemented")
+}
+func (UnimplementedPlatformServiceServer) DeclineWorkspaceInvitation(context.Context, *DeclineWorkspaceInvitationRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeclineWorkspaceInvitation not implemented")
+}
+func (UnimplementedPlatformServiceServer) UpdateWorkspaceMemberRole(context.Context, *UpdateWorkspaceMemberRoleRequest) (*WorkspaceMember, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateWorkspaceMemberRole not implemented")
+}
+func (UnimplementedPlatformServiceServer) RemoveWorkspaceMember(context.Context, *RemoveWorkspaceMemberRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RemoveWorkspaceMember not implemented")
+}
+func (UnimplementedPlatformServiceServer) MoveProject(context.Context, *MoveProjectRequest) (*Project, error) {
+	return nil, status.Error(codes.Unimplemented, "method MoveProject not implemented")
+}
 func (UnimplementedPlatformServiceServer) CreateProject(context.Context, *CreateProjectRequest) (*Project, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateProject not implemented")
 }
@@ -805,6 +1013,240 @@ func RegisterPlatformServiceServer(s grpc.ServiceRegistrar, srv PlatformServiceS
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&PlatformService_ServiceDesc, srv)
+}
+
+func _PlatformService_ListWorkspaces_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWorkspacesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListWorkspaces(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListWorkspaces_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListWorkspaces(ctx, req.(*ListWorkspacesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetWorkspace(ctx, req.(*GetWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_CreateWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).CreateWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_CreateWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).CreateWorkspace(ctx, req.(*CreateWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RenameWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RenameWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RenameWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RenameWorkspace(ctx, req.(*RenameWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DeleteWorkspace_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteWorkspaceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DeleteWorkspace(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DeleteWorkspace_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DeleteWorkspace(ctx, req.(*DeleteWorkspaceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_ListWorkspaceMembers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWorkspaceMembersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListWorkspaceMembers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListWorkspaceMembers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListWorkspaceMembers(ctx, req.(*ListWorkspaceMembersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_InviteWorkspaceMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(InviteWorkspaceMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).InviteWorkspaceMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_InviteWorkspaceMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).InviteWorkspaceMember(ctx, req.(*InviteWorkspaceMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RevokeWorkspaceInvitation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeWorkspaceInvitationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RevokeWorkspaceInvitation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RevokeWorkspaceInvitation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RevokeWorkspaceInvitation(ctx, req.(*RevokeWorkspaceInvitationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_AcceptWorkspaceInvitation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AcceptWorkspaceInvitationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).AcceptWorkspaceInvitation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_AcceptWorkspaceInvitation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).AcceptWorkspaceInvitation(ctx, req.(*AcceptWorkspaceInvitationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_DeclineWorkspaceInvitation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeclineWorkspaceInvitationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).DeclineWorkspaceInvitation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_DeclineWorkspaceInvitation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).DeclineWorkspaceInvitation(ctx, req.(*DeclineWorkspaceInvitationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_UpdateWorkspaceMemberRole_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateWorkspaceMemberRoleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).UpdateWorkspaceMemberRole(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_UpdateWorkspaceMemberRole_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).UpdateWorkspaceMemberRole(ctx, req.(*UpdateWorkspaceMemberRoleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RemoveWorkspaceMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveWorkspaceMemberRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RemoveWorkspaceMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RemoveWorkspaceMember_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RemoveWorkspaceMember(ctx, req.(*RemoveWorkspaceMemberRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_MoveProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MoveProjectRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).MoveProject(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_MoveProject_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).MoveProject(ctx, req.(*MoveProjectRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _PlatformService_CreateProject_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -1642,6 +2084,58 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "platform.v1.PlatformService",
 	HandlerType: (*PlatformServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ListWorkspaces",
+			Handler:    _PlatformService_ListWorkspaces_Handler,
+		},
+		{
+			MethodName: "GetWorkspace",
+			Handler:    _PlatformService_GetWorkspace_Handler,
+		},
+		{
+			MethodName: "CreateWorkspace",
+			Handler:    _PlatformService_CreateWorkspace_Handler,
+		},
+		{
+			MethodName: "RenameWorkspace",
+			Handler:    _PlatformService_RenameWorkspace_Handler,
+		},
+		{
+			MethodName: "DeleteWorkspace",
+			Handler:    _PlatformService_DeleteWorkspace_Handler,
+		},
+		{
+			MethodName: "ListWorkspaceMembers",
+			Handler:    _PlatformService_ListWorkspaceMembers_Handler,
+		},
+		{
+			MethodName: "InviteWorkspaceMember",
+			Handler:    _PlatformService_InviteWorkspaceMember_Handler,
+		},
+		{
+			MethodName: "RevokeWorkspaceInvitation",
+			Handler:    _PlatformService_RevokeWorkspaceInvitation_Handler,
+		},
+		{
+			MethodName: "AcceptWorkspaceInvitation",
+			Handler:    _PlatformService_AcceptWorkspaceInvitation_Handler,
+		},
+		{
+			MethodName: "DeclineWorkspaceInvitation",
+			Handler:    _PlatformService_DeclineWorkspaceInvitation_Handler,
+		},
+		{
+			MethodName: "UpdateWorkspaceMemberRole",
+			Handler:    _PlatformService_UpdateWorkspaceMemberRole_Handler,
+		},
+		{
+			MethodName: "RemoveWorkspaceMember",
+			Handler:    _PlatformService_RemoveWorkspaceMember_Handler,
+		},
+		{
+			MethodName: "MoveProject",
+			Handler:    _PlatformService_MoveProject_Handler,
+		},
 		{
 			MethodName: "CreateProject",
 			Handler:    _PlatformService_CreateProject_Handler,

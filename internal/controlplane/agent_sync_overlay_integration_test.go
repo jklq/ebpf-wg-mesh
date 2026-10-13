@@ -91,7 +91,7 @@ func TestAgentSyncRepairsObservationOverlayOnConnectedSession(t *testing.T) {
 		t.Fatalf("ClusterIdentity: %v", err)
 	}
 
-	projects, err := server.store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := server.store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %#v, %v", projects, err)
 	}

@@ -13,6 +13,8 @@ interface PlatformUserAssertionPayload {
 	iss: typeof PlatformUserAssertionIssuer;
 	aud: typeof PlatformUserAssertionAudience;
 	sub: string;
+	/** Verified email; the control plane matches workspace invitations to it. */
+	email: string;
 	iat: number;
 	exp: number;
 	jti: string;
@@ -21,6 +23,7 @@ interface PlatformUserAssertionPayload {
 export function createPlatformUserAssertion(input: {
 	secret: string;
 	userId: string;
+	email: string;
 	now?: Date;
 	id?: string;
 }): string {
@@ -39,6 +42,7 @@ export function createPlatformUserAssertion(input: {
 		iss: PlatformUserAssertionIssuer,
 		aud: PlatformUserAssertionAudience,
 		sub: input.userId,
+		email: input.email,
 		iat: now,
 		exp: now + PlatformUserAssertionMaxAgeSeconds,
 		jti: input.id ?? randomUUID(),

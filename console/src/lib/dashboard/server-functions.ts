@@ -96,6 +96,7 @@ const updateServiceInput = z.object({
 });
 const volumeSizeBytes = z.number().int().positive();
 const confirmRepositoryInput = z.object({
+	environmentId: identifier,
 	repositorySelector: identifier,
 	serviceName: z.string().optional(),
 	trackedRef: z.string().optional(),
@@ -576,3 +577,197 @@ export const doCreateServiceFast = createServerFn({ method: "POST" })
 			data,
 		);
 	});
+
+const workspaceRole = z.enum([
+	"WORKSPACE_ROLE_ADMIN",
+	"WORKSPACE_ROLE_MEMBER",
+	"WORKSPACE_ROLE_VIEWER",
+]);
+const requestedWorkspace = z
+	.object({ workspaceId: optionalIdentifier })
+	.optional();
+
+export const loadWorkspaceOverview = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.handler(async ({ data }) =>
+		signedIn("/dashboard", async () =>
+			(
+				await import("#/lib/dashboard/core/operations-workspaces.server")
+			).loadWorkspaceOverview(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data?.workspaceId,
+			),
+		),
+	);
+
+export const loadWorkspaceShell = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.handler(async ({ data }) =>
+		signedIn("/workspace/settings", async () =>
+			(
+				await import("#/lib/dashboard/core/operations-workspaces.server")
+			).loadWorkspaceShell(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data?.workspaceId,
+			),
+		),
+	);
+
+export const loadWorkspacePeople = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.handler(async ({ data }) =>
+		signedIn("/workspace/people", async () =>
+			(
+				await import("#/lib/dashboard/core/operations-workspaces.server")
+			).loadWorkspacePeople(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data?.workspaceId,
+			),
+		),
+	);
+
+export const doCreateWorkspaceProject = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({ workspaceId: identifier, name: z.string().optional() })
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).createWorkspaceProjectFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doCreateWorkspace = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ name: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).createWorkspaceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data.name,
+		),
+	);
+
+export const doRenameWorkspace = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier, name: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).renameWorkspaceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doDeleteWorkspace = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({ workspaceId: identifier, confirmationName: z.string() })
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).deleteWorkspaceFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doInviteWorkspaceMember = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				workspaceId: identifier,
+				email: z.string().trim().email(),
+				role: workspaceRole,
+			})
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).inviteWorkspaceMemberFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doRevokeWorkspaceInvitation = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ invitationId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).revokeWorkspaceInvitationFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data.invitationId,
+		),
+	);
+
+export const doAnswerWorkspaceInvitation = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ invitationId: identifier, accept: z.boolean() }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).answerWorkspaceInvitationFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doUpdateWorkspaceMemberRole = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				workspaceId: identifier,
+				userId: identifier,
+				role: workspaceRole,
+			})
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).updateWorkspaceMemberRoleFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doRemoveWorkspaceMember = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier, userId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).removeWorkspaceMemberFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doMoveProject = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ projectId: identifier, workspaceId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-workspaces.server")
+		).moveProjectFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);

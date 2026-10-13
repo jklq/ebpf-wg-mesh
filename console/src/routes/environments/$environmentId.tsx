@@ -19,6 +19,9 @@ export const Route = createFileRoute("/environments/$environmentId")({
 		const state = await loadHome({
 			data: { environmentId: params.environmentId },
 		});
+		if (!state.environment && state.controlPlaneReachable) {
+			throw redirect({ to: "/dashboard" });
+		}
 		if (state.environment && state.environment.id !== params.environmentId) {
 			throw redirect({
 				to: "/environments/$environmentId",

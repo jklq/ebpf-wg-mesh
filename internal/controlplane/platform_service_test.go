@@ -181,8 +181,9 @@ func (f *fakePlatformDelivery) LivePosition() deliverycore.LivePosition {
 }
 
 type fakePlatformStore struct {
-	createProjectFn                   func(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
-	listProjectsFn                    func(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
+	workspaceStore
+	createProjectFn                   func(ctx context.Context, user authz.User, workspaceID, name string) (deliverycore.ProjectRecord, error)
+	listProjectsFn                    func(ctx context.Context, user authz.User, workspaceID string, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
 	projectByIDFn                     func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetentionFn       func(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	serviceByIDFn                     func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
@@ -272,16 +273,16 @@ func (f *fakePlatformStore) restoreEnvironment(ctx context.Context, user authz.U
 	return deliverycore.EnvironmentRecord{ID: environmentID}, nil
 }
 
-func (f *fakePlatformStore) createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error) {
+func (f *fakePlatformStore) createProject(ctx context.Context, user authz.User, workspaceID, name string) (deliverycore.ProjectRecord, error) {
 	if f.createProjectFn != nil {
-		return f.createProjectFn(ctx, user, name)
+		return f.createProjectFn(ctx, user, workspaceID, name)
 	}
 	return deliverycore.ProjectRecord{ID: "project-1", Name: name, Kind: deliverycore.ProjectKindUser, CreatedAt: time.Now().UTC()}, nil
 }
 
-func (f *fakePlatformStore) listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
+func (f *fakePlatformStore) listProjects(ctx context.Context, user authz.User, workspaceID string, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
 	if f.listProjectsFn != nil {
-		return f.listProjectsFn(ctx, user, includeDeleted)
+		return f.listProjectsFn(ctx, user, workspaceID, includeDeleted)
 	}
 	return nil, nil
 }
@@ -482,23 +483,23 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				healthy = true
 			}
 			return deliverycore.ServiceRecord{
-					ID:               serviceID,
-					ProjectID:        "project-1",
-					AllocatedAgentID: "node-1",
-					CreatedAt:        now.Add(-10 * time.Minute),
-					Spec:             directImageServiceSpec("nginx:1.27", nil),
-					LatestBuild: &platformv1.BuildStatus{
-						BuildId: "build-1",
-					},
-				}, []deliverycore.AllocationRecord{{
-					ID:                       "alloc-status",
-					ServiceID:                serviceID,
-					AgentID:                  "node-1",
-					DesiredRolloutGeneration: 2,
-					AppliedRolloutGeneration: applied,
-					Healthy:                  healthy,
-					UpdatedAt:                now,
-				}}, nil
+				ID:               serviceID,
+				ProjectID:        "project-1",
+				AllocatedAgentID: "node-1",
+				CreatedAt:        now.Add(-10 * time.Minute),
+				Spec:             directImageServiceSpec("nginx:1.27", nil),
+				LatestBuild: &platformv1.BuildStatus{
+					BuildId: "build-1",
+				},
+			}, []deliverycore.AllocationRecord{{
+				ID:                       "alloc-status",
+				ServiceID:                serviceID,
+				AgentID:                  "node-1",
+				DesiredRolloutGeneration: 2,
+				AppliedRolloutGeneration: applied,
+				Healthy:                  healthy,
+				UpdatedAt:                now,
+			}}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 

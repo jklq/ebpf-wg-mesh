@@ -12,7 +12,6 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
 
@@ -40,7 +39,7 @@ func TestListProjectsExcludesManagedProjects(t *testing.T) {
 		t.Fatalf("expected managed project kind, got %s", managed.Kind)
 	}
 
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -72,11 +71,11 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	firstProjects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	firstProjects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil {
 		t.Fatalf("listProjects(user-1): %v", err)
 	}
-	secondProjects, err := store.catalog.listProjects(ctx, testUser("user-2"), false)
+	secondProjects, err := store.catalog.listProjects(ctx, testUser("user-2"), "", false)
 	if err != nil {
 		t.Fatalf("listProjects(user-2): %v", err)
 	}
@@ -96,82 +95,35 @@ func TestProjectNamesAreScopedByUserID(t *testing.T) {
 	}
 }
 
-func TestCreateProjectRepairsOwnerMembership(t *testing.T) {
-	t.Parallel()
-
-	store := openTestStore(t)
-	ctx := context.Background()
-
-	if err := store.catalog.EnsureBootstrap(ctx, config.BootstrapConfig{
-		Users: []config.BootstrapUser{{
-			ID:       "user-1",
-			Email:    "user1@example.com",
-			Projects: []string{"demo"},
-		}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
-	if err != nil {
-		t.Fatalf("listProjects(user-1): %v", err)
-	}
-	if len(projects) != 1 {
-		t.Fatalf("unexpected projects: %+v", projects)
-	}
-
-	projectID := projects[0].ID
-	if _, err := store.db.ExecContext(
-		ctx,
-		`UPDATE project_memberships SET role = $1 WHERE user_id = $2 AND project_id = $3`,
-		"viewer",
-		"user-1",
-		projectID,
-	); err != nil {
-		t.Fatalf("downgrade owner membership: %v", err)
-	}
-	if _, err := store.catalog.authz.AuthorizeProject(ctx, testUser("user-1"), projectID, authz.Write); !errors.Is(err, authz.ErrDenied) || !errors.Is(err, sql.ErrNoRows) {
-		t.Fatalf("expected viewer write denial, got %v", err)
-	}
-
-	project, err := store.catalog.createProject(ctx, testUser("user-1"), "demo")
-	if err != nil {
-		t.Fatalf("createProject: %v", err)
-	}
-	if project.ID != projectID {
-		t.Fatalf("expected repaired project %q, got %q", projectID, project.ID)
-	}
-	assertProjectOwnerInvariant(t, store, projectID, "user-1")
-}
-
 func assertProjectOwnerInvariant(t *testing.T, store *persistence, projectID, userID string) {
 	t.Helper()
 
-	var ownerUserID string
+	var personalUserID string
 	var role string
 	if err := store.db.QueryRowContext(
 		context.Background(),
-		`SELECT p.owner_user_id, m.role
+		`SELECT COALESCE(w.personal_user_id, ''), m.role
 		   FROM projects p
-		   JOIN project_memberships m ON m.project_id = p.id AND m.user_id = $2
+		   JOIN workspaces w ON w.id = p.workspace_id
+		   JOIN workspace_memberships m ON m.workspace_id = w.id AND m.user_id = $2
 		  WHERE p.id = $1`,
 		projectID,
 		userID,
-	).Scan(&ownerUserID, &role); err != nil {
+	).Scan(&personalUserID, &role); err != nil {
 		t.Fatalf("load project ownership invariant for %q/%q: %v", projectID, userID, err)
 	}
-	if ownerUserID != userID {
-		t.Fatalf("expected project %q owner user ID %q, got %q", projectID, userID, ownerUserID)
+	if personalUserID != userID {
+		t.Fatalf("expected project %q in the personal workspace of %q, got %q", projectID, userID, personalUserID)
 	}
-	if role != "owner" {
-		t.Fatalf("expected project %q membership role owner for %q, got %q", projectID, userID, role)
+	if role != "admin" {
+		t.Fatalf("expected %q to administer the workspace of project %q, got %q", userID, projectID, role)
 	}
 }
 
 func TestDuplicateEnvironmentSkipsDeletedChildren(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +165,7 @@ func TestDuplicateEnvironmentSkipsDeletedChildren(t *testing.T) {
 func TestDeletedProductionEnvironmentIsNotReused(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +189,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,10 +211,8 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 	if renamed.ID != staging.ID || renamed.NetworkIdentity != staging.NetworkIdentity {
 		t.Fatalf("rename changed environment identity: before=%#v after=%#v", staging, renamed)
 	}
-	if _, err := store.db.ExecContext(ctx, `INSERT INTO project_memberships(user_id, project_id, role)
-		VALUES ('editor', $1, 'editor'), ('viewer', $1, 'viewer')`, project.ID); err != nil {
-		t.Fatal(err)
-	}
+	grantWorkspaceRole(t, store, ctx, project.ID, "editor", "member")
+	grantWorkspaceRole(t, store, ctx, project.ID, "viewer", "viewer")
 	if _, err := store.catalog.createEnvironment(ctx, testUser("editor"), project.ID, "Editor Sandbox"); err != nil {
 		t.Fatalf("editor could not create environment: %v", err)
 	}
@@ -273,7 +223,7 @@ func TestEnvironmentLifecycleAndAuthorization(t *testing.T) {
 		t.Fatalf("viewer could not read project environments: %#v: %v", environments, err)
 	}
 
-	_, err = store.catalog.createProject(ctx, testUser("other"), "other")
+	_, err = store.catalog.createProject(ctx, testUser("other"), "", "other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +254,7 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +326,7 @@ func TestEnvironmentReleaseAndDeleteAreScoped(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "demo")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +419,7 @@ func TestSchemaRejectsCrossServiceReferences(t *testing.T) {
 
 	err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		statements := []string{
-			`INSERT INTO projects(id, name, kind, owner_user_id, created_at) VALUES ('integrity-project', 'integrity', 'user', 'owner', $1)`,
+			`INSERT INTO projects(id, name, kind, created_at) VALUES ('integrity-project', 'integrity', 'user', $1)`,
 			`INSERT INTO environments(id, project_id, name, kind, auto_deploy, network_identity, created_at, updated_at) VALUES ('integrity-environment', 'integrity-project', 'production', 'production', TRUE, 9001, $1, $1)`,
 			`INSERT INTO services(id, environment_id, name, current_spec_revision, desired_replica_count, created_at, updated_at) VALUES ('service-a', 'integrity-environment', 'a', 1, 1, $1, $1), ('service-b', 'integrity-environment', 'b', 1, 1, $1, $1)`,
 			`INSERT INTO service_delivery_status(service_id, updated_at) VALUES ('service-a', $1), ('service-b', $1)`,

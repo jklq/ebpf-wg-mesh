@@ -23,7 +23,7 @@ import (
 func TestJournalReleaseBatchAndReplay(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "journal")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "journal")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	store.journal.SetVerifyRecordings(true)
 	t.Cleanup(func() { store.journal.SetVerifyRecordings(false) })
 
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "recording")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "recording")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "payload")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "payload")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +463,7 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 		for i := 0; i < perStore; i++ {
 			id := uuid.NewString()
 			if _, err := js.Execute(ctx, func(ctx context.Context, tx *sql.Tx) error {
-				if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, 'user', NULL, statement_timestamp())`, id, prefix, prefix+"-"+id); err != nil {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, $2, 'user', NULL, statement_timestamp())`, id, prefix+"-"+id); err != nil {
 					return err
 				}
 				journal.ProjectRow(id).Capture(ctx)
@@ -512,7 +512,7 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 func TestJournalCompactionBootsFromNormalizedProductState(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "compact")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "compact")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -576,7 +576,7 @@ func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 	commandCtx := journal.WithCommandID(ctx, commandID)
 	projectID := uuid.NewString()
 	receipt, err := store.journal.Execute(commandCtx, func(ctx context.Context, tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, 'owner', 'retained', 'user', NULL, statement_timestamp())`, projectID); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, 'retained', 'user', NULL, statement_timestamp())`, projectID); err != nil {
 			return err
 		}
 		journal.ProjectRow(projectID).Capture(ctx)
@@ -630,7 +630,7 @@ func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "behind")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "behind")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -671,7 +671,7 @@ func TestJournalBehindReplicaReloadsSnapshot(t *testing.T) {
 func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "fanout")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "fanout")
 	if err != nil {
 		t.Fatal(err)
 	}

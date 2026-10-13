@@ -87,6 +87,18 @@ export async function loadDashboardHome(
 		if (!project && projects.length > 0) {
 			project = projects[0];
 		}
+		const workspaceProjects = project
+			? projects.filter((entry) => entry.workspaceId === project?.workspaceId)
+			: projects;
+		const workspace = project?.workspaceId
+			? await optionalPlatformResult(
+					runtime.platform.call(
+						PlatformService.method.getWorkspace,
+						session.user,
+						{ workspaceId: project.workspaceId },
+					),
+				)
+			: undefined;
 
 		let reconciledDraft = onboarding;
 		let environments: DashboardHomeState["environments"] = [];
@@ -180,8 +192,9 @@ export async function loadDashboardHome(
 			...baseState,
 			canManageFleet: fleet !== undefined,
 			onboarding: reconciledDraft,
+			workspace,
 			project,
-			projects,
+			projects: workspaceProjects,
 			environments,
 			environment,
 			services: allServices,

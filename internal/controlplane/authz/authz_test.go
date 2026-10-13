@@ -36,18 +36,21 @@ func TestRoleAllows(t *testing.T) {
 		need  Access
 		allow bool
 	}{
-		{RoleOwner, Read, true},
-		{RoleOwner, Write, true},
-		{RoleEditor, Read, true},
-		{RoleEditor, Write, true},
+		{RoleAdmin, Read, true},
+		{RoleAdmin, Write, true},
+		{RoleAdmin, Manage, true},
+		{RoleMember, Read, true},
+		{RoleMember, Write, true},
+		{RoleMember, Manage, false},
 		{RoleViewer, Read, true},
 		{RoleViewer, Write, false},
+		{RoleViewer, Manage, false},
 		{Role(""), Read, false},
 		{Role(""), Write, false},
-		{Role("admin"), Read, false},
-		{Role("admin"), Write, false},
-		{RoleOwner, Access(0), false},
-		{RoleOwner, Access(99), false},
+		{Role("owner"), Read, false},
+		{Role("owner"), Write, false},
+		{RoleAdmin, Access(0), false},
+		{RoleAdmin, Access(99), false},
 	}
 	for _, tc := range cases {
 		if got := tc.role.Allows(tc.need); got != tc.allow {
@@ -65,6 +68,10 @@ func TestZeroScopesAuthorizeNothing(t *testing.T) {
 	var user User
 	if user.ID() != "" {
 		t.Fatalf("zero user id = %q", user.ID())
+	}
+	var workspace Workspace
+	if workspace.ID() != "" || workspace.UserID() != "" {
+		t.Fatalf("zero workspace leaks ids: %+v", workspace)
 	}
 	var project Project
 	if project.ID() != "" || project.UserID() != "" {
@@ -180,13 +187,40 @@ func TestAuthorizerTable(t *testing.T) {
 		wantPlain  bool
 	}{
 		{
-			name:    "project owner write",
-			columns: []string{"role"}, rows: [][]driver.Value{{"owner"}},
+			name:    "project admin write",
+			columns: []string{"role"}, rows: [][]driver.Value{{"admin"}},
 			call: func(a *Authorizer) outcome {
 				scope, err := a.AuthorizeProject(ctx, user, "project-1", Write)
 				return outcome{[]string{scope.ID(), scope.UserID(), string(scope.Role())}, err}
 			},
-			wantIDs: []string{"project-1", "user-1", "owner"},
+			wantIDs: []string{"project-1", "user-1", "admin"},
+		},
+		{
+			name:    "workspace admin manage",
+			columns: []string{"role"}, rows: [][]driver.Value{{"admin"}},
+			call: func(a *Authorizer) outcome {
+				scope, err := a.AuthorizeWorkspace(ctx, user, "workspace-1", Manage)
+				return outcome{[]string{scope.ID(), scope.UserID(), string(scope.Role())}, err}
+			},
+			wantIDs: []string{"workspace-1", "user-1", "admin"},
+		},
+		{
+			name:    "workspace member manage denied",
+			columns: []string{"role"}, rows: [][]driver.Value{{"member"}},
+			call: func(a *Authorizer) outcome {
+				_, err := a.AuthorizeWorkspace(ctx, user, "workspace-1", Manage)
+				return outcome{nil, err}
+			},
+			wantDenied: true, wantNoRows: true,
+		},
+		{
+			name:    "workspace non-member denied",
+			columns: []string{"role"},
+			call: func(a *Authorizer) outcome {
+				_, err := a.AuthorizeWorkspace(ctx, user, "workspace-1", Read)
+				return outcome{nil, err}
+			},
+			wantDenied: true, wantNoRows: true,
 		},
 		{
 			name:    "project viewer read",
@@ -208,7 +242,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "project unknown role denied",
-			columns: []string{"role"}, rows: [][]driver.Value{{"admin"}},
+			columns: []string{"role"}, rows: [][]driver.Value{{"owner"}},
 			call: func(a *Authorizer) outcome {
 				_, err := a.AuthorizeProject(ctx, user, "project-1", Read)
 				return outcome{nil, err}
@@ -235,7 +269,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "project invalid need rejected",
-			columns: []string{"role"}, rows: [][]driver.Value{{"owner"}},
+			columns: []string{"role"}, rows: [][]driver.Value{{"admin"}},
 			call: func(a *Authorizer) outcome {
 				_, err := a.AuthorizeProject(ctx, user, "project-1", Access(99))
 				return outcome{nil, err}
@@ -244,7 +278,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "project zero need rejected",
-			columns: []string{"role"}, rows: [][]driver.Value{{"owner"}},
+			columns: []string{"role"}, rows: [][]driver.Value{{"admin"}},
 			call: func(a *Authorizer) outcome {
 				_, err := a.AuthorizeProject(ctx, user, "project-1", Access(0))
 				return outcome{nil, err}
@@ -253,7 +287,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "project empty user rejected",
-			columns: []string{"role"}, rows: [][]driver.Value{{"owner"}},
+			columns: []string{"role"}, rows: [][]driver.Value{{"admin"}},
 			call: func(a *Authorizer) outcome {
 				_, err := a.AuthorizeProject(ctx, User{}, "project-1", Read)
 				return outcome{nil, err}
@@ -262,7 +296,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "environment allow mints ids",
-			columns: []string{"project_id", "role"}, rows: [][]driver.Value{{"project-1", "editor"}},
+			columns: []string{"project_id", "role"}, rows: [][]driver.Value{{"project-1", "member"}},
 			call: func(a *Authorizer) outcome {
 				scope, err := a.AuthorizeEnvironment(ctx, user, "env-1", Write)
 				return outcome{[]string{scope.ID(), scope.ProjectID(), scope.UserID()}, err}
@@ -280,7 +314,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "environment invalid need rejected",
-			columns: []string{"project_id", "role"}, rows: [][]driver.Value{{"project-1", "owner"}},
+			columns: []string{"project_id", "role"}, rows: [][]driver.Value{{"project-1", "admin"}},
 			call: func(a *Authorizer) outcome {
 				_, err := a.AuthorizeEnvironment(ctx, user, "env-1", Access(0))
 				return outcome{nil, err}
@@ -289,7 +323,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "service allow mints ids",
-			columns: []string{"environment_id", "project_id", "role"}, rows: [][]driver.Value{{"env-1", "project-1", "owner"}},
+			columns: []string{"environment_id", "project_id", "role"}, rows: [][]driver.Value{{"env-1", "project-1", "admin"}},
 			call: func(a *Authorizer) outcome {
 				scope, err := a.AuthorizeService(ctx, user, "service-1", Write)
 				return outcome{[]string{scope.ID(), scope.EnvironmentID(), scope.ProjectID()}, err}
@@ -307,7 +341,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "service empty user rejected",
-			columns: []string{"environment_id", "project_id", "role"}, rows: [][]driver.Value{{"env-1", "project-1", "owner"}},
+			columns: []string{"environment_id", "project_id", "role"}, rows: [][]driver.Value{{"env-1", "project-1", "admin"}},
 			call: func(a *Authorizer) outcome {
 				_, err := a.AuthorizeService(ctx, User{}, "service-1", Read)
 				return outcome{nil, err}
@@ -316,7 +350,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "volume allow mints ids",
-			columns: []string{"environment_id", "project_id", "role"}, rows: [][]driver.Value{{"env-1", "project-1", "editor"}},
+			columns: []string{"environment_id", "project_id", "role"}, rows: [][]driver.Value{{"env-1", "project-1", "member"}},
 			call: func(a *Authorizer) outcome {
 				scope, err := a.AuthorizeVolume(ctx, user, "volume-1", Read)
 				return outcome{[]string{scope.ID(), scope.EnvironmentID(), scope.ProjectID()}, err}
@@ -334,7 +368,7 @@ func TestAuthorizerTable(t *testing.T) {
 		},
 		{
 			name:    "binding allow mints ids",
-			columns: []string{"service_id", "environment_id", "project_id", "role"}, rows: [][]driver.Value{{"service-1", "env-1", "project-1", "owner"}},
+			columns: []string{"service_id", "environment_id", "project_id", "role"}, rows: [][]driver.Value{{"service-1", "env-1", "project-1", "admin"}},
 			call: func(a *Authorizer) outcome {
 				scope, err := a.AuthorizeDomainBinding(ctx, user, "web.example.com", Read)
 				return outcome{[]string{scope.Hostname(), scope.ServiceID(), scope.EnvironmentID(), scope.ProjectID()}, err}
@@ -415,7 +449,7 @@ func TestAuthorizerNormalizesBindingHostname(t *testing.T) {
 	var args []driver.NamedValue
 	db := openStubDB(
 		[]string{"service_id", "environment_id", "project_id", "role"},
-		[][]driver.Value{{"service-1", "env-1", "project-1", "owner"}},
+		[][]driver.Value{{"service-1", "env-1", "project-1", "admin"}},
 		nil, &args,
 	)
 	t.Cleanup(func() { _ = db.Close() })

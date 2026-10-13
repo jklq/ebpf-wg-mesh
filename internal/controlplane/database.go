@@ -291,13 +291,15 @@ func (s *catalogPersistence) EnsureBootstrap(ctx context.Context, bootstrap conf
 			if user.ID == "" {
 				continue
 			}
-			for _, projectName := range user.Projects {
-				projectID, err := s.ensureUserProjectNamedQuerier(ctx, tx, user.ID, projectName)
+			if len(user.Projects) > 0 {
+				personal, err := ensurePersonalWorkspaceQuerier(ctx, tx, user.ID)
 				if err != nil {
-					return err
+					return fmt.Errorf("ensure personal workspace: %w", err)
 				}
-				if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, user.ID, projectID); err != nil {
-					return fmt.Errorf("insert project membership: %w", err)
+				for _, projectName := range user.Projects {
+					if _, err := s.ensureUserProjectNamedQuerier(ctx, tx, personal.ID, projectName); err != nil {
+						return err
+					}
 				}
 			}
 			if user.Operator {

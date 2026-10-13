@@ -40,8 +40,9 @@ type platformService struct {
 type platformStore interface {
 	catalogStore
 	routing.Store
-	createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error)
-	listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
+	workspaceStore
+	createProject(ctx context.Context, user authz.User, workspaceID, name string) (deliverycore.ProjectRecord, error)
+	listProjects(ctx context.Context, user authz.User, workspaceID string, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
 	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
@@ -224,10 +225,13 @@ func (s *platformService) CreateProject(ctx context.Context, req *platformv1.Cre
 	if err != nil {
 		return nil, err
 	}
-	project, err := s.store.createProject(ctx, user, req.GetName())
+	project, err := s.store.createProject(ctx, user, strings.TrimSpace(req.GetWorkspaceId()), req.GetName())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
+		}
+		if errors.Is(err, errProjectNameRequired) {
+			return nil, status.Errorf(codes.InvalidArgument, "create project: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrProjectDeleted) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create project: %v", err)
@@ -242,7 +246,7 @@ func (s *platformService) ListProjects(ctx context.Context, req *platformv1.List
 	if err != nil {
 		return nil, err
 	}
-	items, err := s.store.listProjects(ctx, user, req.GetIncludeDeleted())
+	items, err := s.store.listProjects(ctx, user, strings.TrimSpace(req.GetWorkspaceId()), req.GetIncludeDeleted())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "list projects: %v", err)
 	}

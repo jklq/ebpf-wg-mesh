@@ -50,6 +50,15 @@ type ServiceCaller struct {
 
 type DelegatedUser struct {
 	UserID string
+	// Email is the dashboard-verified address of the user, normalized to
+	// lower case. Workspace invitations are addressed to it.
+	Email string
+}
+
+// userAssertionClaims are the dashboard-signed claims identifying a user.
+type userAssertionClaims struct {
+	jwt.RegisteredClaims
+	Email string `json:"email,omitempty"`
 }
 
 type InternalAuth struct {
@@ -270,6 +279,17 @@ func WithDelegatedUser(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID})
 }
 
+// WithDelegatedUserEmail is WithDelegatedUser for callers that also carry a
+// verified email, such as invitation flows.
+func WithDelegatedUserEmail(ctx context.Context, userID, email string) context.Context {
+	return context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID, Email: NormalizeEmail(email)})
+}
+
+// NormalizeEmail is the single comparison form for email addresses.
+func NormalizeEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 // UserFromContext resolves the delegated dashboard user into the authorization
 // identity every store and delivery entry requires. It is the single RPC
 // entry helper; failures are Unauthenticated statuses, never plain errors.
@@ -364,7 +384,7 @@ func (a *InternalAuth) delegatedUserFromAssertions(ctx context.Context, assertio
 		if len(secret) == 0 {
 			continue
 		}
-		claims := jwt.RegisteredClaims{}
+		claims := userAssertionClaims{}
 		token, err := parser.ParseWithClaims(assertion, &claims, func(token *jwt.Token) (any, error) {
 			return secret, nil
 		})
@@ -378,7 +398,7 @@ func (a *InternalAuth) delegatedUserFromAssertions(ctx context.Context, assertio
 		if userID == "" || userID != claims.Subject || len(userID) > 256 || strings.TrimSpace(claims.ID) == "" {
 			return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion claims")
 		}
-		return DelegatedUser{UserID: userID}, true, nil
+		return DelegatedUser{UserID: userID, Email: NormalizeEmail(claims.Email)}, true, nil
 	}
 	return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
 }

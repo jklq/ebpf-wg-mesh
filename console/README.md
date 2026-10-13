@@ -22,6 +22,7 @@ src/
         variables/        Environment variables
         domains/          Domain workflow, forms and validation
       shared/             Dashboard domain types and pure helpers
+    workspace/            Workspace shell, projects overview, people and workspace settings
     auth/                 Login presentation
     fleet/                Agent management
     deleted/              Resource recovery

@@ -4,9 +4,19 @@ The platform turns a project's desired application configuration into isolated, 
 
 ## Organization and isolation
 
+**Workspace**:
+The access-control container for a group of people and the projects they share. Membership and its role (admin, member, or viewer) apply to every project in the workspace. Usage and billing will be accounted per workspace.
+_Avoid_: Organization, team, tenant
+
+**Personal Workspace**:
+The workspace every user has from their first sign-in, named "My Projects" by default. It has exactly one member and cannot be deleted, left, or shared; collaboration happens in other workspaces.
+
+**Workspace Invitation**:
+A pending offer of a workspace role to whoever signs in with a given email address. Accepting it creates the membership.
+
 **Project**:
-The access-control container shared by a group of users. A project contains environments but is not itself a deployment or network scope.
-_Avoid_: Workspace, tenant
+A named group of environments in one workspace. A project is not itself an access-control, deployment, or network scope; it can move between workspaces.
+_Avoid_: App
 
 **Environment**:
 An isolated deployment and private-network scope within a project. Services, volumes, and their private connectivity belong to exactly one environment.

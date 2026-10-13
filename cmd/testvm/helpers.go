@@ -127,7 +127,7 @@ func collectArtifacts(ctx context.Context, repoRoot, artifactRoot, keyPath strin
 			"processes.txt": "ps aux | grep -E 'controlplane|agent|postgres|containerd' | grep -v grep || true",
 		}
 		if host.Role == "controlplane" {
-			commands["db.txt"] = "psql -h 127.0.0.1 -p 5432 -U postgres -d platform -c \"SET search_path=platform; SELECT * FROM projects; SELECT * FROM project_memberships; SELECT * FROM agents; SELECT * FROM control_plane_leases; SELECT * FROM control_plane_storage;\" || true"
+			commands["db.txt"] = "psql -h 127.0.0.1 -p 5432 -U postgres -d platform -c \"SET search_path=platform; SELECT * FROM projects; SELECT * FROM workspaces; SELECT * FROM workspace_memberships; SELECT * FROM agents; SELECT * FROM control_plane_leases; SELECT * FROM control_plane_storage;\" || true"
 			commands["xds-probe.txt"] = "printf '%s\\n' '=== requests ==='; cat /var/lib/ebpf-wg-mesh/xds-probe/requests.log 2>/dev/null || true; printf '%s\\n' '=== latest ==='; cat /var/lib/ebpf-wg-mesh/xds-probe/latest.json 2>/dev/null || true"
 		}
 		for fileName, remoteCmd := range commands {

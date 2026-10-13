@@ -47,11 +47,11 @@ func TestServiceLogsRuntimeIngestQueryAndIsolation(t *testing.T) {
 	_ = recvDesiredState(t, stream)
 
 	store := cp.server.store
-	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projectsA, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projectsA) != 1 {
 		t.Fatalf("projects A: %v", err)
 	}
-	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), false)
+	projectsB, err := store.catalog.listProjects(ctx, testUser("user-b"), "", false)
 	if err != nil || len(projectsB) != 1 {
 		t.Fatalf("projects B: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestServiceLogsMixedAuthorsAndFileStoreDefault(t *testing.T) {
 	if _, err := upsertTestAgent(t, store, ctx, agentHello(agentID)); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestServiceLogsMixedAuthorsAndFileStoreDefault(t *testing.T) {
 	if _, err := upsertTestAgent(t, disabled.server.store, ctx, agentHello("disabled-agent")); err != nil {
 		t.Fatal(err)
 	}
-	disabledProjects, err := disabled.server.store.catalog.listProjects(ctx, testUser("user-a"), false)
+	disabledProjects, err := disabled.server.store.catalog.listProjects(ctx, testUser("user-a"), "", false)
 	if err != nil || len(disabledProjects) != 1 {
 		t.Fatalf("disabled projects: %v", err)
 	}

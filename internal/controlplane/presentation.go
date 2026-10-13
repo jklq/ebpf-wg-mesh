@@ -22,6 +22,7 @@ func toProtoProject(rec deliverycore.ProjectRecord) *platformv1.Project {
 		SystemKey:        rec.SystemKey,
 		Deletion:         toProtoDeletion(rec.Deletion),
 		LogRetentionDays: rec.LogRetentionDays,
+		WorkspaceId:      rec.WorkspaceID,
 	}
 }
 

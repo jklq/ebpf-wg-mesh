@@ -19,7 +19,8 @@ import (
 func (s *catalogPersistence) lockProjectTx(ctx context.Context, tx *sql.Tx, scope authz.Project) (deliverycore.ProjectRecord, error) {
 	row := tx.QueryRowContext(ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days,
+		        COALESCE(p.workspace_id, '')
 		   FROM projects p
 		  WHERE p.id = $1 AND p.kind = $2 FOR UPDATE OF p`,
 		scope.ID(),

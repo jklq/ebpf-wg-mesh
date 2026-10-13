@@ -17,7 +17,7 @@ func TestSecretEnvelopeRotateRewrapAcrossReplicas(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "envelope")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "envelope")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestSecretEnvelopeRestartWithRetiredKey(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "envelope")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "envelope")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestSecretEnvelopeUnwrapDiagnostics(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "envelope")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "envelope")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestSecretEnvelopeInconsistentKeyring(t *testing.T) {
 
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "envelope")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "envelope")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +334,7 @@ func TestSecretEnvelopeDeleteRefusal(t *testing.T) {
 	if err := store.secrets.Registry().DeleteKey(ctx, "kek-missing"); !errors.Is(err, secretkeys.ErrUnknownKey) {
 		t.Fatalf("delete unknown = %v", err)
 	}
-	project, err := store.catalog.createProject(ctx, testUser("owner"), "envelope")
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "envelope")
 	if err != nil {
 		t.Fatal(err)
 	}

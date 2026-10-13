@@ -40,6 +40,46 @@ message Project {
   DeletionState deletion = 6;
   // Log retention in days. Zero means the platform default.
   int32 log_retention_days = 7;
+  // The workspace that owns a user project. Empty for managed projects.
+  string workspace_id = 8;
+}
+
+enum WorkspaceRole {
+  WORKSPACE_ROLE_UNSPECIFIED = 0;
+  // Manages the workspace, its members, and invitations, and edits projects.
+  WORKSPACE_ROLE_ADMIN = 1;
+  // Creates and edits projects.
+  WORKSPACE_ROLE_MEMBER = 2;
+  // Reads projects.
+  WORKSPACE_ROLE_VIEWER = 3;
+}
+
+// Workspace groups projects and the people who can access them. Every user
+// has exactly one personal workspace, which cannot be deleted or left.
+message Workspace {
+  string id = 1;
+  string name = 2;
+  google.protobuf.Timestamp created_at = 3;
+  bool personal = 4;
+  // The calling user's role in the workspace.
+  WorkspaceRole role = 5;
+}
+
+message WorkspaceMember {
+  string user_id = 1;
+  WorkspaceRole role = 2;
+  google.protobuf.Timestamp joined_at = 3;
+}
+
+// WorkspaceInvitation offers membership to whoever signs in with email.
+message WorkspaceInvitation {
+  string id = 1;
+  string workspace_id = 2;
+  string workspace_name = 3;
+  string email = 4;
+  WorkspaceRole role = 5;
+  string invited_by_user_id = 6;
+  google.protobuf.Timestamp created_at = 7;
 }
 
 // DeletionState marks a tombstoned resource. It is absent while the resource
@@ -648,10 +688,90 @@ message ServiceStatus {
 
 message CreateProjectRequest {
   string name = 1;
+  // Empty creates the project in the caller's personal workspace.
+  string workspace_id = 2;
 }
 
 message ListProjectsRequest {
   bool include_deleted = 1;
+  // Empty lists projects across every workspace the caller belongs to.
+  string workspace_id = 2;
+}
+
+message ListWorkspacesRequest {}
+
+message ListWorkspacesResponse {
+  // Personal workspace first, then by creation time.
+  repeated Workspace workspaces = 1;
+  // Pending invitations addressed to the caller's email.
+  repeated WorkspaceInvitation invitations = 2;
+}
+
+message CreateWorkspaceRequest {
+  string name = 1;
+}
+
+message GetWorkspaceRequest {
+  string workspace_id = 1;
+}
+
+message RenameWorkspaceRequest {
+  string workspace_id = 1;
+  string name = 2;
+}
+
+// DeleteWorkspaceRequest removes a shared workspace without live projects.
+// Its recently deleted projects can no longer be restored and are destroyed.
+message DeleteWorkspaceRequest {
+  string workspace_id = 1;
+  // Must exactly match the workspace's current name.
+  string confirmation_name = 2;
+}
+
+message ListWorkspaceMembersRequest {
+  string workspace_id = 1;
+}
+
+message ListWorkspaceMembersResponse {
+  repeated WorkspaceMember members = 1;
+  repeated WorkspaceInvitation invitations = 2;
+}
+
+message InviteWorkspaceMemberRequest {
+  string workspace_id = 1;
+  string email = 2;
+  WorkspaceRole role = 3;
+}
+
+message RevokeWorkspaceInvitationRequest {
+  string invitation_id = 1;
+}
+
+message AcceptWorkspaceInvitationRequest {
+  string invitation_id = 1;
+}
+
+message DeclineWorkspaceInvitationRequest {
+  string invitation_id = 1;
+}
+
+message UpdateWorkspaceMemberRoleRequest {
+  string workspace_id = 1;
+  string user_id = 2;
+  WorkspaceRole role = 3;
+}
+
+// MoveProjectRequest transfers a project between workspaces. The caller must
+// administer the current workspace and be able to create projects in the target.
+message MoveProjectRequest {
+  string project_id = 1;
+  string workspace_id = 2;
+}
+
+// Removing yourself leaves the workspace.
+message RemoveWorkspaceMemberRequest {
+  string workspace_id = 1;
+  string user_id = 2;
 }
 
 message ListProjectsResponse {
@@ -1219,6 +1339,20 @@ message LinkGitHubRepositoryRequest {
 }
 
 service PlatformService {
+  rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
+  rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace);
+  rpc CreateWorkspace(CreateWorkspaceRequest) returns (Workspace);
+  rpc RenameWorkspace(RenameWorkspaceRequest) returns (Workspace);
+  rpc DeleteWorkspace(DeleteWorkspaceRequest) returns (google.protobuf.Empty);
+  rpc ListWorkspaceMembers(ListWorkspaceMembersRequest) returns (ListWorkspaceMembersResponse);
+  rpc InviteWorkspaceMember(InviteWorkspaceMemberRequest) returns (WorkspaceInvitation);
+  rpc RevokeWorkspaceInvitation(RevokeWorkspaceInvitationRequest) returns (google.protobuf.Empty);
+  rpc AcceptWorkspaceInvitation(AcceptWorkspaceInvitationRequest) returns (Workspace);
+  rpc DeclineWorkspaceInvitation(DeclineWorkspaceInvitationRequest) returns (google.protobuf.Empty);
+  rpc UpdateWorkspaceMemberRole(UpdateWorkspaceMemberRoleRequest) returns (WorkspaceMember);
+  rpc RemoveWorkspaceMember(RemoveWorkspaceMemberRequest) returns (google.protobuf.Empty);
+  rpc MoveProject(MoveProjectRequest) returns (Project);
+
   rpc CreateProject(CreateProjectRequest) returns (Project);
   rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
   rpc GetProject(GetProjectRequest) returns (Project);

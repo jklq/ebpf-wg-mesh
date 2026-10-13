@@ -35,7 +35,7 @@ import (
 func domainOperationFixture(t *testing.T, store *persistence, owner string) deliverycore.ServiceRecord {
 	t.Helper()
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser(owner), owner+"-project")
+	project, err := store.catalog.createProject(ctx, testUser(owner), "", owner+"-project")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,9 +133,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 		t.Fatal(err)
 	}
 	// Read access to the source must not authorize moving its hostname away.
-	if _, err := store.db.ExecContext(owner, `INSERT INTO project_memberships(user_id, project_id, role) VALUES ('attacker', $1, 'viewer')`, source.ProjectID); err != nil {
-		t.Fatal(err)
-	}
+	grantWorkspaceRole(t, store, owner, source.ProjectID, "attacker", "viewer")
 	before := ingress.requests.Load()
 	if _, err := operations.UpdateDomainBinding(attacker, testUser("attacker"), &platformv1.UpdateDomainBindingRequest{Hostname: "owned.example.com", Binding: &platformv1.DomainBindingTarget{ServiceId: target.ID, TargetPort: 8080}}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("viewer steal = %v, want PermissionDenied", err)
@@ -152,9 +150,7 @@ func TestDomainOperationsReassignmentRequiresWriteAccessToBothServices(t *testin
 	if _, err := operations.UpdateDomainBinding(attacker, testUser("attacker"), &platformv1.UpdateDomainBindingRequest{Hostname: "missing.example.com", Binding: &platformv1.DomainBindingTarget{ServiceId: target.ID, TargetPort: 8080}}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("update of missing domain = %v, want PermissionDenied", err)
 	}
-	if _, err := store.db.ExecContext(owner, `UPDATE project_memberships SET role = 'editor' WHERE user_id = 'attacker' AND project_id = $1`, source.ProjectID); err != nil {
-		t.Fatal(err)
-	}
+	grantWorkspaceRole(t, store, owner, source.ProjectID, "attacker", "member")
 	generated, err := store.routing.PlatformDomainBindingForService(owner, testUser("owner"), source.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +313,7 @@ func createHealthyBoundService(t *testing.T, hostname, allocationIP string, targ
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}

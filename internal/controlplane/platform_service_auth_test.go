@@ -21,7 +21,7 @@ func TestPlatformServiceListProjectsUsesDelegatedUser(t *testing.T) {
 	t.Parallel()
 
 	store := &fakePlatformStore{
-		listProjectsFn: func(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
+		listProjectsFn: func(ctx context.Context, user authz.User, workspaceID string, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
 			if user.ID() != "user-1" {
 				t.Fatalf("unexpected user %q", user.ID())
 			}

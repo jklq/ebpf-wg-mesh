@@ -27,7 +27,7 @@ func seedAuthzProject(t *testing.T, store *persistence, ctx context.Context) (pr
 	}); err != nil {
 		t.Fatal(err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("owner"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("owner"), "", false)
 	if err != nil || len(projects) != 1 {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -52,13 +52,8 @@ func seedAuthzProject(t *testing.T, store *persistence, ctx context.Context) (pr
 		t.Fatal(err)
 	}
 	hostname = binding.Hostname
-	for _, member := range []struct{ id, role string }{{"editor", "editor"}, {"viewer", "viewer"}} {
-		if _, err := store.db.ExecContext(ctx,
-			`INSERT INTO project_memberships(user_id, project_id, role) VALUES ($1, $2, $3)`,
-			member.id, projectID, member.role); err != nil {
-			t.Fatal(err)
-		}
-	}
+	grantWorkspaceRole(t, store, ctx, projectID, "editor", "member")
+	grantWorkspaceRole(t, store, ctx, projectID, "viewer", "viewer")
 	return projectID, environmentID, serviceID, volumeID, hostname
 }
 
@@ -213,15 +208,12 @@ func TestAuthorizerReadsLiveMembership(t *testing.T) {
 	if _, err := authorizer.AuthorizeService(ctx, viewer, serviceID, authz.Write); !errors.Is(err, authz.ErrDenied) {
 		t.Fatalf("viewer write = %v, want ErrDenied", err)
 	}
-	if _, err := store.db.ExecContext(ctx,
-		`UPDATE project_memberships SET role = 'editor' WHERE user_id = 'viewer' AND project_id = $1`, projectID); err != nil {
-		t.Fatal(err)
-	}
+	grantWorkspaceRole(t, store, ctx, projectID, "viewer", "member")
 	if _, err := authorizer.AuthorizeService(ctx, viewer, serviceID, authz.Write); err != nil {
 		t.Fatalf("promoted viewer write = %v, want allow", err)
 	}
 	if _, err := store.db.ExecContext(ctx,
-		`DELETE FROM project_memberships WHERE user_id = 'viewer' AND project_id = $1`, projectID); err != nil {
+		`DELETE FROM workspace_memberships WHERE user_id = 'viewer'`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := authorizer.AuthorizeService(ctx, viewer, serviceID, authz.Read); !errors.Is(err, authz.ErrDenied) {
@@ -319,7 +311,7 @@ func TestEnvironmentNetworkIdentitiesAreUniqueAndDeliveredToAgents(t *testing.T)
 	}}); err != nil {
 		t.Fatalf("EnsureBootstrap: %v", err)
 	}
-	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), false)
+	projects, err := store.catalog.listProjects(ctx, testUser("user-1"), "", false)
 	if err != nil {
 		t.Fatalf("listProjects: %v", err)
 	}
@@ -508,7 +500,7 @@ func TestProjectCreationCreatesExactlyOneProductionEnvironment(t *testing.T) {
 	t.Parallel()
 	store := openTestStore(t)
 	ctx := context.Background()
-	project, err := store.catalog.createProject(ctx, testUser("user-1"), "demo")
+	project, err := store.catalog.createProject(ctx, testUser("user-1"), "", "demo")
 	if err != nil {
 		t.Fatalf("createProject: %v", err)
 	}

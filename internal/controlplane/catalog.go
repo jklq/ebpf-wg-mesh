@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -126,8 +127,10 @@ func (s *catalogOperations) RestoreProject(ctx context.Context, projectID string
 	return toProtoProject(rec), nil
 }
 
-func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (string, error) {
-	project, found, err := s.projectByOwnedNameQuerier(ctx, q, userID, name)
+// ensureUserProjectNamedQuerier returns the workspace's project named name,
+// creating it with a production environment when absent.
+func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, q deliverycore.ServiceQueryer, workspaceID, name string) (string, error) {
+	project, found, err := s.projectByWorkspaceNameQuerier(ctx, q, workspaceID, name)
 	if err != nil {
 		return "", err
 	}
@@ -144,9 +147,9 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 	id := uuid.NewString()
 	now := time.Now().UTC()
 	if _, err := journal.ProjectRow(id).Exec(ctx, q,
-		`INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+		`INSERT INTO projects(id, workspace_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		id,
-		userID,
+		workspaceID,
 		name,
 		string(deliverycore.ProjectKindUser),
 		nil,
@@ -158,18 +161,6 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 		return "", fmt.Errorf("create production environment: %w", err)
 	}
 	return id, nil
-}
-
-func (s *catalogPersistence) ensureProjectOwnerMembershipQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, projectID string) error {
-	_, err := q.ExecContext(
-		ctx,
-		`INSERT INTO project_memberships(user_id, project_id, role) VALUES ($1, $2, $3)
-		 ON CONFLICT(user_id, project_id) DO UPDATE SET role = excluded.role`,
-		userID,
-		projectID,
-		"owner",
-	)
-	return err
 }
 
 func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, systemKey string) (deliverycore.ProjectRecord, error) {
@@ -189,9 +180,8 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 				CreatedAt: now,
 			}
 			_, err = journal.ProjectRow(project.ID).Exec(ctx, tx,
-				`INSERT INTO projects(id, owner_user_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
+				`INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5)`,
 				project.ID,
-				"",
 				project.Name,
 				string(project.Kind),
 				project.SystemKey,
@@ -228,14 +218,28 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 	return project, nil
 }
 
-func (s *catalogPersistence) createProject(ctx context.Context, user authz.User, name string) (deliverycore.ProjectRecord, error) {
-	var project deliverycore.ProjectRecord
-	err := s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, user.ID(), name)
+// createProject creates or returns the named project in workspaceID, or in the
+// user's personal workspace when workspaceID is empty.
+func (s *catalogPersistence) createProject(ctx context.Context, user authz.User, workspaceID, name string) (deliverycore.ProjectRecord, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return deliverycore.ProjectRecord{}, errProjectNameRequired
+	}
+	if workspaceID == "" {
+		personal, err := s.ensurePersonalWorkspace(ctx, user)
 		if err != nil {
-			return err
+			return deliverycore.ProjectRecord{}, err
 		}
-		if err := s.ensureProjectOwnerMembershipQuerier(ctx, tx, user.ID(), id); err != nil {
+		workspaceID = personal.ID
+	}
+	scope, err := s.authz.AuthorizeWorkspace(ctx, user, workspaceID, authz.Write)
+	if err != nil {
+		return deliverycore.ProjectRecord{}, err
+	}
+	var project deliverycore.ProjectRecord
+	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, scope.ID(), name)
+		if err != nil {
 			return err
 		}
 		project, err = s.projectByIDInternalQuerier(ctx, tx, id)
@@ -247,23 +251,29 @@ func (s *catalogPersistence) createProject(ctx context.Context, user authz.User,
 	return project, nil
 }
 
-func (s *catalogPersistence) listProjects(ctx context.Context, user authz.User, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
+// listProjects lists user projects in every workspace the user belongs to, or
+// only in workspaceID when it is set.
+func (s *catalogPersistence) listProjects(ctx context.Context, user authz.User, workspaceID string, includeDeleted bool) ([]deliverycore.ProjectRecord, error) {
 	filter := ` AND p.deleted_at IS NULL`
 	if includeDeleted {
 		filter = ``
 	}
+	args := []any{user.ID(), string(deliverycore.ProjectKindUser)}
+	if workspaceID != "" {
+		filter += ` AND p.workspace_id = $3`
+		args = append(args, workspaceID)
+	}
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days,
+		        COALESCE(p.workspace_id, '')
 		   FROM projects p
-		   JOIN project_memberships m ON m.project_id = p.id
+		   JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		  WHERE m.user_id = $1
-		    AND m.role IN ('owner', 'editor', 'viewer')
 		    AND p.kind = $2`+filter+`
 		  ORDER BY p.created_at ASC`,
-		user.ID(),
-		string(deliverycore.ProjectKindUser),
+		args...,
 	)
 	if err != nil {
 		return nil, err
@@ -293,7 +303,8 @@ func (s *catalogPersistence) projectByScopeQuerier(ctx context.Context, q delive
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT p.id, p.name, p.kind, COALESCE(p.system_key, ''), p.created_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at, p.log_retention_days,
+		        COALESCE(p.workspace_id, '')
 		   FROM projects p
 		  WHERE p.id = $1 AND p.kind = $2`,
 		scope.ID(),
@@ -306,7 +317,8 @@ func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q de
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
-		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days
+		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days,
+		        COALESCE(workspace_id, '')
 		   FROM projects
 		  WHERE system_key = $1`,
 		systemKey,
@@ -322,14 +334,15 @@ func (s *catalogPersistence) projectBySystemKeyQuerier(ctx context.Context, q de
 	}
 }
 
-func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q deliverycore.ServiceQueryer, userID, name string) (deliverycore.ProjectRecord, bool, error) {
+func (s *catalogPersistence) projectByWorkspaceNameQuerier(ctx context.Context, q deliverycore.ServiceQueryer, workspaceID, name string) (deliverycore.ProjectRecord, bool, error) {
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
-		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days
+		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days,
+		        COALESCE(workspace_id, '')
 		   FROM projects
-		  WHERE owner_user_id = $1 AND name = $2 AND kind = $3`,
-		userID,
+		  WHERE workspace_id = $1 AND name = $2 AND kind = $3`,
+		workspaceID,
 		name,
 		string(deliverycore.ProjectKindUser),
 	)
@@ -345,6 +358,8 @@ func (s *catalogPersistence) projectByOwnedNameQuerier(ctx context.Context, q de
 }
 
 var errInvalidLogRetention = errors.New("log retention must be 0 (platform default) or 1..90 days")
+
+var errProjectNameRequired = errors.New("project name is required")
 
 func (s *catalogPersistence) updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error) {
 	scope, err := s.authz.AuthorizeProject(ctx, user, projectID, authz.Write)
@@ -377,7 +392,8 @@ func (s *catalogPersistence) projectByIDInternalQuerier(ctx context.Context, q d
 	row := q.QueryRowContext(
 		ctx,
 		`SELECT id, name, kind, COALESCE(system_key, ''), created_at,
-		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days
+		        deleted_at, deleted_by_user_id, delete_expires_at, log_retention_days,
+		        COALESCE(workspace_id, '')
 		   FROM projects
 		  WHERE id = $1`,
 		projectID,
