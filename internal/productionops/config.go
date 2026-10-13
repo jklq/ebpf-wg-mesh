@@ -20,8 +20,8 @@ import (
 	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/recovery"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type Config struct {
@@ -50,13 +50,21 @@ type Config struct {
 	// certificate alarms. Empty disables alarms; there is no default.
 	AlarmWebhookURL string `json:"alarmWebhookUrl,omitempty"`
 }
+
+// DatabaseConfig names the provider executables operations installs and
+// drives. Provider defaults to PostgreSQL through the platformdb seam;
+// operations is the provider's installation adapter, so it names its
+// binaries explicitly while all SQL logic stays provider-neutral.
 type DatabaseConfig struct {
-	Binary               string `json:"binary"`
+	Provider             string `json:"provider,omitempty"`
+	PostgresBinary       string `json:"postgresBinary"`
+	InitDBBinary         string `json:"initdbBinary"`
+	PgBackRestBinary     string `json:"pgBackRestBinary"`
+	PgBackRestStanza     string `json:"pgBackRestStanza"`
 	Address              string `json:"address"`
 	CertificateDirectory string `json:"certificateDirectory"`
 	URLFile              string `json:"urlFile"`
 	Name                 string `json:"name"`
-	BackupURIFile        string `json:"backupURIFile"`
 }
 type ConsoleConfig struct {
 	AdminBinary  string `json:"adminBinary"`
@@ -125,14 +133,17 @@ func (c Config) Validate() error {
 	if err := alarm.Validate(c.AlarmWebhookURL); err != nil {
 		return fmt.Errorf("alarmWebhookUrl: %w", err)
 	}
-	for _, path := range []string{c.StateDirectory, c.RecoveryConfig, c.Database.Binary, c.Database.CertificateDirectory, c.Database.URLFile, c.Database.BackupURIFile, c.Console.AdminBinary, c.Console.TokenKeyFile, c.WildcardCertificate, c.WildcardKey} {
+	for _, path := range []string{c.StateDirectory, c.RecoveryConfig, c.Database.PostgresBinary, c.Database.InitDBBinary, c.Database.PgBackRestBinary, c.Database.CertificateDirectory, c.Database.URLFile, c.Console.AdminBinary, c.Console.TokenKeyFile, c.WildcardCertificate, c.WildcardKey} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("operations file paths must be absolute and clean")
 		}
 	}
 	identifier := regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
-	if !identifier.MatchString(c.Database.Name) || !identifier.MatchString(c.Console.Schema) || c.InternalServerName == "" || c.PlatformDomain == "" {
-		return fmt.Errorf("database, console and TLS service identities are required")
+	if _, err := platformdb.For(c.Database.Provider); err != nil {
+		return fmt.Errorf("database provider: %w", err)
+	}
+	if !identifier.MatchString(c.Database.Name) || !identifier.MatchString(c.Console.Schema) || !identifier.MatchString(c.Database.PgBackRestStanza) || c.InternalServerName == "" || c.PlatformDomain == "" {
+		return fmt.Errorf("database, console, backup stanza and TLS service identities are required")
 	}
 	for _, probe := range c.Probes {
 		if err := probe.Validate(); err != nil {
@@ -149,10 +160,21 @@ func (c Config) Validate() error {
 func (p Probe) Validate() error {
 	target := strings.NewReplacer("{address}", "127.0.0.1", "{socketHost}", "127.0.0.1", "{instance}", "instance").Replace(p.URL)
 	u, err := url.Parse(target)
-	if err != nil || u.Host == "" || u.User != nil || p.Status < 100 || p.Status > 599 {
-		return fmt.Errorf("invalid HTTP probe")
+	if err != nil || u.Host == "" || p.Status < 100 || p.Status > 599 {
+		return fmt.Errorf("invalid probe")
 	}
-	if u.Scheme != "https" && !(u.Scheme == "http" && net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback()) {
+	if u.Scheme == "postgresql" || u.Scheme == "postgres" {
+		// Database probes authenticate with the probe's client certificate;
+		// the SQL user is the certificate identity, never a URL password.
+		if u.User != nil && u.User.Username() == "" {
+			return fmt.Errorf("database probe requires a SQL user")
+		}
+		if _, hasPassword := u.User.Password(); hasPassword || p.AuthorizationURL != "" {
+			return fmt.Errorf("database probes use certificate authentication only")
+		}
+	} else if u.User != nil {
+		return fmt.Errorf("invalid HTTP probe")
+	} else if u.Scheme != "https" && !(u.Scheme == "http" && net.ParseIP(u.Hostname()) != nil && net.ParseIP(u.Hostname()).IsLoopback()) {
 		return fmt.Errorf("HTTP health probes require literal loopback; service probes require HTTPS")
 	}
 	if (p.CertFile == "") != (p.KeyFile == "") {
@@ -170,31 +192,37 @@ func (p Probe) Validate() error {
 	return nil
 }
 
+// db opens the operator connection through the provider seam with the
+// platform schema selected. system selects the "postgres" maintenance
+// database instead, for work that must survive the platform database being
+// created or replaced (installation and restore admission).
 func (r *Runner) db(ctx context.Context, system bool) (*sql.DB, error) {
 	b, err := os.ReadFile(r.Config.Database.URLFile)
 	if err != nil {
 		return nil, err
 	}
-	u, err := url.Parse(strings.TrimSpace(string(b)))
-	if err != nil || u.Scheme != "postgresql" || u.Query().Get("sslmode") != "verify-full" {
+	raw := strings.TrimSpace(string(b))
+	u, err := url.Parse(raw)
+	if err != nil || u.Query().Get("sslmode") != "verify-full" {
 		return nil, fmt.Errorf("operator database connection must use verify-full TLS")
 	}
+	name := r.Config.Database.Name
 	if system {
-		// Full-cluster restore replaces defaultdb. Administrative recovery queries
-		// must stay connected to the system database throughout that transition.
-		u.Path = "/system"
-	} else {
-		u.Path = "/" + r.Config.Database.Name
+		name = "postgres"
 	}
-	db, err := sql.Open("pgx", u.String())
+	if raw, err = platformdb.ReplaceDatabase(raw, name); err != nil {
+		return nil, err
+	}
+	provider, err := platformdb.For(r.Config.Database.Provider)
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(4)
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if err := db.PingContext(probeCtx); err != nil {
-		db.Close()
+	db, err := provider.Open(probeCtx, platformdb.Config{
+		Provider: r.Config.Database.Provider, URL: raw, Schema: platformdb.SchemaPlatform, MaxOpenConns: 4,
+	})
+	if err != nil {
 		return nil, fmt.Errorf("operator database unavailable: %w", err)
 	}
 	return db, nil

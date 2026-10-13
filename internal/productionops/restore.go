@@ -2,7 +2,6 @@ package productionops
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -120,99 +119,106 @@ func (r *Runner) restore(ctx context.Context) error {
 	if err := r.recoverSecrets(ctx, *e.Point, s, c); err != nil {
 		return err
 	}
-	db, err := r.db(ctx, true)
+	pl, err := r.databasePlacement()
 	if err != nil {
 		return err
 	}
-	defer db.Close()
-	job, status, err := nativeRestoreJob(ctx, db, r.Plan.ID, e.Point.Database.Subdirectory, e.DataLossCutoff)
-	if err != nil && err != sql.ErrNoRows {
+	// A completed restore is its own retry marker: the restored database
+	// verifies against the selected point exactly.
+	if err := r.verifyRestore(ctx); err == nil {
+		return nil
+	}
+	data := dataDir(r.Plan, pl) + "/data"
+	marker := dataDir(r.Plan, pl) + "/restore-" + r.Plan.ID
+	started, err := r.remote(ctx, r.Plan, pl, "if test -f "+shell(marker)+"; then printf started; else printf fresh; fi\n")
+	if err != nil {
 		return err
 	}
-	if err == sql.ErrNoRows {
-		if err := recovery.CheckEmptyDestination(ctx, db); err != nil {
+	if string(started) != "started" {
+		// Only the freshly initialized empty cluster may be replaced.
+		if err := r.verifyEmptyDatabase(ctx); err != nil {
 			return err
-		}
-		var pl deploy.Placement
-		for _, candidate := range r.Plan.Placements {
-			if candidate.Role == deploy.Database {
-				pl = candidate
-				break
-			}
-		}
-		if pl.Instance == "" {
-			return fmt.Errorf("restore has no database destination")
-		}
-		h, _ := r.Plan.Installation.Host(pl.Host)
-		node, err := databaseNodeID(ctx, db, h.Network.Address)
-		if err != nil {
-			return err
-		}
-		root := dataDir(r.Plan, pl) + "/external-io/" + r.Plan.ID + "/database"
-		for _, o := range e.Point.Database.Objects {
-			rel := strings.TrimPrefix(o.Key, strings.Trim(c.BackupPrefix, "/")+"/")
-			if rel == o.Key || filepath.IsAbs(rel) || filepath.Clean(rel) != rel || rel == ".." || strings.HasPrefix(rel, "../") {
-				return fmt.Errorf("native backup object escapes the selected collection")
-			}
-			f, err := os.CreateTemp(r.Config.StateDirectory, ".native-backup-")
-			if err != nil {
-				return err
-			}
-			path := f.Name()
-			f.Close()
-			if err := s.Storage.Get(ctx, o, path); err != nil {
-				os.Remove(path)
-				return err
-			}
-			digest, size, err := recovery.FileDigest(path)
-			if err != nil || digest != o.Digest || size != o.Size {
-				os.Remove(path)
-				return fmt.Errorf("frozen database object failed its exact-version digest")
-			}
-			host, err := r.host(ctx, r.Plan, pl.Host)
-			if err != nil {
-				os.Remove(path)
-				return err
-			}
-			err = r.Remote.Upload(ctx, r.Plan.Installation, host, path, root+"/"+rel, strings.TrimPrefix(digest, "sha256:"))
-			os.Remove(path)
-			if err != nil {
-				return err
-			}
-			if _, err := r.remote(ctx, r.Plan, pl, "chmod 0600 "+shell(root+"/"+rel)+"\nsync -f "+shell(root+"/"+rel)+"\n"); err != nil {
-				return err
-			}
-		}
-		collection := fmt.Sprintf("nodelocal://%d/%s/database", node, r.Plan.ID)
-		quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
-		statement := "RESTORE FROM " + quote(e.Point.Database.Subdirectory) + " IN " + quote(collection) + " AS OF SYSTEM TIME " + quote(e.DataLossCutoff.UTC().Format(time.RFC3339Nano)) + " WITH detached"
-		if err := db.QueryRowContext(ctx, statement).Scan(&job); err != nil {
-			return fmt.Errorf("native restore submission unresolved; retry discovers the durable native job before considering an empty destination: %w", err)
 		}
 	}
-	// Native job identity and effects, rather than an attempt file, drive retry.
-	for {
-		observed, state, err := nativeRestoreJob(ctx, db, r.Plan.ID, e.Point.Database.Subdirectory, e.DataLossCutoff)
+	repoRoot := dataDir(r.Plan, pl) + "/recovery-repo"
+	for _, o := range e.Point.Database.Objects {
+		rel := strings.TrimPrefix(o.Key, strings.Trim(c.BackupPrefix, "/")+"/")
+		if rel == o.Key || filepath.IsAbs(rel) || filepath.Clean(rel) != rel || rel == ".." || strings.HasPrefix(rel, "../") {
+			return fmt.Errorf("backup repository object escapes the selected repository")
+		}
+		f, err := os.CreateTemp(r.Config.StateDirectory, ".backup-object-")
 		if err != nil {
 			return err
 		}
-		if observed != job {
-			return fmt.Errorf("native restore job identity changed; destination is preserved")
+		path := f.Name()
+		f.Close()
+		if err := s.Storage.Get(ctx, o, path); err != nil {
+			os.Remove(path)
+			return err
 		}
-		status = state
-		if status == "succeeded" {
-			return r.verifyRestore(ctx)
+		digest, size, err := recovery.FileDigest(path)
+		if err != nil || digest != o.Digest || size != o.Size {
+			os.Remove(path)
+			return fmt.Errorf("frozen backup object failed its exact-version digest")
 		}
-		if status == "failed" || status == "canceled" || status == "paused" {
-			return fmt.Errorf("native restore job %d is %s; destination is preserved", job, status)
+		host, err := r.host(ctx, r.Plan, pl.Host)
+		if err != nil {
+			os.Remove(path)
+			return err
+		}
+		err = r.Remote.Upload(ctx, r.Plan.Installation, host, path, repoRoot+"/"+rel, strings.TrimPrefix(digest, "sha256:"))
+		os.Remove(path)
+		if err != nil {
+			return err
+		}
+	}
+	restoreConfig := recovery.RenderPgBackRestPosixConfig(r.Config.Database.PgBackRestStanza, data, repoRoot)
+	script := remoteFile(cfgDir(r.Plan, pl)+"/certs/pgbackrest-restore.conf", []byte(restoreConfig))
+	script += "chown " + shell(deploy.DatabaseOSUser) + " " + shell(cfgDir(r.Plan, pl)+"/certs/pgbackrest-restore.conf") + "\n"
+	script += "chown -R " + shell(deploy.DatabaseOSUser) + " " + shell(repoRoot) + "\n"
+	script += remoteFile(marker, []byte(e.Point.Database.BackupLabel+"\n"))
+	script += "systemctl stop " + shell(unit(r.Plan, pl)) + "\n"
+	script += "rm -rf " + shell(data) + "\nmkdir -p " + shell(data) + "\nchown " + shell(deploy.DatabaseOSUser) + " " + shell(data) + "\nchmod 0700 " + shell(data) + "\n"
+	restoreArgs := []string{
+		shell(r.databaseTool("pgbackrest")),
+		"--config=" + shell(cfgDir(r.Plan, pl)+"/certs/pgbackrest-restore.conf"),
+		"--stanza=" + shell(r.Config.Database.PgBackRestStanza),
+		"restore", "--set=" + shell(e.Point.Database.BackupLabel),
+		"--type=time", "--target=" + shell(e.DataLossCutoff.UTC().Format("2006-01-02 15:04:05.999999-07")),
+		"--target-action=promote",
+	}
+	script += "runuser -u " + shell(deploy.DatabaseOSUser) + " -- " + strings.Join(restoreArgs, " ") + "\n"
+	script += "systemctl start " + shell(unit(r.Plan, pl)) + "\n"
+	if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
+		return fmt.Errorf("pgBackRest restore failed; destination is preserved for inspection: %w", err)
+	}
+	if err := r.waitPromoted(ctx); err != nil {
+		return err
+	}
+	return r.verifyRestore(ctx)
+}
+
+// waitPromoted waits until WAL replay reaches the recovery target and the
+// primary promotes out of recovery.
+func (r *Runner) waitPromoted(ctx context.Context) error {
+	for {
+		db, err := r.db(ctx, true)
+		if err == nil {
+			var inRecovery bool
+			err = db.QueryRowContext(ctx, `SELECT pg_is_in_recovery()`).Scan(&inRecovery)
+			db.Close()
+			if err == nil && !inRecovery {
+				return nil
+			}
 		}
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return fmt.Errorf("restored primary did not promote: %w", ctx.Err())
 		case <-time.After(time.Second):
 		}
 	}
 }
+
 func (r *Runner) verifyRestore(ctx context.Context) error {
 	e, err := r.selectedPoint(ctx)
 	if err != nil {
@@ -223,12 +229,12 @@ func (r *Runner) verifyRestore(ctx context.Context) error {
 		return err
 	}
 	defer db.Close()
-	_, status, err := nativeRestoreJob(ctx, db, r.Plan.ID, e.Point.Database.Subdirectory, e.DataLossCutoff)
-	if err != nil {
+	var inRecovery bool
+	if err := db.QueryRowContext(ctx, `SELECT pg_is_in_recovery()`).Scan(&inRecovery); err != nil {
 		return err
 	}
-	if status != "succeeded" {
-		return fmt.Errorf("exact-timestamp native restore has not completed")
+	if inRecovery {
+		return fmt.Errorf("point-in-time restore has not promoted")
 	}
 	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
 	if err != nil {
@@ -237,6 +243,7 @@ func (r *Runner) verifyRestore(ctx context.Context) error {
 	clear(s.RecoveryKey)
 	return recovery.CheckRestoredDatabase(ctx, db, *e.Point, r.Config.Console.Schema, c.KeyringFile, []string{r.Config.Console.TokenKeyFile})
 }
+
 func (r *Runner) authority(ctx context.Context, verify bool) error {
 	if !r.Plan.Recovery {
 		return fmt.Errorf("authority replacement is restricted to a fenced restore")

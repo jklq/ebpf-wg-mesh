@@ -61,7 +61,7 @@ func (s *Service) ResetForRecovery(ctx context.Context, installation, generation
 		if _, err := tx.ExecContext(ctx, `UPDATE agent_authority SET epoch = 1, outstanding_not_after = statement_timestamp() WHERE id = 1`); err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, `UPSERT INTO recovery_runtime_authority(singleton,installation,generation,paused) VALUES (TRUE,$1,$2,TRUE)`, installation, generation)
+		_, err = tx.ExecContext(ctx, `INSERT INTO recovery_runtime_authority(singleton,installation,generation,paused) VALUES (TRUE,$1,$2,TRUE) ON CONFLICT(singleton) DO UPDATE SET installation=excluded.installation,generation=excluded.generation,paused=excluded.paused`, installation, generation)
 		return err
 	})
 }

@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,13 +13,13 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/recovery"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // RunRecovery is usable without a platform session or the deployment controller.
-// Native SQL schedules, an OS timer for completion, and an external monitor are
-// three independently operated processes.
+// pgBackRest timers on the database host, WAL archiving, an OS timer for
+// completion, and an external monitor are independently operated processes.
 func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr error) {
 	if len(args) == 0 {
 		return fmt.Errorf("usage: platformctl recovery <protect|protect-files|verify-files|schedule|finalize|complete|verify|monitor|collect|drill> [flags]")
@@ -39,8 +38,8 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 	fs.BoolVar(&secret, "secret", false, "encrypt the secret bundle before upload")
 	fs.StringVar(&pointPath, "point", "", "protected point Object JSON file")
 	fs.StringVar(&backupURL, "backup", "", "version-pinned S3 recovery-point URL")
-	fs.StringVar(&subdir, "subdirectory", "", "full backup subdirectory; empty selects latest native full backup")
-	fs.StringVar(&timestamp, "timestamp", "", "selected RFC3339 database timestamp; defaults to latest backup endpoint")
+	fs.StringVar(&subdir, "backup-label", "", "pgBackRest backup label; empty selects the newest backup covering the snapshot")
+	fs.StringVar(&timestamp, "timestamp", "", "must equal the live snapshot timestamp when set; PostgreSQL inventory cannot be read in the past")
 	fs.StringVar(&sourceConfig, "source-config", "", "source archive backend JSON file")
 	fs.StringVar(&declared, "declared-at", "", "recovery declaration timestamp, before provisioning")
 	fs.BoolVar(&content, "check-content", false, "read and hash every protected dependency")
@@ -173,16 +172,17 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 	if err != nil {
 		return err
 	}
-	db, err := sql.Open("pgx", strings.TrimSpace(string(url)))
+	db, err := platformdb.OpenURL(ctx, strings.TrimSpace(string(url)), platformdb.SchemaPlatform)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	switch args[0] {
 	case "schedule":
-		if err := recovery.VerifyBackupDestination(ctx, db, c.BackupConnection, c.Storage, c.BackupPrefix); err != nil {
-			return err
-		}
+		// Backup cadence is systemd timers on the database host, installed by
+		// production operations; nothing is scheduled inside PostgreSQL.
+		// This command registers the release inventory and verifies the
+		// archiving + repository path those timers feed.
 		if err := s.RequireFiles(ctx, c); err != nil {
 			return err
 		}
@@ -193,63 +193,41 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 		if err := recovery.Register(ctx, db, c.Installation, c.Release, append(c.Requirements(), releaseNeeds...)); err != nil {
 			return err
 		}
-		statement, err := recovery.ScheduleSQL(c.Installation, c.BackupConnection)
-		if err != nil {
+		if err := recovery.VerifyArchiving(ctx, db, c.PgBackRest.Stanza); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, statement); err != nil {
-			return fmt.Errorf("native recovery schedule installation failed: %w", err)
+		if _, err := c.Backups().Info(ctx); err != nil {
+			return fmt.Errorf("backup repository is not readable for stanza %q: %w", c.PgBackRest.Stanza, err)
 		}
-		return recovery.VerifySchedules(ctx, db, c.Installation, c.BackupConnection)
+		return nil
 	case "finalize":
 		return recovery.FinishRelease(ctx, db, c.Installation, c.Release)
 	case "complete":
-		if err := recovery.VerifyBackupDestination(ctx, db, c.BackupConnection, c.Storage, c.BackupPrefix); err != nil {
+		if err := recovery.VerifyArchiving(ctx, db, c.PgBackRest.Stanza); err != nil {
 			return err
 		}
-		if err := recovery.VerifySchedules(ctx, db, c.Installation, c.BackupConnection); err != nil {
-			return err
-		}
-		if subdir == "" {
-			rows, err := db.QueryContext(ctx, "SHOW BACKUPS IN '"+strings.ReplaceAll(c.BackupConnection, "'", "''")+"'")
-			if err != nil {
-				return err
-			}
-			for rows.Next() {
-				var path string
-				if err := rows.Scan(&path); err != nil {
-					rows.Close()
-					return err
-				}
-				if path > subdir {
-					subdir = path
-				}
-			}
-			err = rows.Err()
-			rows.Close()
-			if err != nil {
-				return err
-			}
-		}
-		chain, err := recovery.InspectBackup(ctx, db, c.BackupConnection, subdir)
+		snapshot, walSegment, err := recovery.ReadSnapshot(ctx, db, c.Installation, c.ConsoleSchema)
 		if err != nil {
 			return err
 		}
-		if len(chain.Layers) == 0 {
-			return fmt.Errorf("no completed native database backup")
-		}
-		t := chain.Layers[len(chain.Layers)-1].End
+		t := snapshot.Timestamp
 		if timestamp != "" {
-			t, err = time.Parse(time.RFC3339Nano, timestamp)
+			selected, err := time.Parse(time.RFC3339Nano, timestamp)
 			if err != nil {
 				return err
 			}
-		}
-		snapshot, err := recovery.ReadSnapshot(ctx, db, c.Installation, c.ConsoleSchema, t)
-		if err != nil {
-			return err
+			if !selected.Equal(t) {
+				return fmt.Errorf("--timestamp %s predates the live snapshot %s; PostgreSQL inventory is read live and bound to WAL replay, so complete a fresh point instead", selected, t)
+			}
 		}
 		failureReport.Timestamp = t
+		if err := recovery.EnsureWALArchived(ctx, db, walSegment); err != nil {
+			return err
+		}
+		chain, err := recovery.InspectRepository(ctx, c.Backups(), c.PgBackRest.Stanza, c.Repository(), subdir, t, walSegment)
+		if err != nil {
+			return err
+		}
 		if err := verifyReleaseInventory(ctx, s, snapshot, nil); err != nil {
 			return err
 		}
@@ -305,23 +283,21 @@ func RunRecovery(ctx context.Context, args []string, out io.Writer) (returnErr e
 				return fmt.Errorf("missing protected %s/%s; protect release files before deployment", r.Kind, r.ID)
 			}
 		}
-		base := strings.Trim(c.BackupPrefix, "/")
-		leaf := strings.Trim(subdir, "/")
-		if base == "" || strings.Contains(leaf, "..") {
-			return fmt.Errorf("native backup object prefix is required")
+		if strings.Trim(c.BackupPrefix, "/") == "" {
+			return fmt.Errorf("backup repository prefix is required")
 		}
-		chain, err = s.FreezeDatabase(ctx, chain, []string{base + "/" + leaf + "/", base + "/incrementals/" + leaf + "/"})
+		chain, err = s.FreezeDatabase(ctx, chain, c.BackupPrefix)
 		if err != nil {
 			return err
 		}
-		// A backup completing during the version walk can replace collection
-		// metadata. Retry on the next timer tick instead of publishing a mixed view.
-		checked, err := recovery.InspectBackup(ctx, db, c.BackupConnection, subdir)
+		// A backup completing during the version walk can extend the chain.
+		// Retry on the next timer tick instead of publishing a mixed view.
+		checked, err := recovery.InspectRepository(ctx, c.Backups(), c.PgBackRest.Stanza, c.Repository(), subdir, t, walSegment)
 		if err != nil {
 			return err
 		}
-		if Digest(chain.Layers) != Digest(checked.Layers) {
-			return fmt.Errorf("native backup chain changed during capture; retry completion")
+		if checked.BackupLabel != chain.BackupLabel || Digest(checked.Chain) != Digest(chain.Chain) || checked.WALStart != chain.WALStart {
+			return fmt.Errorf("backup chain changed during capture; retry completion")
 		}
 		p := recovery.Point{Installer: c.Requirements(), Version: 1, Installation: c.Installation, Snapshot: snapshot, Database: chain}
 		object, report, err := s.Publish(ctx, p)

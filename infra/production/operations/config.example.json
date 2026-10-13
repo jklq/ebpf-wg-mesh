@@ -3,15 +3,18 @@
   "stateDirectory": "/var/lib/ebpf-wg-mesh/production/operations",
   "recoveryConfig": "/etc/platform/recovery.json",
   "database": {
-    "binary": "/opt/ebpf-wg-mesh/production/r43/tools/cockroachdb",
+    "provider": "postgres",
+    "postgresBinary": "/opt/ebpf-wg-mesh/production/r43/tools/postgresql",
+    "initdbBinary": "/opt/ebpf-wg-mesh/production/r43/tools/initdb",
+    "pgBackRestBinary": "/opt/ebpf-wg-mesh/production/r43/tools/pgbackrest",
+    "pgBackRestStanza": "platform",
     "certificateDirectory": "/var/lib/ebpf-wg-mesh/production/database-pki",
     "urlFile": "/etc/platform/database-url",
-    "name": "platform",
-    "backupURIFile": "/etc/platform/database-backup-uri"
+    "name": "platform"
   },
   "console": {
     "adminBinary": "/opt/ebpf-wg-mesh/production/r43/tools/console-admin",
-    "schema": "dashboard",
+    "schema": "console",
     "tokenKeyFile": "/etc/platform/console-token.key"
   },
   "platformDomain": "example.com",
@@ -25,7 +28,6 @@
   "ingressHealthListen": "0.0.0.0:19001",
   "alarmWebhookUrl": "https://hooks.example.com/platform-alarm",
   "probes": {
-    "cockroachdb": {"url": "https://{socketHost}:8080/health", "caFile": "{configDir}/certs/ca.crt", "status": 200},
     "controlplane": {
       "url": "http://127.0.0.1:9090/admissionz",
       "runtimeURL": "http://127.0.0.1:9090/readyz",
@@ -37,21 +39,82 @@
       "unauthorizedStatus": 403
     },
     "console": {
-      "url": "http://127.0.0.1:3000/readyz", "status": 200, "bodyContains": "\"ready\"",
-      "authorizationURL": "https://console.example.com/sessionz", "unauthorizedStatus": 401
+      "url": "http://127.0.0.1:3000/readyz",
+      "status": 200,
+      "bodyContains": "\"ready\"",
+      "authorizationURL": "https://console.example.com/sessionz",
+      "unauthorizedStatus": 401
     },
-    "agent": {"url": "http://127.0.0.1:9091/admissionz", "runtimeURL": "http://127.0.0.1:9091/readyz", "status": 200},
-    "builder": {"url": "http://127.0.0.1:9092/admissionz", "runtimeURL": "http://127.0.0.1:9092/readyz", "status": 200},
-    "envoy": {"url": "http://127.0.0.1:19000/ready", "status": 200, "bodyContains": "LIVE"},
-    "registry": {"url": "http://127.0.0.1:5000/v2/", "status": 401, "authorizationURL": "https://registry.example.com/v2/", "unauthorizedStatus": 401}
+    "agent": {
+      "url": "http://127.0.0.1:9091/admissionz",
+      "runtimeURL": "http://127.0.0.1:9091/readyz",
+      "status": 200
+    },
+    "builder": {
+      "url": "http://127.0.0.1:9092/admissionz",
+      "runtimeURL": "http://127.0.0.1:9092/readyz",
+      "status": 200
+    },
+    "envoy": {
+      "url": "http://127.0.0.1:19000/ready",
+      "status": 200,
+      "bodyContains": "LIVE"
+    },
+    "registry": {
+      "url": "http://127.0.0.1:5000/v2/",
+      "status": 401,
+      "authorizationURL": "https://registry.example.com/v2/",
+      "unauthorizedStatus": 401
+    },
+    "postgresql": {
+      "url": "postgresql://node@{socketHost}:5432/platform",
+      "caFile": "{configDir}/certs/ca.crt",
+      "certFile": "{configDir}/certs/node.crt",
+      "keyFile": "{configDir}/certs/node.key",
+      "status": 200
+    }
   },
   "endpointProbes": {
-    "console": {"url": "https://console.example.com/readyz", "status": 200, "bodyContains": "\"ready\"", "authorizationURL": "https://console.example.com/sessionz", "unauthorizedStatus": 401},
-    "envoy": {"url": "https://envoy.example.com/healthz", "status": 200},
-    "registry": {"url": "https://registry.example.com/v2/", "status": 401}
+    "console": {
+      "url": "https://console.example.com/readyz",
+      "status": 200,
+      "bodyContains": "\"ready\"",
+      "authorizationURL": "https://console.example.com/sessionz",
+      "unauthorizedStatus": 401
+    },
+    "envoy": {
+      "url": "https://envoy.example.com/healthz",
+      "status": 200
+    },
+    "registry": {
+      "url": "https://registry.example.com/v2/",
+      "status": 401
+    }
   },
   "storage": {
-    "archives": {"kind": "s3", "s3": {"endpoint": "https://s3.active.example.com", "bucket": "platform-archives", "prefix": "production", "region": "oslo", "owner": "replace-with-active-bucket-owner", "credentialsFile": "/etc/platform/active-s3.ini", "profile": "active"}},
-    "registry": {"kind": "s3", "s3": {"endpoint": "https://s3.active.example.com", "bucket": "platform-registry", "prefix": "production", "region": "oslo", "owner": "replace-with-active-bucket-owner", "credentialsFile": "/etc/platform/active-s3.ini", "profile": "active"}}
+    "archives": {
+      "kind": "s3",
+      "s3": {
+        "endpoint": "https://s3.active.example.com",
+        "bucket": "platform-archives",
+        "prefix": "production",
+        "region": "oslo",
+        "owner": "replace-with-active-bucket-owner",
+        "credentialsFile": "/etc/platform/active-s3.ini",
+        "profile": "active"
+      }
+    },
+    "registry": {
+      "kind": "s3",
+      "s3": {
+        "endpoint": "https://s3.active.example.com",
+        "bucket": "platform-registry",
+        "prefix": "production",
+        "region": "oslo",
+        "owner": "replace-with-active-bucket-owner",
+        "credentialsFile": "/etc/platform/active-s3.ini",
+        "profile": "active"
+      }
+    }
   }
 }

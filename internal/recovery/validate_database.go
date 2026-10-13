@@ -75,62 +75,49 @@ func CheckRestoredDatabase(ctx context.Context, db *sql.DB, p Point, consoleSche
 	if err := checkConsoleTokens(ctx, db, quote(consoleSchema), consoleKeys); err != nil {
 		return err
 	}
-	return scrubDatabases(ctx, db)
+	return checkDatabaseIntegrity(ctx, db, consoleSchema)
 }
 
-func scrubDatabases(ctx context.Context, db *sql.DB) error {
+// checkDatabaseIntegrity replaces the CockroachDB SCRUB pass: every index
+// in the platform schemas must be valid, and every table must be readable
+// end to end. PostgreSQL checksums (enabled at initdb) cover page-level
+// corruption below this; a full heap scan here catches catalog damage a
+// PITR replay could otherwise carry into service.
+func checkDatabaseIntegrity(ctx context.Context, db *sql.DB, consoleSchema string) error {
+	schemas := []string{"platform", consoleSchema, "recovery"}
 	quote := func(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\"\"") + "\"" }
-	rows, err := db.QueryContext(ctx, `SELECT database_name FROM [SHOW DATABASES] WHERE database_name<>'system'`)
-	if err != nil {
+	var invalid int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM pg_index i
+	 JOIN pg_class c ON c.oid = i.indexrelid
+	 JOIN pg_namespace n ON n.oid = c.relnamespace
+	 WHERE NOT i.indisvalid AND n.nspname = ANY($1)`, schemas).Scan(&invalid); err != nil {
 		return err
 	}
-	var databases []string
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			rows.Close()
-			return err
-		}
-		databases = append(databases, name)
+	if invalid != 0 {
+		return fmt.Errorf("database integrity check found %d invalid indexes", invalid)
 	}
-	err = rows.Err()
-	rows.Close()
+	rows, err := db.QueryContext(ctx, `SELECT table_schema,table_name FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema = ANY($1) ORDER BY table_schema,table_name`, schemas)
 	if err != nil {
 		return err
 	}
 	var tables []string
-	for _, name := range databases {
-		rows, err := db.QueryContext(ctx, `SELECT table_schema,table_name FROM `+quote(name)+`.information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema','crdb_internal')`)
-		if err != nil {
+	for rows.Next() {
+		var schema, table string
+		if err := rows.Scan(&schema, &table); err != nil {
+			rows.Close()
 			return err
 		}
-		for rows.Next() {
-			var schema, table string
-			if err := rows.Scan(&schema, &table); err != nil {
-				rows.Close()
-				return err
-			}
-			tables = append(tables, quote(name)+"."+quote(schema)+"."+quote(table))
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
+		tables = append(tables, quote(schema)+"."+quote(table))
 	}
-	for _, table := range tables {
-		rows, err := db.QueryContext(ctx, "EXPERIMENTAL SCRUB TABLE "+table)
-		if err != nil {
-			return fmt.Errorf("database integrity check failed: %w", err)
-		}
-		dirty := rows.Next()
-		err = rows.Err()
+	if err := rows.Err(); err != nil {
 		rows.Close()
-		if err != nil {
-			return err
-		}
-		if dirty {
-			return fmt.Errorf("database integrity check found corruption in %s", table)
+		return err
+	}
+	rows.Close()
+	for _, table := range tables {
+		var count int64
+		if err := db.QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil {
+			return fmt.Errorf("database integrity check failed on %s: %w", table, err)
 		}
 	}
 	return nil

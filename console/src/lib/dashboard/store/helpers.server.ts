@@ -137,7 +137,7 @@ export async function migrateDashboardStore(
 		}>(
 			db,
 			"recovery.authority",
-			"SELECT installation,generation,paused FROM recovery_runtime_authority WHERE singleton = TRUE",
+			"SELECT installation,generation,paused FROM platform.recovery_runtime_authority WHERE singleton = TRUE",
 		);
 		const authority = rowAt(result.rows, 0, "recovery.authority");
 		if (

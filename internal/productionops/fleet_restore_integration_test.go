@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -82,16 +81,27 @@ func (f *nativeFleet) sql(p deploy.Plan, query string) []byte {
 	if !ok {
 		f.t.Fatal("no native administration host")
 	}
-	return f.docker("exec", f.hosts[h.ID], f.selection.Database.Binary, "sql", "--host="+net.JoinHostPort(h.Network.Address, "26257"), "--certs-dir="+f.selection.Database.CertificateDirectory+"/"+p.Generation, "--database="+f.selection.Database.Name, "--format=tsv", "--execute="+query)
+	certs := f.selection.Database.CertificateDirectory + "/" + p.Generation
+	psql := "/opt/ebpf-wg-mesh/" + f.id + "/" + p.Release.ID + "/tools/psql"
+	return f.docker("exec",
+		"-e", "PGHOST="+h.Network.Address, "-e", "PGPORT=5432", "-e", "PGDATABASE="+f.selection.Database.Name,
+		"-e", "PGUSER=root", "-e", "PGSSLMODE=verify-full",
+		"-e", "PGSSLROOTCERT="+certs+"/ca.crt", "-e", "PGSSLCERT="+certs+"/client.root.crt", "-e", "PGSSLKEY="+certs+"/client.root.key",
+		"-e", "PGOPTIONS=-c search_path=platform,console,recovery",
+		f.hosts[h.ID], psql, "--no-psqlrc", "--tuples-only", "--no-align", "--field-separator=	", "--command="+query)
 }
 
 func (f *nativeFleet) completePoint() deploy.Evidence {
 	f.t.Helper()
 	p := f.plan
-	// Submit a real native backup, then explicitly run the independent OS service.
+	// Submit a real pgBackRest backup, then explicitly run the independent OS service.
 	// It uses the applied plan and actual SQL/artifact/key inspection, with no
 	// platform session. There is no fabricated completion timestamp or receipt.
-	f.sql(p, "BACKUP INTO 'external://native_recovery' WITH revision_history")
+	for _, pl := range p.Placements {
+		if pl.Role == deploy.Database {
+			f.maintenanceService(pl.Host, "-pgbackrest-full.service")
+		}
+	}
 	f.completeService(p.AdministrationHost)
 	cfg, service, err := recovery.Load(f.selection.RecoveryConfig)
 	if err != nil {
@@ -229,8 +239,8 @@ func (f *nativeFleet) restoreFleet(t *testing.T, siteLoss bool) {
 	sessionID := fmt.Sprintf("old-session-%s-%t", f.id, siteLoss)
 	// Seed actual retained authority state before native SQL capture. The leased
 	// external effect has not expired, so live workers cannot replay it.
-	f.sql(f.plan, fmt.Sprintf(`INSERT INTO dashboard.users(id,email,created_at,updated_at) VALUES('recovery-user','operator@example.invalid',now(),now()) ON CONFLICT DO NOTHING;
-INSERT INTO dashboard.refresh_sessions(id,user_id,created_at,expires_at) VALUES('%s','recovery-user',now(),now()+INTERVAL '1 hour');
+	f.sql(f.plan, fmt.Sprintf(`INSERT INTO console.users(id,email,created_at,updated_at) VALUES('recovery-user','operator@example.invalid',now(),now()) ON CONFLICT DO NOTHING;
+INSERT INTO console.refresh_sessions(id,user_id,created_at,expires_at) VALUES('%s','recovery-user',now(),now()+INTERVAL '1 hour');
 INSERT INTO durable_work_items(id,kind,dedup_key,state,attempt_limit,owner_id,owner_epoch,lease_expires_at,available_at,payload,created_at,updated_at) VALUES('%s','effect','%s','leased',3,'lost-authority',9,now()+INTERVAL '1 hour',now(),'{"external":"preserve","request":"%s"}',now(),now())`, sessionID, workID, workID, workID))
 	selected := f.completePoint()
 	originalPlan := f.plan
@@ -322,8 +332,8 @@ INSERT INTO durable_work_items(id,kind,dedup_key,state,attempt_limit,owner_id,ow
 	if err := diagnostic.Run(); err != nil {
 		t.Fatal("independently recovered AWS executable", err)
 	}
-	databaseTool := recovered.Tools[originalPlan.Release.ID+"/tool/cockroachdb/amd64"]
-	if databaseTool == "" || databaseTool != recovered.Tools[originalPlan.Release.ID+"/program/cockroachdb/amd64"] {
+	databaseTool := recovered.Tools[originalPlan.Release.ID+"/tool/postgresql/amd64"]
+	if databaseTool == "" || databaseTool != recovered.Tools[originalPlan.Release.ID+"/program/postgresql/amd64"] {
 		t.Fatal("independent identical database executables were not recovered with both release identities")
 	}
 	var target deploy.Installation
@@ -512,14 +522,14 @@ INSERT INTO durable_work_items(id,kind,dedup_key,state,attempt_limit,owner_id,ow
 		f.assertPause(p, false)
 		t.Log("native post-restore credential renewal preserved admission")
 	}
-	if rows := f.sql(p, "SELECT count(*) FROM dashboard.refresh_sessions"); !strings.Contains(string(rows), "\n0\n") {
+	if rows := f.sql(p, "SELECT count(*) FROM console.refresh_sessions"); !strings.Contains(string(rows), "\n0\n") {
 		t.Fatal("native restored console sessions survived authority replacement", string(rows))
 	}
 	// Attempt completion with the old ownership guard, then inspect the actual
 	// unchanged row and its full quarantine payload through native SQL.
 	rows := f.sql(p, fmt.Sprintf(`UPDATE durable_work_items SET state='succeeded' WHERE id='%s' AND state='leased' AND owner_id='lost-authority' AND owner_epoch=9;
 SELECT state,owner_epoch,payload->>'external' FROM durable_work_items WHERE id='%s';
-SELECT record->>'owner_id',record->>'owner_epoch',record->'payload'->>'request' FROM platform_recovery.public.work_quarantine WHERE generation='%s' AND kind='durable_work_items' AND id='%s'`, workID, workID, p.Generation, workID))
+SELECT record->>'owner_id',record->>'owner_epoch',record->'payload'->>'request' FROM recovery.work_quarantine WHERE generation='%s' AND kind='durable_work_items' AND id='%s'`, workID, workID, p.Generation, workID))
 	if !strings.Contains(string(rows), "dead\t10\tpreserve") || !strings.Contains(string(rows), "lost-authority\t9\t"+workID) {
 		t.Fatal("native work recovery lost payload or admitted stale ownership", string(rows))
 	}

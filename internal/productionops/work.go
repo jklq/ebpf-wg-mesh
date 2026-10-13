@@ -21,10 +21,10 @@ func (r *Runner) recoverWork(ctx context.Context, verify bool) error {
 		// Preserve the exact records (including idempotency keys and payloads) before
 		// removing their restored ownership. Unknown external effects are quarantined
 		// rather than reissued. Operators can inspect them through direct SQL offline.
-		if _, err := db.ExecContext(ctx, `CREATE DATABASE IF NOT EXISTS platform_recovery`); err != nil {
+		if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS recovery`); err != nil {
 			return err
 		}
-		if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS platform_recovery.public.work_quarantine(generation STRING,kind STRING,id STRING,record JSONB NOT NULL,PRIMARY KEY(generation,kind,id))`); err != nil {
+		if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS recovery.work_quarantine(generation TEXT,kind TEXT,id TEXT,record JSONB NOT NULL,PRIMARY KEY(generation,kind,id))`); err != nil {
 			return err
 		}
 		tx, err := db.BeginTx(ctx, nil)
@@ -33,9 +33,9 @@ func (r *Runner) recoverWork(ctx context.Context, verify bool) error {
 		}
 		defer tx.Rollback()
 		for _, item := range []struct{ table, where string }{{"build_runs", "state='running'"}, {"build_attempts", "outcome='leased'"}, {"builder_workers", "TRUE"}, {"durable_work_items", "state IN ('pending','leased','failed')"}, {"github_work_items", "state NOT IN ('completed','failed','quarantined')"}, {"github_webhook_deliveries", "state NOT IN ('processed','failed','quarantined')"}, {"registry_image_deletions", "TRUE"}} {
-			statement := `INSERT INTO platform_recovery.public.work_quarantine(generation,kind,id,record) SELECT $1,$2,` + "id" + `,to_jsonb(t) FROM ` + item.table + ` t WHERE ` + item.where + ` ON CONFLICT DO NOTHING`
+			statement := `INSERT INTO recovery.work_quarantine(generation,kind,id,record) SELECT $1,$2,` + "id" + `,to_jsonb(t) FROM ` + item.table + ` t WHERE ` + item.where + ` ON CONFLICT DO NOTHING`
 			if item.table == "registry_image_deletions" {
-				statement = `INSERT INTO platform_recovery.public.work_quarantine(generation,kind,id,record) SELECT $1,$2,image_ref,to_jsonb(t) FROM registry_image_deletions t ON CONFLICT DO NOTHING`
+				statement = `INSERT INTO recovery.work_quarantine(generation,kind,id,record) SELECT $1,$2,image_ref,to_jsonb(t) FROM registry_image_deletions t ON CONFLICT DO NOTHING`
 			}
 			if _, err := tx.ExecContext(ctx, statement, r.Plan.Generation, item.table); err != nil {
 				return err
@@ -82,7 +82,7 @@ func (r *Runner) recoverWork(ctx context.Context, verify bool) error {
 			right += "-'" + column + "'"
 		}
 		var missing int
-		statement := `SELECT count(*) FROM platform_recovery.public.work_quarantine q LEFT JOIN ` + table + ` w ON w.id=q.id WHERE q.generation=$1 AND q.kind=$2 AND (w.id IS NULL OR (` + left + `) <> (` + right + `))`
+		statement := `SELECT count(*) FROM recovery.work_quarantine q LEFT JOIN ` + table + ` w ON w.id=q.id WHERE q.generation=$1 AND q.kind=$2 AND (w.id IS NULL OR (` + left + `) <> (` + right + `))`
 		if err := db.QueryRowContext(ctx, statement, r.Plan.Generation, table).Scan(&missing); err != nil {
 			return err
 		}
@@ -111,7 +111,7 @@ func (r *Runner) admitBuilders(ctx context.Context) error {
 		if pl.Role != deploy.Builder {
 			continue
 		}
-		_, err = db.ExecContext(ctx, `UPDATE builder_workers SET drained=COALESCE((SELECT (record->>'drained')::BOOL FROM platform_recovery.public.work_quarantine WHERE generation=$1 AND kind='builder_workers' AND id=$2),FALSE),current_build_id='',updated_at=statement_timestamp() WHERE id=$2`, r.Plan.Generation, pl.Instance)
+		_, err = db.ExecContext(ctx, `UPDATE builder_workers SET drained=COALESCE((SELECT (record->>'drained')::BOOL FROM recovery.work_quarantine WHERE generation=$1 AND kind='builder_workers' AND id=$2),FALSE),current_build_id='',updated_at=statement_timestamp() WHERE id=$2`, r.Plan.Generation, pl.Instance)
 		if err != nil {
 			return err
 		}

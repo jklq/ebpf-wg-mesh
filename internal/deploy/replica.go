@@ -26,7 +26,7 @@ func (d *SSHDriver) verifyReplicaPeers(ctx context.Context, p Plan, state State,
 		installed := false
 		if state.Progress != nil {
 			for _, op := range p.Operations {
-				if (op.Kind == "install" || op.Kind == "database-upgrade" || op.Kind == "database-join") && op.Placement != nil && *op.Placement == pl {
+				if (op.Kind == "install" || op.Kind == "database-upgrade") && op.Placement != nil && *op.Placement == pl {
 					_, installed = state.Progress.Completed[op.ID]
 				}
 			}

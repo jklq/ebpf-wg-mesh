@@ -16,7 +16,7 @@ import (
 // Transaction runs fn inside a retried coordination transaction.
 type Transaction func(context.Context, func(context.Context, *sql.Tx) error) error
 
-// Store is a CockroachDB-backed durable work queue. EnqueueTx joins the caller's transaction; every other method manages its own.
+// Store is a database-backed durable work queue. EnqueueTx joins the caller's transaction; every other method manages its own.
 type Store struct {
 	db     *sql.DB
 	withTx Transaction
@@ -245,7 +245,7 @@ func markDeadExhaustedTx(ctx context.Context, tx *sql.Tx, now time.Time, rec Rec
 	return rows == 1, nil
 }
 
-// leaseRecordTx claims the candidate row. CockroachDB does not support SKIP LOCKED; the SELECT
+// leaseRecordTx claims the candidate row. The claim avoids SKIP LOCKED so it stays provider-neutral; the SELECT
 // FOR UPDATE row lock plus this guarded UPDATE preserves a single winner under serializable retries.
 // sql.ErrNoRows reports a lost race.
 func leaseRecordTx(ctx context.Context, tx *sql.Tx, now time.Time, rec Record, ownerID string, leaseTTL time.Duration) (Record, error) {

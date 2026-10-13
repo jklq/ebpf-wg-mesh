@@ -37,7 +37,7 @@ afterAll(async () => {
 	await pool.end();
 });
 
-describe("dashboard CockroachDB migrations", () => {
+describe("dashboard PostgreSQL migrations", () => {
 	it("installs the current schema from an empty database and is idempotent", async () => {
 		const runtime = newRuntime("dashboard_clean");
 		const store = createPostgresDashboardStore(runtime, pool);

@@ -207,7 +207,7 @@ function readConfig(): RuntimeConfig {
 	});
 	const profile = parseRuntimeProfile(process.env.DASHBOARD_PROFILE);
 	const databaseSchema = parseIdentifier(
-		process.env.DASHBOARD_DATABASE_SCHEMA ?? "dashboard",
+		process.env.DASHBOARD_DATABASE_SCHEMA ?? "console",
 	);
 	const sessionCookieName =
 		process.env.DASHBOARD_SESSION_COOKIE_NAME ?? "dashboard_session";

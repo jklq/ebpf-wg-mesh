@@ -340,10 +340,10 @@ func assertLeaseTx(ctx context.Context, tx *sql.Tx) error {
 }
 
 // Use a shared lock to fence takeover without blocking the holder's own product transactions.
+// PostgreSQL takes FOR SHARE under the guard transaction's default isolation
+// with no session setting; the removed CockroachDB serializable GUC is not
+// needed behind the provider seam.
 func lockLeaseTx(ctx context.Context, tx *sql.Tx) error {
-	if _, err := tx.ExecContext(ctx, `SET LOCAL enable_shared_locking_for_serializable = true`); err != nil {
-		return err
-	}
 	return checkLeaseTx(ctx, tx, " FOR SHARE")
 }
 

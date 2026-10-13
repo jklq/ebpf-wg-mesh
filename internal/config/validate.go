@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/alarm"
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 func validateControlPlane(cfg ControlPlaneConfig) error {
@@ -29,6 +30,14 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	}
 	if cfg.Database.URL == "" {
 		return errors.New("controlplane.database.url is required")
+	}
+	if _, err := platformdb.For(cfg.Database.Provider); err != nil {
+		return fmt.Errorf("controlplane.database.provider: %w", err)
+	}
+	if cfg.Database.Schema != "" {
+		if err := platformdb.ValidateSchema(cfg.Database.Schema); err != nil {
+			return fmt.Errorf("controlplane.database.schema: %w", err)
+		}
 	}
 	if cfg.Database.MaxOpenConns < 0 {
 		return errors.New("controlplane.database.maxOpenConns must be non-negative")

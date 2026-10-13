@@ -19,8 +19,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/xds"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 // signkeysSchemaVersion is the minimum schema version carrying the signing-key
@@ -134,7 +133,7 @@ func runSigningKeysCommand(command string, args []string) (err error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	db, err := sql.Open("pgx", dbURL)
+	db, err := platformdb.OpenURL(ctx, dbURL, platformdb.SchemaPlatform)
 	if err != nil {
 		return fmt.Errorf("controlplane signing-keys: open database: %w", err)
 	}

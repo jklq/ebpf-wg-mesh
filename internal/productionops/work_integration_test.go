@@ -49,7 +49,7 @@ func testNativeWorkQuarantine(t *testing.T, ctx context.Context, r *Runner, db *
 		t.Fatal("retry changed ownership twice or lost external payload", epoch, payload)
 	}
 	var records int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM platform_recovery.public.work_quarantine WHERE generation=$1`, r.Plan.Generation).Scan(&records); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM recovery.work_quarantine WHERE generation=$1`, r.Plan.Generation).Scan(&records); err != nil {
 		t.Fatal(err)
 	}
 	if records != 7 {

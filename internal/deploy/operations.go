@@ -32,6 +32,19 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 	if p.Automatic && state.Bundle != nil && Digest(*state.Bundle) != Digest(p.Release) {
 		return fmt.Errorf("automatic reconciliation cannot change releases")
 	}
+	if p.Previous != nil && !p.Recovery {
+		primaryHost := func(placements []Placement) string {
+			for _, pl := range placements {
+				if pl.Role == Database {
+					return pl.Host
+				}
+			}
+			return ""
+		}
+		if previous, current := primaryHost(p.Previous.Placements), primaryHost(p.Placements); previous != "" && current != "" && previous != current {
+			return fmt.Errorf("moving the database primary from %s to %s requires a restore plan; a policy change cannot relocate it", previous, current)
+		}
+	}
 	selected := map[string]Placement{}
 	for _, pl := range p.Placements {
 		selected[pl.Slot()] = pl
@@ -65,9 +78,20 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 		add("prior-tools", "stage-tools", h.ID, "previous", nil)
 	}
 	if upgrade {
+		// A single primary restarts in place; the pre-backup phase and the
+		// database-upgrade hook own its safety, not a cluster quorum. The
+		// plan still refuses to start from a primary that is not live.
 		restarts := slices.ContainsFunc(p.Placements, func(pl Placement) bool { return pl.Role == Database && !preserveRuntime(*p, pl) })
-		if restarts && (len(inv.Database.Members) < 3 || len(inv.Database.Live)*2 <= len(inv.Database.Members)) {
-			return fmt.Errorf("rolling release requires at least three database members with a live majority; expand or repair the cluster before applying an upgrade")
+		if restarts {
+			live := false
+			for _, pl := range p.Placements {
+				if pl.Role == Database {
+					live = contains(inv.Database.Live, pl.Host)
+				}
+			}
+			if !live {
+				return fmt.Errorf("rolling release requires the database primary to be live; repair it before applying an upgrade")
+			}
 		}
 		if err := p.validateRollingUpgrade(); err != nil {
 			return err
@@ -110,9 +134,6 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 					}
 				}
 			}
-			if action == "install" && pl.Role == Database && len(inv.Database.Members) > 0 && !contains(inv.Database.Members, pl.Host) {
-				kind = "database-join"
-			}
 			hook := ""
 			if kind == "database-upgrade" {
 				hook = "database-upgrade"
@@ -149,7 +170,7 @@ func (p *Plan) buildOperations(state State, inv Inventory) error {
 	}
 	p.Operations, p.DatabaseChanges = ops, nil
 	for _, op := range ops {
-		if op.Kind == "database-join" || op.Kind == "database-upgrade" || op.Kind == "database-remove" || op.Hook == "database-verify" {
+		if op.Kind == "database-upgrade" || op.Kind == "database-remove" || op.Hook == "database-verify" {
 			p.DatabaseChanges = append(p.DatabaseChanges, op)
 		}
 	}

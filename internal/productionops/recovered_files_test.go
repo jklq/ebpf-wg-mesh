@@ -19,12 +19,12 @@ func TestHydrateIndependentInstallerAfterOriginalDiskLoss(t *testing.T) {
 	if err := writePrivate(independentKey, make([]byte, 32)); err != nil {
 		t.Fatal(err)
 	}
-	config := Config{Version: 1, StateDirectory: origin + "/runtime", RecoveryConfig: origin + "/recovery.json", Database: DatabaseConfig{Binary: origin + "/cockroach", CertificateDirectory: origin + "/pki", URLFile: origin + "/database-url", Name: "platform", BackupURIFile: origin + "/backup-uri"}, Console: ConsoleConfig{AdminBinary: origin + "/console-admin", Schema: "dashboard", TokenKeyFile: origin + "/console.key"}, WildcardCertificate: origin + "/wildcard.crt", WildcardKey: origin + "/wildcard.key", PlatformDomain: "example.com", InternalServerName: "core.example.com"}
+	config := Config{Version: 1, StateDirectory: origin + "/runtime", RecoveryConfig: origin + "/recovery.json", Database: DatabaseConfig{PostgresBinary: origin + "/postgresql", InitDBBinary: origin + "/initdb", PgBackRestBinary: origin + "/pgbackrest", PgBackRestStanza: "platform", CertificateDirectory: origin + "/pki", URLFile: origin + "/database-url", Name: "platform"}, Console: ConsoleConfig{AdminBinary: origin + "/console-admin", Schema: "console", TokenKeyFile: origin + "/console.key"}, WildcardCertificate: origin + "/wildcard.crt", WildcardKey: origin + "/wildcard.key", PlatformDomain: "example.com", InternalServerName: "core.example.com"}
 	config.EndpointProbes = map[string]Probe{"console": {URL: "https://example.com/readyz", CAFile: origin + "/probe-ca.crt", Status: 200}}
 	config.Probes = map[deploy.Role]Probe{deploy.ControlPlane: {URL: "https://{socketHost}:9444/readyz", CAFile: "{configDir}/ca.crt", CertFile: "{configDir}/client.crt", KeyFile: "{configDir}/client.key", Status: 200}}
 	rec := recovery.Config{Storage: recovery.StorageConfig{CredentialsFile: origin + "/storage-credentials"}, RecoveryKeyFile: origin + "/independent.key", KeyringFile: origin + "/keyring.json", Images: recovery.Images{AuthFile: origin + "/registry-auth"}}
 	i := deploy.Installation{ID: "production", Release: "r43", OperationsConfig: origin + "/operations.json", Secrets: map[string]deploy.SecretRef{"ssh": {File: origin + "/ssh.key"}, "recovery": {File: origin + "/independent.key"}}, Backup: deploy.Backup{RecoveryKey: "recovery"}, Hosts: []deploy.Host{{ID: "a", SSH: deploy.SSH{KnownHosts: origin + "/known_hosts"}}}, Recovery: deploy.Recovery{Inventory: origin + "/inventory.json"}}
-	bundle := map[string][]byte{origin + "/ssh.key": []byte("private-ssh-identity"), origin + "/known_hosts": []byte("pinned-known-host"), rec.Storage.CredentialsFile: []byte("storage-credentials"), rec.Images.AuthFile: []byte("registry-credentials"), config.Database.BackupURIFile: []byte("s3://independent"), config.WildcardCertificate: []byte("certificate"), config.WildcardKey: []byte("private-key")}
+	bundle := map[string][]byte{origin + "/ssh.key": []byte("private-ssh-identity"), origin + "/known_hosts": []byte("pinned-known-host"), rec.Storage.CredentialsFile: []byte("storage-credentials"), rec.Images.AuthFile: []byte("registry-credentials"), config.WildcardCertificate: []byte("certificate"), config.WildcardKey: []byte("private-key")}
 	bundle[config.EndpointProbes["console"].CAFile] = []byte("independent-probe-authority")
 	bundle[config.RecoveryConfig], _ = json.Marshal(rec)
 	bundle[i.OperationsConfig], _ = json.Marshal(config)
@@ -37,7 +37,7 @@ func TestHydrateIndependentInstallerAfterOriginalDiskLoss(t *testing.T) {
 	if err := writePrivate(result.ConsoleKeys[0], []byte("independent-console-token")); err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range []string{"operations", "cockroachdb", "console-admin", "aws", "skopeo"} {
+	for _, tool := range []string{"operations", "postgresql", "initdb", "pgbackrest", "console-admin", "aws", "skopeo"} {
 		path := destination + "/tools/" + tool
 		if err := writePrivate(path, []byte("#!/bin/sh\nexit 0\n")); err != nil {
 			t.Fatal(err)
@@ -88,7 +88,7 @@ func TestHydrateIndependentInstallerAfterOriginalDiskLoss(t *testing.T) {
 	if err := privateJSON(result.OperationsConfig, &selected); err != nil {
 		t.Fatal(err)
 	}
-	if selected.Database.Binary != "/opt/ebpf-wg-mesh/production/r43/tools/cockroachdb" {
+	if selected.Database.PostgresBinary != "/opt/ebpf-wg-mesh/production/r43/tools/postgresql" || selected.Database.PgBackRestBinary != "/opt/ebpf-wg-mesh/production/r43/tools/pgbackrest" {
 		t.Fatal("remote tools are not bound to protected release")
 	}
 	var remote recovery.Config

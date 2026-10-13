@@ -170,12 +170,6 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 		}
 		return Ready(ctx, deploy.Role(args[1]), args[2], args[3])
 	}
-	if args[0] == "sql-failover" {
-		if len(args) != 3 {
-			return fmt.Errorf("sql-failover requires role and excluded database address")
-		}
-		return inspectSQLFailover(ctx, deploy.Role(args[1]), args[2], os.Stdin)
-	}
 	var p deploy.Plan
 	if err := privateJSON(*planPath, &p); err != nil {
 		return err

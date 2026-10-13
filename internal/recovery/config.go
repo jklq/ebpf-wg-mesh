@@ -10,7 +10,17 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/platformdb"
 )
+
+// PgBackRestConfig names the backup adapter binary and stanza. Credentials
+// live in the referenced config file, never in recovery-point manifests.
+type PgBackRestConfig struct {
+	Binary     string `json:"binary"`
+	ConfigFile string `json:"configFile"`
+	Stanza     string `json:"stanza"`
+}
 
 type File struct {
 	Requirement Requirement `json:"requirement"`
@@ -19,17 +29,22 @@ type File struct {
 }
 
 type Config struct {
-	Storage          StorageConfig `json:"storage"`
-	RecoveryKeyFile  string        `json:"recoveryKeyFile"`
-	Installation     string        `json:"installation"`
-	Release          string        `json:"release"`
-	DatabaseURLFile  string        `json:"databaseURLFile"`
-	ConsoleSchema    string        `json:"consoleSchema"`
-	BackupConnection string        `json:"backupConnection"`
-	BackupPrefix     string        `json:"backupPrefix"`
-	KeyringFile      string        `json:"keyringFile"`
-	Images           Images        `json:"images"`
-	Files            []File        `json:"files"`
+	Storage         StorageConfig `json:"storage"`
+	RecoveryKeyFile string        `json:"recoveryKeyFile"`
+	Installation    string        `json:"installation"`
+	Release         string        `json:"release"`
+	DatabaseURLFile string        `json:"databaseURLFile"`
+	ConsoleSchema   string        `json:"consoleSchema"`
+	// BackupPrefix is the pgBackRest repository prefix inside the recovery
+	// storage bucket (repo1-path). Repository objects freeze from here.
+	BackupPrefix string `json:"backupPrefix"`
+	// PgBackRest selects the backup adapter used to inspect the repository
+	// from a completer. The database host renders its own copy of the same
+	// stanza configuration for archive-push, backup, and restore.
+	PgBackRest  PgBackRestConfig `json:"pgBackRest"`
+	KeyringFile string           `json:"keyringFile"`
+	Images      Images           `json:"images"`
+	Files       []File           `json:"files"`
 	// DrillCommand is a pinned release tool running inside a fresh network/PID
 	// namespace. It provisions the isolated DB and registry from materialized data.
 	DrillCommand        []string `json:"drillCommand"`
@@ -79,6 +94,16 @@ func Load(path string) (Config, Service, error) {
 		}
 	}
 	return c, Service{Storage: &S3{Config: c.Storage}, Prefix: c.Storage.Prefix, RecoveryKey: key}, nil
+}
+
+// Backups builds the backup adapter for repository inspection.
+func (c Config) Backups() platformdb.Backups {
+	return platformdb.PgBackRest{Binary: c.PgBackRest.Binary, ConfigFile: c.PgBackRest.ConfigFile, Stanza: c.PgBackRest.Stanza}
+}
+
+// Repository is the credential-free identity recorded in recovery points.
+func (c Config) Repository() string {
+	return "s3://" + c.Storage.Bucket + "/" + strings.Trim(c.BackupPrefix, "/")
 }
 
 func (c Config) Requirements() []Requirement {

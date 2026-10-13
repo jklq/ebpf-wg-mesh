@@ -67,11 +67,11 @@ func (r *Runner) yieldReservations(ctx context.Context, db *sql.DB, pl deploy.Pl
 	if old.CPUMillis >= next.CPUMillis && old.MemoryMiB >= next.MemoryMiB {
 		return nil
 	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS platform_recovery.public.reservation_admission(plan_id STRING,agent_id STRING,previous_state STRING,previous_intent STRING,PRIMARY KEY(plan_id,agent_id))`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS recovery.reservation_admission(plan_id TEXT,agent_id TEXT,previous_state TEXT,previous_intent TEXT,PRIMARY KEY(plan_id,agent_id))`); err != nil {
 		return err
 	}
 	if err := adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO platform_recovery.public.reservation_admission SELECT $1,agent_id,lifecycle_state,operator_intent FROM agent_administration WHERE agent_id=$2 ON CONFLICT DO NOTHING`, r.Plan.ID, pl.Instance)
+		_, err := tx.ExecContext(ctx, `INSERT INTO recovery.reservation_admission SELECT $1,agent_id,lifecycle_state,operator_intent FROM agent_administration WHERE agent_id=$2 ON CONFLICT DO NOTHING`, r.Plan.ID, pl.Instance)
 		return err
 	}); err != nil {
 		return err
@@ -149,7 +149,7 @@ func (r *Runner) admitReservations(ctx context.Context) error {
 		}
 	}
 	var exists bool
-	if err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM [SHOW TABLES FROM platform_recovery] WHERE table_name='reservation_admission')`).Scan(&exists); err != nil {
+	if err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema='recovery' AND table_name='reservation_admission')`).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
@@ -160,7 +160,7 @@ func (r *Runner) admitReservations(ctx context.Context) error {
 			if pl.Role != deploy.Agent {
 				continue
 			}
-			if _, err = journal.AdministrationRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_administration SET lifecycle_state=q.previous_state,operator_intent=q.previous_intent,maintenance_message='',updated_at=statement_timestamp() FROM platform_recovery.public.reservation_admission q WHERE agent_administration.agent_id=q.agent_id AND q.plan_id=$1 AND q.agent_id=$2 AND agent_administration.lifecycle_state='draining'`, r.Plan.ID, pl.Instance); err != nil {
+			if _, err = journal.AdministrationRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_administration SET lifecycle_state=q.previous_state,operator_intent=q.previous_intent,maintenance_message='',updated_at=statement_timestamp() FROM recovery.reservation_admission q WHERE agent_administration.agent_id=q.agent_id AND q.plan_id=$1 AND q.agent_id=$2 AND agent_administration.lifecycle_state='draining'`, r.Plan.ID, pl.Instance); err != nil {
 				return err
 			}
 		}

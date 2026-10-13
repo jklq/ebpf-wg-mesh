@@ -106,7 +106,7 @@ func TestFinalizeProductionRejectsInsecureSettings(t *testing.T) {
 	t.Run("loopback database", func(t *testing.T) {
 		t.Parallel()
 		cfg := validMinimalProductionControlPlane(t)
-		cfg.Database.URL = "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"
+		cfg.Database.URL = "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"
 		if err := FinalizeControlPlane(&cfg); err != nil {
 			t.Fatal(err)
 		}
@@ -234,7 +234,7 @@ func TestDevelopmentProfileAllowsLocalConveniences(t *testing.T) {
 
 	cfg := ControlPlaneConfig{
 		Profile:  ProfileDevelopment,
-		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
@@ -288,7 +288,7 @@ func validMinimalProductionControlPlane(t *testing.T) ControlPlaneConfig {
 			},
 		},
 		Database: DatabaseConfig{
-			URL: "postgresql://platform@cockroach.example.test:26257/defaultdb?sslmode=verify-full",
+			URL: "postgresql://platform@postgres.example.test:5432/platform?sslmode=verify-full",
 		},
 		StateDir: "/var/lib/ebpf-wg-mesh/controlplane",
 		SourceArchives: SourceArchiveConfig{

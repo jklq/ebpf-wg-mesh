@@ -19,7 +19,8 @@ func (f *nativeFleet) assertPause(p deploy.Plan, paused bool) {
 	host := p.AdministrationHost
 	address, _ := p.Installation.Host(host)
 	query := `SELECT CASE WHEN a.paused THEN 'paused' ELSE 'active' END AS authority_state,CASE WHEN s.paused THEN 'paused' ELSE 'active' END AS scheduler_state FROM recovery_runtime_authority a CROSS JOIN build_scheduler_control s WHERE a.singleton=TRUE AND s.id=TRUE`
-	b := f.docker("exec", f.hosts[host], f.selection.Database.Binary, "sql", "--host="+address.Network.SocketHost()+":26257", "--certs-dir="+f.selection.Database.CertificateDirectory+"/"+p.Generation, "--database="+f.selection.Database.Name, "--format=tsv", "--execute="+query)
+	_ = address
+	b := f.sql(p, query)
 	state := "active"
 	if paused {
 		state = "paused"
@@ -104,7 +105,9 @@ func (f *nativeFleet) failedUpgrade(t *testing.T) {
 	f.installation.Release = f.release.ID
 	// Select the actual packaged native helpers staged for the applied release.
 	base := "/opt/ebpf-wg-mesh/" + f.id + "/r44/tools/"
-	f.selection.Database.Binary = base + "cockroachdb"
+	f.selection.Database.PostgresBinary = base + "postgresql"
+	f.selection.Database.InitDBBinary = base + "initdb"
+	f.selection.Database.PgBackRestBinary = base + "pgbackrest"
 	f.selection.Console.AdminBinary = base + "console-admin"
 	f.save(f.installation.OperationsConfig, f.selection)
 	var rec map[string]any

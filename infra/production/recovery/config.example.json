@@ -20,8 +20,7 @@
   "installation": "production",
   "release": "r43",
   "databaseURLFile": "/etc/platform/database-url",
-  "consoleSchema": "dashboard",
-  "backupConnection": "external://platform_recovery",
+  "consoleSchema": "console",
   "backupPrefix": "production/database",
   "keyringFile": "/etc/platform/keyring.json",
   "images": {
@@ -32,5 +31,10 @@
   "drillCommand": [],
   "drillCommandDigest": "",
   "fleetSize": 3,
-  "capacityAssumptions": "Replace with the tested hosts' CPU, RAM, disks, recovery capacity and link/storage throughput."
+  "capacityAssumptions": "Replace with the tested hosts' CPU, RAM, disks, recovery capacity and link/storage throughput.",
+  "pgBackRest": {
+    "binary": "/opt/ebpf-wg-mesh/production/r43/tools/pgbackrest",
+    "configFile": "/var/lib/ebpf-wg-mesh/production/operations/pgbackrest.conf",
+    "stanza": "platform"
+  }
 }

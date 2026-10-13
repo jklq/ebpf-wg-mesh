@@ -11,15 +11,18 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 			databaseHosts[p.Host] = true
 		}
 	}
-	replicated := inv.Database.Replicated && len(databaseHosts) >= 3 && len(inv.Database.Members) == len(databaseHosts)
+	// The platform database is a single PostgreSQL primary. It is
+	// recoverable — never redundant — once the observed primary is the
+	// planned host, live, and archiving WAL for point-in-time restore.
+	recoverable := inv.Database.Archiving && len(databaseHosts) == 1 && len(inv.Database.Members) == 1 && len(inv.Database.Live) == 1
 	for _, id := range inv.Database.Members {
 		if !databaseHosts[id] {
-			replicated = false
+			recoverable = false
 		}
 	}
-	a := Availability{OneHostFailure: true, DatabaseRedundant: replicated}
-	if !a.DatabaseRedundant {
-		a.Warnings = append(a.Warnings, "database redundancy remains unverified until native replication completes")
+	a := Availability{OneHostFailure: true, DatabaseRecoverable: recoverable}
+	if !a.DatabaseRecoverable {
+		a.Warnings = append(a.Warnings, "database recoverability remains unverified until the primary is live and archiving WAL")
 	}
 	for name, s := range i.Storage {
 		if s.Replicated && !inv.Storage[name].Verified {
@@ -31,22 +34,7 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 			a.Warnings = append(a.Warnings, fmt.Sprintf("%s management/runtime paths depend on gateways %v", h.ID, h.Network.Gateways))
 		}
 	}
-	for x, p := range placements {
-		if p.Role != Database {
-			continue
-		}
-		for _, q := range placements[x+1:] {
-			if q.Role != Database {
-				continue
-			}
-			h, _ := i.Host(p.Host)
-			other, _ := i.Host(q.Host)
-			rtt, ok := reach(i, p.Host, q.Host)
-			if h.Region != other.Region {
-				a.Warnings = append(a.Warnings, fmt.Sprintf("cross-region database quorum: %s/%s, declared RTT %dms, reachability %t", p.Host, q.Host, rtt, ok))
-			}
-		}
-	}
+
 	for _, failed := range i.Hosts {
 		if contains(i.RetireHosts, failed.ID) {
 			continue
@@ -74,29 +62,11 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 				byRole[p.Role] = append(byRole[p.Role], p)
 			}
 		}
-		dbHosts := map[string]bool{}
-		for _, p := range placements {
-			if p.Role == Database {
-				dbHosts[p.Host] = true
-			}
+		if len(byRole[Database]) == 0 {
+			add("database-primary", string(Database), "the single database primary does not survive its host; recovery is a point-in-time restore")
 		}
-		quorum := len(dbHosts)/2 + 1
-		if len(dbHosts) < 3 || len(byRole[Database]) < quorum {
-			add("quorum", string(Database), "three distinct database hosts and a surviving majority are required")
-		}
-		if !replicated {
-			add("replication", string(Database), "replication has not been verified on the observed cluster")
-		}
-		for _, rng := range inv.Database.Ranges {
-			surviving := 0
-			for _, id := range rng.Voters {
-				if alive(id) {
-					surviving++
-				}
-			}
-			if surviving < len(rng.Voters)/2+1 {
-				add("range-quorum", rng.ID, "observed voting replica placement loses its majority")
-			}
+		if !recoverable {
+			add("wal-archiving", string(Database), "WAL archiving has not been verified on the observed primary")
 		}
 		for _, role := range []Role{ControlPlane, Console, Envoy, Registry, Builder} {
 			if len(byRole[role]) == 0 {
@@ -140,12 +110,12 @@ func assess(i Installation, placements []Placement, reservations map[string]Reso
 						dependenciesOK = false
 					}
 				}
-				if (role == Agent || role == Builder || reachable >= quorum) && dependenciesOK {
+				if (role == Agent || role == Builder || reachable >= 1) && dependenciesOK {
 					usable[role] = append(usable[role], p)
 				}
 			}
 			if len(byRole[role]) > 0 && len(usable[role]) == 0 {
-				add("network-or-storage", string(role), "surviving replicas cannot reach quorum, component dependencies or durable storage")
+				add("network-or-storage", string(role), "surviving replicas cannot reach the database primary, component dependencies or durable storage")
 			}
 		}
 		for _, e := range i.Endpoints {

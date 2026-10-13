@@ -334,7 +334,7 @@ func (s *SQLStore) collectUnreferencedArchiveObjects(ctx context.Context, cutoff
 // collectClaimedArchiveObject deletes one claimed object. The row lock is held across the
 // object delete so a concurrent store of the same content-addressed key serializes on it:
 // deleting the object before the row is confirmed would orphan a live snapshot on re-store.
-// Delete is idempotent in every backend, so CockroachDB transaction retries are safe.
+// Delete is idempotent in every backend, so transaction retries are safe.
 func (s *SQLStore) collectClaimedArchiveObject(ctx context.Context, key string, cutoff time.Time) (bool, error) {
 	collected := false
 	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {

@@ -98,8 +98,8 @@ func fixture(t *testing.T, timestamp time.Time) (Service, *memoryStorage, Point)
 	t.Helper()
 	m := newStorage()
 	s := Service{Storage: m, Prefix: "recovery", RecoveryKey: []byte(strings.Repeat("r", 32))}
-	p := Point{Version: 1, Installation: "production", Snapshot: Snapshot{Timestamp: timestamp, Schema: 42, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: Database{Collection: "external://recovery", Subdirectory: "full", Layers: []Layer{{End: timestamp}}}, ExpiresAt: timestamp.Add(Retention)}
-	o, err := m.Put(context.Background(), "recovery/database/full/data.sst", write(t, []byte("database")), timestamp.Add(Retention))
+	p := Point{Version: 1, Installation: "production", Snapshot: Snapshot{Timestamp: timestamp, Schema: 42, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: Database{Provider: "postgres", Stanza: "platform", BackupLabel: "20260101-000000F", Chain: []string{"20260101-000000F"}, Timeline: 1, BackupStop: timestamp, WALStart: "000000010000000000000001", WALStop: "000000010000000000000003", Repository: "s3://bucket/recovery/database"}, ExpiresAt: timestamp.Add(Retention)}
+	o, err := m.Put(context.Background(), "recovery/database/backup/platform/20260101-000000F/backup.manifest", write(t, []byte("database")), timestamp.Add(Retention))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,19 +259,28 @@ func TestDependencyRetentionPreventsCollectionOfReferencedObjects(t *testing.T) 
 	}
 }
 
-func TestDatabaseChainRejectsGapsAndExcessIncrementals(t *testing.T) {
+func TestDatabaseChainRejectsBrokenChains(t *testing.T) {
 	_, _, p := fixture(t, time.Now().Add(-time.Minute))
-	p.Database.Layers = append(p.Database.Layers, Layer{Start: p.Snapshot.Timestamp.Add(time.Second), End: p.Snapshot.Timestamp.Add(time.Minute)})
+	p.Database.Chain = []string{"20260101-000000F", "20260101-000000F_20260101-010000I"}
 	if err := p.Validate(time.Now()); err == nil {
-		t.Fatal("backup gap accepted")
+		t.Fatal("chain not ending at the selected backup accepted")
 	}
-	p.Database.Layers = []Layer{{End: p.Snapshot.Timestamp.Add(-50 * time.Minute)}}
-	for n := 0; n < 49; n++ {
-		start := p.Database.Layers[len(p.Database.Layers)-1].End
-		p.Database.Layers = append(p.Database.Layers, Layer{Start: start, End: start.Add(time.Minute)})
+	_, _, p = fixture(t, time.Now().Add(-time.Minute))
+	p.Database.WALStop = "000000020000000000000003"
+	if err := p.Validate(time.Now()); err == nil {
+		t.Fatal("WAL range from another timeline accepted")
+	}
+	_, _, p = fixture(t, time.Now().Add(-time.Minute))
+	p.Database.BackupStop = p.Snapshot.Timestamp.Add(time.Minute)
+	if err := p.Validate(time.Now()); err == nil {
+		t.Fatal("backup stopping after the snapshot accepted")
+	}
+	_, _, p = fixture(t, time.Now().Add(-time.Minute))
+	for n := 0; n < 64; n++ {
+		p.Database.Chain = append([]string{"20260101-000000F"}, p.Database.Chain...)
 	}
 	if err := p.Validate(time.Now()); err == nil {
-		t.Fatal("unsupported incremental chain accepted")
+		t.Fatal("unsupported backup chain accepted")
 	}
 }
 

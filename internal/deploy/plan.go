@@ -15,16 +15,19 @@ type HostStatus struct {
 	Capacity     Resources `json:"capacity"`
 	Capabilities []string  `json:"capabilities"`
 }
+
+// DatabaseStatus is the observed state of the single PostgreSQL primary.
+// There is no cluster membership: Members holds at most the one primary
+// host, Live reports it accepting SQL outside recovery, and Archiving
+// reports WAL archiving feeding point-in-time recovery.
 type DatabaseStatus struct {
 	Versions   map[string]string `json:"versions,omitempty"`
 	Live       []string          `json:"live"`
-	Members    []string          `json:"members"` // stable host IDs, including unavailable members
-	Replicated bool              `json:"replicated"`
-	Ranges     []RangeStatus     `json:"ranges,omitempty"`
-}
-type RangeStatus struct {
-	ID     string   `json:"id"`
-	Voters []string `json:"voters"`
+	Members    []string          `json:"members"` // the observed primary host, when any
+	Archiving  bool              `json:"archiving"`
+	Timeline   int               `json:"timeline,omitempty"`
+	WALSegment string            `json:"walSegment,omitempty"`
+	InRecovery bool              `json:"inRecovery,omitempty"`
 }
 type StorageStatus struct {
 	Hosts    []string `json:"hosts"`
@@ -63,10 +66,10 @@ type Failure struct {
 	Unmet []Requirement `json:"unmet"`
 }
 type Availability struct {
-	OneHostFailure    bool      `json:"oneHostFailure"`
-	DatabaseRedundant bool      `json:"databaseRedundant"`
-	Failures          []Failure `json:"failures"`
-	Warnings          []string  `json:"warnings"`
+	OneHostFailure      bool      `json:"oneHostFailure"`
+	DatabaseRecoverable bool      `json:"databaseRecoverable"`
+	Failures            []Failure `json:"failures"`
+	Warnings            []string  `json:"warnings"`
 }
 
 type AppliedDeployment struct {

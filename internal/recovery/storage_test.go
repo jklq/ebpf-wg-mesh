@@ -1,7 +1,8 @@
 package recovery
 
 import (
-	"net/url"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -40,16 +41,24 @@ func TestS3TimestampPrecisionCannotShortenRequiredRetention(t *testing.T) {
 	}
 }
 
-func TestNativeBackupMustUseInventoriedIndependentDestination(t *testing.T) {
-	storage := StorageConfig{Bucket: "independent", Prefix: "production", Endpoint: "https://s3.recovery.example"}
-	u, _ := url.Parse("s3://independent/production/database?AWS_ENDPOINT=https%3A%2F%2Fs3.recovery.example")
-	if err := checkBackupDestination(u, storage, "production/database"); err != nil {
+func TestPgBackRestConfigBindsInventoriedIndependentDestination(t *testing.T) {
+	dir := t.TempDir()
+	credentials := dir + "/credentials"
+	if err := writeTestPrivate(credentials, []byte("[recovery]\naws_access_key_id=access\naws_secret_access_key=secret\n")); err != nil {
 		t.Fatal(err)
 	}
-	for _, raw := range []string{"s3://primary/production/database", "s3://independent/other/database", "s3://independent/production/database?AWS_ENDPOINT=https%3A%2F%2Fprimary.example"} {
-		u, _ := url.Parse(raw)
-		if err := checkBackupDestination(u, storage, "production/database"); err == nil {
-			t.Fatal("native backup and protected inventory used different destinations")
+	storage := StorageConfig{Bucket: "independent", Prefix: "production", Endpoint: "https://s3.recovery.example", Region: "us-east-1", Owner: "owner", CredentialsFile: credentials, Profile: "recovery", Account: "recovery", PrimaryAccount: "primary", FailureDomain: "independent", PrimaryDomains: []string{"primary"}, WriterPrincipal: "writer"}
+	rendered, err := RenderPgBackRestConfig(storage, "production/database", "platform", "/var/lib/platform/data")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"repo1-type=s3", "repo1-path=/production/database", "repo1-s3-bucket=independent", "repo1-s3-endpoint=s3.recovery.example", "[platform]", "pg1-path=/var/lib/platform/data"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered pgBackRest config lacks %q:\n%s", want, rendered)
 		}
 	}
+}
+
+func writeTestPrivate(path string, b []byte) error {
+	return os.WriteFile(path, b, 0600)
 }

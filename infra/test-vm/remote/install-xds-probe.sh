@@ -9,7 +9,7 @@ mkdir -p /opt/ebpf-wg-mesh "${PROBE_DIR}"
 
 # A probe is an operator-owned ingress subscriber, never a fleet agent.
 /opt/ebpf-wg-mesh/controlplane signing-keys issue-client-cert \
-  --db-url 'postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable' \
+  --db-url 'postgresql://postgres@127.0.0.1:5432/platform?sslmode=disable' \
   --state-dir /var/lib/ebpf-wg-mesh/controlplane \
   --caller-class ingress --caller-id testvm-xds-probe --ttl 24h \
   --out-dir "${PROBE_DIR}/identity"

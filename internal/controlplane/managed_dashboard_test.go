@@ -11,7 +11,7 @@ func TestManagedDashboardDesiredEnvironmentContainsOnlySecretFileReferences(t *t
 	t.Parallel()
 
 	reconciler := &managedDashboardReconciler{cfg: config.ManagedDashboardConfig{
-		DatabaseSchema:    "dashboard",
+		DatabaseSchema:    "console",
 		SessionCookieName: "dashboard_session",
 		ControlPlaneAddr:  "controlplane:9443",
 		ControlPlaneSNI:   "controlplane",

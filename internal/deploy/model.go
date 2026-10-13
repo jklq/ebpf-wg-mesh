@@ -21,7 +21,7 @@ import (
 type Role string
 
 const (
-	Database     Role = "cockroachdb"
+	Database     Role = "postgresql"
 	ControlPlane Role = "controlplane"
 	Console      Role = "console"
 	Envoy        Role = "envoy"
@@ -31,6 +31,11 @@ const (
 )
 
 var Roles = []Role{Database, ControlPlane, Console, Envoy, Registry, Builder, Agent}
+
+// DatabaseOSUser is the unprivileged account the PostgreSQL primary runs
+// as; its server refuses to run as root. Installation creates it and owns
+// the data and certificate directories with it.
+const DatabaseOSUser = "platform-postgres"
 
 type Resources struct {
 	CPUMillis int64 `json:"cpuMillis" yaml:"cpuMillis"`

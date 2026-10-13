@@ -198,7 +198,6 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 	config.StateDirectory = filepath.Join(destination, "runtime")
 	config.Database.CertificateDirectory = filepath.Join(destination, "database-certificates")
 	config.Database.URLFile = filepath.Join(destination, "database-url")
-	config.Database.BackupURIFile = relocated(config.Database.BackupURIFile)
 	config.Console.TokenKeyFile = filepath.Join(destination, "console-token.key")
 	if len(result.ConsoleKeys) != 1 {
 		return fmt.Errorf("selected point requires exactly one console token encryption key")
@@ -210,7 +209,15 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 	if err := writePrivate(config.Console.TokenKeyFile, token); err != nil {
 		return err
 	}
-	config.Database.Binary, err = tool("cockroachdb")
+	config.Database.PostgresBinary, err = tool("postgresql")
+	if err != nil {
+		return err
+	}
+	config.Database.InitDBBinary, err = tool("initdb")
+	if err != nil {
+		return err
+	}
+	config.Database.PgBackRestBinary, err = tool("pgbackrest")
 	if err != nil {
 		return err
 	}
@@ -279,7 +286,9 @@ func hydrateRecovered(ctx context.Context, independent recovery.Config, point re
 	// independent operator CLI uses materialized tools from the same pinned point.
 	remoteRec := rec
 	toolRoot := "/opt/ebpf-wg-mesh/" + installation.ID + "/" + installation.Release + "/tools/"
-	config.Database.Binary = toolRoot + "cockroachdb"
+	config.Database.PostgresBinary = toolRoot + "postgresql"
+	config.Database.InitDBBinary = toolRoot + "initdb"
+	config.Database.PgBackRestBinary = toolRoot + "pgbackrest"
 	config.Console.AdminBinary = toolRoot + "console-admin"
 	remoteRec.Images.Binary = toolRoot + "skopeo"
 	remoteRec.DrillCommand = []string{toolRoot + "operations", "offline-recovery"}

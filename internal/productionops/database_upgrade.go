@@ -2,7 +2,6 @@ package productionops
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net"
 	"net/url"
@@ -12,7 +11,13 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/platformdb"
 )
+
+// Database upgrades restart the single primary in place. The plan already
+// rejected major-version transitions and primary host moves (both need a
+// restore), and the workflow's pre-backup phase took a fresh recovery
+// point; these hooks only gate the restart on the observed version.
 
 func (r *Runner) upgradePlacement(args []string) (deploy.Placement, error) {
 	if len(args) != 2 || r.Plan.Previous == nil {
@@ -23,13 +28,7 @@ func (r *Runner) upgradePlacement(args []string) (deploy.Placement, error) {
 			return pl, nil
 		}
 	}
-	return deploy.Placement{}, fmt.Errorf("database upgrade target is not a retained cluster member")
-}
-
-func (r *Runner) upgradeInventory(ctx context.Context, convergence bool) (deploy.DatabaseStatus, error) {
-	plan := r.Plan
-	plan.Placements = r.Plan.Previous.Placements
-	return r.inspectDatabase(ctx, plan, convergence)
+	return deploy.Placement{}, fmt.Errorf("database upgrade target is not the retained primary")
 }
 
 func (r *Runner) prepareDatabaseUpgrade(ctx context.Context, args []string) error {
@@ -37,9 +36,7 @@ func (r *Runner) prepareDatabaseUpgrade(ctx context.Context, args []string) erro
 	if err != nil {
 		return err
 	}
-	h, _ := r.Plan.Installation.Host(pl.Host)
-	address := net.JoinHostPort(h.Network.Address, "26257")
-	status, err := r.upgradeInventory(ctx, false)
+	status, err := r.databaseStatus(ctx)
 	if err != nil {
 		return err
 	}
@@ -47,89 +44,26 @@ func (r *Runner) prepareDatabaseUpgrade(ctx context.Context, args []string) erro
 	if err != nil {
 		return err
 	}
-	recovering := string(running) == "stopped"
-	if err := databaseRestartHealth(status, pl.Host, recovering); err != nil {
-		return err
-	}
-	for _, version := range status.Versions {
-		observed := strings.TrimPrefix(version, "v")
-		if observed != strings.TrimPrefix(r.Plan.Previous.Release.Dependencies["cockroachdb"], "v") && observed != strings.TrimPrefix(r.Plan.Release.Dependencies["cockroachdb"], "v") {
-			return fmt.Errorf("cluster contains a node outside the pinned upgrade versions")
-		}
-	}
-	if recovering {
+	if string(running) == "stopped" {
 		var state deploy.State
 		if err := privateJSON(os.Getenv("PLATFORM_DEPLOYMENT_STATE"), &state); err != nil {
 			return err
 		}
 		if state.Progress == nil || !state.Progress.Started[os.Getenv("PLATFORM_OPERATION")] {
-			return fmt.Errorf("stopped database node has no journaled upgrade")
+			return fmt.Errorf("stopped database primary has no journaled upgrade")
 		}
 		return nil
 	}
-	if err := r.verifySurvivingSQLClients(ctx, address); err != nil {
-		return err
+	if len(status.Live) != 1 || status.Live[0] != pl.Host {
+		return fmt.Errorf("database upgrade waits for the primary on %s to be live", pl.Host)
 	}
-	if cockroachMajor(r.Plan.Previous.Release.Dependencies["cockroachdb"]) != cockroachMajor(r.Plan.Release.Dependencies["cockroachdb"]) {
-		db, err := r.db(ctx, false)
-		if err != nil {
-			return err
-		}
-		defer db.Close()
-		var version string
-		if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING version").Scan(&version); err != nil {
-			return err
-		}
-		if err := validateUpgradeClusterVersion(version, status, r.Plan.Previous.Release.Dependencies["cockroachdb"], r.Plan.Release.Dependencies["cockroachdb"]); err != nil {
-			return err
-		}
-		if _, err := db.ExecContext(ctx, "SET CLUSTER SETTING cluster.auto_upgrade.enabled = false"); err != nil {
-			return err
-		}
+	observed := platformdb.MajorVersion(status.Versions[pl.Host])
+	previous := platformdb.MajorVersion(r.Plan.Previous.Release.Dependencies["postgresql"])
+	desired := platformdb.MajorVersion(r.Plan.Release.Dependencies["postgresql"])
+	if observed == 0 || (observed != previous && observed != desired) {
+		return fmt.Errorf("primary runs PostgreSQL %q outside the pinned upgrade versions", status.Versions[pl.Host])
 	}
-	return nil // systemd SIGTERM performs CockroachDB's native drain.
-}
-
-func validateUpgradeClusterVersion(version string, status deploy.DatabaseStatus, from, to string) error {
-	if version == cockroachMajor(from) {
-		return nil
-	}
-	if version == cockroachMajor(to) && len(status.Versions) == len(status.Members) {
-		// After major-version finalization, never admit an old database binary.
-		for _, build := range status.Versions {
-			if strings.TrimPrefix(build, "v") != strings.TrimPrefix(to, "v") {
-				return fmt.Errorf("finalized CockroachDB cluster contains an old binary")
-			}
-		}
-		return nil
-	}
-	return fmt.Errorf("previous CockroachDB major version has not finalized")
-}
-
-func databaseRestartHealth(status deploy.DatabaseStatus, target string, recovering bool) error {
-	if len(status.Members) < 3 || !slices.Contains(status.Members, target) || len(status.Ranges) == 0 {
-		return fmt.Errorf("rolling database restart requires at least three observed members and voting ranges; expand the cluster first")
-	}
-	if !recovering {
-		if !slices.Contains(status.Live, target) {
-			return fmt.Errorf("database restart waits for its target node to be live")
-		}
-		if len(status.Live)*2 <= len(status.Members) {
-			return fmt.Errorf("database restart waits for a live majority of members")
-		}
-	}
-	for _, row := range status.Ranges {
-		live := 0
-		for _, voter := range row.Voters {
-			if voter != target && slices.Contains(status.Live, voter) {
-				live++
-			}
-		}
-		if live < len(row.Voters)/2+1 {
-			return fmt.Errorf("range %s cannot retain a voting quorum while %s restarts", row.ID, target)
-		}
-	}
-	return nil
+	return nil // systemd SIGTERM is PostgreSQL's fast shutdown; clients reconnect after the restart.
 }
 
 func (r *Runner) verifyDatabaseUpgrade(ctx context.Context, args []string) (deploy.DatabaseStatus, error) {
@@ -146,28 +80,27 @@ func (r *Runner) verifyDatabaseUpgrade(ctx context.Context, args []string) (depl
 	if err != nil {
 		return deploy.DatabaseStatus{}, err
 	}
-	selectDatabaseHost(u, net.JoinHostPort(h.Network.Address, "26257"))
+	selectDatabaseHost(u, net.JoinHostPort(h.Network.Address, "5432"))
 	if err := probeSQL(ctx, u.String()); err != nil {
-		return deploy.DatabaseStatus{}, fmt.Errorf("upgraded node is not accepting SQL: %w", err)
+		return deploy.DatabaseStatus{}, fmt.Errorf("upgraded primary is not accepting SQL: %w", err)
 	}
-	status, err := r.upgradeInventory(ctx, true)
+	status, err := r.databaseStatus(ctx)
 	if err != nil {
 		return status, err
 	}
-	if strings.TrimPrefix(status.Versions[pl.Host], "v") != strings.TrimPrefix(r.Plan.Release.Dependencies["cockroachdb"], "v") {
-		return status, fmt.Errorf("node %s has not rejoined with the pinned CockroachDB version", pl.Host)
+	desired := platformdb.MajorVersion(r.Plan.Release.Dependencies["postgresql"])
+	if platformdb.MajorVersion(status.Versions[pl.Host]) != desired {
+		return status, fmt.Errorf("primary on %s has not rejoined with the pinned PostgreSQL major version", pl.Host)
+	}
+	if !status.Archiving {
+		return status, fmt.Errorf("upgraded primary is not archiving WAL")
 	}
 	return status, nil
 }
 
-func cockroachMajor(version string) string {
-	parts := strings.Split(strings.TrimPrefix(version, "v"), ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	return strings.Join(parts[:2], ".")
-}
-
+// finalizeDatabaseUpgrade has no cluster version to finalize for a single
+// primary; it verifies the pinned version is live and archiving before
+// later phases build on it.
 func (r *Runner) finalizeDatabaseUpgrade(ctx context.Context, verify bool) error {
 	if r.Plan.Previous == nil {
 		return fmt.Errorf("database finalization requires an upgrade")
@@ -176,44 +109,14 @@ func (r *Runner) finalizeDatabaseUpgrade(ctx context.Context, verify bool) error
 	if err != nil {
 		return err
 	}
+	desired := platformdb.MajorVersion(r.Plan.Release.Dependencies["postgresql"])
 	for _, pl := range r.Plan.Placements {
-		if pl.Role == deploy.Database && strings.TrimPrefix(status.Versions[pl.Host], "v") != strings.TrimPrefix(r.Plan.Release.Dependencies["cockroachdb"], "v") {
-			return fmt.Errorf("database finalization waits for every node's pinned version")
+		if pl.Role == deploy.Database && platformdb.MajorVersion(status.Versions[pl.Host]) != desired {
+			return fmt.Errorf("database finalization waits for the primary's pinned PostgreSQL version")
 		}
 	}
-	previous, desired := cockroachMajor(r.Plan.Previous.Release.Dependencies["cockroachdb"]), cockroachMajor(r.Plan.Release.Dependencies["cockroachdb"])
-	if previous == desired {
-		return nil
-	}
-	db, err := r.db(ctx, false)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	var version string
-	if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING version").Scan(&version); err != nil {
-		return err
-	}
-	if version == desired {
-		return nil
-	}
-	if verify {
-		return fmt.Errorf("CockroachDB major-version finalization is pending")
-	}
-	_, err = db.ExecContext(ctx, "SET CLUSTER SETTING version = '"+desired+"'")
-	return err
-}
-
-func (r *Runner) verifySurvivingSQLClients(ctx context.Context, excluded string) error {
-	for _, pl := range r.Plan.Previous.Placements {
-		if pl.Role != deploy.ControlPlane && pl.Role != deploy.Console {
-			continue
-		}
-		script := "pid=$(systemctl show --value -p MainPID " + shell(unit(r.Plan, pl)) + ")\ntest \"$pid\" -gt 1\n"
-		script += shell(operationsBinary(r.Plan)) + " sql-failover " + shell(string(pl.Role)) + " " + shell(excluded) + " < /proc/$pid/environ\n"
-		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
-			return fmt.Errorf("client %s cannot reach surviving database nodes: %w", pl.Instance, err)
-		}
+	if !status.Archiving {
+		return fmt.Errorf("database finalization waits for WAL archiving")
 	}
 	return nil
 }
@@ -221,7 +124,7 @@ func (r *Runner) verifySurvivingSQLClients(ctx context.Context, excluded string)
 func probeSQL(ctx context.Context, address string) error {
 	probe, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	db, err := sql.Open("pgx", address)
+	db, err := platformdb.OpenURL(probe, address, platformdb.SchemaPlatform)
 	if err != nil {
 		return err
 	}

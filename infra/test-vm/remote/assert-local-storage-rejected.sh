@@ -12,7 +12,7 @@ output=$(timeout 20s "${CONTROLPLANE_BIN}" \
   -profile development \
   -internal-listen 127.0.0.1:9555 \
   -agent-bootstrap-tokens "${AGENT_BOOTSTRAP_TOKENS}" \
-  -db-url 'postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable' \
+  -db-url 'postgresql://postgres@127.0.0.1:5432/platform?sslmode=disable' \
   -state-dir "${state_dir}" \
   -ingress-public-addr platform.local \
   -bootstrap-user vm-user:vm@example.com 2>&1)

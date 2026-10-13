@@ -228,7 +228,7 @@ func (s *SQLStore) ClaimNextGitHubWebhookDelivery(ctx context.Context, processor
 		if err != nil {
 			return err
 		}
-		// CockroachDB does not support SKIP LOCKED. The row lock plus the
+		// The claim avoids SKIP LOCKED so it stays provider-neutral. The row lock plus the
 		// guarded UPDATE preserves a single winner under serializable retries.
 		row := tx.QueryRowContext(ctx,
 			`UPDATE github_webhook_deliveries AS delivery

@@ -26,7 +26,7 @@ type stressLease struct {
 func readStressLease(ctx context.Context, key, host string) (stressLease, error) {
 	readCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := runRemoteCommand(readCtx, key, host, "cockroach sql --insecure --host=127.0.0.1:26257 --format=tsv --execute \"SELECT holder_id, fencing_token, advertise_addr FROM control_plane_leases WHERE name = 'control-plane-singleton' AND expires_at > statement_timestamp();\"")
+	out, err := runRemoteCommand(readCtx, key, host, "psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q -A -t -F $'\\t' -c \"SET search_path=platform; SELECT holder_id, fencing_token, advertise_addr FROM control_plane_leases WHERE name = 'control-plane-singleton' AND expires_at > statement_timestamp();\"")
 	if err != nil {
 		return stressLease{}, fmt.Errorf("read singleton lease: %w", err)
 	}

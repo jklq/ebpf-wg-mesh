@@ -2,7 +2,7 @@
 
 A small PaaS. It runs a project's services as isolated workloads on an operator-managed fleet, connected by a WireGuard overlay with eBPF identity policy.
 
-- `cmd/controlplane`: authoritative control plane (CockroachDB, mTLS gRPC, xDS for Envoy ingress, registry auth)
+- `cmd/controlplane`: authoritative control plane (PostgreSQL, mTLS gRPC, xDS for Envoy ingress, registry auth)
 - `cmd/agent`: fleet agent that supervises allocations on one node
 - `cmd/builder`: build worker that turns source snapshots into images
 - `cmd/platformctl`: installation planner and encrypted, resumable SSH deployment controller
@@ -28,7 +28,7 @@ bun --cwd=console install   # Node.js is also required: Vite runs on Node
 ```bash
 make test-unit-go
 make test-unit-console
-make test-integration      # Cockroach-backed
+make test-integration      # PostgreSQL-backed
 make test-e2e-local        # Playwright against an ephemeral local stack
 make test-e2e-vm           # Hetzner VMs; needs HCLOUD_TOKEN
 make test-smoke-local      # local QEMU/KVM fleet; run `make localvm-setup` once

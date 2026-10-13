@@ -21,15 +21,15 @@ import (
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
-	"github.com/cockroachdb/cockroach-go/v2/testserver"
+	"ebof-wg-mesh/internal/platformdb"
+	"ebof-wg-mesh/internal/testdb"
+
 	"github.com/google/uuid"
 )
 
-const cockroachTestVersion = "v26.1.0"
-
 var (
 	testServerOnce sync.Once
-	testServer     testserver.TestServer
+	testServer     *testdb.Server
 	testServerErr  error
 
 	testDatabaseOnce sync.Once
@@ -362,7 +362,7 @@ func newTestDatabaseURL() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	adminDB, err := sql.Open("pgx", raw)
+	adminDB, err := platformdb.OpenURL(context.Background(), raw, "public")
 	if err != nil {
 		return "", fmt.Errorf("open admin database: %w", err)
 	}
@@ -375,23 +375,21 @@ func newTestDatabaseURL() (string, error) {
 	}
 
 	pgURL.Path = "/" + dbName
-	return pgURL.String(), nil
+	return platformdb.WithSchema(pgURL.String(), platformdb.SchemaPlatform)
 }
 
-func sharedTestServer(t *testing.T) testserver.TestServer {
+func sharedTestServer(t *testing.T) *testdb.Server {
 	t.Helper()
 	ts, err := getSharedTestServer()
 	if err != nil {
-		t.Fatalf("NewTestServer: %v", err)
+		t.Fatalf("start test PostgreSQL: %v", err)
 	}
 	return ts
 }
 
-func getSharedTestServer() (testserver.TestServer, error) {
+func getSharedTestServer() (*testdb.Server, error) {
 	testServerOnce.Do(func() {
-		testServer, testServerErr = testserver.NewTestServer(
-			testserver.CustomVersionOpt(cockroachTestVersion),
-		)
+		testServer, testServerErr = testdb.Start("")
 	})
 	if testServerErr != nil {
 		return nil, testServerErr
@@ -401,7 +399,7 @@ func getSharedTestServer() (testserver.TestServer, error) {
 
 func cloneURL(source *url.URL) (*url.URL, error) {
 	if source == nil {
-		return nil, fmt.Errorf("nil CockroachDB test URL")
+		return nil, fmt.Errorf("nil test database URL")
 	}
 	clone := *source
 	query := clone.Query()

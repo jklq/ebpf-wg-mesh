@@ -2,7 +2,6 @@ package recovery
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -16,7 +15,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/source"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 type DrillReport struct {
@@ -252,7 +251,7 @@ func RunIsolated(ctx context.Context, inputPath string) error {
 			return fmt.Errorf("isolated console key is outside its workspace")
 		}
 	}
-	db, err := sql.Open("pgx", ready.DatabaseURL)
+	db, err := platformdb.OpenURL(ctx, ready.DatabaseURL, platformdb.SchemaPlatform)
 	if err != nil {
 		return err
 	}

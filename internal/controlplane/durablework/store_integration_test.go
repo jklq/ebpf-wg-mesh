@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/sqlretry"
-	"github.com/cockroachdb/cockroach-go/v2/testserver"
 	"github.com/google/uuid"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -57,7 +56,7 @@ CREATE TABLE test_effect_runs (
 
 var (
 	testServerOnce sync.Once
-	testServer     testserver.TestServer
+	testServer     *testdb.Server
 	testServerErr  error
 )
 

@@ -55,7 +55,7 @@ ownership, agent sessions, and live indexes are also separate because they have
 different synchronization responsibilities.
 
 Unit tests exercise policies and transport behavior. The integration suites use a
-real CockroachDB instance to exercise transactions, live ownership, builds,
+real PostgreSQL instance to exercise transactions, live ownership, builds,
 deployments, and allocation observations through the existing entry points:
 
 ```sh

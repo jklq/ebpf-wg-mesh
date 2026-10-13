@@ -1,4 +1,4 @@
-// Package durablework is the single CockroachDB-backed durable work queue for
+// Package durablework is the single database-backed durable work queue for
 // control-plane background loops.
 //
 // It replaces the bespoke github_work_items, source_work_items, and github_webhook_deliveries

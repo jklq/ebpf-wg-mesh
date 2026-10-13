@@ -218,7 +218,7 @@ func cleanupCrossReplicaFixture(ctx context.Context, address string, identity cl
 }
 
 func readSingletonLease(ctx context.Context, keyPath, host string) (singletonLease, error) {
-	output, err := runRemoteCommand(ctx, keyPath, host, `cockroach sql --insecure --host=127.0.0.1:26257 --format=tsv --execute "SELECT holder_id, fencing_token FROM control_plane_leases WHERE name = 'control-plane-singleton'"`)
+	output, err := runRemoteCommand(ctx, keyPath, host, `psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q -A -t -F "	" -c "SET search_path=platform; SELECT holder_id, fencing_token FROM control_plane_leases WHERE name = 'control-plane-singleton'"`)
 	if err != nil {
 		return singletonLease{}, err
 	}

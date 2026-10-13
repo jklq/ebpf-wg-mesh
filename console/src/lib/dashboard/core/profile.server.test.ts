@@ -14,7 +14,7 @@ const validProduction = {
 	jwtSecret: "production-dashboard-jwt-secret-at-least-32",
 	userAssertionSecret: "production-user-assertion-secret-at-least-32",
 	databaseURL:
-		"postgresql://platform@cockroach.example.test:26257/defaultdb?sslmode=verify-full",
+		"postgresql://platform@postgres.example.test:5432/platform?sslmode=verify-full",
 	controlPlaneAddress: "controlplane.example.test:9443",
 	controlPlaneServerName: "controlplane.example.test",
 };
@@ -79,7 +79,7 @@ describe("dashboard production profile", () => {
 			"loopback database",
 			{
 				databaseURL:
-					"postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+					"postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 			},
 			"loopback host",
 		],

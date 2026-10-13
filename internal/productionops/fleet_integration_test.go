@@ -31,7 +31,7 @@ import (
 )
 
 // This opt-in fixture exercises the applied-plan engine and packaged reference
-// operations through actual SSH, systemd, containerd, CockroachDB, Envoy and
+// operations through actual SSH, systemd, containerd, PostgreSQL, Envoy and
 // console processes. Docker is only the isolated infrastructure provider. It
 // neither fabricates lifecycle receipts nor substitutes component readiness.
 type nativeFleet struct {
@@ -315,7 +315,7 @@ func newNativeFleet(t *testing.T, ctx context.Context) *nativeFleet {
 	i.Components[deploy.ControlPlane] = core
 	f.write(root+"/registry-auth.json", []byte(`{"auths":{}}`))
 	f.write(root+"/recovery.key", []byte(strings.Repeat("R", 32)))
-	rec := recovery.Config{Storage: f.storage, RecoveryKeyFile: root + "/recovery.key", Installation: id, Release: f.release.ID, DatabaseURLFile: root + "/database-url", KeyringFile: root + "/keyring.json", ConsoleSchema: "dashboard", BackupConnection: "external://native_recovery", BackupPrefix: f.storage.Prefix + "/database", Images: recovery.Images{Binary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/skopeo", AuthFile: root + "/registry-auth.json", CertificateDirectory: root + "/image-ca"}}
+	rec := recovery.Config{Storage: f.storage, RecoveryKeyFile: root + "/recovery.key", Installation: id, Release: f.release.ID, DatabaseURLFile: root + "/database-url", KeyringFile: root + "/keyring.json", ConsoleSchema: "console", PgBackRest: recovery.PgBackRestConfig{Binary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/pgbackrest", Stanza: "platform"}, BackupPrefix: f.storage.Prefix + "/database", Images: recovery.Images{Binary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/skopeo", AuthFile: root + "/registry-auth.json", CertificateDirectory: root + "/image-ca"}}
 	f.save(root+"/recovery.json", rec)
 	credentials, err := iniFile.Load(mustRead(t, f.storage.CredentialsFile))
 	if err != nil {
@@ -333,7 +333,7 @@ func newNativeFleet(t *testing.T, ctx context.Context) *nativeFleet {
 	}
 	f.save(root+"/source-credentials.json", map[string]string{"accessKeyId": activeCreds.Section(active.Profile).Key("aws_access_key_id").String(), "secretAccessKey": activeCreds.Section(active.Profile).Key("aws_secret_access_key").String()})
 	f.save(root+"/source.json", config.SourceArchiveConfig{Provider: "s3", S3: config.SourceArchiveS3Config{CAFile: active.CAFile, Endpoint: active.Endpoint, Region: active.Region, Bucket: active.Bucket, Prefix: "archives", CredentialsFile: root + "/source-credentials.json", ServerSideEncryption: "AES256"}})
-	f.selection = Config{Version: 1, StateDirectory: "/var/lib/ebpf-wg-mesh/" + id + "/operations", RecoveryConfig: root + "/recovery.json", Database: DatabaseConfig{Binary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/cockroachdb", CertificateDirectory: "/var/lib/ebpf-wg-mesh/" + id + "/database-pki", URLFile: root + "/database-url", Name: "platform", BackupURIFile: root + "/backup-uri"}, Console: ConsoleConfig{AdminBinary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/console-admin", Schema: "dashboard", TokenKeyFile: root + "/console.key"}, PlatformDomain: "example.invalid", InternalServerName: "core.example.invalid", WildcardCertificate: root + "/wildcard.crt", WildcardKey: root + "/wildcard.key", RegistryRealm: realm.URL + "/token", RegistryService: strings.TrimPrefix(registry.URL, "https://"), SourceConfig: root + "/source.json", Storage: map[string]StoreConfig{"registry": {Kind: "s3", S3: active}, "archives": {Kind: "s3", S3: active}}, Probes: map[deploy.Role]Probe{}, EndpointProbes: map[string]Probe{}, BuilderSandbox: config.BuilderSandboxConfig{Snapshotter: "native", CNIConfDir: "/etc/cni/build-sandbox.d", CNINetwork: "build-sandbox"}}
+	f.selection = Config{Version: 1, StateDirectory: "/var/lib/ebpf-wg-mesh/" + id + "/operations", RecoveryConfig: root + "/recovery.json", Database: DatabaseConfig{PostgresBinary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/postgresql", InitDBBinary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/initdb", PgBackRestBinary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/pgbackrest", PgBackRestStanza: "platform", CertificateDirectory: "/var/lib/ebpf-wg-mesh/" + id + "/database-pki", URLFile: root + "/database-url", Name: "platform"}, Console: ConsoleConfig{AdminBinary: "/opt/ebpf-wg-mesh/" + id + "/" + f.release.ID + "/tools/console-admin", Schema: "console", TokenKeyFile: root + "/console.key"}, PlatformDomain: "example.invalid", InternalServerName: "core.example.invalid", WildcardCertificate: root + "/wildcard.crt", WildcardKey: root + "/wildcard.key", RegistryRealm: realm.URL + "/token", RegistryService: strings.TrimPrefix(registry.URL, "https://"), SourceConfig: root + "/source.json", Storage: map[string]StoreConfig{"registry": {Kind: "s3", S3: active}, "archives": {Kind: "s3", S3: active}}, Probes: map[deploy.Role]Probe{}, EndpointProbes: map[string]Probe{}, BuilderSandbox: config.BuilderSandboxConfig{Snapshotter: "native", CNIConfDir: "/etc/cni/build-sandbox.d", CNINetwork: "build-sandbox"}}
 	var reference Config
 	if err = json.Unmarshal(mustRead(t, "../../infra/production/operations/config.example.json"), &reference); err != nil {
 		t.Fatal(err)

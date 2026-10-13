@@ -11,7 +11,7 @@ func TestFinalizeControlPlaneAppliesDefaults(t *testing.T) {
 	cfg := ControlPlaneConfig{
 		Profile: ProfileDevelopment,
 		Database: DatabaseConfig{
-			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+			URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 		},
 		InternalGRPC: ListenerConfig{
 			TLS: ServerTLSConfig{
@@ -51,7 +51,7 @@ func TestFinalizeControlPlaneRequiresAdvertiseAddrForMultipleReplicas(t *testing
 
 	cfg := ControlPlaneConfig{
 		Profile:  ProfileDevelopment,
-		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
@@ -75,7 +75,7 @@ func TestFinalizeControlPlaneValidatesXDSListen(t *testing.T) {
 
 	base := ControlPlaneConfig{
 		Profile:  ProfileDevelopment,
-		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"},
 		InternalGRPC: ListenerConfig{TLS: ServerTLSConfig{
 			BootstrapTokens: []AgentBootstrapToken{{AgentID: "node-a", Token: "token-a"}},
 		}},
@@ -108,7 +108,7 @@ func TestFinalizeControlPlaneValidatesDashboardConfig(t *testing.T) {
 			},
 		},
 		Database: DatabaseConfig{
-			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+			URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 		},
 		StateDir: "var/controlplane",
 		Ingress: IngressConfig{
@@ -149,7 +149,7 @@ func TestFinalizeControlPlaneAllowsGitHubWithoutDashboardInstallURL(t *testing.T
 			},
 		},
 		Database: DatabaseConfig{
-			URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+			URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 		},
 		StateDir: "var/controlplane",
 		Ingress: IngressConfig{
@@ -358,7 +358,7 @@ func TestFinalizeControlPlaneRejectsEnabledGitHubWithoutRegistryConfig(t *testin
 				ClientCertValidityHours: 24,
 			},
 		},
-		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"},
 		StateDir: "var/controlplane",
 		Ingress:  IngressConfig{PublicAddr: "platform.example.test"},
 		GitHub: GitHubAppConfig{
@@ -502,7 +502,7 @@ func validControlPlaneConfigForRegistryTest() ControlPlaneConfig {
 				ClientCertValidityHours: 24,
 			},
 		},
-		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"},
+		Database: DatabaseConfig{URL: "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"},
 		StateDir: "var/controlplane",
 		Ingress:  IngressConfig{PublicAddr: "platform.example.test"},
 		GitHub: GitHubAppConfig{

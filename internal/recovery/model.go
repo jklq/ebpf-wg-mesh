@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 const (
@@ -62,16 +64,25 @@ type Snapshot struct {
 	ConsoleSchema  int                 `json:"consoleSchema"`
 }
 
-type Layer struct {
-	Start time.Time `json:"start"`
-	End   time.Time `json:"end"`
-}
-
+// Database identifies the physical backup chain and archived WAL range a
+// point-in-time restore needs. It is written by the backup adapter
+// (pgBackRest today) and recorded verbatim in the protected manifest, so a
+// restore never has to trust mutable repository state: the exact backup
+// label, its dependency chain, and the WAL segments covering the snapshot
+// timestamp are pinned here and frozen as Objects.
 type Database struct {
-	Collection   string   `json:"collection"` // credential-free external connection URI
-	Subdirectory string   `json:"subdirectory"`
-	Layers       []Layer  `json:"layers"`
-	Objects      []Object `json:"objects"`
+	Provider string `json:"provider"` // platformdb provider name, e.g. "postgres"
+	Stanza   string `json:"stanza"`
+	// BackupLabel is the selected backup; Chain lists every label a restore
+	// of it needs, full backup first, BackupLabel last.
+	BackupLabel string    `json:"backupLabel"`
+	Chain       []string  `json:"chain"`
+	Timeline    int       `json:"timeline"`
+	BackupStop  time.Time `json:"backupStop"` // completion time of BackupLabel
+	WALStart    string    `json:"walStart"`   // first WAL segment the chain needs
+	WALStop     string    `json:"walStop"`    // last archived WAL segment frozen for this point
+	Repository  string    `json:"repository"` // credential-free repo identity, e.g. s3://bucket/prefix
+	Objects     []Object  `json:"objects"`
 }
 
 type Point struct {
@@ -114,14 +125,21 @@ func (p Point) Validate(now time.Time) error {
 			return fmt.Errorf("recovery point lacks %s identities", table)
 		}
 	}
-	layers := p.Database.Layers
-	if p.Database.Collection == "" || p.Database.Subdirectory == "" || len(p.Database.Objects) == 0 || len(layers) == 0 || len(layers) > 49 || !layers[0].Start.IsZero() || t.Before(layers[0].End) || t.After(layers[len(layers)-1].End) {
-		return fmt.Errorf("database chain must contain a full backup and at most 48 incrementals covering the selected timestamp")
+	db := p.Database
+	if db.Provider == "" || db.Stanza == "" || db.BackupLabel == "" || db.Repository == "" || len(db.Objects) == 0 || len(db.Chain) == 0 || len(db.Chain) > 64 || db.Chain[len(db.Chain)-1] != db.BackupLabel || db.BackupStop.IsZero() || t.Before(db.BackupStop) {
+		return fmt.Errorf("database backup chain must end at the selected backup and cover the selected timestamp")
 	}
-	for n := 1; n < len(layers); n++ {
-		if !layers[n].Start.Equal(layers[n-1].End) || !layers[n].End.After(layers[n].Start) {
-			return fmt.Errorf("database chain has a gap at layer %d", n)
+	seenLabels := map[string]bool{}
+	for _, label := range db.Chain {
+		if label == "" || seenLabels[label] {
+			return fmt.Errorf("database backup chain has an empty or duplicate label")
 		}
+		seenLabels[label] = true
+	}
+	startTimeline, startSeq, startErr := platformdb.ParseWALSegment(db.WALStart)
+	stopTimeline, stopSeq, stopErr := platformdb.ParseWALSegment(db.WALStop)
+	if startErr != nil || stopErr != nil || startTimeline != db.Timeline || stopTimeline != db.Timeline || stopSeq < startSeq {
+		return fmt.Errorf("database WAL range does not cover the selected backup timeline")
 	}
 	selected := map[string]int{}
 	for _, r := range p.Installer {

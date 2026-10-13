@@ -1,13 +1,16 @@
-// Package sqlretry runs serializable transactions on PostgreSQL and CockroachDB.
+// Package sqlretry runs serializable transactions through the platform
+// database provider seam: retryable-error classification belongs to the
+// provider adapter, so this package never names a provider dialect.
 package sqlretry
 
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"time"
+
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 // ExecuteTx retries the entire transaction with a fresh snapshot on serialization
@@ -38,8 +41,7 @@ func ExecuteTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(*sq
 		if err == nil {
 			return nil
 		}
-		var state interface{ SQLState() string }
-		if !errors.As(err, &state) || (state.SQLState() != "40001" && state.SQLState() != "40P01") {
+		if !platformdb.Default().Retryable(err) {
 			return err
 		}
 		if attempt == 9 {

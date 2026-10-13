@@ -17,7 +17,7 @@ func generateSSHKey(ctx context.Context, path string) error {
 }
 
 const (
-	vmControlPlaneDBURL    = "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"
+	vmControlPlaneDBURL    = "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"
 	vmControlPlaneStateDir = "/var/lib/ebpf-wg-mesh/controlplane"
 )
 

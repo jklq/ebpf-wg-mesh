@@ -2,7 +2,6 @@ package deploy
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/recovery"
 )
 
@@ -40,7 +40,7 @@ func runFleetRecovery(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	db, err := sql.Open("pgx", strings.TrimSpace(string(url)))
+	db, err := platformdb.OpenURL(ctx, strings.TrimSpace(string(url)), platformdb.SchemaPlatform)
 	if err != nil {
 		return err
 	}

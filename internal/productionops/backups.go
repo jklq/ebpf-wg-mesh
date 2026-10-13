@@ -2,7 +2,6 @@ package productionops
 
 import (
 	"context"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,6 +50,15 @@ func (r *Runner) prepareProtection(ctx context.Context, selected *deploy.Release
 	defer clear(s.RecoveryKey)
 	c.Images.RegistryService = r.Config.RegistryService
 	c.Installation, c.Release, c.DatabaseURLFile, c.ConsoleSchema = r.Plan.Installation.ID, r.Plan.Release.ID, r.Config.Database.URLFile, r.Config.Console.Schema
+	backrest, err := recovery.RenderPgBackRestConfig(c.Storage, c.BackupPrefix, r.Config.Database.PgBackRestStanza, "")
+	if err != nil {
+		return err
+	}
+	backrestPath := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "inputs", "pgbackrest.conf")
+	if err := writePrivate(backrestPath, []byte(backrest)); err != nil {
+		return err
+	}
+	c.PgBackRest = recovery.PgBackRestConfig{Binary: r.Config.Database.PgBackRestBinary, ConfigFile: backrestPath, Stanza: r.Config.Database.PgBackRestStanza}
 	dir := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "inputs")
 	var files []recovery.File
 	add := func(kind, id, path string, secret bool) {
@@ -100,7 +108,7 @@ func (r *Runner) prepareProtection(ctx context.Context, selected *deploy.Release
 		}
 		var previous, current bool
 		var schema int
-		err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM platform_recovery.public.installations WHERE installation=$1 AND release=$2), EXISTS(SELECT 1 FROM platform_recovery.public.installations WHERE installation=$1 AND release=$3)`, r.Plan.Installation.ID, r.Plan.Previous.Release.ID, r.Plan.Release.ID).Scan(&previous, &current)
+		err = db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM recovery.installations WHERE installation=$1 AND release=$2), EXISTS(SELECT 1 FROM recovery.installations WHERE installation=$1 AND release=$3)`, r.Plan.Installation.ID, r.Plan.Previous.Release.ID, r.Plan.Release.ID).Scan(&previous, &current)
 		if err == nil {
 			err = db.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&schema)
 		}
@@ -248,39 +256,13 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 		if _, err := r.nativeRecovery(ctx, "protect-files"); err != nil {
 			return err
 		}
-		// The backup URI is a private service selection, not lifecycle code.
-		uri, err := os.ReadFile(r.Config.Database.BackupURIFile)
-		if err != nil {
+		// The stanza binds this primary (fresh or restored onto a new
+		// timeline) to the repository rendered from recovery storage.
+		if err := r.ensureStanza(ctx); err != nil {
 			return err
 		}
-		c, s, err := recoveryConfig(r.effectiveConfig())
-		if err != nil {
+		if err := r.installBackupTimers(ctx, false); err != nil {
 			return err
-		}
-		clear(s.RecoveryKey)
-		name := strings.TrimPrefix(c.BackupConnection, "external://")
-		if name == "" || strings.ContainsAny(name, "/ -'\"") {
-			return fmt.Errorf("backup requires a named external connection")
-		}
-		if c.Storage.CAFile != "" {
-			ca, readErr := os.ReadFile(c.Storage.CAFile)
-			pool := x509.NewCertPool()
-			if readErr != nil || !pool.AppendCertsFromPEM(ca) {
-				return fmt.Errorf("invalid backup storage TLS CA")
-			}
-			if _, err := db.ExecContext(ctx, "SET CLUSTER SETTING cloudstorage.http.custom_ca = $1", string(ca)); err != nil {
-				return err
-			}
-		}
-		statement := "CREATE EXTERNAL CONNECTION IF NOT EXISTS " + name + " AS '" + strings.ReplaceAll(strings.TrimSpace(string(uri)), "'", "''") + "'"
-		_, err = db.ExecContext(ctx, statement)
-		if err != nil {
-			return fmt.Errorf("native backup connection provisioning failed")
-		}
-		if r.Plan.Recovery {
-			if err := recovery.ReestablishSchedules(ctx, db, r.Plan.Installation.ID, c.BackupConnection); err != nil {
-				return err
-			}
 		}
 		if _, err := r.nativeRecovery(ctx, "schedule"); err != nil {
 			return err
@@ -289,28 +271,10 @@ func (r *Runner) backupSchedule(ctx context.Context, verify bool) error {
 	if err := r.verifyMaintenancePlan(ctx, db); err != nil {
 		return err
 	}
-	c, s, err := recoveryConfig(r.Config.RecoveryConfig)
-	if err != nil {
+	if err := recovery.VerifyArchiving(ctx, db, r.Config.Database.PgBackRestStanza); err != nil {
 		return err
 	}
-	defer clear(s.RecoveryKey)
-	if c.Storage.CAFile != "" {
-		ca, err := os.ReadFile(c.Storage.CAFile)
-		if err != nil {
-			return err
-		}
-		var actual string
-		if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING cloudstorage.http.custom_ca").Scan(&actual); err != nil {
-			return err
-		}
-		if actual != string(ca) {
-			return fmt.Errorf("native backup storage TLS trust differs from selected CA")
-		}
-	}
-	if err := recovery.VerifyBackupDestination(ctx, db, c.BackupConnection, c.Storage, c.BackupPrefix); err != nil {
-		return err
-	}
-	if err := recovery.VerifySchedules(ctx, db, r.Plan.Installation.ID, c.BackupConnection); err != nil {
+	if err := r.installBackupTimers(ctx, true); err != nil {
 		return err
 	}
 	if err := r.completionTimer(ctx, verify); err != nil {
@@ -342,9 +306,14 @@ func (r *Runner) backup(ctx context.Context) error {
 		return err
 	}
 	defer release()
-	if _, err := db.ExecContext(ctx, "BACKUP INTO '"+strings.ReplaceAll(c.BackupConnection, "'", "''")+"' WITH revision_history"); err != nil {
-		return fmt.Errorf("native full-cluster backup failed: %w", err)
+	pl, err := r.databasePlacement()
+	if err != nil {
+		return err
 	}
+	if _, err := r.remotePgBackRest(ctx, pl, "backup", "--type=full", "--start-fast"); err != nil {
+		return fmt.Errorf("pgBackRest full backup failed: %w", err)
+	}
+	_ = c
 	return r.completeBackup(ctx)
 }
 

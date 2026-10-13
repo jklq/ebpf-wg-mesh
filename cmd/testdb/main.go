@@ -19,7 +19,7 @@ type output struct {
 }
 
 func main() {
-	version := flag.String("version", testdb.DefaultVersion, "cockroach version")
+	version := flag.String("version", testdb.DefaultVersion, "PostgreSQL major version or Docker image")
 	flag.Parse()
 
 	args := flag.Args()
@@ -29,13 +29,13 @@ func main() {
 
 	server, err := testdb.Start(*version)
 	if err != nil {
-		log.Fatalf("start cockroach testserver: %v", err)
+		log.Fatalf("start test PostgreSQL: %v", err)
 	}
 	defer server.Stop()
 
 	pgURL := testdb.NormalizeURL(server.PGURL())
 	if pgURL == nil {
-		log.Fatal("nil cockroach pg url")
+		log.Fatal("nil test database url")
 	}
 
 	if len(args) == 0 {

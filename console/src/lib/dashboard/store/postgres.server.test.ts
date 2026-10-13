@@ -24,7 +24,7 @@ describe("Postgres dashboard GitHub token store", () => {
 		const pool = {
 			async query(text: string, values: ReadonlyArray<unknown> = []) {
 				if (
-					text.includes("UPDATE dashboard.accounts") &&
+					text.includes("UPDATE console.accounts") &&
 					text.includes("oauth_token_version = oauth_token_version + 1")
 				) {
 					row.access_token = String(values[4]);
@@ -46,7 +46,7 @@ describe("Postgres dashboard GitHub token store", () => {
 			},
 		} as unknown as Pool;
 		const store = createPostgresDashboardStore(
-			{ databaseSchema: "dashboard", githubTokenCipher: cipher },
+			{ databaseSchema: "console", githubTokenCipher: cipher },
 			pool,
 		);
 

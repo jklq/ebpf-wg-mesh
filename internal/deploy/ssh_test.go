@@ -127,8 +127,8 @@ func TestNativeAddressSubstitutionsPreserveBareIdentityAndIPv6Sockets(t *testing
 	i.Hosts[0].Network.Address = "fd42::a"
 	p := Plan{Installation: i, Release: r, Placements: []Placement{{Role: Database, Host: "a"}}}
 	pl := Placement{Role: Database, Host: "a", Instance: "database-a"}
-	actual := expand(p, pl, "https://{socketHost}:8080/health --listen={socketHost}:26257 --identity={address} --join={joins}")
-	if actual != "https://[fd42::a]:8080/health --listen=[fd42::a]:26257 --identity=fd42::a --join=[fd42::a]:26257" {
+	actual := expand(p, pl, "https://{socketHost}:8080/health --listen={socketHost}:5432 --identity={address} --join={joins}")
+	if actual != "https://[fd42::a]:8080/health --listen=[fd42::a]:5432 --identity=fd42::a --join=[fd42::a]:5432" {
 		t.Fatal(actual)
 	}
 	i.Hosts[0].Network.Address = "192.0.2.1"

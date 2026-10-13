@@ -72,8 +72,12 @@ func TestUpgradeHandsOverListenersAndKeepsAnUnchangedDatabase(t *testing.T) {
 	}
 
 	r.Programs[Database] = nextRelease(r, "r44").Programs[Database]
-	if _, err := BuildPlan(i, r, state, inv, false, testNow); err == nil || !strings.Contains(err.Error(), "three database members") {
-		t.Fatalf("a single-node database restart was admitted: %v", err)
+	restarted, err := BuildPlan(i, r, state, inv, false, testNow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(restarted.Upgrade.Limitations, func(l string) bool { return strings.Contains(l, string(Database)) }) {
+		t.Fatalf("single-primary restart outage not disclosed: %v", restarted.Upgrade.Limitations)
 	}
 }
 

@@ -71,7 +71,7 @@ hosts:
       reliability: reliable
       trusted: true
       roles:
-        - cockroachdb
+        - postgresql
         - controlplane
         - console
         - envoy
@@ -116,7 +116,7 @@ hosts:
       reliability: reliable
       trusted: true
       roles:
-        - cockroachdb
+        - postgresql
         - controlplane
         - console
         - envoy
@@ -161,7 +161,7 @@ hosts:
       reliability: reliable
       trusted: true
       roles:
-        - cockroachdb
+        - postgresql
         - controlplane
         - console
         - envoy
@@ -206,7 +206,7 @@ hosts:
       reliability: reliable
       trusted: true
       roles:
-        - cockroachdb
+        - postgresql
         - controlplane
         - console
         - envoy
@@ -248,9 +248,9 @@ components:
             - cgroup-v2
             - kvm
         distinctDomains: false
-    cockroachdb:
-        replicas: 3
-        reliableReplicas: 3
+    postgresql:
+        replicas: 1
+        reliableReplicas: 1
         resources:
             cpuMillis: 200
             memoryMiB: 256
@@ -311,7 +311,7 @@ storage:
             - d
         replicated: true
     database:
-        path: /var/lib/cockroach
+        path: /var/lib/postgresql
         hosts:
             - a
             - b
@@ -392,7 +392,7 @@ recovery:
           reliability: reliable
           trusted: true
           roles:
-            - cockroachdb
+            - postgresql
             - controlplane
             - console
             - envoy
@@ -410,7 +410,7 @@ recovery:
                 d: 5
     credentials:
         - recovery
-oneHostFailure: true
+oneHostFailure: false
 workload:
     cpuMillis: 500
     memoryMiB: 512

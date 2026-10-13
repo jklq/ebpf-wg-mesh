@@ -158,7 +158,7 @@ func (e Engine) step(ctx context.Context, p Plan, state *State, op Operation, un
 				}
 			}
 		}
-		if !critical && !contains([]string{"install", "database-join", "database-upgrade", "stage", "configure", "stage-tools", "upgrade-preflight", "finish"}, op.Kind) {
+		if !critical && !contains([]string{"install", "database-upgrade", "stage", "configure", "stage-tools", "upgrade-preflight", "finish"}, op.Kind) {
 			return nil
 		}
 		if !critical {

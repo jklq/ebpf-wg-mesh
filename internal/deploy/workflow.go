@@ -241,7 +241,7 @@ func (p Plan) validateWorkflow() error {
 				if kind == "hook" && op.Hook == action && (action == "builder-drain" || action == "builder-resume") {
 					kind = action
 				}
-				if role == Database && (kind == "database-join" || (mode == upgradeMode && kind == "database-upgrade" && op.Hook == "database-upgrade")) {
+				if role == Database && mode == upgradeMode && kind == "database-upgrade" && op.Hook == "database-upgrade" {
 					kind = "install"
 				}
 				host := op.Host

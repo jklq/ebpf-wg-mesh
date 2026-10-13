@@ -35,7 +35,7 @@ func preserveRuntime(p Plan, pl Placement) bool {
 	if Digest(old.Installation.Components[pl.Role]) != Digest(p.Installation.Components[pl.Role]) || Digest(old.Release.Programs[pl.Role]) != Digest(p.Release.Programs[pl.Role]) || old.Release.Dependencies[string(pl.Role)] != p.Release.Dependencies[string(pl.Role)] {
 		return false
 	}
-	if pl.Role == Database && old.Release.Dependencies["cockroachdb"] != p.Release.Dependencies["cockroachdb"] {
+	if pl.Role == Database && old.Release.Dependencies["postgresql"] != p.Release.Dependencies["postgresql"] {
 		return false
 	}
 	if pl.Role == Builder && Digest(old.Release.Images) != Digest(p.Release.Images) {

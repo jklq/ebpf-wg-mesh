@@ -202,7 +202,10 @@ func (i Installation) Validate(r Release) error {
 			return fmt.Errorf("%s requires a reliable baseline replica", role)
 		}
 		if role == Database && c.ReliableReplicas != c.Replicas {
-			return fmt.Errorf("database membership requires reliable hosts")
+			return fmt.Errorf("the database primary requires a reliable host")
+		}
+		if role == Database && c.Replicas != 1 {
+			return fmt.Errorf("the platform database is a single PostgreSQL primary; replicas must be 1 (recovery is restore-based, not database membership)")
 		}
 		p, ok := r.Programs[role]
 		if !ok || len(p.Ready) == 0 {

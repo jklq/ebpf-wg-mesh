@@ -13,7 +13,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.1
 	github.com/aws/smithy-go v1.28.1
 	github.com/cilium/ebpf v0.20.0
-	github.com/cockroachdb/cockroach-go/v2 v2.4.3
 	github.com/containerd/containerd v1.7.30
 	github.com/containerd/containerd/api v1.8.0
 	github.com/containerd/errdefs v1.0.0
@@ -94,7 +93,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/josharian/native v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.3 // indirect
-	github.com/lib/pq v1.10.9 // indirect
 	github.com/mdlayher/genetlink v1.3.2 // indirect
 	github.com/mdlayher/netlink v1.7.2 // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect

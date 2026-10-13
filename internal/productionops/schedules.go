@@ -124,7 +124,9 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 		// selected config to those pinned executables on every independent completer.
 		selected := r.Config
 		selected.RecoveryConfig = baseConfig
-		selected.Database.Binary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/cockroachdb"
+		selected.Database.PostgresBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/postgresql"
+		selected.Database.InitDBBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/initdb"
+		selected.Database.PgBackRestBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/pgbackrest"
 		selected.Console.AdminBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/console-admin"
 		files := map[string][]byte{}
 		for path, b := range inputs {

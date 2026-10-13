@@ -72,17 +72,17 @@ func run() error {
 	}
 	_ = os.Remove(filepath.Join(artifactsDir, "stack.json"))
 
-	cockroach, err := testdb.StartEphemeral()
+	database, err := testdb.StartEphemeral()
 	if err != nil {
-		return fmt.Errorf("start cockroach testserver: %v", err)
+		return fmt.Errorf("start test PostgreSQL: %v", err)
 	}
-	defer cockroach.Stop()
+	defer database.Stop()
 
-	cockroachURL := testdb.NormalizeURL(cockroach.PGURL())
-	if cockroachURL == nil {
-		return fmt.Errorf("nil cockroach pg url")
+	databaseURL := testdb.NormalizeURL(database.PGURL())
+	if databaseURL == nil {
+		return fmt.Errorf("nil test database url")
 	}
-	dbURL := cockroachURL.String()
+	dbURL := databaseURL.String()
 	stateDir := filepath.Join(os.TempDir(), fmt.Sprintf("ebpf-wg-mesh-localtest-%d", time.Now().UnixNano()))
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return fmt.Errorf("mkdir state dir: %v", err)
@@ -213,7 +213,7 @@ func run() error {
 	consoleEnv := map[string]string{
 		"DASHBOARD_PROFILE":                     "development",
 		"DASHBOARD_DATABASE_URL":                dbURL,
-		"DASHBOARD_DATABASE_SCHEMA":             "dashboard_local_e2e",
+		"DASHBOARD_DATABASE_SCHEMA":             "console_local_e2e",
 		"DASHBOARD_SESSION_COOKIE_NAME":         "dashboard_local_e2e_session",
 		"DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": githubTokenEncryptionKey,
 		"DASHBOARD_PUBLIC_BASE_URL":             ingressURL[:len(ingressURL)-1],

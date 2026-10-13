@@ -18,12 +18,16 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/recovery"
 )
 
 func probeHTTP(ctx context.Context, p Probe, authorization bool) ([]byte, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
+	}
+	if strings.HasPrefix(p.URL, "postgresql://") || strings.HasPrefix(p.URL, "postgres://") {
+		return probeDatabase(ctx, p)
 	}
 	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: p.ServerName}
 	if p.CAFile != "" {
@@ -298,7 +302,7 @@ func (r *Runner) verifyRuntime(ctx context.Context, pl deploy.Placement) error {
 	// Inspect from each actual component host. Replica clients select a live
 	// peer before submitting work; loss of a retained member is permitted only
 	// when another dependency is reachable and native readiness passed.
-	ports := map[deploy.Role]string{deploy.Database: "26257", deploy.ControlPlane: "9443", deploy.Registry: "5000"}
+	ports := map[deploy.Role]string{deploy.Database: "5432", deploy.ControlPlane: "9443", deploy.Registry: "5000"}
 	dependencies := map[deploy.Role][]deploy.Role{deploy.ControlPlane: {deploy.Database, deploy.ControlPlane}, deploy.Console: {deploy.Database, deploy.ControlPlane}, deploy.Builder: {deploy.ControlPlane, deploy.Registry}, deploy.Agent: {deploy.ControlPlane, deploy.Registry}, deploy.Envoy: {deploy.ControlPlane}}
 	for _, role := range dependencies[pl.Role] {
 		reachable := false
@@ -352,4 +356,37 @@ func sameEndpoint(probe, endpoint string) bool {
 	e, ee := url.Parse(endpoint)
 	return pe == nil && ee == nil && p.Scheme == "https" && e.Scheme == "https" &&
 		p.User == nil && p.Host == e.Host && strings.HasPrefix(p.Path, e.Path)
+}
+
+// probeSQL is the database readiness probe: PostgreSQL has no HTTP health
+// endpoint, so a postgresql:// probe URL means an authenticated SELECT 1
+// with the probe's TLS material. Status/BodyContains are HTTP-only fields.
+func probeDatabase(ctx context.Context, p Probe) ([]byte, error) {
+	u, err := url.Parse(p.URL)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	if q.Get("sslmode") == "" {
+		q.Set("sslmode", "verify-full")
+	}
+	if p.CAFile != "" {
+		q.Set("sslrootcert", p.CAFile)
+	}
+	if p.CertFile != "" {
+		q.Set("sslcert", p.CertFile)
+		q.Set("sslkey", p.KeyFile)
+	}
+	q.Set("connect_timeout", "3")
+	u.RawQuery = q.Encode()
+	db, err := platformdb.OpenURL(ctx, u.String(), platformdb.SchemaPlatform)
+	if err != nil {
+		return nil, fmt.Errorf("database probe failed: %w", err)
+	}
+	defer db.Close()
+	var one int
+	if err := db.QueryRowContext(ctx, "SELECT 1").Scan(&one); err != nil {
+		return nil, fmt.Errorf("database probe failed: %w", err)
+	}
+	return []byte("ok"), nil
 }

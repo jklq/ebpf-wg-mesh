@@ -442,24 +442,24 @@ func captureStressResources(ctx context.Context, key string, hosts map[string]ho
 		"echo \"--- $(basename \"$f\" .path) ---\"; nsenter --net=\"$ns\" ip -brief addr 2>&1; nsenter --net=\"$ns\" ip route 2>&1; " +
 		"nsenter --net=\"$ns\" ip -6 route 2>&1; nsenter --net=\"$ns\" nft list ruleset 2>&1 | head -120; done; echo '=== PEER PING ==='; " + pingBuilder.String()
 
-	stateProbe := "echo '=== AGENTS ==='; cockroach sql --insecure --host=127.0.0.1:26257 --format=csv " +
-		"--execute \"SELECT r.id, r.cpu_millis_capacity, r.reserved_cpu_millis, r.memory_mebibytes_capacity, r.reserved_memory_mebibytes, ad.lifecycle_state, r.desired_revision FROM agent_registrations r JOIN agent_administration ad ON ad.agent_id = r.id ORDER BY r.id\" 2>&1; " +
-		"echo '=== USAGE ==='; cockroach sql --insecure --host=127.0.0.1:26257 --format=csv " +
-		"--execute \"SELECT a.agent_id, count(*), COALESCE(sum((sr.spec_json->'runtime'->>'cpuMillis')::int8),0), COALESCE(sum((sr.spec_json->'runtime'->>'memoryMebibytes')::int8),0) FROM allocation_assignments a JOIN services s ON s.id = a.service_id LEFT JOIN service_revisions sr ON sr.service_id = a.service_id AND sr.spec_revision = s.current_spec_revision WHERE a.rollout_state <> 'lost' GROUP BY a.agent_id ORDER BY a.agent_id\" 2>&1; " +
-		"echo '=== SERVICES ==='; cockroach sql --insecure --host=127.0.0.1:26257 --format=csv " +
-		"--execute \"SELECT s.id, s.name, s.current_spec_revision, s.current_rollout_generation, s.placement_message FROM services s ORDER BY s.id\" 2>&1; " +
-		"echo '=== ALLOCATIONS ==='; cockroach sql --insecure --host=127.0.0.1:26257 --format=csv " +
-		"--execute \"SELECT a.service_id, a.id, a.agent_id, a.desired_spec_revision, a.desired_rollout_generation, a.rollout_state, a.intent, a.intent_message, a.allocation_ipv4, a.allocation_ipv6, a.created_at FROM allocation_assignments a ORDER BY a.service_id, a.created_at, a.id\" 2>&1; " +
-		"echo '=== ROLLOUTS ==='; cockroach sql --insecure --host=127.0.0.1:26257 --format=csv " +
-		"--execute \"SELECT service_id, rollout_generation, spec_revision, state, target_allocation_id, failure_reason, progress_at FROM service_rollouts ORDER BY service_id, rollout_generation\" 2>&1; " +
-		"echo '=== DEPLOYMENTS ==='; cockroach sql --insecure --host=127.0.0.1:26257 --format=csv " +
-		"--execute \"SELECT service_id, id, spec_revision, rollout_generation, state, cause_kind, reason_code, is_current, detail FROM deployments ORDER BY service_id, rollout_generation, created_at\" 2>&1; "
+	stateProbe := "echo '=== AGENTS ==='; psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv " +
+		"-c \"SET search_path=platform; SELECT r.id, r.cpu_millis_capacity, r.reserved_cpu_millis, r.memory_mebibytes_capacity, r.reserved_memory_mebibytes, ad.lifecycle_state, r.desired_revision FROM agent_registrations r JOIN agent_administration ad ON ad.agent_id = r.id ORDER BY r.id\" 2>&1; " +
+		"echo '=== USAGE ==='; psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv " +
+		"-c \"SET search_path=platform; SELECT a.agent_id, count(*), COALESCE(sum((sr.spec_json->'runtime'->>'cpuMillis')::int8),0), COALESCE(sum((sr.spec_json->'runtime'->>'memoryMebibytes')::int8),0) FROM allocation_assignments a JOIN services s ON s.id = a.service_id LEFT JOIN service_revisions sr ON sr.service_id = a.service_id AND sr.spec_revision = s.current_spec_revision WHERE a.rollout_state <> 'lost' GROUP BY a.agent_id ORDER BY a.agent_id\" 2>&1; " +
+		"echo '=== SERVICES ==='; psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv " +
+		"-c \"SET search_path=platform; SELECT s.id, s.name, s.current_spec_revision, s.current_rollout_generation, s.placement_message FROM services s ORDER BY s.id\" 2>&1; " +
+		"echo '=== ALLOCATIONS ==='; psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv " +
+		"-c \"SET search_path=platform; SELECT a.service_id, a.id, a.agent_id, a.desired_spec_revision, a.desired_rollout_generation, a.rollout_state, a.intent, a.intent_message, a.allocation_ipv4, a.allocation_ipv6, a.created_at FROM allocation_assignments a ORDER BY a.service_id, a.created_at, a.id\" 2>&1; " +
+		"echo '=== ROLLOUTS ==='; psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv " +
+		"-c \"SET search_path=platform; SELECT service_id, rollout_generation, spec_revision, state, target_allocation_id, failure_reason, progress_at FROM service_rollouts ORDER BY service_id, rollout_generation\" 2>&1; " +
+		"echo '=== DEPLOYMENTS ==='; psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv " +
+		"-c \"SET search_path=platform; SELECT service_id, id, spec_revision, rollout_generation, state, cause_kind, reason_code, is_current, detail FROM deployments ORDER BY service_id, rollout_generation, created_at\" 2>&1; "
 
 	for name, host := range hosts {
 		command := "date -u; uptime; free -m; df -h; cat /proc/pressure/cpu /proc/pressure/memory /proc/pressure/io; ss -s; " +
-			"systemctl show ebpf-wg-mesh-controlplane ebpf-wg-mesh-controlplane-replica ebpf-wg-mesh-agent ebpf-wg-mesh-cockroach -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec -p TasksCurrent -p NRestarts; " +
+			"systemctl show ebpf-wg-mesh-controlplane ebpf-wg-mesh-controlplane-replica ebpf-wg-mesh-agent ebpf-wg-mesh-postgresql -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec -p TasksCurrent -p NRestarts; " +
 			"iptables-save; " + meshProbe + " dmesg --level=err,warn | tail -100; " +
-			"journalctl -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-controlplane-replica -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-cockroach -n 300 --no-pager"
+			"journalctl -u ebpf-wg-mesh-controlplane -u ebpf-wg-mesh-controlplane-replica -u ebpf-wg-mesh-agent -u ebpf-wg-mesh-postgresql -n 300 --no-pager"
 		if name == "controlplane" {
 			command = stateProbe + command
 		}
@@ -476,7 +476,7 @@ func captureStressResources(ctx context.Context, key string, hosts map[string]ho
 func stressOwnerService(ctx context.Context, key, host string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	out, err := runRemoteCommand(ctx, key, host, "cockroach sql --insecure --host=127.0.0.1:26257 --format=csv --execute \"SELECT advertise_addr FROM control_plane_leases WHERE name = 'control-plane-singleton' AND expires_at > statement_timestamp();\"")
+	out, err := runRemoteCommand(ctx, key, host, "psql -h 127.0.0.1 -p 5432 -U postgres -d platform -q --csv -c \"SET search_path=platform; SELECT advertise_addr FROM control_plane_leases WHERE name = 'control-plane-singleton' AND expires_at > statement_timestamp();\"")
 	if err != nil {
 		return "", fmt.Errorf("read current owner: %w", err)
 	}

@@ -81,7 +81,7 @@ def main():
     parser.add_argument("--url-base", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--native-inputs", required=True, type=Path,
-                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: cockroachdb, envoy, registry, bun, aws, skopeo, buildkitd")
+                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: postgresql, initdb, pgbackrest, psql, envoy, registry, bun, aws, skopeo, buildkitd")
     parser.add_argument("--images", required=True, type=Path,
                         help="JSON containing builder-sandbox and railpack-frontend repository@sha256 references")
     parser.add_argument("--architectures", default="amd64,arm64")
@@ -105,7 +105,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     release = yaml.safe_load((ROOT / "infra/production/examples/releases/r43.yaml").read_text())
     release["id"] = args.id
-    release["tools"] = {name: {} for name in ("operations", "platformctl", "continuity", "console-admin", "cockroachdb", "aws", "skopeo", "buildkitd")}
+    release["tools"] = {name: {} for name in ("operations", "platformctl", "continuity", "console-admin", "postgresql", "initdb", "pgbackrest", "psql", "aws", "skopeo", "buildkitd")}
     if not args.skip_console_build:
         run(["bun", "run", "build"], cwd=ROOT / "console")
     for role in release["programs"].values():
@@ -120,7 +120,7 @@ def main():
         run(["bun", "build", "--compile", f"--target={target}", "tooling/production-admin.ts", "--outfile", str(output / f"console-admin-{arch}")], cwd=ROOT / "console")
         with tempfile.TemporaryDirectory(prefix="platform-release-") as tmp:
             tmp = Path(tmp)
-            for name in ("cockroachdb", "envoy", "registry", "aws", "skopeo", "buildkitd"):
+            for name in ("postgresql", "initdb", "pgbackrest", "psql", "envoy", "registry", "aws", "skopeo", "buildkitd"):
                 specification = inputs[name][arch]
                 source = Path(specification["path"]).resolve(strict=True)
                 artifact = output / f"{name}-{arch}"

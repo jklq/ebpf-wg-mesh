@@ -126,7 +126,7 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 		cfg.Dashboard.MemoryMebibytes = 256
 	}
 	if cfg.Dashboard.DatabaseSchema == "" {
-		cfg.Dashboard.DatabaseSchema = "dashboard"
+		cfg.Dashboard.DatabaseSchema = "console"
 	}
 	if cfg.Dashboard.SessionCookieName == "" {
 		cfg.Dashboard.SessionCookieName = "dashboard_session"

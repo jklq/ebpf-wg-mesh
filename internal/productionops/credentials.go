@@ -446,7 +446,11 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 			script += "ln -sfn " + shell(string(target)) + " " + shell(dir+"/current.next") + "\nmv -Tf " + shell(dir+"/current.next") + " " + shell(dir+"/current") + "\n"
 		}
 		if verify && (pl.Role == deploy.ControlPlane || pl.Role == deploy.Console) {
-			script += shell(operationsBinary(r.Plan)) + " sql-client " + shell(cfgDir(r.Plan, pl)+"/database-url") + " " + shell(r.Config.Console.Schema) + "\n"
+			clientSchema := "platform"
+			if pl.Role == deploy.Console {
+				clientSchema = r.Config.Console.Schema
+			}
+			script += shell(operationsBinary(r.Plan)) + " sql-client " + shell(cfgDir(r.Plan, pl)+"/database-url") + " " + shell(clientSchema) + "\n"
 		}
 		if _, err := r.remote(ctx, r.Plan, pl, script); err != nil {
 			return err
@@ -566,7 +570,29 @@ func (r *Runner) databaseClient(ctx context.Context, pl deploy.Placement, db *sq
 	}
 	files["db-ca.crt"], files["db-client.crt"], files["db-client.key"] = ca.Certificate, b.Certificate, b.Key
 	if !verify {
-		for _, statement := range []string{"CREATE USER IF NOT EXISTS " + name, "GRANT ALL ON DATABASE " + r.Config.Database.Name + " TO " + name, "GRANT USAGE ON SCHEMA public TO " + name, "GRANT USAGE ON SCHEMA " + r.Config.Console.Schema + " TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA public TO " + name, "GRANT ALL ON ALL TABLES IN SCHEMA " + r.Config.Console.Schema + " TO " + name} {
+		// Each component owns exactly one schema in the platform database;
+		// application workloads never receive platform database users at all.
+		schema := "platform"
+		if pl.Role == deploy.Console {
+			schema = r.Config.Console.Schema
+		}
+		statements := []string{
+			"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='" + name + "') THEN CREATE ROLE " + name + " LOGIN; END IF; END $$",
+			"GRANT CONNECT ON DATABASE " + r.Config.Database.Name + " TO " + name,
+			"GRANT ALL ON SCHEMA " + schema + " TO " + name,
+			"GRANT ALL ON ALL TABLES IN SCHEMA " + schema + " TO " + name,
+			"GRANT ALL ON ALL SEQUENCES IN SCHEMA " + schema + " TO " + name,
+			"ALTER DEFAULT PRIVILEGES IN SCHEMA " + schema + " GRANT ALL ON TABLES TO " + name,
+			"ALTER DEFAULT PRIVILEGES IN SCHEMA " + schema + " GRANT ALL ON SEQUENCES TO " + name,
+		}
+		if pl.Role == deploy.Console {
+			// The console's one cross-schema read: the platform pause
+			// authority that gates its admission after a restore.
+			statements = append(statements,
+				"GRANT USAGE ON SCHEMA platform TO "+name,
+				"GRANT SELECT ON platform.recovery_runtime_authority TO "+name)
+		}
+		for _, statement := range statements {
 			if _, err := db.ExecContext(ctx, statement); err != nil {
 				return err
 			}

@@ -3,8 +3,8 @@ package deploy
 import (
 	"fmt"
 	"slices"
-	"strconv"
-	"strings"
+
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 var rollingHooks = []string{"database-upgrade", "database-finalize", "builder-drain", "builder-resume", "rolling-prepare", "schema-verify"}
@@ -42,7 +42,7 @@ func (p Plan) validateRollingSteps(groups map[string][]Operation) error {
 		}
 		installs := 0
 		for _, op := range groups[phase] {
-			if op.Placement != nil && *op.Placement == pl && slices.Contains([]string{"install", "database-upgrade", "database-join"}, op.Kind) {
+			if op.Placement != nil && *op.Placement == pl && slices.Contains([]string{"install", "database-upgrade"}, op.Kind) {
 				installs++
 			}
 		}
@@ -83,20 +83,16 @@ func (p Plan) validateRollingUpgrade() error {
 	if old.Protocol != p.Release.Protocol || old.Configuration != p.Release.Configuration {
 		return fmt.Errorf("rolling upgrades require compatible configuration and protocol versions")
 	}
-	if cockroachReleaseMajor(old.Dependencies["cockroachdb"]) != cockroachReleaseMajor(p.Release.Dependencies["cockroachdb"]) {
-		members := func(placements []Placement) []string {
-			var ids []string
-			for _, pl := range placements {
-				if pl.Role == Database {
-					ids = append(ids, pl.Instance)
-				}
+	primaryHost := func(placements []Placement) string {
+		for _, pl := range placements {
+			if pl.Role == Database {
+				return pl.Host
 			}
-			slices.Sort(ids)
-			return ids
 		}
-		if !slices.Equal(members(p.Previous.Placements), members(p.Placements)) {
-			return fmt.Errorf("change CockroachDB membership in a separate plan before a major-version upgrade")
-		}
+		return ""
+	}
+	if previous, current := primaryHost(p.Previous.Placements), primaryHost(p.Placements); previous != "" && current != "" && previous != current {
+		return fmt.Errorf("moving the database primary to another host requires a restore plan, not a rolling upgrade")
 	}
 	changed := old.Schema != p.Release.Schema || old.ConsoleSchema != p.Release.ConsoleSchema
 	if p.Release.Schema < old.Schema || p.Release.ConsoleSchema < old.ConsoleSchema {
@@ -124,46 +120,5 @@ func (p Plan) validateRollingUpgrade() error {
 			}
 		}
 	}
-	return validateCockroachUpgrade(old.Dependencies["cockroachdb"], p.Release.Dependencies["cockroachdb"])
-}
-
-func validateCockroachUpgrade(from, to string) error {
-	parse := func(v string) ([3]int, error) {
-		var parts [3]int
-		fields := strings.Split(strings.TrimPrefix(v, "v"), ".")
-		if len(fields) != 3 {
-			return parts, fmt.Errorf("CockroachDB must pin a stable major.minor.patch version")
-		}
-		for n, field := range fields {
-			x, err := strconv.Atoi(field)
-			if err != nil || x < 0 {
-				return parts, fmt.Errorf("invalid CockroachDB version %q", v)
-			}
-			parts[n] = x
-		}
-		return parts, nil
-	}
-	a, err := parse(from)
-	if err != nil {
-		return err
-	}
-	b, err := parse(to)
-	if err != nil {
-		return err
-	}
-	if a[0] == b[0] && a[1] == b[1] && b[2] >= a[2] {
-		return nil
-	}
-	if (a[0] == b[0] && b[1] == a[1]+1) || (b[0] == a[0]+1 && a[1] == 4 && b[1] == 1) {
-		return nil
-	}
-	return fmt.Errorf("unsupported CockroachDB rolling version transition %s -> %s; use adjacent major releases or a restore for downgrade", from, to)
-}
-
-func cockroachReleaseMajor(version string) string {
-	parts := strings.Split(strings.TrimPrefix(version, "v"), ".")
-	if len(parts) < 2 {
-		return ""
-	}
-	return strings.Join(parts[:2], ".")
+	return platformdb.ValidateVersionTransition(old.Dependencies["postgresql"], p.Release.Dependencies["postgresql"])
 }

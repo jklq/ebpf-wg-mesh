@@ -47,8 +47,13 @@ type ListenerConfig struct {
 	TLS    ServerTLSConfig
 }
 
+// DatabaseConfig selects the platform database through the provider seam
+// (internal/platformdb). Provider defaults to PostgreSQL; Schema defaults
+// to the platform schema. Logic never branches on Provider.
 type DatabaseConfig struct {
+	Provider     string
 	URL          string
+	Schema       string
 	MaxOpenConns int
 	MaxIdleConns int
 }

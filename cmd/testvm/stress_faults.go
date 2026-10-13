@@ -100,18 +100,18 @@ func stressFaultSteps(hosts map[string]hostInfo, ownerService string, faults []s
 				Heal:   constHeal("systemctl set-property --runtime " + ownerService + " MemoryHigh=infinity MemoryMax=infinity")})
 		case "database-pause":
 			steps = append(steps, stressFaultStep{Kind: fault.Kind, Host: "controlplane",
-				Inject: "systemctl kill --kill-whom=main --signal=SIGSTOP ebpf-wg-mesh-cockroach",
-				Heal:   constHeal("systemctl kill --kill-whom=main --signal=SIGCONT ebpf-wg-mesh-cockroach")})
+				Inject: "systemctl kill --kill-whom=main --signal=SIGSTOP ebpf-wg-mesh-postgresql",
+				Heal:   constHeal("systemctl kill --kill-whom=main --signal=SIGCONT ebpf-wg-mesh-postgresql")})
 		case "database-restart":
 			// A real crash/restart, not a pause; the heal is idempotent.
 			steps = append(steps, stressFaultStep{Kind: fault.Kind, Host: "controlplane",
-				Inject: "systemctl restart ebpf-wg-mesh-cockroach",
-				Heal:   constHeal("systemctl start ebpf-wg-mesh-cockroach"),
-				Ready:  "systemctl is-active --quiet ebpf-wg-mesh-cockroach && cockroach sql --insecure --host=127.0.0.1:26257 --execute 'SELECT 1' >/dev/null"})
+				Inject: "systemctl restart ebpf-wg-mesh-postgresql",
+				Heal:   constHeal("systemctl start ebpf-wg-mesh-postgresql"),
+				Ready:  "systemctl is-active --quiet ebpf-wg-mesh-postgresql && psql -h 127.0.0.1 -p 5432 -U postgres -d platform -tAc 'SELECT 1' >/dev/null"})
 		case "disk-io-throttle":
 			steps = append(steps, stressFaultStep{Kind: fault.Kind, Host: "controlplane",
-				Inject: "systemctl set-property --runtime ebpf-wg-mesh-cockroach IOWriteBandwidthMax='/ 1048576' IOWeight=1",
-				Heal:   constHeal("systemctl set-property --runtime ebpf-wg-mesh-cockroach IOWriteBandwidthMax= IOWeight=100")})
+				Inject: "systemctl set-property --runtime ebpf-wg-mesh-postgresql IOWriteBandwidthMax='/ 1048576' IOWeight=1",
+				Heal:   constHeal("systemctl set-property --runtime ebpf-wg-mesh-postgresql IOWriteBandwidthMax= IOWeight=100")})
 		case "agent-kill":
 			host, err := stressFaultHost(hosts, fault.Target)
 			if err != nil {

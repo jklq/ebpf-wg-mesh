@@ -378,7 +378,7 @@ func (d *SSHDriver) Observe(ctx context.Context, p Plan, state State, op Operati
 		_, err := d.Remote.Run(ctx, p.Installation, h, "! systemctl is-active --quiet "+quote(unit(p.Installation, pl))+"\n")
 		return err == nil, Evidence{}, nil
 	}
-	if op.Kind == "install" || op.Kind == "database-join" || op.Kind == "database-upgrade" {
+	if op.Kind == "install" || op.Kind == "database-upgrade" {
 		out, err := d.Remote.Run(ctx, p.Installation, h, hostProbe)
 		if err != nil {
 			return false, Evidence{}, nil
@@ -483,7 +483,7 @@ func (d *SSHDriver) Execute(ctx context.Context, p Plan, state State, op Operati
 			return Binding{}, err
 		}
 		script += fileScript(ConfigurationDir(p, pl)+"/configured", []byte(p.ID+"/"+op.ID), "0600")
-	case "install", "database-join", "database-upgrade":
+	case "install", "database-upgrade":
 		probeCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		out, probeErr := d.Remote.Run(probeCtx, p.Installation, h, hostProbe)
 		cancel()

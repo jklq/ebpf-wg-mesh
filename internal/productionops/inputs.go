@@ -14,7 +14,7 @@ import (
 // externalInputs enumerates the service-selection closure. Missing dependencies
 // fail protection before a cutover; generated keys are protected separately.
 func (r *Runner) externalInputs(c recovery.Config) (map[string][]byte, error) {
-	paths := []string{r.Plan.Installation.OperationsConfig, r.Config.RecoveryConfig, c.Storage.CredentialsFile, c.Storage.CAFile, c.Images.AuthFile, r.Config.WildcardCertificate, r.Config.WildcardKey, r.Config.SourceConfig, r.Config.MonitorTokenFile, r.Config.Database.BackupURIFile}
+	paths := []string{r.Plan.Installation.OperationsConfig, r.Config.RecoveryConfig, c.Storage.CredentialsFile, c.Storage.CAFile, c.Images.AuthFile, r.Config.WildcardCertificate, r.Config.WildcardKey, r.Config.SourceConfig, r.Config.MonitorTokenFile}
 	paths = append(paths, r.Plan.Installation.OperationsInputs...)
 	// Once generated, native database authority and installer client credentials
 	// belong to the same independently encrypted closure as service secrets.

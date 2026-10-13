@@ -96,13 +96,16 @@ func TestRollingFailureKeepsOtherReplicasServingAndResumesTheSameReplica(t *test
 	if err := store.Write(state); err != nil {
 		t.Fatal(err)
 	}
-	d := &pendingReplicaDriver{fakeDriver: fake(inv), pending: installs[1].ID}
+	d := &pendingReplicaDriver{fakeDriver: fake(inv), pending: installs[0].ID}
 	e := Engine{Store: store, Driver: d}
 	if err := e.Apply(context.Background(), p); err == nil {
 		t.Fatal("unready replica did not block the rollout")
 	}
-	if d.count[installs[0].ID] != 1 || d.count[installs[1].ID] != 1 || d.count[installs[2].ID] != 0 || d.paused {
-		t.Fatal("pending replica interrupted surviving nodes or global automation")
+	if len(installs) != 1 {
+		t.Fatalf("single primary should have exactly one upgrade gate: %v", installs)
+	}
+	if d.count[installs[0].ID] != 1 || d.paused {
+		t.Fatal("pending primary interrupted other replicas or global automation")
 	}
 	partial, err := store.Read()
 	if err != nil || partial.Progress == nil || partial.Bundle.ID != state.Bundle.ID || partial.LastBackup.Backup == "" {
@@ -223,11 +226,11 @@ func TestCleanupInterruptionResumesAfterTheOverlapBoundaryIsSuperseded(t *testin
 	}
 }
 
-func TestRollingPlanRejectsAClusterWithoutALiveMajorityBeforeItStarts(t *testing.T) {
+func TestRollingPlanRejectsAnUpgradeWithoutALivePrimaryBeforeItStarts(t *testing.T) {
 	p, state, inv := rollingPlan(t, false)
-	inv.Database.Live = inv.Database.Live[:1]
+	inv.Database.Live = nil
 	if _, err := BuildPlan(p.Installation, p.Release, state, inv, false, testNow); err == nil {
-		t.Fatal("plan admitted a rolling upgrade with no live database majority")
+		t.Fatal("plan admitted a rolling upgrade with no live database primary")
 	}
 }
 

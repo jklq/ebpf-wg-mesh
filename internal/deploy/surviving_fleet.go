@@ -67,7 +67,7 @@ func newRestorePlan(i Installation, r Release, state State, inv Inventory, selec
 	// Recovery always uses a new database store; occupied stores remain intact.
 	for n := range p.Placements {
 		if p.Placements[n].Role == Database {
-			p.Placements[n].Instance = fmt.Sprintf("cockroachdb-%d-%s", p.Placements[n].Ordinal, Digest([]any{p.Generation, p.Placements[n].Host})[:12])
+			p.Placements[n].Instance = fmt.Sprintf("postgresql-%d-%s", p.Placements[n].Ordinal, Digest([]any{p.Generation, p.Placements[n].Host})[:12])
 		}
 	}
 	groups := map[string][]Operation{}

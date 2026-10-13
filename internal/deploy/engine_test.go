@@ -53,7 +53,7 @@ func (d *fakeDriver) Observe(_ context.Context, p Plan, state State, op Operatio
 	}
 	if contract, ok := ContractForHook(op.Hook); ok {
 		if contract.Kind == DatabaseVerification {
-			db := DatabaseStatus{Replicated: true}
+			db := DatabaseStatus{Archiving: true}
 			for _, placement := range p.Placements {
 				if placement.Role == Database {
 					db.Members = append(db.Members, placement.Host)
@@ -330,7 +330,7 @@ func TestUnknownPurchaseRequiresDiscoveryAndNeverDuplicates(t *testing.T) {
 func completeEvidence(installation, location string, t time.Time) Evidence {
 	until := t.Add(recovery.Retention)
 	object := recovery.Object{Key: "objects/test", Version: "protected", Digest: recovery.Digest([]byte("test")), Size: 4, RetainUntil: until}
-	point := recovery.Point{Version: 1, Installation: installation, Snapshot: recovery.Snapshot{Timestamp: t, Schema: 43, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: recovery.Database{Collection: "external://recovery", Subdirectory: "full", Layers: []recovery.Layer{{End: t}}, Objects: []recovery.Object{object}}, CompletedAt: t, ExpiresAt: until}
+	point := recovery.Point{Version: 1, Installation: installation, Snapshot: recovery.Snapshot{Timestamp: t, Schema: 43, ConsoleSchema: 3, Identities: map[string][]string{"agent_registrations": {}, "ingress_nodes": {}, "platform_signing_keys": {}}}, Database: recovery.Database{Provider: "postgres", Stanza: "platform", BackupLabel: "20260101-000000F", Chain: []string{"20260101-000000F"}, Timeline: 1, BackupStop: t, WALStart: "000000010000000000000001", WALStop: "000000010000000000000003", Repository: "s3://bucket/recovery/database", Objects: []recovery.Object{object}}, CompletedAt: t, ExpiresAt: until}
 	for _, kind := range []string{"keyring", "console-key", "external-secret", "installation", "deployment-state", "release", "tool"} {
 		point.Snapshot.Requirements = append(point.Snapshot.Requirements, recovery.Requirement{Kind: kind, ID: "required"})
 		point.Dependencies = append(point.Dependencies, recovery.Dependency{Kind: kind, ID: "required", Objects: []recovery.Object{object}})

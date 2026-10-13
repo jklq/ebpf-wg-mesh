@@ -4,60 +4,80 @@ package productionops
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
+	"net"
+	"os"
+	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
+	"time"
 
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/testdb"
-	"github.com/cockroachdb/cockroach-go/v2/testserver"
 )
 
 func TestBuilderRollingDrainKeepsActiveWorkAndOperatorIntent(t *testing.T) {
-	ts, err := testserver.NewTestServer(testserver.CustomVersionOpt(testdb.DefaultVersion), testserver.SecureOpt(), testserver.StoreOnDiskOpt(), testserver.CacheSizeOpt(.02))
+	binDir, ok := testdb.Binaries()
+	if !ok {
+		t.Skip("set POSTGRES_BIN_DIR to local PostgreSQL binaries")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	r := testRunner(t)
+	r.Config.Database.PostgresBinary = filepath.Join(binDir, "postgres")
+	r.Config.Database.InitDBBinary = filepath.Join(binDir, "initdb")
+	r.Config.Database.Address = freeAddress(t, "127.0.0.1")
+	r.Plan.Installation.Hosts[0].Network.Address = "127.0.0.1"
+	if err := r.databaseCredentials(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	pl := r.Plan.Placements[0]
+	host := r.Plan.Installation.Hosts[0]
+	remote := r.Remote.(isolatedRemote)
+	certs := remote.path(host, cfgDir(r.Plan, pl)+"/certs")
+	data := remote.path(host, dataDir(r.Plan, pl)+"/data")
+	logs, err := os.Create(r.Config.StateDirectory + "/postgres-builder.log")
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ts.Stop)
-	if err := ts.WaitForInit(); err != nil {
+	defer logs.Close()
+	_, port, _ := net.SplitHostPort(r.Config.Database.Address)
+	process := exec.CommandContext(ctx, r.Config.Database.PostgresBinary,
+		"-D", data, "-c", "listen_addresses=127.0.0.1", "-c", "port="+port, "-c", "unix_socket_directories="+r.Config.StateDirectory,
+		"-c", "ssl=on", "-c", "ssl_cert_file="+certs+"/node.crt", "-c", "ssl_key_file="+certs+"/node.key",
+		"-c", "ssl_ca_file="+certs+"/ca.crt", "-c", "hba_file="+certs+"/pg_hba.conf",
+		"-c", "shared_buffers=32MB", "-c", "max_connections=20")
+	process.Stdout, process.Stderr = logs, logs
+	process.Env = os.Environ()
+	isolateChild(process)
+	if err := process.Start(); err != nil {
 		t.Fatal(err)
 	}
-	u := ts.PGURL()
-	db, err := sql.Open("pgx", u.String())
+	defer func() { process.Process.Kill(); process.Wait() }()
+	ready := false
+	for attempts := 0; attempts < 200 && !ready; attempts++ {
+		if db, err := r.db(ctx, true); err == nil {
+			db.Close()
+			ready = true
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !ready {
+		b, _ := os.ReadFile(r.Config.StateDirectory + "/postgres-builder.log")
+		t.Fatalf("PostgreSQL did not become ready: %s", b)
+	}
+	if err := r.Execute(ctx, []string{"database-init"}); err != nil {
+		t.Fatal("initialize:", err)
+	}
+	db, err := r.db(ctx, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, stmt := range []string{`CREATE DATABASE platform_recovery`, `CREATE TABLE builder_workers(id STRING PRIMARY KEY,drained BOOL NOT NULL,updated_at TIMESTAMPTZ NOT NULL)`, `CREATE TABLE build_runs(id STRING PRIMARY KEY,state STRING NOT NULL,builder_id STRING NOT NULL)`} {
+	for _, stmt := range []string{`CREATE TABLE builder_workers(id TEXT PRIMARY KEY,drained BOOL NOT NULL,updated_at TIMESTAMPTZ NOT NULL)`, `CREATE TABLE build_runs(id TEXT PRIMARY KEY,state TEXT NOT NULL,builder_id TEXT NOT NULL)`} {
 		if _, err := db.Exec(stmt); err != nil {
 			t.Fatal(err)
 		}
-	}
-	r := testRunner(t)
-	r.Config.Database.Name = u.Path[1:]
-	r.Config.Database.URLFile = filepath.Join(t.TempDir(), "url")
-	if err := writePrivate(r.Config.Database.URLFile, []byte(u.String())); err != nil {
-		t.Fatal(err)
-	}
-	bad := *u
-	bad.Host = "127.0.0.1:1"
-	control := *u
-	q := control.Query()
-	q.Set("host", "127.0.0.1,"+u.Hostname())
-	q.Set("port", "1,"+u.Port())
-	control.RawQuery = q.Encode()
-	if err := inspectSQLFailover(context.Background(), deploy.ControlPlane, bad.Host, strings.NewReader("CONTROLPLANE_DB_URL="+control.String()+"\x00")); err != nil {
-		t.Fatal("control-plane failover", err)
-	}
-	urls, _ := json.Marshal([]string{bad.String(), u.String()})
-	if err := inspectSQLFailover(context.Background(), deploy.Console, bad.Host, strings.NewReader("DASHBOARD_DATABASE_URLS="+string(urls)+"\x00")); err != nil {
-		t.Fatal("console failover", err)
-	}
-	only, _ := json.Marshal([]string{u.String()})
-	if err := inspectSQLFailover(context.Background(), deploy.Console, u.Host, strings.NewReader("DASHBOARD_DATABASE_URLS="+string(only)+"\x00")); err == nil {
-		t.Fatal("single-node client bypassed the surviving-node gate")
 	}
 	r.Plan.Previous = &deploy.AppliedDeployment{}
 	for _, originallyDrained := range []bool{false, true} {

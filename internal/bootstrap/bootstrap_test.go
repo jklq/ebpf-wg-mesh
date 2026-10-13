@@ -15,7 +15,7 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 		"-internal-server-names", "controlplane,controlplane-internal",
 		"-replica-addresses", "replica-a:9443,replica-b:9443",
 		"-advertise-addr", "replica-a:9443",
-		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+		"-db-url", "postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 		"-logs-clickhouse-url", "clickhouse://127.0.0.1:9000/default",
 		"-logs-retention-days", "30",
 		"-failover-reconcile-interval-seconds", "7",
@@ -51,7 +51,7 @@ func TestControlPlaneBootstrapParsesFlags(t *testing.T) {
 	if got := cfg.InternalGRPC.TLS.BootstrapTokens; len(got) != 2 || got[0].AgentID != "node-a" || got[0].Token != "token-a" || got[0].Region != "us-east" || got[0].FailureDomain != "zone-1" || got[0].ReservedCPUMillis != 500 || got[1].AgentID != "node-b" || got[1].Token != "token-b" {
 		t.Fatalf("unexpected bootstrap tokens %#v", got)
 	}
-	if got := cfg.Database.URL; got != "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable" {
+	if got := cfg.Database.URL; got != "postgresql://root@127.0.0.1:5432/platform?sslmode=disable" {
 		t.Fatalf("unexpected db url %q", got)
 	}
 	if got := cfg.Logs.ClickHouse.URL; got != "clickhouse://127.0.0.1:9000/default" {
@@ -74,7 +74,7 @@ func TestControlPlaneBootstrapDefaultsToProductionAndRejectsEphemeralState(t *te
 	_, err := ControlPlane([]string{
 		"-internal-server-names", "controlplane.example.test",
 		"-agent-bootstrap-tokens", "node-a=token-a",
-		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+		"-db-url", "postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 		"-health-listen", "127.0.0.1:18080",
 		"-source-archives-provider", "s3",
 		"-source-archives-s3-endpoint", "https://s3.us-east-1.amazonaws.com",
@@ -94,7 +94,7 @@ func TestControlPlaneBootstrapParsesSourceArchiveS3Flags(t *testing.T) {
 		"-profile", "development",
 		"-internal-server-names", "controlplane",
 		"-agent-bootstrap-tokens", "node-a=token-a",
-		"-db-url", "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable",
+		"-db-url", "postgresql://root@127.0.0.1:5432/platform?sslmode=disable",
 		"-source-archives-provider", "s3",
 		"-source-archives-s3-endpoint", "https://s3.us-east-1.amazonaws.com",
 		"-source-archives-s3-region", "us-east-1",

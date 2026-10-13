@@ -22,12 +22,18 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/recovery"
+	"ebof-wg-mesh/internal/testdb"
 )
 
 func TestRecoveryReplacesTrustWithoutOverlapAndProtectsUnreachableRanges(t *testing.T) {
 	ctx := context.Background()
-	db, stop := restoreTestDB(t, t.TempDir())
-	defer stop()
+	server, err := testdb.Start("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Stop()
+	db := checkRestoredDB(t, ctx, server, "platform_fleet")
+	defer db.Close()
 	if err := recovery.CheckEmptyDestination(ctx, db); err != nil {
 		t.Fatal("fresh database is not an empty recovery destination", err)
 	}
@@ -36,7 +42,7 @@ func TestRecoveryReplacesTrustWithoutOverlapAndProtectsUnreachableRanges(t *test
 		t.Fatal(err)
 	}
 	if err := recovery.CheckEmptyDestination(ctx, db); err == nil {
-		t.Fatal("platform-initialized destination accepted for full-cluster restore")
+		t.Fatal("platform-initialized destination accepted for restore")
 	}
 	for _, statement := range []string{
 		`INSERT INTO agent_registrations(id,name,local_store_id,region,failure_domain,workload_ipv4_subnet,workload_ipv6_subnet,wireguard_ipv6,created_at,updated_at) VALUES ('survivor','survivor','store','region','domain','10.0.0.0/24','fd00:1::/64','fd00:44::11/64',now(),now())`,

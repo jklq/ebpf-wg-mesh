@@ -20,15 +20,17 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
 
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/schemacompat"
 	"ebof-wg-mesh/internal/sqlretry"
 	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 type database struct {
 	initializeSchema bool
 	db               *sql.DB
+	provider         platformdb.Provider
+	schema           string
 	mesh             config.ControlPlaneMeshConfig
 	reservedAgentIDs []string
 	deletionGrace    time.Duration
@@ -51,6 +53,13 @@ func withDeletionGracePeriod(grace time.Duration) persistenceOption {
 	}
 }
 
+func (s *database) schemaName() string {
+	if s == nil || s.schema == "" {
+		return platformdb.SchemaPlatform
+	}
+	return s.schema
+}
+
 func (s *database) deletionGracePeriod() time.Duration {
 	if s == nil || s.deletionGrace <= 0 {
 		return deliverycore.DefaultDeletionGracePeriod
@@ -69,20 +78,27 @@ func (s *database) reserveAgents(agentIDs ...string) {
 
 func openPersistence(dbCfg config.DatabaseConfig, meshCfg config.ControlPlaneMeshConfig, opts ...persistenceOption) (*persistence, error) {
 	normalizeDatabaseConfig(&dbCfg)
-	db, err := sql.Open("pgx", dbCfg.URL)
+	provider, err := platformdb.For(dbCfg.Provider)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
+		return nil, err
 	}
-	db.SetMaxOpenConns(dbCfg.MaxOpenConns)
-	db.SetMaxIdleConns(dbCfg.MaxIdleConns)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetConnMaxIdleTime(time.Minute)
-	if err := db.PingContext(context.Background()); err != nil {
+	schema := dbCfg.Schema
+	if schema == "" {
+		schema = platformdb.SchemaPlatform
+	}
+	db, err := provider.Open(context.Background(), platformdb.Config{
+		Provider: dbCfg.Provider, URL: dbCfg.URL, Schema: schema,
+		MaxOpenConns: dbCfg.MaxOpenConns, MaxIdleConns: dbCfg.MaxIdleConns,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := provider.EnsureSchema(context.Background(), db, schema); err != nil {
 		_ = db.Close()
-		return nil, fmt.Errorf("ping database: %w", err)
+		return nil, fmt.Errorf("ensure platform schema: %w", err)
 	}
 
-	handle := &database{db: db, mesh: meshCfg}
+	handle := &database{db: db, provider: provider, schema: schema, mesh: meshCfg}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(handle)
@@ -123,7 +139,7 @@ func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 	if err := s.db.PingContext(ctx); err != nil {
 		return false, false
 	}
-	status, err := schemacompat.Read(ctx, s.db, "public")
+	status, err := schemacompat.Read(ctx, s.db, s.schemaName())
 	if err != nil {
 		return true, false
 	}
@@ -131,7 +147,7 @@ func (s *database) Ready(ctx context.Context) (databaseOK, migrationsOK bool) {
 }
 
 func (s *database) validateSchema(ctx context.Context) error {
-	status, err := schemacompat.Read(ctx, s.db, "public")
+	status, err := schemacompat.Read(ctx, s.db, s.schemaName())
 	if err != nil {
 		return fmt.Errorf("schema is not initialized; run explicit controlplane database bootstrap: %w", err)
 	}
@@ -143,6 +159,12 @@ func (s *database) validateSchema(ctx context.Context) error {
 
 func (s *database) migrate(ctx context.Context) error {
 	return s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// BootstrapInstallation receives a bare connection whose search_path
+		// names this schema before it exists; create it so unqualified DDL
+		// lands here instead of falling back to public.
+		if _, err := tx.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS `+platformdb.QuoteIdentifier(s.schemaName())); err != nil {
+			return fmt.Errorf("create platform schema: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INT8 PRIMARY KEY, min_compatible_version INT8 NULL, applied_at TIMESTAMPTZ NOT NULL)`); err != nil {
 			return fmt.Errorf("create schema_migrations: %w", err)
 		}
@@ -165,7 +187,7 @@ func (s *database) migrate(ctx context.Context) error {
 			return fmt.Errorf("iterate schema versions: %w", err)
 		}
 		if len(applied) > 0 {
-			status, err := schemacompat.Read(ctx, tx, "public")
+			status, err := schemacompat.Read(ctx, tx, s.schemaName())
 			if err != nil {
 				return err
 			}
@@ -175,7 +197,7 @@ func (s *database) migrate(ctx context.Context) error {
 			return fmt.Errorf("database schema is incompatible with release schema %d; apply an explicit online schema change or restore", currentSchemaVersion)
 		}
 		var populated bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations')`).Scan(&populated); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema IN (current_schema(), 'public') AND table_type = 'BASE TABLE' AND table_name <> 'schema_migrations')`).Scan(&populated); err != nil {
 			return fmt.Errorf("inspect database before bootstrap: %w", err)
 		}
 		if populated {

@@ -28,7 +28,7 @@ func (r *Runner) verifySchemaCompatibility(ctx context.Context) error {
 		schema                  string
 		current, minimum, prior int
 	}{
-		{"public", r.Plan.Release.Schema, minimumSchema(r.Plan.Release, false), priorSchema(r.Plan.Previous, false)},
+		{"platform", r.Plan.Release.Schema, minimumSchema(r.Plan.Release, false), priorSchema(r.Plan.Previous, false)},
 		{r.Config.Console.Schema, r.Plan.Release.ConsoleSchema, minimumSchema(r.Plan.Release, true), priorSchema(r.Plan.Previous, true)},
 	} {
 		status, err := schemacompat.Read(ctx, db, item.schema)

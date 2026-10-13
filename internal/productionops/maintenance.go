@@ -109,15 +109,15 @@ func (r *Runner) acquireNativeLease(ctx context.Context, db *sql.DB, kind string
 	if kind != "credential_renewal" && kind != "backup_completion" {
 		return nil, fmt.Errorf("unknown native maintenance lease")
 	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS platform_recovery.public.maintenance_plan(installation STRING PRIMARY KEY,generation STRING NOT NULL,plan_id STRING NOT NULL)`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS recovery.maintenance_plan(installation TEXT PRIMARY KEY,generation TEXT NOT NULL,plan_id TEXT NOT NULL)`); err != nil {
 		return nil, err
 	}
-	table := "platform_recovery.public." + kind
-	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+table+`(installation STRING PRIMARY KEY,generation STRING NOT NULL,owner STRING NOT NULL,expires_at TIMESTAMPTZ NOT NULL)`); err != nil {
+	table := "recovery." + kind
+	if _, err := db.ExecContext(ctx, "CREATE TABLE IF NOT EXISTS "+table+`(installation TEXT PRIMARY KEY,generation TEXT NOT NULL,owner TEXT NOT NULL,expires_at TIMESTAMPTZ NOT NULL)`); err != nil {
 		return nil, err
 	}
 	owner := uuid.NewString()
-	result, err := db.ExecContext(ctx, "INSERT INTO "+table+` SELECT $1,$2,$3,statement_timestamp()+INTERVAL '15 minutes' FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2 AND (paused=FALSE OR $4) AND (NOT $5 OR EXISTS(SELECT 1 FROM platform_recovery.public.maintenance_plan WHERE installation=$1 AND generation=$2 AND plan_id=$6)) ON CONFLICT(installation) DO UPDATE SET generation=excluded.generation,owner=excluded.owner,expires_at=excluded.expires_at WHERE `+kind+`.expires_at<=statement_timestamp() OR `+kind+`.generation<>excluded.generation`, r.Plan.Installation.ID, r.Plan.Generation, owner, allowPaused, selected, r.Plan.ID)
+	result, err := db.ExecContext(ctx, "INSERT INTO "+table+` SELECT $1,$2,$3,statement_timestamp()+INTERVAL '15 minutes' FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2 AND (paused=FALSE OR $4) AND (NOT $5 OR EXISTS(SELECT 1 FROM recovery.maintenance_plan WHERE installation=$1 AND generation=$2 AND plan_id=$6)) ON CONFLICT(installation) DO UPDATE SET generation=excluded.generation,owner=excluded.owner,expires_at=excluded.expires_at WHERE `+kind+`.expires_at<=statement_timestamp() OR `+kind+`.generation<>excluded.generation`, r.Plan.Installation.ID, r.Plan.Generation, owner, allowPaused, selected, r.Plan.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func (r *Runner) admitMaintenancePlan(ctx context.Context, db *sql.DB) (func(), 
 		return nil, err
 	}
 	release := func() { backup(); credentials() }
-	result, err := db.ExecContext(ctx, `UPSERT INTO platform_recovery.public.maintenance_plan SELECT $1,$2,$3 FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2`, r.Plan.Installation.ID, r.Plan.Generation, r.Plan.ID)
+	result, err := db.ExecContext(ctx, `INSERT INTO recovery.maintenance_plan SELECT $1,$2,$3 FROM recovery_runtime_authority WHERE singleton=TRUE AND installation=$1 AND generation=$2 ON CONFLICT(installation) DO UPDATE SET generation=excluded.generation,plan_id=excluded.plan_id`, r.Plan.Installation.ID, r.Plan.Generation, r.Plan.ID)
 	if err != nil {
 		release()
 		return nil, err
@@ -163,7 +163,7 @@ func (r *Runner) admitMaintenancePlan(ctx context.Context, db *sql.DB) (func(), 
 
 func (r *Runner) verifyMaintenancePlan(ctx context.Context, db *sql.DB) error {
 	var generation, plan string
-	if err := db.QueryRowContext(ctx, `SELECT generation,plan_id FROM platform_recovery.public.maintenance_plan WHERE installation=$1`, r.Plan.Installation.ID).Scan(&generation, &plan); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT generation,plan_id FROM recovery.maintenance_plan WHERE installation=$1`, r.Plan.Installation.ID).Scan(&generation, &plan); err != nil {
 		return err
 	}
 	if generation != r.Plan.Generation || plan != r.Plan.ID {

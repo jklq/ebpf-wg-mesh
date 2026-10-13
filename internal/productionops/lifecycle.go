@@ -2,12 +2,9 @@ package productionops
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -435,75 +432,26 @@ func (r *Runner) findPlacement(role deploy.Role, id string) (deploy.Placement, d
 	}
 	return deploy.Placement{}, deploy.Plan{}, fmt.Errorf("lifecycle target is absent from the applied inventory")
 }
+
+// databaseRetirement stops a removed primary. There is no membership to
+// decommission and no replicas to drain: the placement is being removed by
+// a plan whose earlier gates (fencing, a verified recovery point, or a
+// completed restore) already own data safety. Stopping also stops the
+// backup timers so a retired host cannot keep writing to the repository.
 func (r *Runner) databaseRetirement(ctx context.Context, p deploy.Plan, pl deploy.Placement, action string, verify bool) error {
-	h, _ := p.Installation.Host(pl.Host)
-	// Resolve the native node ID from its actual address, never its ordinal.
-	db, err := r.db(ctx, false)
-	if err != nil {
+	timers := shell("platform-"+p.Installation.ID+"-pgbackrest-full.timer") + " " + shell("platform-"+p.Installation.ID+"-pgbackrest-incr.timer")
+	if action == "retire" {
+		if !verify {
+			_, err := r.remote(ctx, p, pl, "systemctl disable --now "+timers+" 2>/dev/null || true\n"+maskScript(p, pl))
+			return err
+		}
+		_, err := r.remote(ctx, p, pl, "! systemctl is-active --quiet "+shell(unit(p, pl))+"\ntest \"$(readlink "+shell("/etc/systemd/system/"+unit(p, pl))+")\" = /dev/null\n")
 		return err
-	}
-	defer db.Close()
-	identityPath := filepath.Join(r.Config.StateDirectory, r.Plan.ID, "retired-node-"+pl.Instance+".json")
-	var identity struct {
-		Node    int64
-		Address string
-	}
-	id, resolveErr := databaseNodeID(ctx, db, h.Network.Address)
-	if err := privateJSON(identityPath, &identity); err == nil {
-		if identity.Address != h.Network.Address || identity.Node <= 0 || (resolveErr == nil && id != identity.Node) {
-			return fmt.Errorf("retained native node identity differs")
-		}
-		if resolveErr != nil && resolveErr != sql.ErrNoRows {
-			return resolveErr
-		}
-		id = identity.Node
-	} else {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		if resolveErr != nil {
-			return resolveErr
-		}
-		identity.Node, identity.Address = id, h.Network.Address
-		if err := saveJSON(identityPath, identity); err != nil {
-			return err
-		}
 	}
 	if !verify {
-		cmd := exec.CommandContext(ctx, r.Config.Database.Binary, "node", "decommission", fmt.Sprint(id), "--wait=all", "--host="+r.reachableDatabase(ctx), "--certs-dir="+r.databasePKI())
-		if err := cmd.Run(); err != nil {
-			return fmt.Errorf("native database decommission incomplete: %w", err)
-		}
-	}
-	conn, err := db.Conn(ctx)
-	if err != nil {
+		_, err := r.remote(ctx, p, pl, "systemctl disable --now "+timers+" 2>/dev/null || true\nsystemctl stop "+shell(unit(p, pl))+"\n")
 		return err
 	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, `SET allow_unsafe_internals = true`); err != nil {
-		return err
-	}
-	var replicas int
-	if err := conn.QueryRowContext(ctx, `SELECT count(*) FROM crdb_internal.ranges WHERE $1=ANY(replicas)`, id).Scan(&replicas); err != nil {
-		return err
-	}
-	if replicas != 0 {
-		return fmt.Errorf("database node still holds replicas")
-	}
-	var membership string
-	if err := conn.QueryRowContext(ctx, `SELECT membership FROM crdb_internal.kv_node_liveness WHERE node_id=$1`, id).Scan(&membership); err != nil {
-		return err
-	}
-	if membership != "decommissioned" {
-		return fmt.Errorf("native database membership retirement is unresolved")
-	}
-	if action == "retire" && !verify {
-		_, err = r.remote(ctx, p, pl, maskScript(p, pl))
-		return err
-	}
-	if action == "retire" {
-		_, err = r.remote(ctx, p, pl, "! systemctl is-active --quiet "+shell(unit(p, pl))+"\ntest \"$(readlink "+shell("/etc/systemd/system/"+unit(p, pl))+")\" = /dev/null\n")
-		return err
-	}
-	return nil
+	_, err := r.remote(ctx, p, pl, "! systemctl is-active --quiet "+shell(unit(p, pl))+"\n")
+	return err
 }

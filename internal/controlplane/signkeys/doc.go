@@ -5,7 +5,7 @@
 //
 // Every key lives as one row in platform_signing_keys, with its private
 // material wrapped by the envelope key provider from 2.3a
-// (internal/controlplane/secretkeys). CockroachDB holds the wrapped bytes
+// (internal/controlplane/secretkeys). The platform database holds the wrapped bytes
 // and the shared active/retiring state; the master keyring file stays
 // provisioned to every replica separately from the database. Replicas hold
 // no node-local signing authority: they read key state through on every

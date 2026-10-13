@@ -20,6 +20,7 @@ import (
 
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/recovery"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -53,7 +54,24 @@ func testRunner(t *testing.T) *Runner {
 	t.Helper()
 	dir := t.TempDir()
 	i := deploy.Installation{ID: "isolated", Providers: map[string]deploy.Provider{"linux": {Kind: "linux"}}, Hosts: []deploy.Host{{ID: "a", Binding: deploy.Binding{Provider: "linux", ServerID: "a"}, Network: deploy.Network{Address: "127.0.0.1"}}}, Components: map[deploy.Role]deploy.Component{}}
-	return &Runner{Plan: deploy.Plan{ID: "plan", Generation: "initial", Installation: i, Release: deploy.Release{ID: "r43", Schema: 43, ConsoleSchema: 3}, Placements: []deploy.Placement{{Role: deploy.Database, Host: "a", Instance: "db-a"}}}, Config: Config{StateDirectory: dir, Database: DatabaseConfig{CertificateDirectory: dir + "/pki", URLFile: dir + "/database-url", Address: "127.0.0.1:26257", Name: "platform"}, Probes: map[deploy.Role]Probe{deploy.Database: {URL: "https://127.0.0.1:8080/health", Status: 200}}}, Remote: isolatedRemote{Root: dir + "/hosts"}, Adapter: deploy.NewAdapter}
+	// A stand-in initdb: host preparation must prove it initializes the data
+	// directory exactly once, without a PostgreSQL installation in unit tests.
+	initdb := filepath.Join(dir, "initdb")
+	if err := os.WriteFile(initdb, []byte("#!/bin/sh\nwhile [ $# -gt 0 ]; do if [ \"$1\" = -D ]; then mkdir -p \"$2\"; printf '17\n' > \"$2/PG_VERSION\"; fi; shift; done\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	credentials := filepath.Join(dir, "storage-credentials")
+	if err := writePrivate(credentials, []byte("[test]\naws_access_key_id=access\naws_secret_access_key=secret\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writePrivate(filepath.Join(dir, "recovery.key"), make([]byte, 32)); err != nil {
+		t.Fatal(err)
+	}
+	recoveryConfig := filepath.Join(dir, "recovery.json")
+	if err := saveJSON(recoveryConfig, recovery.Config{Storage: recovery.StorageConfig{Bucket: "isolated", Prefix: "test", Region: "test", Owner: "test", CredentialsFile: credentials, Profile: "test", Account: "recovery", PrimaryAccount: "primary", FailureDomain: "recovery", PrimaryDomains: []string{"primary"}, WriterPrincipal: "test"}, BackupPrefix: "production/database", RecoveryKeyFile: filepath.Join(dir, "recovery.key"), KeyringFile: filepath.Join(dir, "keyring.json")}); err != nil {
+		t.Fatal(err)
+	}
+	return &Runner{Plan: deploy.Plan{ID: "plan", Generation: "initial", Installation: i, Release: deploy.Release{ID: "r43", Schema: 43, ConsoleSchema: 3}, Placements: []deploy.Placement{{Role: deploy.Database, Host: "a", Instance: "db-a"}}}, Config: Config{StateDirectory: dir, RecoveryConfig: recoveryConfig, Database: DatabaseConfig{InitDBBinary: initdb, PgBackRestStanza: "platform", CertificateDirectory: dir + "/pki", URLFile: dir + "/database-url", Address: "127.0.0.1:5432", Name: "platform"}, Probes: map[deploy.Role]Probe{deploy.Database: {URL: "postgresql://node@127.0.0.1:5432/platform", Status: 200}}}, Remote: isolatedRemote{Root: dir + "/hosts"}, Adapter: deploy.NewAdapter}
 }
 func TestDatabaseCertificatesProvisionedBeforeStartupAndIdempotent(t *testing.T) {
 	r := testRunner(t)
@@ -277,7 +295,7 @@ func TestDatabaseURLRetainsVerifiedIPv6Failover(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	u, err := verifiedDatabaseURL("root", "[fd42::a]:26257,[fd42::b]:26258,sql.example.invalid:26259", "platform", dir+"/ca", dir+"/cert", dir+"/key")
+	u, err := verifiedDatabaseURL("root", "[fd42::a]:5432,[fd42::b]:26258,sql.example.invalid:26259", "platform", dir+"/ca", dir+"/cert", dir+"/key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +307,7 @@ func TestDatabaseURLRetainsVerifiedIPv6Failover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Host != "fd42::a" || cfg.Port != 26257 || cfg.TLSConfig.ServerName != "fd42::a" || cfg.TLSConfig.InsecureSkipVerify || len(cfg.Fallbacks) != 2 {
+	if cfg.Host != "fd42::a" || cfg.Port != 5432 || cfg.TLSConfig.ServerName != "fd42::a" || cfg.TLSConfig.InsecureSkipVerify || len(cfg.Fallbacks) != 2 {
 		t.Fatalf("primary SQL/TLS failover: %+v", cfg.Config)
 	}
 	for n, want := range []string{"fd42::b", "sql.example.invalid"} {
@@ -307,6 +325,15 @@ func TestDatabaseURLRetainsVerifiedIPv6Failover(t *testing.T) {
 // These fixtures execute Linux-host scripts on the test machine. Darwin ships
 // shasum and BSD mv, so select their equivalent checksum and symlink semantics.
 func portableHostScript(script string) string {
+	// Isolated scripts run unprivileged: the database service account maps
+	// to the current user and runuser drops out, while file contents,
+	// ownership checks, and initdb effects stay real.
+	me := os.Getenv("USER")
+	if me == "" {
+		me = "nobody"
+	}
+	script = strings.ReplaceAll(script, "'"+deploy.DatabaseOSUser+"'", "'"+me+"'")
+	script = strings.ReplaceAll(script, "runuser -u '"+me+"' -- ", "")
 	if runtime.GOOS == "darwin" {
 		return strings.NewReplacer("sha256sum", "shasum -a 256", "mv -Tf", "mv -hf").Replace(script)
 	}

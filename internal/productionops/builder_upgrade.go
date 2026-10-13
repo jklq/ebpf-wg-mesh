@@ -46,7 +46,7 @@ func (r *Runner) builderUpgrade(ctx context.Context, args []string, verify bool)
 	var drained, previous, resumed bool
 	var drainedAt sql.NullTime
 	var now time.Time
-	if err := db.QueryRowContext(ctx, `SELECT b.drained,q.previous_drained,q.resumed,q.drained_at,statement_timestamp() FROM builder_workers b JOIN platform_recovery.public.rolling_builder_drains q ON q.instance=b.id WHERE q.plan_id=$1 AND b.id=$2`, r.Plan.ID, pl.Instance).Scan(&drained, &previous, &resumed, &drainedAt, &now); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT b.drained,q.previous_drained,q.resumed,q.drained_at,statement_timestamp() FROM builder_workers b JOIN recovery.rolling_builder_drains q ON q.instance=b.id WHERE q.plan_id=$1 AND b.id=$2`, r.Plan.ID, pl.Instance).Scan(&drained, &previous, &resumed, &drainedAt, &now); err != nil {
 		return err
 	}
 	if args[0] == "builder-resume" {
@@ -85,9 +85,9 @@ func (r *Runner) inspectBuilderUpgrade(ctx context.Context, action string) error
 	return fmt.Errorf("builder inspection requires its deployment operation")
 }
 
-const builderDrainTable = `CREATE TABLE IF NOT EXISTS platform_recovery.public.rolling_builder_drains(plan_id STRING NOT NULL,instance STRING NOT NULL,previous_drained BOOL NOT NULL,resumed BOOL NOT NULL DEFAULT FALSE,drained_at TIMESTAMPTZ,PRIMARY KEY(plan_id,instance))`
+const builderDrainTable = `CREATE TABLE IF NOT EXISTS recovery.rolling_builder_drains(plan_id TEXT NOT NULL,instance TEXT NOT NULL,previous_drained BOOL NOT NULL,resumed BOOL NOT NULL DEFAULT FALSE,drained_at TIMESTAMPTZ,PRIMARY KEY(plan_id,instance))`
 
-const builderDrainDrainedAt = `ALTER TABLE platform_recovery.public.rolling_builder_drains ADD COLUMN IF NOT EXISTS drained_at TIMESTAMPTZ`
+const builderDrainDrainedAt = `ALTER TABLE recovery.rolling_builder_drains ADD COLUMN IF NOT EXISTS drained_at TIMESTAMPTZ`
 
 func ensureBuilderDrainTable(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, builderDrainTable); err != nil {
@@ -103,10 +103,10 @@ func drainBuilder(ctx context.Context, db *sql.DB, key, instance string) error {
 		return err
 	}
 	return sqlretry.ExecuteTx(ctx, db, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO platform_recovery.public.rolling_builder_drains(plan_id,instance,previous_drained,drained_at) SELECT $1,id,drained,statement_timestamp() FROM builder_workers WHERE id=$2 ON CONFLICT DO NOTHING`, key, instance); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO recovery.rolling_builder_drains(plan_id,instance,previous_drained,drained_at) SELECT $1,id,drained,statement_timestamp() FROM builder_workers WHERE id=$2 ON CONFLICT DO NOTHING`, key, instance); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE platform_recovery.public.rolling_builder_drains q SET previous_drained=b.drained,resumed=FALSE,drained_at=statement_timestamp() FROM builder_workers b WHERE q.instance=b.id AND q.plan_id=$1 AND q.instance=$2 AND q.resumed`, key, instance); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE recovery.rolling_builder_drains q SET previous_drained=b.drained,resumed=FALSE,drained_at=statement_timestamp() FROM builder_workers b WHERE q.instance=b.id AND q.plan_id=$1 AND q.instance=$2 AND q.resumed`, key, instance); err != nil {
 			return err
 		}
 		_, err := tx.ExecContext(ctx, `UPDATE builder_workers SET drained=TRUE,updated_at=statement_timestamp() WHERE id=$1`, instance)
@@ -119,10 +119,10 @@ func resumeBuilder(ctx context.Context, db *sql.DB, key, instance string) error 
 		return err
 	}
 	return sqlretry.ExecuteTx(ctx, db, nil, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `UPDATE builder_workers SET drained=q.previous_drained,updated_at=statement_timestamp() FROM platform_recovery.public.rolling_builder_drains q WHERE builder_workers.id=q.instance AND q.plan_id=$1 AND q.instance=$2 AND NOT q.resumed`, key, instance); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE builder_workers SET drained=q.previous_drained,updated_at=statement_timestamp() FROM recovery.rolling_builder_drains q WHERE builder_workers.id=q.instance AND q.plan_id=$1 AND q.instance=$2 AND NOT q.resumed`, key, instance); err != nil {
 			return err
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE platform_recovery.public.rolling_builder_drains SET resumed=TRUE WHERE plan_id=$1 AND instance=$2`, key, instance)
+		_, err := tx.ExecContext(ctx, `UPDATE recovery.rolling_builder_drains SET resumed=TRUE WHERE plan_id=$1 AND instance=$2`, key, instance)
 		return err
 	})
 }

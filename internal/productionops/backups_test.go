@@ -21,7 +21,7 @@ func TestProtectionSnapshotDoesNotOverwriteAppliedPlan(t *testing.T) {
 	r.Config.Console.TokenKeyFile = filepath.Join(r.Config.StateDirectory, "console.key")
 	r.Plan.Installation.OperationsConfig = filepath.Join(r.Config.StateDirectory, "operations.json")
 	c := recovery.Config{Storage: recovery.StorageConfig{Bucket: "isolated", Prefix: "test", Region: "test", Owner: "test", CredentialsFile: filepath.Join(r.Config.StateDirectory, "credentials"), Profile: "test", Account: "recovery", PrimaryAccount: "primary", FailureDomain: "recovery", PrimaryDomains: []string{"primary"}, WriterPrincipal: "test"}, RecoveryKeyFile: filepath.Join(r.Config.StateDirectory, "recovery.key"), KeyringFile: filepath.Join(r.Config.StateDirectory, "keyring.json"), Images: recovery.Images{Binary: "/prior-release/skopeo"}}
-	for path, data := range map[string][]byte{c.RecoveryKeyFile: []byte(strings.Repeat("r", 32)), c.Storage.CredentialsFile: []byte("isolated-service-selection"), r.Config.Console.TokenKeyFile: []byte("independent-console-key")} {
+	for path, data := range map[string][]byte{c.RecoveryKeyFile: []byte(strings.Repeat("r", 32)), c.Storage.CredentialsFile: []byte("[test]\naws_access_key_id=access\naws_secret_access_key=secret\n"), r.Config.Console.TokenKeyFile: []byte("independent-console-key")} {
 		if err := writePrivate(path, data); err != nil {
 			t.Fatal(err)
 		}

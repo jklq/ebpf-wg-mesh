@@ -2,13 +2,13 @@ package bootstrap
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"os"
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/ingressnodes"
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 func RunIngressNodes(args []string) error {
@@ -32,7 +32,7 @@ func RunIngressNodes(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	db, err := sql.Open("pgx", dbURL)
+	db, err := platformdb.OpenURL(ctx, dbURL, platformdb.SchemaPlatform)
 	if err != nil {
 		return err
 	}

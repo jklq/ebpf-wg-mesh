@@ -101,8 +101,8 @@ func ValidateHookEvidence(name string, p Plan, e Evidence) error {
 			return fmt.Errorf("receipt contract %s has no proof obligations", name)
 		}
 	case DatabaseVerification:
-		if e.Database == nil || !e.Database.Replicated || len(e.Database.Members) == 0 || len(e.Database.Live) < len(e.Database.Members)/2+1 {
-			return fmt.Errorf("database verification requires native membership, replication and live quorum")
+		if e.Database == nil || !e.Database.Archiving || len(e.Database.Members) == 0 || len(e.Database.Live) == 0 || e.Database.InRecovery {
+			return fmt.Errorf("database verification requires a live primary with WAL archiving outside recovery")
 		}
 	case StorageVerification:
 		for name := range p.Installation.Storage {

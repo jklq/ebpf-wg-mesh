@@ -44,7 +44,7 @@ func TestReadinessReportsFailedDependencyClassesOnly(t *testing.T) {
 	if !strings.Contains(body, `"failed":["database","migrations"]`) {
 		t.Fatalf("unexpected body %s", body)
 	}
-	if strings.Contains(body, "postgresql://") || strings.Contains(body, "cockroach") {
+	if strings.Contains(body, "postgresql://") || strings.Contains(body, "5432") {
 		t.Fatalf("readiness leaked private topology: %s", body)
 	}
 }

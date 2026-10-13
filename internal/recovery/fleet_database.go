@@ -7,22 +7,17 @@ import (
 	"net/netip"
 )
 
-// CheckEmptyDestination runs before any platform or console schema initializer.
-// Cockroach's built-in defaultdb/postgres databases may exist, but contain no
-// user tables. Never drop an occupied destination to make a restore fit.
+// CheckEmptyDestination runs before any platform or console schema
+// initializer. The destination is one PostgreSQL database; its platform,
+// console, and recovery schemas must hold no tables. Never drop an occupied
+// destination to make a restore fit.
 func CheckEmptyDestination(ctx context.Context, db *sql.DB) error {
 	var count int
-	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM [SHOW DATABASES] WHERE database_name NOT IN ('system','defaultdb','postgres')`).Scan(&count); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.tables WHERE table_type='BASE TABLE' AND table_schema NOT IN ('pg_catalog','information_schema')`).Scan(&count); err != nil {
 		return err
 	}
 	if count != 0 {
-		return fmt.Errorf("full-cluster restore destination contains user-created databases")
-	}
-	if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM [SHOW TABLES FROM defaultdb]) + (SELECT count(*) FROM [SHOW TABLES FROM postgres])`).Scan(&count); err != nil {
-		return err
-	}
-	if count != 0 {
-		return fmt.Errorf("full-cluster restore destination contains user-created tables")
+		return fmt.Errorf("restore destination already contains platform tables")
 	}
 	return nil
 }

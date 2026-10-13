@@ -13,7 +13,7 @@ describe("restored console startup", () => {
 			installationID: "installation",
 			recoveryGeneration: "recovery",
 			recoveryPaused: false,
-			databaseSchema: "dashboard",
+			databaseSchema: "console",
 			githubTokenCipher: createGitHubTokenCipher(Buffer.alloc(32, 4)),
 		};
 		const db = {

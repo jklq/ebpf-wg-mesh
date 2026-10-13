@@ -11,7 +11,7 @@ var testNow = time.Now().UTC().Truncate(time.Second)
 
 func fixture(n int) (Installation, Release, Inventory) {
 	i := Installation{Version: 1, ID: "production", Release: "r42", ManagementHost: "a", Providers: map[string]Provider{"hetzner": {Kind: "hetzner", Token: "provider"}, "gigahost": {Kind: "gigahost", Token: "provider"}, "imported": {Kind: "linux"}}, Secrets: map[string]SecretRef{"provider": {File: "/etc/platform/provider"}, "ssh": {File: "/etc/platform/ssh"}, "recovery": {File: "/etc/platform/recovery"}, "backup-writer": {File: "/etc/platform/backup-writer"}, "recovery-key": {File: "/etc/platform/recovery.key"}}, Components: map[Role]Component{}, Storage: map[string]Storage{}, Backup: Backup{Target: "s3://backups/production", Credentials: []string{"backup-writer"}, Account: "recovery", PrimaryAccount: "production", FailureDomain: "independent", RecoveryKey: "recovery-key", Monitor: "https://monitor.example/recovery"}, Recovery: Recovery{Inventory: "/var/lib/platform/fleet-inventory.json", Credentials: []string{"recovery"}}, OneHostFailure: n >= 3, Workload: Resources{500, 512, 1}, MaxDatabaseRTTMillis: 120}
-	r := Release{Version: 1, ID: "r42", Configuration: 1, Protocol: 1, Schema: 43, ConsoleSchema: 3, Dependencies: map[string]string{"cockroachdb": "26.1.0"}, Images: map[string]string{"registry": "distribution@sha256:" + strings.Repeat("1", 64)}, Programs: map[Role]Program{}, Hooks: map[string]Hook{}, Conversions: map[string]Hook{}}
+	r := Release{Version: 1, ID: "r42", Configuration: 1, Protocol: 1, Schema: 43, ConsoleSchema: 3, Dependencies: map[string]string{"postgresql": "17.4"}, Images: map[string]string{"registry": "distribution@sha256:" + strings.Repeat("1", 64)}, Programs: map[Role]Program{}, Hooks: map[string]Hook{}, Conversions: map[string]Hook{}}
 	r.SchemaCompatibility = true
 	inv := Inventory{Hosts: map[string]HostStatus{}, Storage: map[string]StorageStatus{}}
 	var ids []string
@@ -35,7 +35,7 @@ func fixture(n int) (Installation, Release, Inventory) {
 	rescue.Binding = Binding{Provider: "imported", ServerID: "alternative-machine"}
 	rescue.FailureDomain = "offsite"
 	i.Recovery.Hosts = []Host{rescue}
-	i.Storage["database"] = Storage{Path: "/var/lib/cockroach", Hosts: ids}
+	i.Storage["database"] = Storage{Path: "/var/lib/postgresql", Hosts: ids}
 	i.Storage["registry"] = Storage{Path: "/var/lib/registry", Hosts: ids, Replicated: n > 1}
 	i.Storage["archives"] = Storage{Path: "/var/lib/platform/archives", Hosts: ids, Replicated: n > 1}
 	inv.Storage["registry"] = StorageStatus{Hosts: ids, Verified: true}
@@ -44,8 +44,8 @@ func fixture(n int) (Installation, Release, Inventory) {
 		count := min(n, 2)
 		reliable := 1
 		if role == Database {
-			count = min(n, 3)
-			reliable = count
+			// A single PostgreSQL primary, regardless of fleet size.
+			count, reliable = 1, 1
 		}
 		if role == Agent {
 			count = n
@@ -78,7 +78,7 @@ func fixture(n int) (Installation, Release, Inventory) {
 	for _, role := range []Role{Console, Envoy, Registry} {
 		i.Endpoints = append(i.Endpoints, Endpoint{Name: string(role), URL: "https://" + string(role) + ".example.com", Role: role, Hosts: ids})
 	}
-	inv.Database = DatabaseStatus{Members: ids[:min(n, 3)], Live: ids[:min(n, 3)], Replicated: n >= 3}
+	inv.Database = DatabaseStatus{Members: ids[:1], Live: ids[:1], Archiving: true}
 	return i, r, inv
 }
 func build(t *testing.T, i Installation, r Release, state State, inv Inventory, automatic bool) Plan {
@@ -107,7 +107,7 @@ func TestAcceptanceTopologies(t *testing.T) {
 		i, r, inv := fixture(1)
 		p := build(t, i, r, State{}, inv, false)
 		requireComplete(t, p)
-		if p.Availability.OneHostFailure || p.Availability.DatabaseRedundant {
+		if p.Availability.OneHostFailure {
 			t.Fatal("single-host installation claims fault tolerance")
 		}
 		if len(p.Placements) != len(Roles) {
@@ -143,25 +143,29 @@ func TestAcceptanceTopologies(t *testing.T) {
 			t.Fatal("two machines claim database fault tolerance")
 		}
 	})
-	t.Run("redundant across Hetzner and Gigahost", func(t *testing.T) {
+	t.Run("fleet survives any host except the database primary", func(t *testing.T) {
 		i, r, inv := fixture(3)
 		p := build(t, i, r, State{}, inv, false)
 		requireComplete(t, p)
-		if !p.Availability.OneHostFailure {
+		if p.Availability.OneHostFailure || !p.Availability.DatabaseRecoverable {
 			t.Fatalf("availability: %+v", p.Availability)
 		}
-		providers := map[string]bool{}
+		primary := ""
 		for _, pl := range p.Placements {
 			if pl.Role == Database {
-				h, _ := i.Host(pl.Host)
-				providers[h.Binding.Provider] = true
+				primary = pl.Host
 			}
 		}
-		if !providers["hetzner"] || !providers["gigahost"] {
-			t.Fatal(providers)
+		for _, f := range p.Availability.Failures {
+			if f.Host != primary && len(f.Unmet) > 0 {
+				t.Fatalf("non-primary host %s failure is unmet: %+v", f.Host, f.Unmet)
+			}
+			if f.Host == primary && len(f.Unmet) == 0 {
+				t.Fatal("primary host failure claims survival")
+			}
 		}
 	})
-	t.Run("regions report quorum and latency", func(t *testing.T) {
+	t.Run("regions report database latency", func(t *testing.T) {
 		i, r, inv := fixture(4)
 		i.Hosts[1].Region = "helsinki"
 		i.Hosts[2].Region = "virginia"
@@ -169,8 +173,14 @@ func TestAcceptanceTopologies(t *testing.T) {
 		i.Hosts[0].Network.Peers["c"] = 90
 		p := build(t, i, r, State{}, inv, false)
 		requireComplete(t, p)
-		if !strings.Contains(strings.Join(p.Availability.Warnings, " "), "cross-region database quorum") {
-			t.Fatal(p.Availability.Warnings)
+		primaries := 0
+		for _, pl := range p.Placements {
+			if pl.Role == Database {
+				primaries++
+			}
+		}
+		if primaries != 1 {
+			t.Fatal("expected one cross-region primary", p.Placements)
 		}
 		i.MaxDatabaseRTTMillis = 10
 		for _, id := range []string{"a", "b", "d"} {
@@ -182,13 +192,17 @@ func TestAcceptanceTopologies(t *testing.T) {
 				}
 			}
 		}
-		// Pin the third member to the remote host so a different local host cannot satisfy the budget.
+		// Host c is beyond the latency budget from every candidate primary,
+		// so no database consumer may be placed there.
 		c := i.Components[Database]
 		c.Hosts = []string{"a", "b", "c"}
 		i.Components[Database] = c
 		p = build(t, i, r, State{}, inv, false)
-		if len(p.Unmet) == 0 || !strings.Contains(fmt.Sprint(p.Unmet), "RTT") {
-			t.Fatal("latency mismatch not explained")
+		requireComplete(t, p)
+		for _, pl := range p.Placements {
+			if pl.Host == "c" && (pl.Role == ControlPlane || pl.Role == Console) {
+				t.Fatalf("consumer placed beyond the database RTT budget: %+v", pl)
+			}
 		}
 	})
 }
@@ -222,8 +236,10 @@ func TestBuildPlanPublicConsoleRequiresUsableDependencies(t *testing.T) {
 	}
 	connected := build(t, i, r, State{}, inv, false)
 	requireComplete(t, connected)
-	if !connected.Availability.OneHostFailure {
-		t.Fatal(connected.Availability)
+	for _, f := range connected.Availability.Failures {
+		if f.Host != "a" && len(f.Unmet) > 0 {
+			t.Fatalf("connected public console loses host %s: %+v", f.Host, f.Unmet)
+		}
 	}
 	for _, public := range []int{3, 4} {
 		for core := 0; core < 3; core++ {
@@ -281,7 +297,7 @@ func TestAutomaticStatelessReplacementRetainsUnavailableEnvoy(t *testing.T) {
 	requireComplete(t, p)
 	retained := false
 	for _, op := range p.Operations {
-		if op.Kind == "purchase" || op.Kind == "database-remove" || op.Kind == "database-join" {
+		if op.Kind == "purchase" || op.Kind == "database-remove" {
 			t.Fatal("automatic database/infrastructure change", op)
 		}
 		if op.Kind == "retire" && op.Host == "a" {
@@ -300,39 +316,28 @@ func TestAutomaticStatelessReplacementRetainsUnavailableEnvoy(t *testing.T) {
 		}
 	}
 }
-func TestControlledExpansionAndVerifiedRedundancy(t *testing.T) {
+func TestDatabasePrimaryCountIsFixedAndRecoverabilityIsObserved(t *testing.T) {
 	i, r, inv := fixture(3)
-	c := i.Components[Database]
-	c.Replicas = 1
-	c.ReliableReplicas = 1
-	i.Components[Database] = c
-	inv.Database = DatabaseStatus{Members: []string{"a"}}
 	p := build(t, i, r, State{}, inv, false)
 	state := applied(p)
+	c := i.Components[Database]
 	c.Replicas = 3
 	c.ReliableReplicas = 3
 	i.Components[Database] = c
+	if _, err := BuildPlan(i, r, state, inv, false, testNow); err == nil {
+		t.Fatal("database membership expansion accepted for a single primary")
+	}
+	c.Replicas, c.ReliableReplicas = 1, 1
+	i.Components[Database] = c
+	inv.Database = DatabaseStatus{Members: []string{"a"}, Live: []string{"a"}, Archiving: false}
 	p = build(t, i, r, state, inv, false)
-	requireComplete(t, p)
-	joins := 0
-	for _, op := range p.DatabaseChanges {
-		if op.Kind == "database-join" {
-			joins++
-		}
+	if p.Availability.DatabaseRecoverable {
+		t.Fatal("desired primary reported as recoverable without WAL archiving")
 	}
-	if joins != 2 {
-		t.Fatal("expected native joins", p.DatabaseChanges)
-	}
-	if p.Availability.DatabaseRedundant {
-		t.Fatal("desired counts reported as completed replication")
-	}
-	inv.Database = DatabaseStatus{Members: []string{"a", "b", "c"}, Replicated: true}
+	inv.Database.Archiving = true
 	p = build(t, i, r, state, inv, false)
-	if !p.Availability.DatabaseRedundant {
-		t.Fatal("verified redundancy not reported")
-	}
-	if _, err := BuildPlan(i, r, state, inv, true, testNow); err == nil {
-		t.Fatal("unapplied policy reconciled")
+	if !p.Availability.DatabaseRecoverable {
+		t.Fatal("verified WAL archiving not reported as recoverable")
 	}
 }
 func TestAvailabilityIncludesGatewayStorageIngressAndCapacity(t *testing.T) {
@@ -340,7 +345,7 @@ func TestAvailabilityIncludesGatewayStorageIngressAndCapacity(t *testing.T) {
 		name, code string
 		change     func(*Installation)
 	}{
-		{"gateway", "quorum", func(i *Installation) {
+		{"gateway", "replicas", func(i *Installation) {
 			i.Hosts[1].Network.Gateways = []string{"a"}
 			i.Hosts[2].Network.Gateways = []string{"a"}
 		}},
@@ -410,8 +415,10 @@ func TestBuildPlanRedundancyRequiresSurvivingBuildExecution(t *testing.T) {
 	i, r, inv := fixture(3)
 	baseline := build(t, i, r, State{}, inv, false)
 	requireComplete(t, baseline)
-	if !baseline.Availability.OneHostFailure {
-		t.Fatal(baseline.Availability)
+	for _, f := range baseline.Availability.Failures {
+		if f.Host != "a" && len(f.Unmet) > 0 {
+			t.Fatalf("baseline loses non-primary host %s: %+v", f.Host, f.Unmet)
+		}
 	}
 	builder := i.Components[Builder]
 	builder.Replicas, builder.ReliableReplicas = 1, 1

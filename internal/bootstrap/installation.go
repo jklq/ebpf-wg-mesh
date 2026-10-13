@@ -2,7 +2,6 @@ package bootstrap
 
 import (
 	"context"
-	"database/sql"
 	"flag"
 	"fmt"
 	"os"
@@ -11,6 +10,7 @@ import (
 
 	"ebof-wg-mesh/internal/controlplane"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/recovery"
 )
 
@@ -28,7 +28,7 @@ func RunInstallationDatabase(args []string) error {
 	fs.StringVar(&backup, "backup", "", "verified complete backup location")
 	fs.StringVar(&cutoff, "data-loss-cutoff", "", "backup mutation cutoff, RFC3339")
 	fs.StringVar(&revocations, "revocations-file", "", "v41 revoked client serials to import into shared state")
-	fs.StringVar(&consoleSchema, "console-schema", "dashboard", "console SQL schema included in the flat conversion")
+	fs.StringVar(&consoleSchema, "console-schema", "console", "console SQL schema included in the flat conversion")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func RunInstallationDatabase(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	db, err := sql.Open("pgx", dbURL)
+	db, err := platformdb.OpenURL(ctx, dbURL, platformdb.SchemaPlatform)
 	if err != nil {
 		return err
 	}

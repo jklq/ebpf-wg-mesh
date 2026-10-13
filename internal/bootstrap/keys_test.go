@@ -66,7 +66,7 @@ func TestKeysUsageErrors(t *testing.T) {
 		t.Fatalf("list without db = %v", err)
 	}
 	// Activate and delete require their key ID even before touching the DB.
-	dbURL := "postgresql://root@127.0.0.1:26257/defaultdb?sslmode=disable"
+	dbURL := "postgresql://root@127.0.0.1:5432/platform?sslmode=disable"
 	if err := RunKeys([]string{"activate", "-db-url", dbURL}); err == nil || !strings.Contains(err.Error(), "--key-id is required") {
 		t.Fatalf("activate without key id = %v", err)
 	}

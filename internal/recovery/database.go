@@ -5,211 +5,134 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/platformdb"
 )
 
 func literal(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// ScheduleSQL is a full-cluster schedule, including console SQL and the
-// recovery inventory. External connections keep credentials out of SQL output.
-func ScheduleSQL(installation, connection string) (string, error) {
-	if installation == "" || !strings.HasPrefix(connection, "external://") || strings.ContainsAny(connection, "?\n\r") {
-		return "", fmt.Errorf("native backup schedules require an installation and credential-free external connection")
-	}
-	return "CREATE SCHEDULE IF NOT EXISTS " + literal("recovery-"+installation) + " FOR BACKUP INTO " + literal(connection) + " WITH revision_history RECURRING " + literal(IncrementalCron) + " FULL BACKUP " + literal(FullCron) + " WITH SCHEDULE OPTIONS first_run = 'now', on_execution_failure = 'retry', on_previous_running = 'wait', ignore_existing_backups", nil
-}
-
-type nativeBackupSchedule struct {
-	ID                  int64
-	Cron, Status, State string
-}
-
-func (s nativeBackupSchedule) active() bool {
-	return s.Status == "ACTIVE" || s.Cron == IncrementalCron && strings.Contains(s.State, "Waiting for initial backup")
-}
-
-func readBackupSchedules(ctx context.Context, db *sql.DB, installation, connection string) ([]nativeBackupSchedule, error) {
-	var enabled bool
-	if err := db.QueryRowContext(ctx, "SHOW CLUSTER SETTING jobs.scheduler.enabled").Scan(&enabled); err != nil {
-		return nil, err
-	}
-	if !enabled {
-		return nil, fmt.Errorf("native backup scheduler is disabled")
-	}
-	rows, err := db.QueryContext(ctx, `SELECT id,recurrence,command,schedule_status,COALESCE(state,'') FROM [SHOW SCHEDULES] WHERE label=$1`, "recovery-"+installation)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var schedules []nativeBackupSchedule
-	seen := map[string]bool{}
-	for rows.Next() {
-		var s nativeBackupSchedule
-		var command string
-		if err := rows.Scan(&s.ID, &s.Cron, &command, &s.Status, &s.State); err != nil {
-			return nil, err
-		}
-		if (s.Cron != FullCron && s.Cron != IncrementalCron) || !strings.Contains(command, literal(connection)) || !strings.Contains(command, "revision_history") {
-			return nil, fmt.Errorf("native recovery backup schedule has changed its cadence, destination, or revision history")
-		}
-		if seen[s.Cron] {
-			return nil, fmt.Errorf("duplicate native recovery backup schedules")
-		}
-		seen[s.Cron] = true
-		schedules = append(schedules, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(schedules) != 0 && len(schedules) != 2 {
-		return nil, fmt.Errorf("full and incremental native backup schedules are required")
-	}
-	return schedules, nil
-}
-
-func VerifySchedules(ctx context.Context, db *sql.DB, installation, connection string) error {
-	schedules, err := readBackupSchedules(ctx, db, installation, connection)
-	if err != nil {
+// VerifyArchiving checks the live server is feeding the WAL archive the
+// recovery points replay from: archiving on at replica level, the archive
+// command is the backup adapter, and the newest archived segment is fresh
+// enough for the recovery objective. Backup *scheduling* lives outside the
+// database (systemd timers on the database host); there is nothing to
+// install or inspect over SQL since the CockroachDB schedulers were removed.
+func VerifyArchiving(ctx context.Context, db *sql.DB, stanza string) error {
+	var mode, level, command string
+	if err := db.QueryRowContext(ctx, `SELECT current_setting('archive_mode'), current_setting('wal_level'), current_setting('archive_command')`).Scan(&mode, &level, &command); err != nil {
 		return err
 	}
-	if len(schedules) != 2 {
-		return fmt.Errorf("full and incremental native backup schedules are required")
+	if mode != "on" && mode != "always" {
+		return fmt.Errorf("WAL archiving is not enabled (archive_mode=%s)", mode)
 	}
-	for _, s := range schedules {
-		if !s.active() {
-			return fmt.Errorf("native backup schedule is paused or failed: %s", s.State)
-		}
+	if level == "minimal" {
+		return fmt.Errorf("wal_level=%s cannot archive WAL for point-in-time recovery", level)
+	}
+	if !strings.Contains(command, "pgbackrest") || !strings.Contains(command, "archive-push") || (stanza != "" && !strings.Contains(command, stanza)) {
+		return fmt.Errorf("archive_command does not archive WAL with pgBackRest for stanza %q", stanza)
+	}
+	var lastArchived sql.NullTime
+	var failed int64
+	if err := db.QueryRowContext(ctx, `SELECT last_archived_time, failed_count FROM pg_stat_archiver`).Scan(&lastArchived, &failed); err != nil {
+		return err
+	}
+	if !lastArchived.Valid {
+		return fmt.Errorf("no WAL segment has been archived yet")
+	}
+	if age := time.Since(lastArchived.Time); age > Objective {
+		return fmt.Errorf("newest archived WAL is %s old, beyond the recovery objective", age.Round(time.Second))
 	}
 	return nil
 }
 
-// ReestablishSchedules is used only by an applied recovery plan. Replace the
-// validated, paused platform pair so the new cluster starts a fresh full chain;
-// retaining restored incremental-chain state would bind it to the lost cluster.
-// Unrelated schedules and all protected historical backup objects are retained.
-func ReestablishSchedules(ctx context.Context, db *sql.DB, installation, connection string) error {
-	statement, err := ScheduleSQL(installation, connection)
-	if err != nil {
-		return err
+// EnsureWALArchived switches WAL and waits until the archiver has archived
+// the segment holding the snapshot, so a published point can always replay
+// to its timestamp. It is bounded by ctx.
+func EnsureWALArchived(ctx context.Context, db *sql.DB, segment string) error {
+	if _, err := db.ExecContext(ctx, `SELECT pg_switch_wal()`); err != nil {
+		return fmt.Errorf("switch WAL for snapshot: %w", err)
 	}
-	schedules, err := readBackupSchedules(ctx, db, installation, connection)
-	if err != nil {
-		return err
-	}
-	paused := false
-	for _, s := range schedules {
-		if !s.active() {
-			if s.Status != "PAUSED" {
-				return fmt.Errorf("native backup schedule failure requires inspection: %s", s.State)
-			}
-			paused = true
-		}
-	}
-	if len(schedules) == 2 && !paused {
-		return nil
-	}
-	if paused {
-		// One native statement removes the pair. A retry after this effect sees
-		// no pair and recreates it; a retry after creation keeps the active pair.
-		if _, err := db.ExecContext(ctx, `DROP SCHEDULES SELECT id FROM [SHOW SCHEDULES] WHERE label=$1 AND id IN ($2,$3)`, "recovery-"+installation, schedules[0].ID, schedules[1].ID); err != nil {
+	for {
+		var last string
+		if err := db.QueryRowContext(ctx, `SELECT COALESCE(last_archived_wal,'') FROM pg_stat_archiver`).Scan(&last); err != nil {
 			return err
 		}
+		if last != "" {
+			if cmp, err := platformdb.CompareWALSegments(last, segment); err != nil {
+				return err
+			} else if cmp >= 0 {
+				return nil
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("WAL segment %s was not archived: %w", segment, ctx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
 	}
-	if _, err := db.ExecContext(ctx, statement); err != nil {
-		return err
-	}
-	return VerifySchedules(ctx, db, installation, connection)
 }
 
-// Read only the supported SHOW CREATE response. Credential-bearing URI values
-// are used in memory to bind native backups to the independently verified store;
-// they never enter catalog manifests or diagnostics.
-func externalConnectionURI(ctx context.Context, db *sql.DB, connection string) (*url.URL, error) {
-	u, err := url.Parse(connection)
-	if err != nil || u.Scheme != "external" || u.Host == "" || u.Path != "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("invalid external recovery connection identity")
-	}
-	var name, statement string
-	identifier := "\"" + strings.ReplaceAll(u.Host, "\"", "\"\"") + "\""
-	if err := db.QueryRowContext(ctx, "SHOW CREATE EXTERNAL CONNECTION "+identifier).Scan(&name, &statement); err != nil {
-		return nil, fmt.Errorf("read native recovery connection: %w", err)
-	}
-	marker := " AS '"
-	start := strings.Index(statement, marker)
-	if name != u.Host || start < 0 || !strings.HasSuffix(statement, "'") {
-		return nil, fmt.Errorf("unexpected native external connection definition")
-	}
-	raw := strings.ReplaceAll(statement[start+len(marker):len(statement)-1], "''", "'")
-	location, err := url.Parse(raw)
-	if err != nil {
-		return nil, fmt.Errorf("native recovery connection URI is invalid")
-	}
-	return location, nil
-}
-
-func VerifyBackupDestination(ctx context.Context, db *sql.DB, connection string, storage StorageConfig, prefix string) error {
-	u, err := externalConnectionURI(ctx, db, connection)
-	if err != nil {
-		return err
-	}
-	return checkBackupDestination(u, storage, prefix)
-}
-
-func checkBackupDestination(u *url.URL, storage StorageConfig, prefix string) error {
-	if u.Scheme != "s3" || u.Host != storage.Bucket || u.User != nil || strings.Trim(u.Path, "/") != prefix || !strings.HasPrefix(prefix, storage.Prefix+"/") || strings.TrimRight(u.Query().Get("AWS_ENDPOINT"), "/") != strings.TrimRight(storage.Endpoint, "/") {
-		return fmt.Errorf("native backup bucket, prefix or endpoint differs from independent recovery storage")
-	}
-	return nil
-}
-
-// Register records installer-owned dependencies in SQL so historical inventory
-// reads use the same timestamp as application metadata. Keep both releases
+// Register records installer-owned dependencies in the recovery schema so
+// inventory reads share the snapshot's database. Keep both releases
 // registered during cutover; FinishRelease removes the previous release only
 // after platform availability has been independently verified.
 func Register(ctx context.Context, db *sql.DB, installation, release string, requirements []Requirement) error {
-	if _, err := db.ExecContext(ctx, `CREATE DATABASE IF NOT EXISTS platform_recovery`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS recovery`); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS platform_recovery.public.installations (
-	 installation STRING NOT NULL, release STRING NOT NULL, requirements JSONB NOT NULL,
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS recovery.installations (
+	 installation TEXT NOT NULL, release TEXT NOT NULL, requirements JSONB NOT NULL,
 	 PRIMARY KEY (installation, release))`); err != nil {
 		return err
 	}
-	_, err := db.ExecContext(ctx, `UPSERT INTO platform_recovery.public.installations VALUES ($1,$2,$3)`, installation, release, string(jsonBytes(requirements)))
-	return err
-}
-func FinishRelease(ctx context.Context, db *sql.DB, installation, release string) error {
-	_, err := db.ExecContext(ctx, `DELETE FROM platform_recovery.public.installations WHERE installation=$1 AND release<>$2`, installation, release)
+	_, err := db.ExecContext(ctx, `INSERT INTO recovery.installations VALUES ($1,$2,$3)
+	 ON CONFLICT (installation, release) DO UPDATE SET requirements=excluded.requirements`,
+		installation, release, string(jsonBytes(requirements)))
 	return err
 }
 
-func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema string, t time.Time) (Snapshot, error) {
-	s := Snapshot{Timestamp: t, Identities: map[string][]string{}}
-	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+func FinishRelease(ctx context.Context, db *sql.DB, installation, release string) error {
+	_, err := db.ExecContext(ctx, `DELETE FROM recovery.installations WHERE installation=$1 AND release<>$2`, installation, release)
+	return err
+}
+
+// ReadSnapshot reads the platform inventory in one repeatable-read
+// transaction and returns it with the WAL segment that contains every
+// commit the snapshot can see. PostgreSQL has no time-travel reads (that
+// was the CockroachDB AS OF SYSTEM TIME path); instead the snapshot binds
+// a live consistent read to a point-in-time recovery target: restore the
+// selected backup, replay archived WAL to Snapshot.Timestamp, and the
+// restored database contains exactly what this read saw.
+func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema string) (Snapshot, string, error) {
+	s := Snapshot{Identities: map[string][]string{}}
+	if consoleSchema == "" {
+		return s, "", fmt.Errorf("console SQL schema is required")
+	}
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelRepeatableRead})
 	if err != nil {
-		return s, err
+		return s, "", err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "SET TRANSACTION AS OF SYSTEM TIME "+literal(t.UTC().Format(time.RFC3339Nano))); err != nil {
-		return s, err
+	// First statement fixes the snapshot; its transaction timestamp is the
+	// recovery target and its WAL segment bounds archived replay.
+	var walSegment string
+	if err := tx.QueryRowContext(ctx, `SELECT transaction_timestamp(), pg_walfile_name(pg_current_wal_lsn())`).Scan(&s.Timestamp, &walSegment); err != nil {
+		return s, "", err
 	}
-	if err := tx.QueryRowContext(ctx, `SELECT max(version) FROM schema_migrations`).Scan(&s.Schema); err != nil {
-		return s, err
+	s.Timestamp = s.Timestamp.UTC()
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(max(version),0) FROM schema_migrations`).Scan(&s.Schema); err != nil {
+		return s, "", err
 	}
-	identifier := "\"" + strings.ReplaceAll(consoleSchema, "\"", "\"\"") + "\""
-	if consoleSchema == "" {
-		return s, fmt.Errorf("console SQL schema is required")
+	identifier := platformdb.QuoteIdentifier(consoleSchema)
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(max(version),0) FROM `+identifier+`.schema_migrations`).Scan(&s.ConsoleSchema); err != nil {
+		return s, "", fmt.Errorf("console schema inventory: %w", err)
 	}
-	// Console's flat schema records exactly one version.
-	if err := tx.QueryRowContext(ctx, `SELECT max(version) FROM `+identifier+`.schema_migrations`).Scan(&s.ConsoleSchema); err != nil {
-		return s, fmt.Errorf("console schema inventory: %w", err)
-	}
-	query := func(statement string, visit func(*sql.Rows) error) error {
-		rows, err := tx.QueryContext(ctx, statement)
+	query := func(statement string, visit func(*sql.Rows) error, args ...any) error {
+		rows, err := tx.QueryContext(ctx, statement, args...)
 		if err != nil {
 			return err
 		}
@@ -221,7 +144,7 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 		}
 		return rows.Err()
 	}
-	if err := query(`SELECT requirements FROM platform_recovery.public.installations WHERE installation=`+literal(installation), func(rows *sql.Rows) error {
+	if err := query(`SELECT requirements FROM recovery.installations WHERE installation=$1`, func(rows *sql.Rows) error {
 		var b []byte
 		if err := rows.Scan(&b); err != nil {
 			return err
@@ -238,8 +161,8 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 			}
 		}
 		return nil
-	}); err != nil {
-		return s, err
+	}, installation); err != nil {
+		return s, "", err
 	}
 	if err := query(`SELECT provider_ref FROM envelope_keys`, func(rows *sql.Rows) error {
 		var id string
@@ -249,7 +172,7 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 		s.Requirements = append(s.Requirements, Requirement{Kind: "keyring", ID: id})
 		return nil
 	}); err != nil {
-		return s, err
+		return s, "", err
 	}
 	if err := query(`SELECT DISTINCT digest, object_key FROM source_snapshots WHERE object_key<>''
 	 UNION SELECT o.digest,o.object_key FROM source_archive_objects o JOIN build_runs b ON b.source_snapshot_digest=o.digest WHERE b.state IN ('queued','running')`, func(rows *sql.Rows) error {
@@ -260,7 +183,7 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 		s.Requirements = append(s.Requirements, Requirement{Kind: "source", ID: key, Digest: digest})
 		return nil
 	}); err != nil {
-		return s, err
+		return s, "", err
 	}
 	if err := query(`SELECT DISTINCT kind,image_ref,image_manifest_digest FROM build_artifacts WHERE image_retained=true`, func(rows *sql.Rows) error {
 		var kind, ref, digest string
@@ -274,7 +197,7 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 		}
 		return nil
 	}); err != nil {
-		return s, err
+		return s, "", err
 	}
 	for _, table := range []string{"agent_registrations", "ingress_nodes", "platform_signing_keys"} {
 		column := "id"
@@ -289,20 +212,20 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 			s.Identities[table] = append(s.Identities[table], id)
 			return nil
 		}); err != nil {
-			return s, err
+			return s, "", err
 		}
 		if s.Identities[table] == nil {
 			s.Identities[table] = []string{}
 		}
 	}
 	if err := readSecretProbes(ctx, tx, &s, identifier); err != nil {
-		return s, err
+		return s, "", err
 	}
 	unique := map[string]Requirement{}
 	for _, r := range s.Requirements {
 		k := identity(r)
 		if prev, ok := unique[k]; ok && prev.Digest != r.Digest {
-			return s, fmt.Errorf("historical dependency %s has conflicting immutable identities", k)
+			return s, "", fmt.Errorf("historical dependency %s has conflicting immutable identities", k)
 		}
 		unique[k] = r
 	}
@@ -311,62 +234,118 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 		s.Requirements = append(s.Requirements, r)
 	}
 	sort.Slice(s.Requirements, func(i, j int) bool { return identity(s.Requirements[i]) < identity(s.Requirements[j]) })
-	return s, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return s, "", err
+	}
+	return s, walSegment, nil
 }
 
-// InspectBackup uses the supported SHOW BACKUP response, never internal
-// protobuf/manifest JSON. Storage objects are frozen separately by version.
-func InspectBackup(ctx context.Context, db *sql.DB, collection, subdirectory string) (Database, error) {
-	b := Database{Collection: collection, Subdirectory: subdirectory}
-	if !strings.HasPrefix(collection, "external://") || subdirectory == "" || strings.Contains(subdirectory, "..") {
-		return b, fmt.Errorf("invalid native backup selection")
-	}
-	// Backup HLC endpoints can contain sub-microsecond wall time. The pgwire
-	// binary timestamp representation can round that endpoint forward, outside
-	// the native manifest's coverage. Select a supported timestamp inside the
-	// coverage before encoding it, and use that exact cutoff for every read and
-	// restore. Never adjust a timestamp from an already published point.
-	rows, err := db.QueryContext(ctx, `SELECT DISTINCT backup_type,date_trunc('microsecond',start_time) AS start_time,date_trunc('microsecond',end_time) AS end_time,is_full_cluster FROM [SHOW BACKUP FROM `+literal(subdirectory)+` IN `+literal(collection)+` WITH check_files] ORDER BY end_time`)
+// InspectRepository selects, through the backup adapter, the newest backup
+// chain that can replay archived WAL to the snapshot segment, and returns
+// the manifest record for it (without frozen objects). Repository identity
+// is credential-free: bucket and prefix only.
+// An empty label selects the newest backup that stopped at or before at.
+func InspectRepository(ctx context.Context, backups platformdb.Backups, stanza, repository, label string, at time.Time, walSegment string) (Database, error) {
+	b := Database{Provider: platformdb.ProviderPostgres, Stanza: stanza, Repository: repository}
+	info, err := backups.Info(ctx)
 	if err != nil {
-		return b, fmt.Errorf("native backup verification failed: %w", err)
+		return b, fmt.Errorf("inspect backup repository: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var kind string
-		var start sql.NullTime
-		var end time.Time
-		var fullCluster bool
-		if err := rows.Scan(&kind, &start, &end, &fullCluster); err != nil {
+	var selected platformdb.BackupInfo
+	if label == "" {
+		var err error
+		if selected, err = platformdb.SelectBackup(info, at); err != nil {
 			return b, err
 		}
-		if !fullCluster {
-			return b, fmt.Errorf("recovery requires a full-cluster backup covering every state database")
+	} else {
+		found := false
+		for _, candidate := range info.Backups {
+			if candidate.Label == label && !candidate.Error && !candidate.StopTime.After(at) {
+				selected, found = candidate, true
+			}
 		}
-		layer := Layer{End: end}
-		if start.Valid {
-			layer.Start = start.Time
+		if !found {
+			return b, fmt.Errorf("backup %s is missing, failed, or stopped after the snapshot", label)
 		}
-		if len(b.Layers) == 0 && kind != "full" {
-			return b, fmt.Errorf("backup chain is missing its full layer")
-		}
-		b.Layers = append(b.Layers, layer)
 	}
-	return b, rows.Err()
+	chain, err := platformdb.ChainLabels(info, selected.Label)
+	if err != nil {
+		return b, err
+	}
+	if !platformdb.ArchiveCovers(info, selected.Timeline, walSegment) {
+		return b, fmt.Errorf("archived WAL does not yet cover snapshot segment %s", walSegment)
+	}
+	byLabel := map[string]platformdb.BackupInfo{}
+	for _, backup := range info.Backups {
+		byLabel[backup.Label] = backup
+	}
+	b.BackupLabel = selected.Label
+	b.Chain = chain
+	b.Timeline = selected.Timeline
+	b.BackupStop = selected.StopTime
+	b.WALStart = byLabel[chain[0]].WALStart
+	b.WALStop = walSegment
+	return b, nil
 }
 
-// FreezeDatabase checksums exact immutable versions of every object in the
-// selected full and incremental directories, including manifests and metadata.
-// A new incremental racing this walk cannot make an incomplete chain pass
-// InspectBackup at the selected timestamp; publication also rechecks the chain.
-func (s Service) FreezeDatabase(ctx context.Context, b Database, objectPrefixes []string) (Database, error) {
+// RepositoryObjectPrefixes are the repository key prefixes (relative to the
+// recovery storage prefix) whose exact object versions FreezeDatabase pins:
+// the stanza backup directory and its WAL archive.
+func RepositoryObjectPrefixes(b Database, repoPrefix string) []string {
+	base := strings.Trim(repoPrefix, "/")
+	return []string{
+		base + "/backup/" + b.Stanza + "/",
+		base + "/archive/" + b.Stanza + "/",
+	}
+}
+
+// repositoryObjectSelected decides whether one repository object belongs to
+// the selected chain or to the frozen WAL range. pgBackRest layout:
+// backup/<stanza>/<label>/... plus backup.info metadata, and
+// archive/<stanza>/<id>/<segment-prefix>/<segment>-<hash>[.gz].
+func repositoryObjectSelected(b Database, key string) bool {
+	if strings.Contains(key, "/backup/"+b.Stanza+"/") {
+		if strings.Contains(key, "backup.info") {
+			return true
+		}
+		for _, label := range b.Chain {
+			if strings.Contains(key, "/"+label+"/") || strings.HasSuffix(key, "/"+label) {
+				return true
+			}
+		}
+		return false
+	}
+	if strings.Contains(key, "/archive/"+b.Stanza+"/") {
+		name := key[strings.LastIndexByte(key, '/')+1:]
+		// Timeline history files ride along: replay needs them after a
+		// promotion, and they are tiny.
+		if strings.HasSuffix(name, ".history") {
+			return true
+		}
+		segment := name
+		if len(segment) > 24 {
+			segment = segment[:24]
+		}
+		low, errLow := platformdb.CompareWALSegments(segment, b.WALStart)
+		high, errHigh := platformdb.CompareWALSegments(segment, b.WALStop)
+		return errLow == nil && errHigh == nil && low >= 0 && high <= 0
+	}
+	return false
+}
+
+// FreezeDatabase checksums exact immutable versions of every repository
+// object the selected chain and WAL range need, including backup metadata.
+// A backup or WAL segment landing during the walk cannot make an incomplete
+// chain pass: publication re-inspects the repository and compares the chain.
+func (s Service) FreezeDatabase(ctx context.Context, b Database, repoPrefix string) (Database, error) {
 	seen := map[string]bool{}
-	for _, prefix := range objectPrefixes {
+	for _, prefix := range RepositoryObjectPrefixes(b, repoPrefix) {
 		objects, err := s.Storage.Versions(ctx, prefix)
 		if err != nil {
 			return b, err
 		}
 		for _, o := range objects {
-			if seen[o.Key] {
+			if seen[o.Key] || !repositoryObjectSelected(b, o.Key) {
 				continue
 			}
 			seen[o.Key] = true // S3 returns newest versions first per key
@@ -384,6 +363,9 @@ func (s Service) FreezeDatabase(ctx context.Context, b Database, objectPrefixes 
 			}
 			b.Objects = append(b.Objects, o)
 		}
+	}
+	if len(b.Objects) == 0 {
+		return b, fmt.Errorf("no repository objects found for backup %s under %q", b.BackupLabel, repoPrefix)
 	}
 	return b, nil
 }

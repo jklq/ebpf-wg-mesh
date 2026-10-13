@@ -117,7 +117,7 @@ func expand(p Plan, pl Placement, s string) string {
 	for _, db := range p.Placements {
 		if db.Role == Database {
 			host, _ := p.Installation.Host(db.Host)
-			joins = append(joins, net.JoinHostPort(host.Network.Address, "26257"))
+			joins = append(joins, net.JoinHostPort(host.Network.Address, "5432"))
 		}
 	}
 	sort.Strings(joins)
@@ -303,7 +303,11 @@ func unitConfiguration(p Plan, pl Placement, observed Resources) (string, string
 		// cannot reset the live agent's cgroup to unprotected defaults.
 		resources = fmt.Sprintf("MemoryMin=%dM\nMemoryLow=%dM\nCPUWeight=10000\n", reserve.MemoryMiB, reserve.MemoryMiB)
 	}
-	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nEnvironmentFile=" + ConfigurationDir(p, pl) + "/environment\nEnvironmentFile=-" + ConfigurationDir(p, pl) + "/runtime.env\nEnvironmentFile=" + ConfigurationDir(p, pl) + "/launch.env\nExecStart=" + systemdCommand(argv) + "\n" + stop + "WorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n" + resources + "[Install]\nWantedBy=multi-user.target\n"
+	user := ""
+	if pl.Role == Database {
+		user = "User=" + DatabaseOSUser + "\n"
+	}
+	service := "[Unit]\nDescription=Platform " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\n" + user + "EnvironmentFile=" + ConfigurationDir(p, pl) + "/environment\nEnvironmentFile=-" + ConfigurationDir(p, pl) + "/runtime.env\nEnvironmentFile=" + ConfigurationDir(p, pl) + "/launch.env\nExecStart=" + systemdCommand(argv) + "\n" + stop + "WorkingDirectory=" + stateDir(i, pl) + "\nRestart=always\nRestartSec=5\nTimeoutStopSec=120\nUMask=0077\n" + resources + "[Install]\nWantedBy=multi-user.target\n"
 	if len(program.Listeners) > 0 {
 		owner := []string{"PLATFORM_CONFIG_DIR=" + configDir(i, pl), "PLATFORM_CONTINUITY_OWNER=" + ownerDigest(p, pl)}
 		service = "[Unit]\nDescription=Platform listener owner " + string(pl.Role) + " " + pl.Instance + "\nAfter=network-online.target\nWants=network-online.target\n[Service]\nType=simple\nDelegate=yes\nEnvironment=" + systemdCommand(owner) + "\nExecStart=" + systemdCommand([]string{ContinuityBinary(p, pl), "serve", ContinuityDir(p, pl)}) + "\n" + stop + "Restart=always\nRestartSec=1\nTimeoutStopSec=120\nUMask=0077\n[Install]\nWantedBy=multi-user.target\n"

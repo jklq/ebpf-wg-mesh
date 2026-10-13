@@ -2,22 +2,25 @@ package productionops
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/recovery"
 	"go.yaml.in/yaml/v3"
@@ -79,7 +82,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 		}
 		return path, nil
 	}
-	start := func(name, binary string, args []string, environment map[string]string) error {
+	startAs := func(name, binary string, args []string, environment map[string]string, decorate func(*exec.Cmd)) error {
 		log, err := os.OpenFile(filepath.Join(workspace, name+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 		if err != nil {
 			return err
@@ -92,10 +95,16 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 		for key, value := range environment {
 			cmd.Env = append(cmd.Env, key+"="+value)
 		}
+		if decorate != nil {
+			decorate(cmd)
+		}
 		if err := cmd.Start(); err != nil {
 			return err
 		}
 		return saveJSON(filepath.Join(workspace, name+".pid"), cmd.Process.Pid)
+	}
+	start := func(name, binary string, args []string, environment map[string]string) error {
+		return startAs(name, binary, args, environment, nil)
 	}
 	ca, err := certificate("offline-db-ca", nil, nil)
 	if err != nil {
@@ -115,23 +124,78 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 			return ready, err
 		}
 	}
-	cockroach, err := executable("program", "cockroachdb")
+	postgres, err := executable("program", "postgresql")
 	if err != nil {
 		return ready, err
 	}
-	if err := start("database", cockroach, []string{"start-single-node", "--certs-dir=" + certDir, "--store=" + filepath.Join(workspace, "store"), "--listen-addr=127.0.0.1:26257", "--http-addr=127.0.0.1:8080", "--external-io-dir=" + filepath.Join(workspace, "database"), "--cache=128MiB", "--max-sql-memory=128MiB"}, nil); err != nil {
+	backrest, err := executable("tool", "pgbackrest")
+	if err != nil {
 		return ready, err
 	}
-	url := fmt.Sprintf("postgresql://root@127.0.0.1:26257/system?sslmode=verify-full&sslrootcert=%s&sslcert=%s&sslkey=%s", certDir+"/ca.crt", certDir+"/client.root.crt", certDir+"/client.root.key")
-	db, err := sql.Open("pgx", url)
+	dataDir := filepath.Join(workspace, "data")
+	if entries, err := os.ReadDir(dataDir); err == nil && len(entries) != 0 {
+		return ready, fmt.Errorf("offline restore destination is not empty")
+	} else if err != nil && !os.IsNotExist(err) {
+		return ready, err
+	}
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
+		return ready, err
+	}
+	if err := writePrivate(filepath.Join(workspace, "pg_hba.conf"), []byte(pgHBAConfig)); err != nil {
+		return ready, err
+	}
+	repoRoot := filepath.Join(workspace, "database", strings.Trim(input.Config.BackupPrefix, "/"))
+	restoreConfigPath := filepath.Join(workspace, "pgbackrest-restore.conf")
+	if err := writePrivate(restoreConfigPath, []byte(recovery.RenderPgBackRestPosixConfig(input.Point.Database.Stanza, dataDir, repoRoot))); err != nil {
+		return ready, err
+	}
+	// PostgreSQL and pgBackRest refuse to run as root; the drill namespace
+	// may be root-owned, so database processes drop to nobody.
+	drop, err := dropToNobody(dataDir, certDir, repoRoot, restoreConfigPath, filepath.Join(workspace, "pg_hba.conf"))
+	if err != nil {
+		return ready, err
+	}
+	restorer := platformdb.PgBackRest{Binary: backrest, ConfigFile: restoreConfigPath, Stanza: input.Point.Database.Stanza, Run: func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = workspace
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "PLATFORM_RECOVERY_WORKSPACE=" + workspace}
+		drop(cmd)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return out, fmt.Errorf("%s: %w: %s", name, err, out)
+		}
+		return out, nil
+	}}
+	if err := restorer.Restore(ctx, dataDir, input.Point.Database.BackupLabel, input.Point.Snapshot.Timestamp); err != nil {
+		return ready, fmt.Errorf("offline pgBackRest restore: %w", err)
+	}
+	if err := startAs("database", postgres, []string{
+		"-D", dataDir,
+		"-c", "listen_addresses=127.0.0.1", "-c", "port=5432",
+		"-c", "unix_socket_directories=" + workspace,
+		"-c", "ssl=on",
+		"-c", "ssl_cert_file=" + certDir + "/node.crt",
+		"-c", "ssl_key_file=" + certDir + "/node.key",
+		"-c", "ssl_ca_file=" + certDir + "/ca.crt",
+		"-c", "hba_file=" + filepath.Join(workspace, "pg_hba.conf"),
+		"-c", "shared_buffers=32MB", "-c", "max_connections=20",
+	}, nil, drop); err != nil {
+		return ready, err
+	}
+	url := fmt.Sprintf("postgresql://root@127.0.0.1:5432/postgres?sslmode=verify-full&sslrootcert=%s&sslcert=%s&sslkey=%s", certDir+"/ca.crt", certDir+"/client.root.crt", certDir+"/client.root.key")
+	db, err := platformdb.OpenURL(ctx, url, platformdb.SchemaPlatform)
 	if err != nil {
 		return ready, err
 	}
 	defer db.Close()
-	deadline := time.Now().Add(60 * time.Second)
-	for db.PingContext(ctx) != nil {
+	deadline := time.Now().Add(120 * time.Second)
+	for {
+		var inRecovery bool
+		if err := db.QueryRowContext(ctx, `SELECT pg_is_in_recovery()`).Scan(&inRecovery); err == nil && !inRecovery {
+			break
+		}
 		if time.Now().After(deadline) {
-			return ready, fmt.Errorf("offline database startup did not converge")
+			return ready, fmt.Errorf("offline database startup/promotion did not converge")
 		}
 		select {
 		case <-ctx.Done():
@@ -139,26 +203,13 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	if err := recovery.CheckEmptyDestination(ctx, db); err != nil {
-		return ready, err
-	}
-	collection := "nodelocal://1/" + strings.Trim(input.Config.BackupPrefix, "/")
-	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
-	if _, err := db.ExecContext(ctx, "RESTORE FROM "+quote(input.Point.Database.Subdirectory)+" IN "+quote(collection)+" AS OF SYSTEM TIME "+quote(input.Point.Snapshot.Timestamp.UTC().Format(time.RFC3339Nano))); err != nil {
-		return ready, err
-	}
 	var databaseName string
-	for _, query := range []string{`SELECT table_catalog FROM information_schema.tables WHERE table_name='recovery_runtime_authority' LIMIT 1`, `SELECT database_name FROM [SHOW DATABASES] WHERE database_name NOT IN ('system','defaultdb','postgres','platform_recovery') LIMIT 1`} {
-		if err = db.QueryRowContext(ctx, query).Scan(&databaseName); err == nil {
-			break
-		}
+	if err := db.QueryRowContext(ctx, `SELECT datname FROM pg_database WHERE NOT datistemplate AND datname<>'postgres' ORDER BY datname LIMIT 1`).Scan(&databaseName); err != nil {
+		return ready, fmt.Errorf("restored platform database is missing: %w", err)
 	}
-	if databaseName == "" {
-		return ready, fmt.Errorf("restored platform database is missing")
-	}
-	url = strings.Replace(url, "/system?", "/"+databaseName+"?", 1)
+	url = strings.Replace(url, "/postgres?", "/"+databaseName+"?", 1)
 	db.Close()
-	db, err = sql.Open("pgx", url)
+	db, err = platformdb.OpenURL(ctx, url, platformdb.SchemaPlatform)
 	if err != nil {
 		return ready, err
 	}
@@ -242,7 +293,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 		return ready, err
 	}
 	durable := "/var/lib/platform-offline"
-	env := map[string]string{"CONTROLPLANE_PROFILE": "production", "CONTROLPLANE_DB_URL": strings.Replace(url, "127.0.0.1:26257", "database.offline.invalid:26257", 1), "CONTROLPLANE_SECRET_KEYS_KEYRING": durable + "/keyring.json", "CONTROLPLANE_AUTHORITY_FILE": authorityFile, "CONTROLPLANE_STATE_DIR": durable + "/controlplane", "CONTROLPLANE_HEALTH_LISTEN": "127.0.0.1:9090", "CONTROLPLANE_INTERNAL_LISTEN": "127.0.0.1:9443", "CONTROLPLANE_INTERNAL_SERVER_NAMES": "controlplane.offline.invalid,127.0.0.1", "CONTROLPLANE_CONSOLE_CALLER_IDS": "offline-console", "CONTROLPLANE_DASHBOARD_ENABLED": "false", "CONTROLPLANE_SOURCE_ARCHIVES_DIR": durable + "/sources", "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE": certDir + "/node.crt", "CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE": certDir + "/node.key", "CONTROLPLANE_INGRESS_PUBLIC_ADDR": "platform.offline.invalid"}
+	env := map[string]string{"CONTROLPLANE_PROFILE": "production", "CONTROLPLANE_DB_URL": strings.Replace(url, "127.0.0.1:5432", "database.offline.invalid:5432", 1), "CONTROLPLANE_SECRET_KEYS_KEYRING": durable + "/keyring.json", "CONTROLPLANE_AUTHORITY_FILE": authorityFile, "CONTROLPLANE_STATE_DIR": durable + "/controlplane", "CONTROLPLANE_HEALTH_LISTEN": "127.0.0.1:9090", "CONTROLPLANE_INTERNAL_LISTEN": "127.0.0.1:9443", "CONTROLPLANE_INTERNAL_SERVER_NAMES": "controlplane.offline.invalid,127.0.0.1", "CONTROLPLANE_CONSOLE_CALLER_IDS": "offline-console", "CONTROLPLANE_DASHBOARD_ENABLED": "false", "CONTROLPLANE_SOURCE_ARCHIVES_DIR": durable + "/sources", "CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE": certDir + "/node.crt", "CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE": certDir + "/node.key", "CONTROLPLANE_INGRESS_PUBLIC_ADDR": "platform.offline.invalid"}
 	if err := start("controlplane", cp, nil, env); err != nil {
 		return ready, err
 	}
@@ -295,7 +346,7 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 			return ready, err
 		}
 	}
-	env = map[string]string{"DASHBOARD_PROFILE": "production", "DASHBOARD_AUTHORITY_FILE": authorityFile, "DASHBOARD_DATABASE_URL": strings.Replace(url, "127.0.0.1:26257", "database.offline.invalid:26257", 1), "DASHBOARD_DATABASE_SCHEMA": input.Config.ConsoleSchema, "DASHBOARD_JWT_SECRET": string(session), "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": string(assertion), "DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": strings.TrimSpace(string(token)), "DASHBOARD_PUBLIC_BASE_URL": "https://console.offline.invalid", "DASHBOARD_INGRESS_TARGET_HOST": "console.offline.invalid", "DASHBOARD_CONTROLPLANE_ADDRESSES": "controlplane.offline.invalid:9443", "DASHBOARD_CONTROLPLANE_SERVER_NAME": "controlplane.offline.invalid", "DASHBOARD_CONTROLPLANE_CERT_FILE": workspace + "/console-client.crt", "DASHBOARD_CONTROLPLANE_KEY_FILE": workspace + "/console-client.key", "DASHBOARD_CONTROLPLANE_CA_FILE": consoleCA, "PORT": "3000", "HOST": "127.0.0.1"}
+	env = map[string]string{"DASHBOARD_PROFILE": "production", "DASHBOARD_AUTHORITY_FILE": authorityFile, "DASHBOARD_DATABASE_URL": strings.Replace(url, "127.0.0.1:5432", "database.offline.invalid:5432", 1), "DASHBOARD_DATABASE_SCHEMA": input.Config.ConsoleSchema, "DASHBOARD_JWT_SECRET": string(session), "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": string(assertion), "DASHBOARD_GITHUB_TOKEN_ENCRYPTION_KEY": strings.TrimSpace(string(token)), "DASHBOARD_PUBLIC_BASE_URL": "https://console.offline.invalid", "DASHBOARD_INGRESS_TARGET_HOST": "console.offline.invalid", "DASHBOARD_CONTROLPLANE_ADDRESSES": "controlplane.offline.invalid:9443", "DASHBOARD_CONTROLPLANE_SERVER_NAME": "controlplane.offline.invalid", "DASHBOARD_CONTROLPLANE_CERT_FILE": workspace + "/console-client.crt", "DASHBOARD_CONTROLPLANE_KEY_FILE": workspace + "/console-client.key", "DASHBOARD_CONTROLPLANE_CA_FILE": consoleCA, "PORT": "3000", "HOST": "127.0.0.1"}
 	if err := start("console", console, nil, env); err != nil {
 		return ready, err
 	}
@@ -322,4 +373,41 @@ func offlineRecovery(ctx context.Context, workspace, inputPath string) (recovery
 		return ready, err
 	}
 	return ready, nil
+}
+
+// dropToNobody returns a command decorator that runs database processes as
+// nobody when the drill itself runs as root (PostgreSQL refuses root), and
+// chowns the paths those processes must read or write. When unprivileged
+// already it is a no-op.
+func dropToNobody(paths ...string) (func(*exec.Cmd), error) {
+	noop := func(*exec.Cmd) {}
+	if os.Geteuid() != 0 {
+		return noop, nil
+	}
+	nobody, err := user.Lookup("nobody")
+	if err != nil {
+		return noop, fmt.Errorf("offline database requires a nobody account to drop root: %w", err)
+	}
+	uid, err1 := strconv.Atoi(nobody.Uid)
+	gid, err2 := strconv.Atoi(nobody.Gid)
+	if err1 != nil || err2 != nil {
+		return noop, fmt.Errorf("invalid nobody account ids")
+	}
+	for _, path := range paths {
+		err := filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
+			if err != nil {
+				if os.IsNotExist(err) {
+					return nil
+				}
+				return err
+			}
+			return os.Chown(p, uid, gid)
+		})
+		if err != nil && !os.IsNotExist(err) {
+			return noop, err
+		}
+	}
+	return func(cmd *exec.Cmd) {
+		cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}}
+	}, nil
 }

@@ -4,7 +4,9 @@ package sqlretry
 
 import (
 	"context"
+
 	"database/sql"
+	"ebof-wg-mesh/internal/testdb"
 	"fmt"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"os"
@@ -16,7 +18,12 @@ import (
 func TestPostgresSerializableRetry(t *testing.T) {
 	raw := os.Getenv("CONTROLPLANE_TEST_DATABASE_URL")
 	if raw == "" {
-		t.Skip("set CONTROLPLANE_TEST_DATABASE_URL for PostgreSQL transaction checks")
+		server, err := testdb.Start("")
+		if err != nil {
+			t.Fatalf("start test PostgreSQL: %v", err)
+		}
+		defer server.Stop()
+		raw = testdb.NormalizeURL(server.PGURL()).String()
 	}
 	db, err := sql.Open("pgx", raw)
 	if err != nil {
