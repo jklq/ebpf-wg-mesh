@@ -61,7 +61,7 @@ export function assertProductionDashboardConfig(input: {
 	assertProductionHTTPSURL("DASHBOARD_PUBLIC_BASE_URL", input.publicBaseURL);
 	assertProductionDurableURL("DASHBOARD_DATABASE_URL", input.databaseURL);
 	assertProductionDurableDial(
-		"DASHBOARD_CONTROLPLANE_ADDRESS",
+		"DASHBOARD_CONTROLPLANE_ADDRESSES",
 		input.controlPlaneAddress,
 	);
 	assertProductionSecret("DASHBOARD_JWT_SECRET", input.jwtSecret);

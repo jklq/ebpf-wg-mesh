@@ -480,7 +480,7 @@ func run() error {
 	log.Printf("local agent ready: %s", localAgentID)
 	go monitorBackgroundComponent(ctx, stop, "local agent", localAgentErrCh)
 
-	consoleEnv["DASHBOARD_CONTROLPLANE_ADDRESS"] = server.InternalAddr()
+	consoleEnv["DASHBOARD_CONTROLPLANE_ADDRESSES"] = server.InternalAddr()
 	consoleEnv["DASHBOARD_CONTROLPLANE_SERVER_NAME"] = "localhost"
 	consoleEnv["DASHBOARD_CONTROLPLANE_CA_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CAPEM)
 	consoleEnv["DASHBOARD_CONTROLPLANE_CERT_PEM_B64"] = base64.StdEncoding.EncodeToString(identity.CertPEM)
