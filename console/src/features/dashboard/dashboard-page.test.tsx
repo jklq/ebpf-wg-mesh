@@ -16,7 +16,6 @@ import {
 import {
 	cleanup,
 	fireEvent,
-	render,
 	screen,
 	waitFor,
 	within,
@@ -44,6 +43,7 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { renderWithRouter as render } from "#/lib/dashboard/testkit/render-with-router";
 
 const {
 	doCreateVolumeMock,

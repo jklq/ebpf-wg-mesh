@@ -17,7 +17,7 @@ export const Route = createFileRoute("/events/service-status")({
 					return indexedEventResponse({
 						event: "status",
 						signal: request.signal,
-						load: async (waitIndex) => {
+						load: async (waitIndex, signal) => {
 							const snapshot = await (
 								await import("#/lib/dashboard/core/operations-services.server")
 							).waitForServiceStatusFromSession(
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/events/service-status")({
 									waitIndex,
 									waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
 								},
+								signal,
 							);
 							return {
 								...snapshot,

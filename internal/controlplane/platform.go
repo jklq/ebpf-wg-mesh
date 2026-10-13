@@ -43,6 +43,7 @@ type platformStore interface {
 	workspaceStore
 	createProject(ctx context.Context, user authz.User, workspaceID, name string) (deliverycore.ProjectRecord, error)
 	listProjects(ctx context.Context, user authz.User, workspaceID string, includeDeleted bool) ([]deliverycore.ProjectRecord, error)
+	listProjectSummaries(ctx context.Context, user authz.User, projects []deliverycore.ProjectRecord) ([]*platformv1.ProjectSummary, error)
 	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
@@ -242,6 +243,11 @@ func (s *platformService) CreateProject(ctx context.Context, req *platformv1.Cre
 }
 
 func (s *platformService) ListProjects(ctx context.Context, req *platformv1.ListProjectsRequest) (*platformv1.ListProjectsResponse, error) {
+	if req.GetIncludeSummaries() {
+		if err := s.requireLiveOwner(ctx); err != nil {
+			return nil, err
+		}
+	}
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
@@ -253,6 +259,27 @@ func (s *platformService) ListProjects(ctx context.Context, req *platformv1.List
 	resp := &platformv1.ListProjectsResponse{Projects: make([]*platformv1.Project, 0, len(items))}
 	for _, item := range items {
 		resp.Projects = append(resp.Projects, toProtoProject(item))
+	}
+	if req.GetIncludeSummaries() {
+		resp.Summaries, err = s.store.listProjectSummaries(ctx, user, items)
+		if err != nil {
+			return nil, status.Errorf(codes.Internal, "list project summaries: %v", err)
+		}
+		for _, summary := range resp.Summaries {
+			if summary.LandingEnvironment == nil {
+				continue
+			}
+			allocations, err := s.delivery.LiveAllocationsByEnvironment(summary.LandingEnvironment.Id)
+			if err != nil {
+				if mapped := s.liveOwnerError(ctx, err); mapped != nil {
+					return nil, mapped
+				}
+				return nil, status.Errorf(codes.Internal, "read project service health: %v", err)
+			}
+			for _, service := range summary.Services {
+				service.Online = countReadyAllocations(allocations[service.Id]) > 0
+			}
+		}
 	}
 	return resp, nil
 }

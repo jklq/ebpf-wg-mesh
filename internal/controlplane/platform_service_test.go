@@ -287,6 +287,14 @@ func (f *fakePlatformStore) listProjects(ctx context.Context, user authz.User, w
 	return nil, nil
 }
 
+func (f *fakePlatformStore) listProjectSummaries(_ context.Context, _ authz.User, projects []deliverycore.ProjectRecord) ([]*platformv1.ProjectSummary, error) {
+	out := make([]*platformv1.ProjectSummary, 0, len(projects))
+	for _, project := range projects {
+		out = append(out, &platformv1.ProjectSummary{Project: toProtoProject(project)})
+	}
+	return out, nil
+}
+
 func (f *fakePlatformStore) deleteProject(ctx context.Context, user authz.User, projectID, confirmation string) ([]string, error) {
 	if f.deleteProjectFn != nil {
 		return f.deleteProjectFn(ctx, user, projectID, confirmation)

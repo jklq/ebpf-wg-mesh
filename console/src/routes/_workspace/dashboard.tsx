@@ -1,17 +1,21 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { ProjectsPage } from "#/features/workspace/projects-page";
+import { WorkspacePageSkeleton } from "#/features/workspace/workspace-skeleton";
 import { loadWorkspaceOverview } from "#/lib/dashboard/server-functions";
 import { validateWorkspaceSearch } from "#/routes/-workspace-search";
 
-export const Route = createFileRoute("/dashboard")({
+export const Route = createFileRoute("/_workspace/dashboard")({
 	validateSearch: validateWorkspaceSearch,
 	loaderDeps: ({ search }) => ({ workspace: search.workspace }),
 	loader: ({ deps }) =>
 		loadWorkspaceOverview({ data: { workspaceId: deps.workspace } }),
+	pendingComponent: () => <WorkspacePageSkeleton section="projects" />,
 	component: DashboardRoute,
 });
 
 function DashboardRoute() {
 	const { shell, projects } = Route.useLoaderData();
-	return <ProjectsPage shell={shell} projects={projects} />;
+	return (
+		<ProjectsPage key={shell.workspace.id} shell={shell} projects={projects} />
+	);
 }

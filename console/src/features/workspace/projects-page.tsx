@@ -8,7 +8,6 @@ import { Notice } from "#/components/ui/notice";
 import { StatusDot } from "#/components/ui/status-dot";
 import { WorkspacePageHeader } from "#/features/workspace/page-header";
 import { canEditProjects } from "#/features/workspace/roles";
-import { WorkspaceShell } from "#/features/workspace/workspace-shell";
 import type {
 	DashboardProjectSummary,
 	DashboardWorkspaceShell,
@@ -45,6 +44,7 @@ export function ProjectsPage({
 				to: "/environments/$environmentId",
 				params: { environmentId: created.environmentId },
 			});
+			await router.invalidate();
 		} catch (cause) {
 			setError(formatError(cause));
 			setCreating(false);
@@ -67,7 +67,7 @@ export function ProjectsPage({
 	);
 
 	return (
-		<WorkspaceShell shell={shell} section="projects">
+		<>
 			<WorkspacePageHeader
 				title="Projects"
 				lede={`${projects.length} ${projects.length === 1 ? "project" : "projects"} in ${shell.workspace.name}`}
@@ -115,7 +115,7 @@ export function ProjectsPage({
 					))}
 				</ul>
 			)}
-		</WorkspaceShell>
+		</>
 	);
 }
 
@@ -127,8 +127,16 @@ function ProjectCard({ summary }: { summary: DashboardProjectSummary }) {
 	const hidden = services.length - maxServiceChips;
 	return (
 		<Link
-			to="/projects/$projectId"
-			params={{ projectId: project.id }}
+			to={
+				landingEnvironment
+					? "/environments/$environmentId"
+					: "/projects/$projectId/settings"
+			}
+			params={
+				landingEnvironment
+					? { environmentId: landingEnvironment.id }
+					: { projectId: project.id }
+			}
 			{...stylex.props(styles.card)}
 		>
 			<div {...stylex.props(styles.cardHeader)}>

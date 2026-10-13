@@ -36,10 +36,13 @@ export async function waitForServiceStatusFromSession(
 		waitIndex: string;
 		waitTimeoutSeconds: number;
 	},
+	signal?: AbortSignal,
 ) {
 	const session = await requireSession(runtime);
 	return runtime.platform
-		.call(PlatformService.method.getServiceStatus, session.user, input)
+		.call(PlatformService.method.getServiceStatus, session.user, input, {
+			signal,
+		})
 		.then((status) => ({
 			index: status.index,
 			notModified: status.notModified,
@@ -75,12 +78,14 @@ export async function waitForEnvironmentServicesFromSession(
 		waitIndex: string;
 		waitTimeoutSeconds: number;
 	},
+	signal?: AbortSignal,
 ) {
 	const session = await requireSession(runtime);
 	const result = await runtime.platform.call(
 		PlatformService.method.listServices,
 		session.user,
 		input,
+		{ signal },
 	);
 	if (result.notModified || !result.services) {
 		return result;

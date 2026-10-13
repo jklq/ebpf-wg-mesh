@@ -17,7 +17,7 @@ export const Route = createFileRoute("/events/environment-services")({
 					return indexedEventResponse({
 						event: "services",
 						signal: request.signal,
-						load: async (waitIndex) => {
+						load: async (waitIndex, signal) => {
 							const snapshot = await (
 								await import("#/lib/dashboard/core/operations-services.server")
 							).waitForEnvironmentServicesFromSession(
@@ -27,6 +27,7 @@ export const Route = createFileRoute("/events/environment-services")({
 									waitIndex,
 									waitTimeoutSeconds: WAIT_TIMEOUT_SECONDS,
 								},
+								signal,
 							);
 							return {
 								...snapshot,

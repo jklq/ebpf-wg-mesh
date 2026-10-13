@@ -13,7 +13,7 @@ export function indexedEventResponse<T>({
 	signal,
 }: {
 	event: string;
-	load: (after: string) => Promise<IndexedSnapshot<T>>;
+	load: (after: string, signal: AbortSignal) => Promise<IndexedSnapshot<T>>;
 	signal: AbortSignal;
 }): Response {
 	return new Response(indexedEventStream({ event, load, signal }), {
@@ -32,10 +32,11 @@ function indexedEventStream<T>({
 	signal,
 }: {
 	event: string;
-	load: (after: string) => Promise<IndexedSnapshot<T>>;
+	load: (after: string, signal: AbortSignal) => Promise<IndexedSnapshot<T>>;
 	signal: AbortSignal;
 }): ReadableStream<Uint8Array> {
 	const encoder = new TextEncoder();
+	const pendingLoad = new AbortController();
 	let closed = false;
 	let lastIndex = "0";
 	let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -53,6 +54,7 @@ function indexedEventStream<T>({
 			const close = () => {
 				if (closed) return;
 				closed = true;
+				pendingLoad.abort();
 				clearTimers();
 				signal.removeEventListener("abort", close);
 				try {
@@ -75,7 +77,8 @@ function indexedEventStream<T>({
 					return;
 				}
 				try {
-					const snapshot = await load(lastIndex);
+					const snapshot = await load(lastIndex, pendingLoad.signal);
+					if (closed) return;
 					lastIndex = snapshot.index;
 					if (!snapshot.notModified && snapshot.value !== undefined) {
 						enqueue(
@@ -84,6 +87,7 @@ function indexedEventStream<T>({
 					}
 					if (!closed) void publish();
 				} catch (error) {
+					if (closed) return;
 					enqueue(
 						`event: ${event}-error\ndata: ${JSON.stringify({
 							message: error instanceof Error ? error.message : "stream failed",

@@ -386,6 +386,82 @@ func TestSyncSessionRepublishesReportAfterIndependentUpdate(t *testing.T) {
 	}
 }
 
+func TestSyncSessionPublishesReportsWhileUpdatesContinue(t *testing.T) {
+	t.Parallel()
+	authority := newTestTLSAuthority(t)
+	reports := make(chan *agentv1.StatusReport, 1)
+	updatesDone := make(chan struct{})
+	var clusterIdentity string
+	syncAddr := startSyncServer(t, authority, func(stream agentv1.AgentControl_SyncServer) error {
+		hello, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		sessionID := hello.GetHello().GetSessionId()
+		nodeConfig := &agentv1.AssignedNodeConfig{WorkloadIpv4Subnet: "10.0.0.0/24"}
+		update := &agentv1.NodeConfigUpdate{
+			AgentId: "node-1", ClusterId: clusterIdentity, SessionId: sessionID,
+			NodeConfigVersion: reconciliation.HashNodeConfig(nodeConfig), NodeConfig: nodeConfig,
+			AuthorityEpoch: 1, AuthorityNotAfter: timestamppb.New(time.Now().Add(15 * time.Second)),
+		}
+		go func() {
+			defer close(updatesDone)
+			ticker := time.NewTicker(reportRepublishQuietPeriod / 5)
+			defer ticker.Stop()
+			for range 40 {
+				if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_NodeConfigUpdate{NodeConfigUpdate: update}}); err != nil {
+					return
+				}
+				if err := stream.Send(&agentv1.AgentServerMessage{Payload: &agentv1.AgentServerMessage_BatchEnd{BatchEnd: &agentv1.SyncBatchEnd{SessionId: sessionID}}}); err != nil {
+					return
+				}
+				select {
+				case <-stream.Context().Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+		for {
+			msg, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+			if report := msg.GetStatusReport(); report != nil {
+				select {
+				case reports <- report:
+				default:
+				}
+			}
+		}
+	})
+	app, creds, certNotAfter, clusterIdentity := newSyncSessionApp(t, authority)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- app.runSessionAt(ctx, creds, certNotAfter, clusterIdentity, syncAddr) }()
+	select {
+	case <-reports:
+		select {
+		case <-updatesDone:
+			t.Fatal("report was postponed until updates stopped")
+		default:
+		}
+	case <-updatesDone:
+		t.Fatal("continuous updates prevented report publication")
+	case err := <-done:
+		t.Fatalf("session ended before report: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for report during continuous updates")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("session did not stop")
+	}
+}
+
 func TestSyncSessionDefersReportUntilBatchApplied(t *testing.T) {
 	t.Parallel()
 

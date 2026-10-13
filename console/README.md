@@ -44,6 +44,8 @@ tooling/
 
 Keep a change with the behavior it affects. Feature modules may use shared modules; shared modules cannot import features, and implementation modules cannot import routes. UI primitives have no knowledge of application data. Server function adapters used across features live in `lib/dashboard/server-functions.ts`; fleet-specific adapters stay with fleet. Tests live beside the behavior they verify.
 
+Workspace pages share the pathless `routes/_workspace.tsx` layout. It keeps the sidebar mounted, follows the destination for active navigation and workspace selection, and shows page-shaped skeletons while child loaders run. Sidebar links preload in the viewport; other links and environment controls preload on intent. The router briefly caches loaded data, and mutations invalidate it so returning to an overview shows current projects and membership.
+
 ## Dashboard composition
 
 `DashboardPage` arranges navigation, canvas, panel and dialogs. Its controller exposes grouped `canvas`, `navigation`, `selection`, `creation` and `release` interfaces. State synchronization belongs to `useDashboardState`, canvas interaction to `useDashboardCanvas`, and apply/discard coordination to `useEnvironmentRelease`.

@@ -407,6 +407,45 @@ func TestBuildSchedulerGlobalAndProjectCaps(t *testing.T) {
 	claimBuildWith(t, d, ctx, "builder-3", buildA2.ID)
 }
 
+func TestBuildSchedulerSkipsSaturatedProjectsBeforeLimitingCandidates(t *testing.T) {
+	store, ctx, userID, projectID, service := setupSourceServiceForDeployment(t)
+	d := schedulerTestDelivery(store, deliverycore.BuildSchedulerConfig{
+		MaxConcurrentGlobal: 10, MaxConcurrentPerProject: 1,
+	}.WithDefaults())
+	enqueue := func(service deliverycore.ServiceRecord, commit string) deliverycore.BuildRunRecord {
+		t.Helper()
+		if err := seedReadySourceState(t, store, service, commit); err != nil {
+			t.Fatal(err)
+		}
+		build, err := enqueueBuildForTest(ctx, store, userID, service.ID, commit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return build
+	}
+	create := func(projectID, name string) deliverycore.ServiceRecord {
+		t.Helper()
+		created, err := createService(ctx, store, userID, productionEnvironmentID(t, store, projectID), name, service.Spec, "node-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return created
+	}
+	running := enqueue(service, "running")
+	claimBuildWith(t, d, ctx, "builder-1", running.ID)
+	for i := range 20 {
+		queued := create(projectID, fmt.Sprintf("queued-%d", i))
+		enqueue(queued, fmt.Sprintf("queued-commit-%d", i))
+	}
+	other, err := store.catalog.createProject(ctx, testUser(userID), "", "other-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eligible := enqueue(create(other.ID, "eligible"), "eligible-commit")
+	claimBuildWith(t, d, ctx, "builder-2", eligible.ID)
+	assertNoClaim(t, d, ctx, "builder-3")
+}
+
 func TestBuildSchedulerReleasesCapOnRunningTerminalPaths(t *testing.T) {
 	store, ctx, userID, projectID, serviceA := setupSourceServiceForDeployment(t)
 	serviceB := createSecondRepoService(t, store, ctx, projectID)

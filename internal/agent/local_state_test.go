@@ -490,6 +490,11 @@ func TestSupervisorRestoresAndReconcilesWithoutControlPlane(t *testing.T) {
 	if err := supervisor.Start(ctx, "cluster-a"); err != nil {
 		t.Fatalf("start supervisor: %v", err)
 	}
+	select {
+	case <-supervisor.ReportNotifications():
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup reconciliation did not publish a report")
+	}
 	runtime.mu.Lock()
 	calls := runtime.calls
 	cleanup := append([]bool(nil), runtime.cleanup...)
@@ -522,6 +527,11 @@ func TestSupervisorDisablesCleanupWhileRuntimeOwnershipIsUnknown(t *testing.T) {
 	defer cancel()
 	if err := supervisor.Start(ctx, "cluster-a"); err != nil {
 		t.Fatal(err)
+	}
+	select {
+	case <-supervisor.ReportNotifications():
+	case <-time.After(5 * time.Second):
+		t.Fatal("startup reconciliation did not publish a report")
 	}
 	runtime.mu.Lock()
 	cleanup := append([]bool(nil), runtime.cleanup...)

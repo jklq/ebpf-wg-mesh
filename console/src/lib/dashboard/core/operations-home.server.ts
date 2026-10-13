@@ -29,10 +29,12 @@ export async function loadDashboardHome(
 	}
 
 	const { config } = runtime;
-	const onboarding = await loadOnboardingDraft(runtime, session.user.id);
-	const githubAccount = await storeCall(runtime, "getGitHubAccount", (store) =>
-		store.getGitHubAccount(session.user.id),
-	);
+	const [onboarding, githubAccount] = await Promise.all([
+		loadOnboardingDraft(runtime, session.user.id),
+		storeCall(runtime, "getGitHubAccount", (store) =>
+			store.getGitHubAccount(session.user.id),
+		),
+	]);
 
 	const baseState = {
 		user: session.user,
@@ -57,23 +59,23 @@ export async function loadDashboardHome(
 	} satisfies DashboardHomeState;
 
 	try {
-		const [projects, fleet] = await Promise.all([
+		const [projects, fleet, selectedEnvironment] = await Promise.all([
 			runtime.platform
 				.call(PlatformService.method.listProjects, session.user, {})
 				.then((response) => response.projects ?? []),
 			optionalPlatformResult(
 				runtime.platform.call(OpsService.method.listFleet, session.user, {}),
 			),
+			selectedEnvironmentId
+				? optionalPlatformResult(
+						runtime.platform.call(
+							PlatformService.method.getEnvironment,
+							session.user,
+							{ environmentId: selectedEnvironmentId },
+						),
+					)
+				: undefined,
 		]);
-		const selectedEnvironment = selectedEnvironmentId
-			? await optionalPlatformResult(
-					runtime.platform.call(
-						PlatformService.method.getEnvironment,
-						session.user,
-						{ environmentId: selectedEnvironmentId },
-					),
-				)
-			: undefined;
 		let project = selectedEnvironment
 			? projects.find((entry) => entry.id === selectedEnvironment.projectId)
 			: onboarding.projectId

@@ -10,7 +10,6 @@ import { SettingsCard } from "#/features/project-settings/settings-card";
 import { WorkspaceMark } from "#/features/workspace/avatars";
 import { WorkspacePageHeader } from "#/features/workspace/page-header";
 import { canManageWorkspace, roleLabel } from "#/features/workspace/roles";
-import { WorkspaceShell } from "#/features/workspace/workspace-shell";
 import type { DashboardWorkspaceShell } from "#/lib/dashboard/core/types.server";
 import {
 	doDeleteWorkspace,
@@ -63,6 +62,7 @@ export function WorkspaceSettingsPage({
 				data: { workspaceId: workspace.id, userId: shell.user.id },
 			});
 			await router.navigate({ to: "/dashboard" });
+			await router.invalidate();
 		} catch (cause) {
 			setDangerError(formatError(cause));
 		}
@@ -77,6 +77,7 @@ export function WorkspaceSettingsPage({
 			});
 			setDeleting(false);
 			await router.navigate({ to: "/dashboard" });
+			await router.invalidate();
 		} catch (cause) {
 			setDangerError(formatError(cause));
 			setDeleteBusy(false);
@@ -84,7 +85,7 @@ export function WorkspaceSettingsPage({
 	};
 
 	return (
-		<WorkspaceShell shell={shell} section="settings">
+		<>
 			<WorkspacePageHeader
 				title="Settings"
 				lede={`General settings for ${workspace.name}`}
@@ -205,7 +206,7 @@ export function WorkspaceSettingsPage({
 					onConfirm={(confirmationName) => void remove(confirmationName)}
 				/>
 			)}
-		</WorkspaceShell>
+		</>
 	);
 }
 

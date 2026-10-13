@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { Link } from "@tanstack/react-router";
 import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
 import { buttonStyles } from "#/components/ui/button";
@@ -22,13 +23,13 @@ export function PageShell({
 	return (
 		<main {...stylex.props(styles.page)}>
 			<header {...stylex.props(styles.toolbar)}>
-				<a
-					href={back.href}
+				<Link
+					to={back.href}
 					{...stylex.props(buttonStyles.base, buttonStyles.ghost)}
 				>
 					<ArrowLeft size={13} />
 					{back.label}
-				</a>
+				</Link>
 				<div {...stylex.props(styles.toolbarTitle)}>
 					{icon}
 					<strong>{title}</strong>

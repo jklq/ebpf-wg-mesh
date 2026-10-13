@@ -8,13 +8,7 @@ import {
 import { sizes } from "#/styles/tokens.stylex";
 // @vitest-environment jsdom
 
-import {
-	cleanup,
-	fireEvent,
-	render,
-	screen,
-	waitFor,
-} from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import {
 	afterEach,
 	beforeAll,
@@ -34,6 +28,7 @@ import {
 	stubDashboardLayoutMetrics,
 } from "#/features/dashboard/dashboard-page.test-helpers";
 import { CreatedServiceCacheProvider } from "#/features/dashboard/state/created-service-cache";
+import { renderWithRouter as render } from "#/lib/dashboard/testkit/render-with-router";
 
 const {
 	doReleaseEnvironmentMock,

@@ -24,6 +24,7 @@ export interface PlatformGateway {
 		method: DescMethodUnary<I, O>,
 		user: DashboardUser,
 		input: MessageJsonType<I>,
+		options?: { signal?: AbortSignal },
 	): Promise<PlatformJson<O>>;
 }
 
@@ -32,11 +33,11 @@ export function createAuthenticatedPlatform(
 	assertionSecret: string,
 ): PlatformGateway {
 	return {
-		async call(method, user, input) {
+		async call(method, user, input, options) {
 			try {
 				const response = await transport.unary(
 					method,
-					undefined,
+					options?.signal,
 					undefined,
 					userAssertionMetadata({ userAssertionSecret: assertionSecret }, user),
 					fromPlatformJson(method.input, input),

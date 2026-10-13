@@ -42,7 +42,11 @@ export function WorkspaceShell({
 	return (
 		<div {...stylex.props(styles.layout)}>
 			<aside {...stylex.props(styles.sidebar)}>
-				<Link to="/dashboard" {...stylex.props(styles.brand)}>
+				<Link
+					to="/dashboard"
+					search={{ workspace: shell.workspace.id }}
+					{...stylex.props(styles.brand)}
+				>
 					<Zap size={15} {...stylex.props(styles.brandIcon)} />
 					<span {...stylex.props(styles.brandName)}>mesh</span>
 				</Link>
@@ -53,18 +57,21 @@ export function WorkspaceShell({
 				<nav {...stylex.props(styles.nav)} aria-label="Workspace">
 					<NavLink
 						to="/dashboard"
+						workspaceId={shell.workspace.id}
 						active={section === "projects"}
 						icon={<LayoutGrid size={14} />}
 						label="Projects"
 					/>
 					<NavLink
 						to="/workspace/people"
+						workspaceId={shell.workspace.id}
 						active={section === "people"}
 						icon={<Users size={14} />}
 						label="People"
 					/>
 					<NavLink
 						to="/workspace/settings"
+						workspaceId={shell.workspace.id}
 						active={section === "settings"}
 						icon={<Settings size={14} />}
 						label="Settings"
@@ -111,6 +118,7 @@ export function WorkspaceShell({
 
 function NavLink({
 	to,
+	workspaceId,
 	active,
 	icon,
 	label,
@@ -121,6 +129,7 @@ function NavLink({
 		| "/workspace/settings"
 		| "/deleted"
 		| "/fleet";
+	workspaceId?: string;
 	active: boolean;
 	icon: ReactNode;
 	label: string;
@@ -128,6 +137,8 @@ function NavLink({
 	return (
 		<Link
 			to={to}
+			search={workspaceId ? { workspace: workspaceId } : undefined}
+			preload="viewport"
 			aria-current={active ? "page" : undefined}
 			{...stylex.props(styles.navLink, active && styles.navLinkActive)}
 		>
@@ -240,6 +251,7 @@ function InvitationBanner({
 					to: "/dashboard",
 					search: { workspace: invitation.workspaceId },
 				});
+				await router.invalidate();
 			} else {
 				await router.invalidate();
 			}

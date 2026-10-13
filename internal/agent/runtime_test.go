@@ -125,6 +125,31 @@ func (f *fakeEngine) SetLogSink(LogSink) {}
 
 func (f *fakeEngine) Close() error { return nil }
 
+func TestContainerdRuntimeCancellationDoesNotRestartHealthyService(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	engine := &fakeEngine{status: map[string]serviceStatus{"alloc-1": {
+		AppliedSpecRevision: 1, AppliedRolloutGeneration: 1,
+	}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runtime := newRestartTestRuntime(t, dir, engine, nil)
+	runtime.probeHealth = func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe {
+		cancel()
+		return serviceHealthProbe{failureReason: context.Canceled.Error()}
+	}
+	state := restartState(&platformv1.ServiceRestart{Policy: platformv1.RestartPolicy_RESTART_POLICY_ALWAYS})
+	state.Services[0].Spec.Runtime.LivenessCheck = &platformv1.HealthCheck{
+		Type: platformv1.HealthCheck_TYPE_HTTP, Port: 8080, Path: "/health",
+	}
+	if report, err := runtime.Reconcile(ctx, state); !errors.Is(err, context.Canceled) || report != nil {
+		t.Fatalf("interrupted reconciliation = (%v, %v)", report, err)
+	}
+	if len(engine.removed) != 0 {
+		t.Fatalf("canceled probe restarted healthy allocation: %v", engine.removed)
+	}
+}
+
 func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing.T) {
 	t.Parallel()
 

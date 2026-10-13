@@ -247,6 +247,9 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	e.imageMu.Lock()
 	defer e.imageMu.Unlock()
 	defer func() {
+		if ctx.Err() != nil {
+			return
+		}
 		if err := e.collectUnusedImagesLocked(ctx); err != nil {
 			slog.Warn("collect unused allocation images", "error", err)
 		}
@@ -281,9 +284,16 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		_ = e.cleanupNetNS(svc.GetAllocationId())
 		return serviceStatus{}, false, fmt.Errorf("create container %s: %w", containerID, err)
 	}
+	var task containerd.Task
 	cleanup := func(err error) (serviceStatus, bool, error) {
-		_ = e.teardownNetwork(ctx, containerID, svc.GetAllocationId(), netnsPath)
-		_ = container.Delete(ctx, containerd.WithSnapshotCleanup)
+		// An interrupted startup still has to release its partial container.
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if task != nil {
+			_, _ = task.Delete(cleanupCtx, containerd.WithProcessKill)
+		}
+		_ = e.teardownNetwork(cleanupCtx, containerID, svc.GetAllocationId(), netnsPath)
+		_ = container.Delete(cleanupCtx, containerd.WithSnapshotCleanup)
 		_ = e.cleanupNetNS(svc.GetAllocationId())
 		return serviceStatus{}, false, err
 	}
@@ -291,12 +301,11 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	if _, err := e.setupNetwork(ctx, containerID, netnsPath, svc); err != nil {
 		return cleanup(err)
 	}
-	task, err := container.NewTask(ctx, e.logIOCreator(svc))
+	task, err = container.NewTask(ctx, e.logIOCreator(svc))
 	if err != nil {
 		return cleanup(fmt.Errorf("create task %s: %w", containerID, err))
 	}
 	if err := task.Start(ctx); err != nil {
-		_ = e.deleteTask(ctx, task, containerID)
 		return cleanup(fmt.Errorf("start task %s: %w", containerID, err))
 	}
 	return serviceStatus{

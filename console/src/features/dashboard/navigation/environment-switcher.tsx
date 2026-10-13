@@ -1,4 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
+import { useRouter } from "@tanstack/react-router";
 import { colors, fonts, motion, shape, space } from "#/styles/tokens.stylex";
 
 const slideDown = stylex.keyframes({
@@ -96,6 +97,7 @@ export function EnvironmentSwitcher({
 	onChanged: () => void;
 	onNavigateEnvironment: (environmentId: string | null) => void;
 }) {
+	const router = useRouter();
 	const [open, setOpen] = useState(false);
 	const [menuFor, setMenuFor] = useState<RowMenuAnchor | null>(null);
 	const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -170,6 +172,16 @@ export function EnvironmentSwitcher({
 		closeMenus();
 		if (id === environment.id) return;
 		onNavigateEnvironment(id);
+	};
+	const preloadEnvironment = (environmentId: string) => {
+		if (environmentId === environment.id) return;
+		void router
+			.preloadRoute({
+				to: "/environments/$environmentId",
+				params: { environmentId },
+				search: {},
+			})
+			.catch(() => {});
 	};
 
 	const openRowMenu = (
@@ -337,6 +349,8 @@ export function EnvironmentSwitcher({
 											active && styles.selectedEnvironment,
 										])}
 										role="menuitem"
+										onMouseEnter={() => preloadEnvironment(entry.id)}
+										onFocus={() => preloadEnvironment(entry.id)}
 										onClick={() => selectEnvironment(entry.id)}
 									>
 										<span {...stylex.props(styles.selectionIndicator)}>
