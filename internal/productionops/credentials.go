@@ -340,6 +340,9 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				env["CONTROLPLANE_INGRESS_PLATFORM_TLS_CERT_FILE"] = cfgDir(r.Plan, pl) + "/wildcard.crt"
 				env["CONTROLPLANE_INGRESS_PLATFORM_TLS_KEY_FILE"] = cfgDir(r.Plan, pl) + "/wildcard.key"
 				env["CONTROLPLANE_INGRESS_PUBLIC_ADDR"] = r.Config.PlatformDomain
+				if r.Config.AlarmWebhookURL != "" {
+					env["CONTROLPLANE_ALARM_WEBHOOK_URL"] = r.Config.AlarmWebhookURL
+				}
 			} else {
 				for key, name := range map[string]string{"DASHBOARD_JWT_SECRET": signkeys.ScopeDashboardSession, "DASHBOARD_CONTROLPLANE_USER_ASSERTION_SECRET": signkeys.ScopeUserAssertion} {
 					b, err := signing.ActiveSecret(ctx, name)

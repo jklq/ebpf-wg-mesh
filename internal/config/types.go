@@ -246,7 +246,11 @@ type DirectImageConfig struct {
 }
 
 type ControlPlaneConfig struct {
-	AuthorityFile    string
+	AuthorityFile string
+	// AlarmWebhookURL receives operator alarms, today for certificate
+	// renewal failures and platform wildcard expiry. Empty disables alarms;
+	// there is no default destination.
+	AlarmWebhookURL  string
 	RecoveryConfig   string
 	ConsoleCallerIDs []string
 	Profile          Profile

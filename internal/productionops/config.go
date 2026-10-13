@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/recovery"
@@ -44,6 +45,10 @@ type Config struct {
 	SourceConfig        string                      `json:"sourceConfig,omitempty"`
 	MonitorTokenFile    string                      `json:"monitorTokenFile,omitempty"`
 	IngressHealthListen string                      `json:"ingressHealthListen,omitempty"`
+	// AlarmWebhookURL receives operator alarms from scheduled operations
+	// (credential renewal today) and is passed to the control plane for its
+	// certificate alarms. Empty disables alarms; there is no default.
+	AlarmWebhookURL string `json:"alarmWebhookUrl,omitempty"`
 }
 type DatabaseConfig struct {
 	Binary               string `json:"binary"`
@@ -116,6 +121,9 @@ func privateJSON(path string, target any) error {
 func (c Config) Validate() error {
 	if c.Version != 1 {
 		return fmt.Errorf("operations configuration version must be 1")
+	}
+	if err := alarm.Validate(c.AlarmWebhookURL); err != nil {
+		return fmt.Errorf("alarmWebhookUrl: %w", err)
 	}
 	for _, path := range []string{c.StateDirectory, c.RecoveryConfig, c.Database.Binary, c.Database.CertificateDirectory, c.Database.URLFile, c.Database.BackupURIFile, c.Console.AdminBinary, c.Console.TokenKeyFile, c.WildcardCertificate, c.WildcardKey} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {

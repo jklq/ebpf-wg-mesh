@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/controlplane/xds"
 
 	"golang.org/x/crypto/acme"
@@ -24,11 +25,27 @@ const (
 	versionRetention    = 24 * time.Hour
 	pruneInterval       = time.Hour
 	maxFailureMessageSz = 512
+	// renewalAlarmWindow bounds failure alarms: a failed renewal pages the
+	// operator only when the served certificate is missing, expired, or
+	// expires within this window. Earlier failures retry silently.
+	renewalAlarmWindow = 72 * time.Hour
 )
+
+// platformAlarmLevels are the remaining-lifetime thresholds at which the
+// externally renewed wildcard pages the operator. Each level fires once
+// per certificate.
+var platformAlarmLevels = []struct {
+	name  string
+	after time.Duration
+}{
+	{"21d", 21 * 24 * time.Hour},
+	{"7d", 7 * 24 * time.Hour},
+	{"24h", 24 * time.Hour},
+}
 
 // Run issues and renews certificates until ctx ends. Only the live owner runs it.
 func (s *Service) Run(ctx context.Context) error {
-	if s == nil || s.issuer == nil {
+	if s == nil || (s.issuer == nil && s.platform == nil) {
 		<-ctx.Done()
 		return nil
 	}
@@ -52,6 +69,10 @@ func (s *Service) Run(ctx context.Context) error {
 }
 
 func (s *Service) reconcile(ctx context.Context, slots chan struct{}, workers *sync.WaitGroup, lastPrune *time.Time) error {
+	s.checkPlatform(ctx)
+	if s.issuer == nil {
+		return nil
+	}
 	hosts, err := s.hosts.RoutedHostnames(ctx)
 	if err != nil {
 		return err
@@ -145,6 +166,7 @@ func (s *Service) issue(ctx context.Context, host Hostname, record Record) {
 		if recordErr := s.store.RecordFailure(context.WithoutCancel(ctx), host.Name, attempts, next, failureMessage(err)); recordErr != nil {
 			slog.Warn("record certificate failure", "hostname", host.Name, "error", recordErr)
 		}
+		s.alarmRenewalFailure(ctx, host.Name, record, attempts, next, err)
 		return
 	}
 	slog.Info("certificate issued", "hostname", host.Name, "duration", s.now().Sub(started))
@@ -178,6 +200,98 @@ func retryDelay(attempts int, err error) time.Duration {
 		delay = after
 	}
 	return delay
+}
+
+// alarmRenewalFailure pages the operator when a failed attempt leaves a
+// hostname without a certificate that comfortably outlives the retry
+// schedule. Failures with ample lifetime left stay log-only; the loop
+// retries them on its own.
+func (s *Service) alarmRenewalFailure(ctx context.Context, hostname string, record Record, attempts int, next time.Time, err error) {
+	if !s.alarm.Enabled() {
+		return
+	}
+	now := s.now()
+	switch {
+	case record.Fingerprint == "":
+	case !now.Before(record.NotAfter):
+	case record.NotAfter.Sub(now) <= renewalAlarmWindow:
+	default:
+		return
+	}
+	expiry := "no certificate is served yet"
+	if record.Fingerprint != "" {
+		expiry = fmt.Sprintf("current certificate expires at %s", record.NotAfter.UTC().Format(time.RFC3339))
+	}
+	s.sendAlarm(ctx, alarm.Event{
+		Event:   "certificate_renewal_failed",
+		Subject: hostname,
+		Message: fmt.Sprintf("issuance attempt %d failed: %s; %s; next attempt at %s",
+			attempts, failureMessage(err), expiry, next.UTC().Format(time.RFC3339)),
+		NextAction: "check DNS, ingress reachability, and the ACME account; renewal keeps retrying alone",
+	})
+}
+
+// checkPlatform watches the externally renewed wildcard. The platform never
+// holds the DNS-01 credential, so it cannot renew this certificate itself;
+// instead it pages the operator early enough that a silent external renewal
+// failure cannot become an outage. Each threshold fires once per
+// certificate, and a fresh owner may repeat one alarm after a handover.
+func (s *Service) checkPlatform(ctx context.Context) {
+	if s.platform == nil || !s.alarm.Enabled() {
+		return
+	}
+	subject := "*." + s.platformSuffix
+	version, err := s.platform.load()
+	if err != nil {
+		if s.alarmOnce("platform-load:" + failureMessage(err)) {
+			s.sendAlarm(ctx, alarm.Event{
+				Event:      "platform_certificate_unavailable",
+				Subject:    subject,
+				Message:    fmt.Sprintf("platform wildcard certificate cannot be loaded: %s", failureMessage(err)),
+				NextAction: "repair the deployed wildcard files; generated hostnames have no valid certificate",
+			})
+		}
+		return
+	}
+	remaining := version.NotAfter.Sub(s.now())
+	// Tightest applicable level wins, so an owner that starts late pages
+	// once at the real urgency instead of replaying every looser level.
+	for i := len(platformAlarmLevels) - 1; i >= 0; i-- {
+		level := platformAlarmLevels[i]
+		if remaining > level.after {
+			continue
+		}
+		if s.alarmOnce("platform:" + version.Fingerprint + ":" + level.name) {
+			s.sendAlarm(ctx, alarm.Event{
+				Event:   "platform_certificate_expiring",
+				Subject: subject,
+				Message: fmt.Sprintf("platform wildcard certificate expires at %s (less than %s left) and external renewal has not replaced it",
+					version.NotAfter.UTC().Format(time.RFC3339), level.name),
+				NextAction: "check the external DNS-01 renewal job and its deploy hook",
+			})
+		}
+		return
+	}
+}
+
+// alarmOnce claims key, reporting true only for its first caller.
+func (s *Service) alarmOnce(key string) bool {
+	s.alarmMu.Lock()
+	defer s.alarmMu.Unlock()
+	if s.alarmed == nil {
+		s.alarmed = map[string]bool{}
+	}
+	if s.alarmed[key] {
+		return false
+	}
+	s.alarmed[key] = true
+	return true
+}
+
+func (s *Service) sendAlarm(ctx context.Context, event alarm.Event) {
+	if err := s.alarm.Send(context.WithoutCancel(ctx), event); err != nil {
+		slog.Warn("send certificate alarm", "event", event.Event, "subject", event.Subject, "error", err)
+	}
 }
 
 func failureMessage(err error) string {

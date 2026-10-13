@@ -1,0 +1,21 @@
+[Unit]
+Description=Renew one ingress identity before it expires
+Wants=network-online.target
+After=network-online.target
+
+# One unit per ingress identity on an operator-controlled control-plane
+# host. Replace ingress-eu-1 and the binary path, and put the secrets in
+# the environment file (mode 0600, owned by this user):
+#   CONTROLPLANE_DB_URL=...
+#   CONTROLPLANE_STATE_DIR=/var/lib/controlplane
+#   CONTROLPLANE_ALARM_WEBHOOK_URL=https://...   (alarm on failure)
+# Add the secret-key provider variables your installation uses.
+# This renews the staged generation only; deliver it to the ingress host
+# and switch its `current` symlink with your existing delivery tool.
+[Service]
+Type=oneshot
+User=controlplane
+UMask=0077
+EnvironmentFile=/etc/ebpf-wg-mesh/ingress-renew.env
+ExecStart=/opt/ebpf-wg-mesh/bin/controlplane signing-keys issue-client-cert --caller-class ingress --caller-id ingress-eu-1 --ttl 24h --out-dir /srv/ingress-eu-1/identity --mounted-dir /etc/envoy/identity
+TimeoutStartSec=10min

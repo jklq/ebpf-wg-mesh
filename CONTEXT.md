@@ -79,3 +79,9 @@ It is independent of an environment release or an application deployment.
 **Platform Upgrade**:
 One controlled transition of an installation from its applied platform release to
 another platform release.
+
+**Alarm**:
+One message the platform sends to the operator when automatic operation fails
+with service at risk. An alarm names the failed operation and the next
+operator action.
+_Avoid_: Alert, notification

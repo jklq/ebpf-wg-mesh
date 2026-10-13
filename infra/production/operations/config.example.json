@@ -23,6 +23,7 @@
   "sourceConfig": "/etc/platform/source-archives.json",
   "monitorTokenFile": "/etc/platform/monitor-token",
   "ingressHealthListen": "0.0.0.0:19001",
+  "alarmWebhookUrl": "https://hooks.example.com/platform-alarm",
   "probes": {
     "cockroachdb": {"url": "https://{socketHost}:8080/health", "caFile": "{configDir}/certs/ca.crt", "status": 200},
     "controlplane": {

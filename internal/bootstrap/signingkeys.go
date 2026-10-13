@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/ingressnodes"
@@ -62,10 +63,10 @@ func signingKeysUsageError() error {
 	return fmt.Errorf("usage: controlplane signing-keys <init|list|rotate-start|rotate-finish|export|check|issue-client-cert> [flags]")
 }
 
-func runSigningKeysCommand(command string, args []string) error {
+func runSigningKeysCommand(command string, args []string) (err error) {
 	var dbURL, stateDir, hmacSecret, hmacSecretFile, registryIssuer, minOverlapRaw, outPath string
 	var scopes scopeListFlag
-	var callerClass, callerID, ttlRaw, identityDir, mountedDir string
+	var callerClass, callerID, ttlRaw, identityDir, mountedDir, alarmURL string
 	var force bool
 	var keysCfg config.SecretKeysConfig
 	fs := flag.NewFlagSet("controlplane signing-keys "+command, flag.ContinueOnError)
@@ -97,9 +98,33 @@ func runSigningKeysCommand(command string, args []string) error {
 		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (agent, dashboard, builder, or ingress)")
 		stringFlag(fs, &callerID, "caller-id", "CONTROLPLANE_SIGNING_KEYS_CALLER_ID", "", "client caller id")
 		stringFlag(fs, &ttlRaw, "ttl", "CONTROLPLANE_SIGNING_KEYS_CLIENT_TTL", "24h", "client certificate lifetime")
+		stringFlag(fs, &alarmURL, "alarm-webhook-url", "CONTROLPLANE_ALARM_WEBHOOK_URL", "", "HTTPS webhook paged when this scheduled renewal fails; empty disables alarms")
 	}
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if command == "issue-client-cert" {
+		// Scheduled renewal runs unattended, so its failure pages the
+		// operator instead of dying silently in a timer log. The identity
+		// still expires on schedule; the alarm carries the fixed margin.
+		sender, aerr := alarm.New(alarmURL, "controlplane signing-keys")
+		if aerr != nil {
+			return aerr
+		}
+		defer func() {
+			if err == nil || !sender.Enabled() {
+				return
+			}
+			event := alarm.Event{
+				Event:      "credential_renewal_failed",
+				Subject:    strings.TrimSpace(callerClass + "/" + callerID),
+				Message:    err.Error(),
+				NextAction: "run the renewal command by hand before the current identity expires, then inspect why the scheduled run failed",
+			}
+			if serr := sender.Send(context.Background(), event); serr != nil {
+				err = fmt.Errorf("%w (alarm also failed: %v)", err, serr)
+			}
+		}()
 	}
 	if strings.TrimSpace(keysCfg.KeyringPath) == "" {
 		keysCfg.KeyringPath = filepath.Join(stateDir, "secret-keys", "keys.json")

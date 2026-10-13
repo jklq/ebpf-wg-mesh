@@ -46,9 +46,18 @@ authentication bypass.
 
 ## Rotation
 
-Ingress leaves have a maximum 24-hour lifetime. Run the provisioning command
-at least every 12 hours, alert on failure, and deploy the complete new generation
-before expiry. The command validates the key pair and atomically switches the
+Ingress leaves have a maximum 24-hour lifetime. Renewal is automatic; no
+person runs it on a schedule. On a platformctl-managed installation, the
+credentials timer renews every leaf hourly and pages the alarm webhook when
+a round fails. On an installation managed by hand, install the renewal timer
+once (see `infra/production/ingress/`): it runs the provisioning command
+every six hours, and `--alarm-webhook-url` (or `CONTROLPLANE_ALARM_WEBHOOK_URL`)
+makes a failed run page the operator. Set the alarm destination in exactly
+one place per surface — `alarmWebhookUrl` in the operations configuration
+for managed installations, `--alarm-webhook-url` on the control plane and
+renewal commands otherwise. There is no default destination; with none set,
+failures stay in the logs. Deploy the complete new generation before expiry.
+The command validates the key pair and atomically switches the
 `current` symlink. Envoy watches the identity directory through filesystem SDS
 and reloads the certificate, key, and trust bundle without a restart (see
 [Envoy filesystem SDS rotation](https://www.envoyproxy.io/docs/envoy/v1.36.0/configuration/security/secret)). For remote
@@ -67,7 +76,9 @@ configured CA overlap and client renewal; then deploy the final bundle. Both old
 and new CA leaves are accepted during overlap. Revoked and expired leaves are
 rechecked on each request and configuration push, including existing streams.
 
-Monitor identity expiry, Envoy's SDS reload failures, and xDS ACK/NACK state.
+Identity expiry needs no separate expiry monitor: the renewal alarm fires
+while hours of margin remain. Still monitor Envoy's SDS reload failures and
+xDS ACK/NACK state.
 The VM probe and local stack use the same authenticated transport and stable
 node IDs.
 
@@ -195,10 +206,19 @@ authenticated SDS without a restart. An incomplete or invalid replacement keeps
 the previous valid certificate. Missing, expired, mismatched, or incorrect
 wildcard material is rejected at startup. Expiry during operation fails
 publication and certificate status rather than removing HTTPS from the last
-good snapshot or ordering individual certificates. Monitor wildcard expiry and
-renewal/deployment failures before the old certificate expires.
+good snapshot or ordering individual certificates. The wildcard itself stays
+externally renewed on purpose — the DNS-01 credential never enters the
+platform — but its expiry is now watched by the control plane: with an alarm
+webhook set, it pages the operator at 21 days, 7 days, and 24 hours of
+remaining lifetime, once per level, and when the deployed files cannot be
+loaded at all. A silent external renewal failure therefore becomes an alarm
+long before it becomes an outage.
 
-Custom domains retain individual ACME HTTP-01 issuance and renewal. Their CNAME
+Custom domains retain individual ACME HTTP-01 issuance and renewal, which the
+control plane already runs alone before expiry. A failed attempt pages the
+alarm webhook only when service is actually at risk: no certificate yet, an
+expired certificate, or under 72 hours of lifetime left. Earlier failures
+retry alone on the existing backoff. Their CNAME
 ownership checks still point at the service's generated hostname. Keep port 80
 reachable for those custom-domain challenges; ordinary certified traffic
 redirects to HTTPS. The control plane needs no DNS-01 credentials.

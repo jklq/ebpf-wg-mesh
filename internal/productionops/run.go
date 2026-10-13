@@ -2,6 +2,7 @@ package productionops
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/builder"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -232,7 +233,7 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if !verify {
 		if err := r.Execute(ctx, args); err != nil {
-			return fmt.Errorf("%s: %w", args[0], err)
+			return r.alarmFailure(ctx, args[0], fmt.Errorf("%s: %w", args[0], err))
 		}
 	}
 	result, err := r.Verify(ctx, args)
@@ -244,9 +245,34 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 				return fmt.Errorf("verify %s: %w; pause unresolved: %v", args[0], err, pauseErr)
 			}
 		}
-		return fmt.Errorf("verify %s: %w", args[0], err)
+		return r.alarmFailure(ctx, args[0], fmt.Errorf("verify %s: %w", args[0], err))
 	}
 	return json.NewEncoder(out).Encode(result)
+}
+
+// alarmFailure pages the operator about a failed scheduled operation and
+// returns err, annotated when the alarm itself could not be sent. Only
+// timer-driven operations alarm; an operator at the terminal already sees
+// interactive failures. Renewal retries hourly on its timer, so a lasting
+// failure alarms again each round until fixed.
+func (r *Runner) alarmFailure(ctx context.Context, operation string, err error) error {
+	if operation != "credential-renew" {
+		return err
+	}
+	sender, aerr := alarm.New(r.Config.AlarmWebhookURL, "operations")
+	if aerr != nil || !sender.Enabled() {
+		return err
+	}
+	event := alarm.Event{
+		Event:      "credential_renewal_failed",
+		Subject:    r.Plan.Installation.ID,
+		Message:    err.Error(),
+		NextAction: "inspect the credentials timer on a completion host; internal certificates expire 24h after issue and renewal retries hourly",
+	}
+	if serr := sender.Send(context.WithoutCancel(ctx), event); serr != nil {
+		return fmt.Errorf("%w (alarm also failed: %v)", err, serr)
+	}
+	return err
 }
 
 func (r *Runner) Execute(ctx context.Context, args []string) error {

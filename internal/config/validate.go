@@ -10,9 +10,14 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+
+	"ebof-wg-mesh/internal/alarm"
 )
 
 func validateControlPlane(cfg ControlPlaneConfig) error {
+	if err := alarm.Validate(cfg.AlarmWebhookURL); err != nil {
+		return fmt.Errorf("controlplane.alarmWebhookUrl: %w", err)
+	}
 	if cfg.InternalGRPC.Listen == "" {
 		return errors.New("controlplane.internalGrpc.listen is required")
 	}

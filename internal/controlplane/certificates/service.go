@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/controlplane/xds"
 )
 
@@ -24,6 +25,9 @@ type Config struct {
 	PlatformCertFile           string
 	PlatformKeyFile            string
 	RequirePlatformCertificate bool
+	// Alarm pages the operator when renewal fails with service at risk and
+	// when the externally renewed wildcard nears expiry. Nil disables alarms.
+	Alarm *alarm.Sender
 	// Workers bounds the concurrent issuances. Zero selects a default.
 	Workers int
 	Now     func() time.Time
@@ -39,11 +43,15 @@ type Service struct {
 	verify         OwnershipVerifier
 	platform       *platformCertificate
 	platformSuffix string
+	alarm          *alarm.Sender
 	workers        int
 	now            func() time.Time
 
 	keysMu sync.Mutex
 	keys   map[string]xds.KeyPair
+
+	alarmMu sync.Mutex
+	alarmed map[string]bool
 
 	nudge    chan struct{}
 	inflight sync.Map
@@ -73,9 +81,11 @@ func New(cfg Config) (*Service, error) {
 		verify:         cfg.Verify,
 		platform:       platform,
 		platformSuffix: strings.ToLower(strings.Trim(strings.TrimSpace(cfg.PlatformSuffix), ".")),
+		alarm:          cfg.Alarm,
 		workers:        workers,
 		now:            now,
 		keys:           map[string]xds.KeyPair{},
+		alarmed:        map[string]bool{},
 		nudge:          make(chan struct{}, 1),
 	}, nil
 }

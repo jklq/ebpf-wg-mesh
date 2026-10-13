@@ -37,6 +37,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 
 	platformv1connect "ebof-wg-mesh/api/proto/platformv1connect"
+	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/reconciliation"
@@ -453,6 +454,10 @@ func newCertificateService(cfg config.ControlPlaneConfig, store *persistence) (*
 		}
 		issuer = acme
 	}
+	alarms, err := alarm.New(cfg.AlarmWebhookURL, "controlplane")
+	if err != nil {
+		return nil, fmt.Errorf("configure alarms: %w", err)
+	}
 	resolver := routing.NewPublicDNSResolver()
 	certs, err := certificates.New(certificates.Config{
 		Store:  store.certificates,
@@ -467,6 +472,7 @@ func newCertificateService(cfg config.ControlPlaneConfig, store *persistence) (*
 		PlatformCertFile:           cfg.Ingress.TLS.PlatformCertFile,
 		PlatformKeyFile:            cfg.Ingress.TLS.PlatformKeyFile,
 		RequirePlatformCertificate: cfg.Profile.IsProduction(),
+		Alarm:                      alarms,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("configure ingress certificates: %w", err)

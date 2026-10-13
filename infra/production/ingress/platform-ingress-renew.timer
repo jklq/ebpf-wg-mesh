@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew ingress identities well before their 24h expiry
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+Persistent=true
+Unit=platform-ingress-renew.service
+
+[Install]
+WantedBy=timers.target
