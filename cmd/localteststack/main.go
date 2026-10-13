@@ -41,6 +41,10 @@ type stackSummary struct {
 
 const consoleStartupTimeout = 2 * time.Minute
 
+// localConsoleCallerID is the CN of the console client certificate; the control
+// plane must allow it as a console caller.
+const localConsoleCallerID = "dashboard-local"
+
 func main() {
 	if err := run(); err != nil {
 		log.Print(err)
@@ -199,8 +203,9 @@ func run() error {
 			Users: bootstrapUsers,
 		},
 		Dashboard: config.ManagedDashboardConfig{
-			ServiceCallerID: "dashboard-local",
+			ServiceCallerID: localConsoleCallerID,
 		},
+		ConsoleCallerIDs: []string{localConsoleCallerID},
 		Mesh: config.ControlPlaneMeshConfig{
 			InterfaceName:              "wg0",
 			ListenPort:                 51820,
@@ -464,7 +469,7 @@ func run() error {
 	}()
 	log.Printf("local registry ready: %s", managedRegistry.Host())
 
-	identity, err := server.EnsureDashboardClientIdentity(ctx, "dashboard-local")
+	identity, err := server.EnsureDashboardClientIdentity(ctx, localConsoleCallerID)
 	if err != nil {
 		return fmt.Errorf("mint dashboard client identity: %v", err)
 	}
