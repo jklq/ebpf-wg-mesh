@@ -8,6 +8,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -29,7 +30,13 @@ type Entry struct {
 // during replay: a committed decision outlives the lease that authorized it.
 func (s DurableState) Apply(entry Entry) (DurableState, error) {
 	next, _, err := s.applyEntry(entry)
-	return next, err
+	if err == nil {
+		err = next.validateReservations()
+	}
+	if err != nil {
+		return s, err
+	}
+	return next, nil
 }
 
 func (s DurableState) applyEntry(entry Entry) (DurableState, Batch, error) {
@@ -109,18 +116,9 @@ func changes[T any](before, after map[string]T) []Change[T] {
 
 func (s DurableState) validateReservations() error {
 	addresses := make(map[string]string)
-	for id, assignment := range s.Assignments {
-		if assignment.ID != id || assignment.AgentID == "" || assignment.ServiceID == "" || assignment.DeploymentID == "" {
-			return fmt.Errorf("incomplete assignment %q", id)
-		}
-		if _, ok := s.Agents[assignment.AgentID]; !ok {
-			return fmt.Errorf("assignment %q has no agent", id)
-		}
-		if _, ok := s.Services[assignment.ServiceID]; !ok {
-			return fmt.Errorf("assignment %q has no service", id)
-		}
-		if _, ok := s.Deployments[assignment.DeploymentID]; !ok {
-			return fmt.Errorf("assignment %q has no deployment", id)
+	for id, assignment := range s.Assignments.All() {
+		if err := s.validateAssignment(id, assignment); err != nil {
+			return err
 		}
 		for _, address := range []string{assignment.AllocationIPv4, assignment.AllocationIPv6} {
 			if address == "" {
@@ -135,6 +133,22 @@ func (s DurableState) validateReservations() error {
 	return nil
 }
 
+func (s DurableState) validateAssignment(id string, assignment Assignment) error {
+	if assignment.ID != id || assignment.AgentID == "" || assignment.ServiceID == "" || assignment.DeploymentID == "" {
+		return fmt.Errorf("incomplete assignment %q", id)
+	}
+	if _, ok := s.Agents[assignment.AgentID]; !ok {
+		return fmt.Errorf("assignment %q has no agent", id)
+	}
+	if _, ok := s.Services[assignment.ServiceID]; !ok {
+		return fmt.Errorf("assignment %q has no service", id)
+	}
+	if _, ok := s.Deployments[assignment.DeploymentID]; !ok {
+		return fmt.Errorf("assignment %q has no deployment", id)
+	}
+	return nil
+}
+
 func (s DurableState) Clone() DurableState {
 	next := DurableState{
 		Projects:       maps.Clone(s.Projects),
@@ -142,7 +156,7 @@ func (s DurableState) Clone() DurableState {
 		LogIndex:       s.LogIndex,
 		Services:       maps.Clone(s.Services),
 		Revisions:      maps.Clone(s.Revisions),
-		Assignments:    maps.Clone(s.Assignments),
+		Assignments:    s.Assignments,
 		Rollouts:       maps.Clone(s.Rollouts),
 		Deployments:    maps.Clone(s.Deployments),
 		Agents:         maps.Clone(s.Agents),
@@ -161,10 +175,10 @@ func (s DurableState) Clone() DurableState {
 		v.EnvCiphertext = bytes.Clone(v.EnvCiphertext)
 		next.Revisions[id] = v
 	}
-	for id, v := range next.Assignments {
+	for id, v := range next.Assignments.All() {
 		v.DrainStartedAt = clonePointer(v.DrainStartedAt)
 		v.DrainDeadline = clonePointer(v.DrainDeadline)
-		next.Assignments[id] = v
+		next.Assignments.Set(id, v)
 	}
 	for id, v := range next.Rollouts {
 		v.StrategyJSON = bytes.Clone(v.StrategyJSON)
@@ -196,7 +210,7 @@ func clonePointer[T any](v *T) *T {
 
 func (s DurableState) applyBatch(batch Batch) (DurableState, error) {
 	for _, change := range batch.Assignments {
-		if before, exists := s.Assignments[change.Key]; exists && change.Value != nil &&
+		if before, exists := s.Assignments.Lookup(change.Key); exists && change.Value != nil &&
 			(before.AgentID != change.Value.AgentID || before.ServiceID != change.Value.ServiceID) {
 			return s, fmt.Errorf("assignment %q cannot change owner", change.Key)
 		}
@@ -219,7 +233,7 @@ func (s DurableState) applyBatch(batch Batch) (DurableState, error) {
 		}
 	}
 	if len(batch.Assignments) > 0 {
-		if next.Assignments, err = applyChanges(s.Assignments, batch.Assignments); err != nil {
+		if next.Assignments, err = applyRowChanges(s.Assignments, batch.Assignments); err != nil {
 			return s, err
 		}
 	}
@@ -263,9 +277,6 @@ func (s DurableState) applyBatch(batch Batch) (DurableState, error) {
 			return s, err
 		}
 	}
-	if err := next.validateReservations(); err != nil {
-		return s, err
-	}
 	return next, nil
 }
 
@@ -303,7 +314,7 @@ func Diff(before, after DurableState) Batch {
 		Projects:       changes(before.Projects, after.Projects),
 		Services:       changes(before.Services, after.Services),
 		Revisions:      changes(before.Revisions, after.Revisions),
-		Assignments:    changes(before.Assignments, after.Assignments),
+		Assignments:    tableChanges(before.Assignments, after.Assignments),
 		Rollouts:       changes(before.Rollouts, after.Rollouts),
 		Deployments:    changes(before.Deployments, after.Deployments),
 		Agents:         changes(before.Agents, after.Agents),
@@ -313,4 +324,37 @@ func Diff(before, after DurableState) Batch {
 		Destructions:   changes(before.Destructions, after.Destructions),
 		Domains:        changes(before.Domains, after.Domains),
 	}
+}
+
+func applyRowChanges[T any](previous RowMap[T], changes []Change[T]) (RowMap[T], error) {
+	next := previous
+	seen := make(map[string]bool, len(changes))
+	for _, change := range changes {
+		if change.Key == "" || seen[change.Key] {
+			return previous, fmt.Errorf("empty or repeated durable key %q", change.Key)
+		}
+		seen[change.Key] = true
+		if change.Value == nil {
+			next.Delete(change.Key)
+		} else {
+			next.Set(change.Key, *change.Value)
+		}
+	}
+	return next, nil
+}
+
+func tableChanges[T any](before, after RowMap[T]) []Change[T] {
+	var result []Change[T]
+	for key, value := range after.All() {
+		if previous, exists := before.Lookup(key); !exists || !reflect.DeepEqual(previous, value) {
+			result = append(result, Change[T]{Key: key, Value: &value})
+		}
+	}
+	for key := range before.All() {
+		if _, exists := after.Lookup(key); !exists {
+			result = append(result, Change[T]{Key: key})
+		}
+	}
+	slices.SortFunc(result, func(a, b Change[T]) int { return strings.Compare(a.Key, b.Key) })
+	return result
 }

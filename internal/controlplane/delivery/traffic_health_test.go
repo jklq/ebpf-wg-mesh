@@ -48,10 +48,10 @@ func TestReachableWorkloadSurvivesManagementSessionLoss(t *testing.T) {
 	l := startLive(t)
 	l.applyTestState(journal.DurableState{ClusterID: "test", LogIndex: 1,
 		Services: map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
-		Assignments: map[string]journal.Assignment{"alloc": {
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{"alloc": {
 			ID: "alloc", ServiceID: "svc", AgentID: "agent", AllocationIPv4: "127.0.0.1", AllocationIPv6: "fd00::1",
 			DesiredSpecRevision: 1, DesiredRolloutGeneration: 1, RolloutState: AllocationRolloutServing,
-		}},
+		}}),
 	})
 	if err := l.BeginSession("agent", "s1", []string{"alloc"}, []string{"alloc"}, true); err != nil {
 		t.Fatal(err)

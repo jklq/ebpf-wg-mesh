@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
@@ -36,6 +37,8 @@ type BuildExecutor interface {
 // ExecutionSpec is the complete explicit input to one build execution.
 type ExecutionSpec struct {
 	BuildID string
+	// CacheScope comes from the control plane: project/environment/service identity.
+	CacheScope string
 
 	// SnapshotArchivePath is a compressed snapshot archive staged by the caller.
 	SnapshotArchivePath string
@@ -47,9 +50,10 @@ type ExecutionSpec struct {
 	Buildkit BuildkitEndpoint
 	Railpack RailpackToolchain
 
-	Limits  ResourceLimits
-	Network NetworkPolicy
-	Cache   CachePolicy
+	Limits      ResourceLimits
+	Network     NetworkPolicy
+	Cache       CachePolicy
+	cacheImport bool
 
 	// Cleanup destroys and verifies workspace removal; disable only to debug a failed build.
 	Cleanup bool
@@ -176,24 +180,26 @@ func (p NetworkPolicy) Validate() error {
 type CacheMode string
 
 const (
-	CacheModeNone CacheMode = "none"
+	CacheModeNone    CacheMode = "none"
+	CacheModeService CacheMode = "service"
 	// CacheModeContentAddressed persists cache only under content-derived keys.
 	CacheModeContentAddressed CacheMode = "content-addressed"
 )
 
 type CachePolicy struct {
-	Mode CacheMode
-	Key  string
+	Mode     CacheMode
+	Key      string
+	MaxBytes int64
 }
 
-// Validate requires an explicit mode and, for content-addressed mode, a key.
+// Validate requires an explicit mode and a bounded byte budget for retained caches.
 func (p CachePolicy) Validate() error {
 	switch p.Mode {
 	case CacheModeNone:
 		return nil
-	case CacheModeContentAddressed:
-		if strings.TrimSpace(p.Key) == "" {
-			return errors.New("content-addressed cache requires a key")
+	case CacheModeService, CacheModeContentAddressed:
+		if strings.TrimSpace(p.Key) == "" || p.MaxBytes <= 0 {
+			return errors.New("build cache requires a key and a positive byte limit")
 		}
 		return nil
 	default:
@@ -213,5 +219,20 @@ func ContentCacheKey(snapshotDigest string, recipe *platformv1.BuildRecipe, fron
 	}
 	parts = append(parts, "frontend="+strings.TrimSpace(frontendImage))
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\n")))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// ServiceCacheKey keeps layer reuse stable as source changes, within one
+// service's isolation boundary and build recipe/toolchain.
+func ServiceCacheKey(scope string, recipe *platformv1.BuildRecipe, frontendImage string) string {
+	contextDir, dockerfile := recipe.GetContextDir(), recipe.GetDockerfilePath()
+	if contextDir == "" {
+		contextDir = "."
+	}
+	if dockerfile == "" {
+		dockerfile = "Dockerfile"
+	}
+	parts, _ := json.Marshal([]string{scope, recipe.GetBuilder().String(), contextDir, dockerfile, frontendImage})
+	sum := sha256.Sum256(parts)
 	return "sha256:" + hex.EncodeToString(sum[:])
 }

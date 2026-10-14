@@ -21,13 +21,13 @@ func TestSharedEnvironmentMembership(t *testing.T) {
 			"a": {ID: "a", EnvironmentID: "a"},
 			"b": {ID: "b", EnvironmentID: "b"},
 		},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"1a":       {ID: "1a", AgentID: "1", ServiceID: "a"},
 			"2a":       {ID: "2a", AgentID: "2", ServiceID: "a"},
 			"2a-extra": {ID: "2a-extra", AgentID: "2", ServiceID: "a"},
 			"2b":       {ID: "2b", AgentID: "2", ServiceID: "b"},
 			"3b":       {ID: "3b", AgentID: "3", ServiceID: "b"},
-		},
+		}),
 	}
 	for _, id := range []string{"1", "2", "3"} {
 		state.Agents[id] = journal.AgentRegistration{
@@ -36,9 +36,9 @@ func TestSharedEnvironmentMembership(t *testing.T) {
 		}
 	}
 	state.Deployments = map[string]journal.Deployment{"dep": {ID: "dep"}}
-	for id, a := range state.Assignments {
+	for id, a := range state.Assignments.All() {
 		a.DeploymentID = "dep"
-		state.Assignments[id] = a
+		state.Assignments.Set(id, a)
 	}
 	product := journal.NewProjection(state)
 	check := func(wantPeers []string, wantIdentities int) {
@@ -79,12 +79,12 @@ func TestSharedEnvironmentMembership(t *testing.T) {
 		check(nil, 3)
 	}
 	delete(state.Administration, "2")
-	delete(state.Assignments, "2a-extra")
+	state.Assignments.Delete("2a-extra")
 	check([]string{"2"}, 2)
-	assignment := state.Assignments["2a"]
+	assignment := state.Assignments.Get("2a")
 	assignment.RolloutState = AllocationRolloutLost
-	state.Assignments["2a"] = assignment
+	state.Assignments.Set("2a", assignment)
 	check(nil, 1)
-	delete(state.Assignments, "1a")
+	state.Assignments.Delete("1a")
 	check(nil, 0)
 }

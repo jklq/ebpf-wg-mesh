@@ -572,7 +572,7 @@ func TestCachePolicyValidate(t *testing.T) {
 	if err := (CachePolicy{Mode: CacheModeNone}).Validate(); err != nil {
 		t.Fatalf("none mode must validate: %v", err)
 	}
-	if err := (CachePolicy{Mode: CacheModeContentAddressed, Key: "sha256:abc"}).Validate(); err != nil {
+	if err := (CachePolicy{Mode: CacheModeContentAddressed, MaxBytes: 10 << 30, Key: "sha256:abc"}).Validate(); err != nil {
 		t.Fatalf("keyed content-addressed mode must validate: %v", err)
 	}
 	if err := (CachePolicy{Mode: CacheModeContentAddressed}).Validate(); err == nil {

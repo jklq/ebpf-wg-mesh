@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,8 +49,8 @@ func TestJournalReleaseBatchAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if live.LogIndex != before.LogIndex+1 || len(released) != 2 || len(live.Assignments) != 2 {
-		t.Fatalf("release was not one batch: %d -> %d, %d releases, %d assignments", before.LogIndex, live.LogIndex, len(released), len(live.Assignments))
+	if live.LogIndex != before.LogIndex+1 || len(released) != 2 || live.Assignments.Len() != 2 {
+		t.Fatalf("release was not one batch: %d -> %d, %d releases, %d assignments", before.LogIndex, live.LogIndex, len(released), live.Assignments.Len())
 	}
 	var payload []byte
 	var epoch int64
@@ -65,7 +66,7 @@ func TestJournalReleaseBatchAndReplay(t *testing.T) {
 	}
 	for _, result := range released {
 		assignment := result.Allocations[0]
-		recorded := live.Assignments[assignment.ID]
+		recorded := live.Assignments.Get(assignment.ID)
 		if recorded.AgentID != assignment.AgentID || recorded.AllocationIPv4 != assignment.AllocationIPv4 || recorded.AllocationIPv6 != assignment.AllocationIPv6 {
 			t.Fatalf("published assignment differs from committed assignment: %+v", recorded)
 		}
@@ -124,7 +125,7 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if committed.Assignments[allocation.ID].OperatorRestartNonce != before.Assignments[allocation.ID].OperatorRestartNonce+1 {
+	if committed.Assignments.Get(allocation.ID).OperatorRestartNonce != before.Assignments.Get(allocation.ID).OperatorRestartNonce+1 {
 		t.Fatal("committed command not applied")
 	}
 	restarted := journal.New(store.db, "default", nil)
@@ -837,5 +838,64 @@ func assertNoWatch(t *testing.T, context string, channels ...<-chan struct{}) {
 			t.Fatalf("%s: unexpected wakeup", context)
 		case <-time.After(250 * time.Millisecond):
 		}
+	}
+}
+
+func TestJournalSlowCommandDoesNotBlockReadsOrIndependentCommands(t *testing.T) {
+	store := openTestStore(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	first, err := store.catalog.createProject(ctx, testUser("owner"), "", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.catalog.createProject(ctx, testUser("owner"), "", "second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	done := make(chan error, 1)
+	go func() {
+		_, err := store.journal.Execute(ctx, func(ctx context.Context, tx *sql.Tx) error {
+			once.Do(func() { close(started) })
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			_, err := journal.ProjectRow(first.ID).Exec(ctx, tx, `UPDATE projects SET name = 'first changed' WHERE id = $1`, first.ID)
+			return err
+		})
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	if _, err := store.journal.Snapshot(ctx); err != nil {
+		t.Fatalf("read blocked behind command: %v", err)
+	}
+	if _, err := store.journal.Execute(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := journal.ProjectRow(second.ID).Exec(ctx, tx, `UPDATE projects SET name = 'second changed' WHERE id = $1`, second.ID)
+		return err
+	}); err != nil {
+		t.Fatalf("independent command blocked: %v", err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	after, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.LogIndex != before.LogIndex+2 || after.Projects[first.ID].Name != "first changed" || after.Projects[second.ID].Name != "second changed" {
+		t.Fatalf("concurrent commands lost effects: %+v", after)
 	}
 }

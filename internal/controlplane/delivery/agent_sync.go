@@ -192,7 +192,7 @@ func (v *agentView) overlayAndImages() ([]*agentv1.DesiredService, []PullImage) 
 	var overlays []*agentv1.DesiredService
 	var images []PullImage
 	for _, id := range v.product.AssignmentIDsForAgent(v.agentID) {
-		a := v.product.Assignments[id]
+		a := v.product.Assignments.Get(id)
 		if a.RolloutState == AllocationRolloutLost {
 			continue
 		}

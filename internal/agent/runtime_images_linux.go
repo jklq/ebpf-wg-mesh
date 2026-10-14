@@ -11,6 +11,16 @@ import (
 	"github.com/containerd/containerd/errdefs"
 )
 
+// Readers protect pulls through container creation. Collection is exclusive,
+// but skips a busy start so a slow pull cannot hold up unrelated lifecycle work.
+func (e *containerdEngine) collectUnusedImages(ctx context.Context) error {
+	if !e.imageMu.TryLock() {
+		return nil
+	}
+	defer e.imageMu.Unlock()
+	return e.collectUnusedImagesLocked(ctx)
+}
+
 // collectUnusedImagesLocked drops platform image roots after their last container
 // disappears. Containerd then collects unused content and unpacked snapshots;
 // shared layers and live container snapshots remain rooted. imageMu fences pulls

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"testing"
 )
 
@@ -49,5 +50,22 @@ func TestAuthorizeSchedulingPropagatesFenceError(t *testing.T) {
 	store := &Store{fence: func(context.Context, *sql.Tx) (int64, error) { return 0, sentinel }}
 	if _, err := store.authorizeScheduling(context.Background(), nil, assignedBatch()); !errors.Is(err, sentinel) {
 		t.Fatalf("err = %v, want %v", err, sentinel)
+	}
+}
+
+func TestPublicationRejectsOlderReadsAndTrimsAlreadyAppliedBatches(t *testing.T) {
+	s := New(nil, "test", nil)
+	var updates []Applied
+	s.publish(newProjection(DurableState{ClusterID: "test", LogIndex: 1}), nil)
+	s.SetOnApplied(func(a Applied) { updates = append(updates, a) })
+	s.publish(s.state, nil)
+	s.publish(newProjection(DurableState{ClusterID: "test", LogIndex: 2}), []Batch{{BaseIndex: 1}})
+	s.publish(newProjection(DurableState{ClusterID: "test", LogIndex: 1}), nil)
+	s.publish(newProjection(DurableState{ClusterID: "test", LogIndex: 3}), []Batch{{BaseIndex: 1}, {BaseIndex: 2}})
+	if len(updates) != 3 || !updates[0].Reset || updates[1].Reset || updates[2].Reset {
+		t.Fatalf("unexpected publications: %+v", updates)
+	}
+	if !reflect.DeepEqual(updates[2].Batches, []Batch{{BaseIndex: 2}}) || s.state.LogIndex != 3 {
+		t.Fatal("publication repeated an already-applied batch or regressed")
 	}
 }

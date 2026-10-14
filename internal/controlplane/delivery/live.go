@@ -148,7 +148,7 @@ func (l *Live) publicationReadyLocked() error {
 	}
 	for _, domain := range l.product.Domains {
 		for _, id := range l.product.AssignmentIDsForService(domain.ServiceID) {
-			assignment := l.product.Assignments[id]
+			assignment := l.product.Assignments.Get(id)
 			if assignment.RolloutState != AllocationRolloutServing {
 				continue
 			}
@@ -273,7 +273,7 @@ func (l *Live) become(ctx context.Context, readState func(context.Context, func(
 	l.serving = true
 	l.ownerCtx = ctx
 	l.authorityEpoch = epoch
-	for id, assignment := range durable.Assignments {
+	for id, assignment := range durable.Assignments.All() {
 		if assignment.DrainDeadline != nil && !assignment.DrainDeadline.IsZero() {
 			l.deadlines[id] = assignment.DrainDeadline.UTC()
 		}

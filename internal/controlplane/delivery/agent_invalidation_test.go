@@ -16,7 +16,7 @@ func TestAffectedAgentsUseBothIndexedPrefixes(t *testing.T) {
 		Agents:         map[string]journal.AgentRegistration{"one": peerAgent("one"), "two": peerAgent("two"), "three": peerAgent("three")},
 		Administration: map[string]journal.AgentAdministration{"one": {AgentID: "one", LifecycleState: "active"}},
 		Deployments:    map[string]journal.Deployment{"d": {ID: "d"}},
-		Assignments:    map[string]journal.Assignment{"a": {ID: "a", AgentID: "one", ServiceID: "s", DeploymentID: "d"}, "b": {ID: "b", AgentID: "two", ServiceID: "sibling", DeploymentID: "d"}, "c": {ID: "c", AgentID: "three", ServiceID: "foreign", DeploymentID: "d"}},
+		Assignments:    journal.NewRowMap(map[string]journal.Assignment{"a": {ID: "a", AgentID: "one", ServiceID: "s", DeploymentID: "d"}, "b": {ID: "b", AgentID: "two", ServiceID: "sibling", DeploymentID: "d"}, "c": {ID: "c", AgentID: "three", ServiceID: "foreign", DeploymentID: "d"}}),
 		Domains:        map[string]journal.Domain{"example.test": {Hostname: "example.test", ServiceID: "s"}},
 		Volumes:        map[string]journal.Volume{"v": {ID: "v", EnvironmentID: "e"}},
 	}
@@ -61,8 +61,8 @@ func TestAffectedAgentsUseBothIndexedPrefixes(t *testing.T) {
 			delete(s.Environments, "e")
 			delete(s.Services, "s")
 			delete(s.Services, "sibling")
-			delete(s.Assignments, "a")
-			delete(s.Assignments, "b")
+			s.Assignments.Delete("a")
+			s.Assignments.Delete("b")
 		}, []string{"one", "two"}},
 	}
 	for _, test := range tests {

@@ -34,6 +34,7 @@ func (headMovedError) SQLState() string { return "40001" }
 
 type Store struct {
 	mu          sync.Mutex
+	publishMu   sync.Mutex
 	db          *sql.DB
 	clusterID   string
 	state       *Projection
@@ -41,7 +42,6 @@ type Store struct {
 	fence       Fence
 	onApplied   func(Applied)
 	published   *Projection
-	pending     Applied
 	verify      bool
 }
 
@@ -110,12 +110,8 @@ func (s *Store) authorizeScheduling(ctx context.Context, tx *sql.Tx, batch Batch
 
 func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
 	s.mu.Lock()
-	held := true
-	defer func() {
-		if held {
-			s.mu.Unlock()
-		}
-	}()
+	verify := s.verify
+	s.mu.Unlock()
 	id, _ := ctx.Value(commandIDKey{}).(string)
 	callerProvidedID := id != ""
 	if id == "" {
@@ -173,7 +169,7 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 				return err
 			}
 		}
-		if s.verify {
+		if verify {
 			if err := verifyRecordings(ctx, tx, base.DurableState, batch); err != nil {
 				return err
 			}
@@ -206,15 +202,15 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		if err != nil {
 			return err
 		}
+		if _, _, err := base.advance(receipt); err != nil {
+			return err
+		}
 		var lockedHead int64
 		if err := tx.QueryRowContext(ctx, `SELECT log_index FROM cluster_journal_heads WHERE cluster_id = $1 FOR UPDATE`, s.clusterID).Scan(&lockedHead); err != nil {
 			return err
 		}
 		if lockedHead != head {
 			return headMovedError{}
-		}
-		if _, _, err := base.advance(receipt); err != nil {
-			return err
 		}
 		if err := tx.QueryRowContext(ctx, `INSERT INTO cluster_journal
    (cluster_id, log_index, command_id, command_version, command_type, payload, authorizing_epoch, created_at)
@@ -246,20 +242,12 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 	defer cancel()
 	committed, resolveErr := lookup(resolveCtx, s.db, s.clusterID, id)
 	if resolveErr != nil {
-		held = false
-		s.mu.Unlock()
 		if err != nil {
 			return Entry{}, &CommitError{CommandID: id, Err: err}
 		}
 		return Entry{}, &CommitError{CommandID: id, Committed: true, Err: resolveErr}
 	}
-	catchErr := s.catchUp(resolveCtx)
-	hook, snap := s.appliedLocked(catchErr == nil)
-	held = false
-	s.mu.Unlock()
-	if hook != nil {
-		hook(snap)
-	}
+	catchErr := s.Read(resolveCtx, nil)
 	if catchErr != nil {
 		return committed, &CommitError{CommandID: id, Committed: true, Err: catchErr}
 	}
@@ -271,48 +259,53 @@ func (s *Store) Receipt(ctx context.Context, commandID string) (Entry, error) {
 }
 
 func (s *Store) Snapshot(ctx context.Context) (DurableState, error) {
-	s.mu.Lock()
-	if err := s.catchUp(ctx); err != nil {
-		s.mu.Unlock()
+	var snapshot DurableState
+	err := s.Read(ctx, func(_ *sql.Tx, p *Projection) error {
+		snapshot = p.DurableState.Clone()
+		return nil
+	})
+	if err != nil {
 		return DurableState{}, err
 	}
-	copy := s.state.DurableState.Clone()
-	hook, snap := s.appliedLocked(true)
-	s.mu.Unlock()
-	if hook != nil {
-		hook(snap)
-	}
-	return copy, nil
-}
-
-func (s *Store) catchUp(ctx context.Context) error {
-	return s.read(ctx, nil)
+	return snapshot, nil
 }
 
 // Read builds an external snapshot from the same database snapshot as the
 // applied prefix. The result must not be published inside fn.
 func (s *Store) Read(ctx context.Context, fn func(*sql.Tx, *Projection) error) error {
-	s.mu.Lock()
-	err := s.read(ctx, fn)
-	hook, snap := s.appliedLocked(err == nil)
-	s.mu.Unlock()
-	if hook != nil {
-		hook(snap)
-	}
-	return err
+	return s.read(ctx, fn)
 }
 
-func (s *Store) appliedLocked(ok bool) (func(Applied), Applied) {
-	if !ok || s.onApplied == nil || s.published == s.state {
-		return nil, Applied{}
+// publish orders callbacks while keeping SQL, replay, and readers outside the
+// lock. A transaction may finish after a newer database snapshot was published.
+func (s *Store) publish(next *Projection, batches []Batch) {
+	s.publishMu.Lock()
+	defer s.publishMu.Unlock()
+	s.mu.Lock()
+	reset := s.published == nil
+	if s.initialized && next.LogIndex <= s.state.LogIndex {
+		if s.onApplied == nil || !reset {
+			s.mu.Unlock()
+			return
+		}
+		next, batches = s.state, nil
+	} else {
+		for len(batches) > 0 && batches[0].BaseIndex < s.state.LogIndex {
+			batches = batches[1:]
+		}
+		if len(batches) == 0 || batches[0].BaseIndex != s.state.LogIndex {
+			reset = true
+		}
+		s.state, s.initialized = next, true
 	}
-	update := s.pending
-	update.Projection = s.state
-	if s.published == nil {
-		update.Reset = true
+	hook := s.onApplied
+	if hook != nil {
+		s.published = next
 	}
-	s.published = s.state
-	return s.onApplied, update
+	s.mu.Unlock()
+	if hook != nil {
+		hook(Applied{Projection: next, Batches: batches, Reset: reset})
+	}
 }
 
 func (s *Store) read(ctx context.Context, fn func(*sql.Tx, *Projection) error) error {
@@ -334,9 +327,7 @@ func (s *Store) read(ctx context.Context, fn func(*sql.Tx, *Projection) error) e
 		return nil
 	})
 	if err == nil {
-		s.pending = Applied{Projection: next, Batches: batches, Reset: next != s.state && len(batches) == 0}
-		s.state = next
-		s.initialized = true
+		s.publish(next, batches)
 	}
 	return err
 }
@@ -346,7 +337,10 @@ func (s *Store) stateAtHead(ctx context.Context, tx *sql.Tx, head int64) (*Proje
 	if err := tx.QueryRowContext(ctx, `SELECT compacted_index FROM cluster_journal_heads WHERE cluster_id = $1`, s.clusterID).Scan(&compacted); err != nil {
 		return nil, nil, err
 	}
-	if !s.initialized || s.state.LogIndex < compacted {
+	s.mu.Lock()
+	state, initialized := s.state, s.initialized
+	s.mu.Unlock()
+	if !initialized || state.LogIndex < compacted || state.LogIndex > head {
 		state, err := readProductState(ctx, tx)
 		if err != nil {
 			return nil, nil, err
@@ -355,7 +349,7 @@ func (s *Store) stateAtHead(ctx context.Context, tx *sql.Tx, head int64) (*Proje
 		state.LogIndex = head
 		return newProjection(state), nil, nil
 	}
-	return replay(ctx, tx, s.state, head)
+	return replay(ctx, tx, state, head)
 }
 
 type queryer interface {

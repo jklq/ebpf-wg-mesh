@@ -340,6 +340,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		t.Fatalf("createService: %v", err)
 	}
 
+	delivery := testDelivery(store)
 	var wg sync.WaitGroup
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
@@ -347,7 +348,7 @@ func TestReplicaConcurrentScalingStaysConsistent(t *testing.T) {
 		desired := int32(2 + i%2)
 		go func(desired int32) {
 			defer wg.Done()
-			_, _, err := scaleService(ctx, store, "user-1", service.ID, desired)
+			_, _, _, err := delivery.ScaleService(ctx, testUser("user-1"), service.ID, desired)
 			if err != nil && !errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 				errs <- err
 			}

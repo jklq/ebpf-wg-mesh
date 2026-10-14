@@ -48,7 +48,7 @@ type containerdEngine struct {
 	recoveryPaused          bool
 	cfg                     config.AgentConfig
 	client                  *containerd.Client
-	imageMu                 sync.Mutex
+	imageMu                 sync.RWMutex
 	diskUsage               diskUsageCache
 	cni                     cni.CNI
 	logSinkMu               sync.RWMutex
@@ -127,8 +127,8 @@ func (e *containerdEngine) SetLogSink(sink LogSink) {
 }
 
 func (e *containerdEngine) DiscoverServices(ctx context.Context) ([]RuntimeResource, error) {
-	e.imageMu.Lock()
-	defer e.imageMu.Unlock()
+	e.imageMu.RLock()
+	defer e.imageMu.RUnlock()
 
 	containers, err := e.client.Containers(e.namespaced(ctx))
 	if err != nil {
@@ -255,14 +255,13 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		}
 	}
 
-	e.imageMu.Lock()
-	defer e.imageMu.Unlock()
+	e.imageMu.RLock()
 	defer func() {
-		if ctx.Err() != nil {
-			return
-		}
-		if err := e.collectUnusedImagesLocked(ctx); err != nil {
-			slog.Warn("collect unused allocation images", "error", err)
+		e.imageMu.RUnlock()
+		if ctx.Err() == nil {
+			if err := e.collectUnusedImages(ctx); err != nil {
+				slog.Warn("collect unused allocation images", "error", err)
+			}
 		}
 	}()
 	image, err := e.ensureImage(ctx, svc.GetSpec().GetImage(), svc.GetRegistryUsername(), svc.GetRegistryPassword())
@@ -405,8 +404,7 @@ func (e *containerdEngine) RemoveService(ctx context.Context, allocationID strin
 }
 
 func (e *containerdEngine) removeService(ctx context.Context, allocationID string, collectImages bool) error {
-	e.imageMu.Lock()
-	defer e.imageMu.Unlock()
+	e.imageMu.RLock()
 	ctx = e.namespaced(ctx)
 	containerID := containerName(allocationID)
 	e.clearOOM(containerID)
@@ -439,8 +437,10 @@ func (e *containerdEngine) removeService(ctx context.Context, allocationID strin
 	if err := e.cleanupServiceHostsFile(allocationID); err != nil {
 		errs = append(errs, err)
 	}
+	e.diskUsage.remove(containerID)
+	e.imageMu.RUnlock()
 	if collectImages {
-		errs = append(errs, e.collectUnusedImagesLocked(ctx))
+		errs = append(errs, e.collectUnusedImages(ctx))
 	}
 	return errors.Join(errs...)
 }
@@ -504,8 +504,7 @@ func (e *containerdEngine) DrainService(ctx context.Context, allocationID string
 }
 
 func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container containerd.Container, containerID, allocationID string) error {
-	e.imageMu.Lock()
-	defer e.imageMu.Unlock()
+	e.imageMu.RLock()
 	var errs []error
 	if netnsPath, ok := e.netnsPath(allocationID); ok {
 		if err := e.teardownNetwork(ctx, containerID, allocationID, netnsPath); err != nil {
@@ -522,7 +521,8 @@ func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container 
 		errs = append(errs, err)
 	}
 	e.clearOOM(containerID)
-	errs = append(errs, e.collectUnusedImagesLocked(ctx))
+	e.imageMu.RUnlock()
+	errs = append(errs, e.collectUnusedImages(ctx))
 	e.diskUsage.remove(containerID)
 	return errors.Join(errs...)
 }
@@ -605,7 +605,7 @@ func (e *containerdEngine) inspect(ctx context.Context, containerID string) (ins
 		rec.exitCode, rec.signal = classifyContainerExit(status.ExitStatus)
 		rec.oomKilled = e.containerOOMKilled(containerID)
 	}
-	rec.diskExhausted = e.ephemeralDiskExhausted(ctx, containerID)
+	rec.diskExhausted = e.diskUsage.cached(containerID) > e.ephemeralDiskLimit()
 	return rec, true, nil
 }
 
@@ -730,4 +730,21 @@ func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, passw
 		opts = append(opts, containerd.WithResolver(resolver))
 	}
 	return e.client.Pull(ctx, ref, opts...)
+}
+
+// Disk scans run independently of lifecycle reconciliation. Inspection reads
+// the latest completed sample and never waits for a snapshot filesystem walk.
+func (e *containerdEngine) RefreshDiskUsage(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(e.namespaced(ctx), diskEnforcementInterval)
+	defer cancel()
+	containers, err := e.client.Containers(ctx, fmt.Sprintf(`labels.%q==true`, meshlabels.Managed))
+	if err != nil {
+		return
+	}
+	for _, container := range containers {
+		if ctx.Err() != nil {
+			return
+		}
+		e.ephemeralDiskExhausted(ctx, container.ID())
+	}
 }

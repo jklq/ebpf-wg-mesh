@@ -440,13 +440,12 @@ type BuilderNetworkConfig struct {
 	DeniedCIDRs       []string
 }
 
-// BuilderCacheConfig selects how build cache data persists between executions. Mode "none"
-// persists nothing; mode "content-addressed" lets the hardened executor mount a host cache dir
-// keyed purely by build content (snapshot digest, recipe, toolchain), never by project identity.
-// Cache dirs accumulate under the builder work dir; the operator prunes them. The development
-// executor validates the mode but exports no cache.
+// BuilderCacheConfig bounds retained local layer caches under the work dir.
+// Service caches reuse layers across source changes within one service. The
+// development executor relies on its existing host BuildKit daemon's cache.
 type BuilderCacheConfig struct {
-	Mode string
+	Mode     string
+	MaxBytes int64
 }
 
 // BuilderSandboxConfig selects the hardened executor's sandbox backend. The development executor

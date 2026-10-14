@@ -190,6 +190,16 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: err})
 	}
+	var retained *buildCache
+	if spec.Cache.Mode != CacheModeNone {
+		retained, err = openBuildCache(execCtx, e.workDir, spec)
+		if err != nil {
+			return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, err)
+		}
+		defer retained.close()
+		_, err = os.Stat(filepath.Join(cacheDir, "index.json"))
+		spec.cacheImport = err == nil
+	}
 	if cacheDir != "" {
 		if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 			return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: fmt.Errorf("mkdir build cache dir: %w", err)})
@@ -276,7 +286,7 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 		{Source: workspace.repoDir, Dest: sandboxBuildRoot + "/repo", ReadOnly: true},
 	}
 	if cacheDir != "" {
-		mounts = append(mounts, SandboxMount{Source: cacheDir, Dest: sandboxGuestCache})
+		mounts = append(mounts, SandboxMount{Source: cacheDir, Dest: sandboxGuestCache, ReadOnly: true})
 	}
 	if spec.Railpack.FrontendDirectory != "" {
 		mounts = append(mounts, SandboxMount{Source: spec.Railpack.FrontendDirectory, Dest: sandboxBuildRoot + "/platform-frontend", ReadOnly: true})
@@ -296,6 +306,11 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	}
 	if err := enforceHardenedDiskLimit(workspace.root, daemonBuildDir, cacheDir, cacheBytesBefore, spec.Limits.MaxWorkspaceBytes); err != nil {
 		return ExecutionResult{}, &buildFailureError{kind: failureKindBuild, err: err}
+	}
+	if retained != nil {
+		if err := retained.retain(execCtx, filepath.Join(workspace.scratchDir, "cache-export")); err != nil {
+			slog.WarnContext(ctx, "retain build cache", "build_id", spec.BuildID, "error", err)
+		}
 	}
 	return ExecutionResult{ImageDigestRef: ref}, nil
 }
@@ -348,23 +363,29 @@ func (e *hardenedExecutor) renderSandboxIdentity(workspace executionWorkspace, p
 	return resolvHost, hostsHost, nil
 }
 
-// resolveExecutionCacheDir verifies the content-addressed cache key and returns
-// its host directory. The key must exactly equal the content-derived key, so
-// cache mounts can never carry state between projects.
+// resolveExecutionCacheDir verifies the key before exposing a cache to a build.
 func resolveExecutionCacheDir(workDir string, spec ExecutionSpec) (string, error) {
 	if spec.Cache.Mode == CacheModeNone {
 		return "", nil
 	}
 	expected := ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage)
+	prefix := "cache-sha256-"
+	if spec.Cache.Mode == CacheModeService {
+		if spec.CacheScope == "" {
+			return "", errors.New("service cache requires project/environment/service scope")
+		}
+		expected = ServiceCacheKey(spec.CacheScope, spec.Recipe, spec.Railpack.FrontendImage)
+		prefix = "service-sha256-"
+	}
 	if spec.Cache.Key != expected {
-		return "", errors.New("content-addressed cache key does not match build content: refusing project-keyed cache")
+		return "", errors.New("cache key does not match execution scope and inputs")
 	}
 	digest := strings.TrimPrefix(expected, "sha256:")
 	cacheRoot, err := safeChildPath(workDir, "cache")
 	if err != nil {
 		return "", err
 	}
-	return safeChildPath(cacheRoot, "cache-sha256-"+digest)
+	return safeChildPath(cacheRoot, prefix+digest)
 }
 
 func (e *hardenedExecutor) invokeBuild(ctx context.Context, spec ExecutionSpec, workspace executionWorkspace, sandboxNet SandboxNet, buildkitAddr, dockerConfigDir string, mounts []SandboxMount, report func(commandOutputLine)) (string, error) {
@@ -467,16 +488,15 @@ func (e *hardenedExecutor) guestBuildPaths(workspace executionWorkspace, dockerC
 	return guest, nil
 }
 
-// appendCacheFlags points the build at the execution's content-keyed cache dir,
-// shared by import and export as a standard local-cache round trip.
+// appendCacheFlags imports retained layers and stages a complete fresh export.
 func (e *hardenedExecutor) appendCacheFlags(spec ExecutionSpec, req *commandRequest) {
-	if spec.Cache.Mode != CacheModeContentAddressed {
+	if spec.Cache.Mode == CacheModeNone {
 		return
 	}
-	req.Args = append(req.Args,
-		"--export-cache", "type=local,dest="+sandboxGuestCache,
-		"--import-cache", "type=local,src="+sandboxGuestCache,
-	)
+	req.Args = append(req.Args, "--export-cache", "type=local,dest="+sandboxGuestScratch+"/cache-export,mode=max")
+	if spec.cacheImport {
+		req.Args = append(req.Args, "--import-cache", "type=local,src="+sandboxGuestCache)
+	}
 }
 
 func (e *hardenedExecutor) runSandboxStep(ctx context.Context, sandboxNet SandboxNet, spec ExecutionSpec, mounts []SandboxMount, name string, req commandRequest, report func(commandOutputLine)) error {

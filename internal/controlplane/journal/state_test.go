@@ -47,7 +47,7 @@ func TestReplayDurableStateAndDeadline(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if !reflect.DeepEqual(state, replayed) || !state.Assignments["allocation"].DrainDeadline.Equal(deadline) {
+	if !reflect.DeepEqual(state, replayed) || !state.Assignments.Get("allocation").DrainDeadline.Equal(deadline) {
 		t.Fatalf("replay changed durable state: %+v", replayed)
 	}
 }

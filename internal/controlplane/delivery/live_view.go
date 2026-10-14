@@ -40,7 +40,7 @@ func (l *Live) applyProductLocked(update journal.Applied) {
 	}
 	l.product = state
 	for key, obs := range l.observations {
-		a, exists := state.Assignments[key.AllocationID]
+		a, exists := state.Assignments.Lookup(key.AllocationID)
 		if !exists || a.AgentID != obs.AgentID || a.DesiredRolloutGeneration != key.Generation {
 			delete(l.observations, key)
 		}
@@ -212,7 +212,7 @@ func (l *Live) IngressState() (*journal.Projection, map[string]AllocationRecord,
 	for _, domain := range l.product.Domains {
 		for _, id := range l.product.AssignmentIDsForService(domain.ServiceID) {
 			if _, exists := allocations[id]; !exists {
-				allocations[id] = l.overlayAllocationLocked(allocationRecordFromAssignment(l.product.DurableState, l.product.Assignments[id]))
+				allocations[id] = l.overlayAllocationLocked(allocationRecordFromAssignment(l.product.DurableState, l.product.Assignments.Get(id)))
 			}
 		}
 	}
@@ -386,7 +386,7 @@ func (l *Live) allocationsByServiceLocked(serviceID string) []AllocationRecord {
 	ids := l.product.AssignmentIDsForService(serviceID)
 	out := make([]AllocationRecord, 0, len(ids))
 	for _, id := range ids {
-		assignment, ok := l.product.Assignments[id]
+		assignment, ok := l.product.Assignments.Lookup(id)
 		if !ok {
 			continue
 		}
@@ -404,7 +404,7 @@ func (l *Live) AllocationsByAgent(agentID string) []AllocationRecord {
 	ids := l.product.AssignmentIDsForAgent(agentID)
 	out := make([]AllocationRecord, 0, len(ids))
 	for _, id := range ids {
-		assignment, ok := l.product.Assignments[id]
+		assignment, ok := l.product.Assignments.Lookup(id)
 		if !ok {
 			continue
 		}
@@ -430,7 +430,7 @@ func (l *Live) AssignedIDs(agentID string) []string {
 func (l *Live) assignedIDsLocked(agentID string) []string {
 	var ids []string
 	for _, id := range l.product.AssignmentIDsForAgent(agentID) {
-		assignment := l.product.Assignments[id]
+		assignment := l.product.Assignments.Get(id)
 		if assignment.RolloutState != AllocationRolloutLost {
 			ids = append(ids, id)
 		}
@@ -454,7 +454,7 @@ func (l *Live) InProgressRolloutServiceIDs() []string {
 			seen[rollout.ServiceID] = struct{}{}
 		}
 	}
-	for _, assignment := range l.product.Assignments {
+	for _, assignment := range l.product.Assignments.All() {
 		if assignment.RolloutState == AllocationRolloutDraining || assignment.RolloutState == AllocationRolloutWithdrawing {
 			seen[assignment.ServiceID] = struct{}{}
 		}
@@ -474,7 +474,7 @@ func (l *Live) AgentUsage() map[string]AgentUsage {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := make(map[string]AgentUsage, len(l.product.Agents))
-	for _, assignment := range l.product.Assignments {
+	for _, assignment := range l.product.Assignments.All() {
 		if assignment.RolloutState == AllocationRolloutLost {
 			continue
 		}

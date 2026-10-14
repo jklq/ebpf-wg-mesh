@@ -338,9 +338,9 @@ func TestHardenedExecuteRejectsMismatchedCacheKey(t *testing.T) {
 	starter := &fakeDaemonStarter{}
 	executor := newHardenedExecutorForTest(t.TempDir(), backend, starter)
 	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
-	spec.Cache = CachePolicy{Mode: CacheModeContentAddressed, Key: "sha256:project-keyed"}
+	spec.Cache = CachePolicy{Mode: CacheModeContentAddressed, MaxBytes: 10 << 30, Key: "sha256:project-keyed"}
 	_, err := executor.Execute(context.Background(), spec)
-	if err == nil || !strings.Contains(err.Error(), "does not match build content") {
+	if err == nil || !strings.Contains(err.Error(), "does not match execution scope and inputs") {
 		t.Fatalf("expected cache key refusal, got %v", err)
 	}
 	if len(backend.setupNets) != 0 || len(starter.calls) != 0 {
@@ -359,9 +359,21 @@ func TestHardenedExecuteMountsContentCache(t *testing.T) {
 
 	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
 	spec.Cache = CachePolicy{
-		Mode: CacheModeContentAddressed,
-		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
+		Mode:     CacheModeContentAddressed,
+		MaxBytes: 10 << 30,
+		Key:      ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
 	}
+	dir, err := resolveExecutionCacheDir(workDir, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
 	if _, err := executor.Execute(context.Background(), spec); err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -375,8 +387,8 @@ func TestHardenedExecuteMountsContentCache(t *testing.T) {
 			cache = &steps[0].Mounts[i]
 		}
 	}
-	if cache == nil || cache.ReadOnly {
-		t.Fatalf("expected writable cache mount, got %+v", steps[0].Mounts)
+	if cache == nil || !cache.ReadOnly {
+		t.Fatalf("expected read-only cache mount, got %+v", steps[0].Mounts)
 	}
 	if !strings.HasPrefix(cache.Source, filepath.Join(workDir, "cache", "cache-sha256-")) {
 		t.Fatalf("cache source must be content-keyed under the work dir, got %q", cache.Source)
@@ -385,7 +397,7 @@ func TestHardenedExecuteMountsContentCache(t *testing.T) {
 		t.Fatalf("cache dir must exist, stat err=%v", err)
 	}
 	argv := strings.Join(steps[0].Argv, " ")
-	if !strings.Contains(argv, "--export-cache type=local,dest=/build/cache") ||
+	if !strings.Contains(argv, "--export-cache type=local,dest=/build/scratch/cache-export,mode=max") ||
 		!strings.Contains(argv, "--import-cache type=local,src=/build/cache") {
 		t.Fatalf("build step must round-trip the content cache: %#v", steps[0].Argv)
 	}
@@ -550,8 +562,9 @@ func TestResolveExecutionCacheDir(t *testing.T) {
 		t.Fatalf("mode none must resolve no dir, got %q, %v", dir, err)
 	}
 	spec.Cache = CachePolicy{
-		Mode: CacheModeContentAddressed,
-		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
+		Mode:     CacheModeContentAddressed,
+		MaxBytes: 10 << 30,
+		Key:      ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
 	}
 	dir, err = resolveExecutionCacheDir(workDir, spec)
 	if err != nil {
@@ -734,8 +747,8 @@ func TestHardenedExecuteChargesCacheGrowth(t *testing.T) {
 	build := emulateBuildctl(t, workDir, "build-1", "sha256:abc")
 	backend.runHook = func(ctx context.Context, net SandboxNet, step SandboxStep) error {
 		for _, mount := range step.Mounts {
-			if mount.Dest == "/build/cache" {
-				sparseFileForTest(t, filepath.Join(mount.Source, "export.bin"), 2<<30)
+			if mount.Dest == sandboxBuildRoot {
+				sparseFileForTest(t, filepath.Join(mount.Source, "scratch", "cache-export", "export.bin"), 2<<30)
 			}
 		}
 		return build(ctx, net, step)
@@ -743,8 +756,9 @@ func TestHardenedExecuteChargesCacheGrowth(t *testing.T) {
 
 	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
 	spec.Cache = CachePolicy{
-		Mode: CacheModeContentAddressed,
-		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
+		Mode:     CacheModeContentAddressed,
+		MaxBytes: 10 << 30,
+		Key:      ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
 	}
 	if _, err := executor.Execute(context.Background(), spec); err == nil {
 		t.Fatal("cache growth over the budget must fail the build")
@@ -764,8 +778,9 @@ func TestHardenedExecuteIgnoresPreexistingCacheBytes(t *testing.T) {
 
 	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())
 	spec.Cache = CachePolicy{
-		Mode: CacheModeContentAddressed,
-		Key:  ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
+		Mode:     CacheModeContentAddressed,
+		MaxBytes: 10 << 30,
+		Key:      ContentCacheKey(spec.SnapshotDigest, spec.Recipe, spec.Railpack.FrontendImage),
 	}
 	// An earlier identical-content build filled the cache past this build's budget; none of it is attributable here.
 	dir, err := resolveExecutionCacheDir(workDir, spec)

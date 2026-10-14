@@ -27,10 +27,10 @@ func syncFixture(t *testing.T) (*Delivery, *journal.DurableState, *AgentSyncPlan
 		Agents:       map[string]journal.AgentRegistration{"agent": {ID: "agent", DesiredRevision: 1}},
 		Deployments:  map[string]journal.Deployment{"d": {ID: "d", ServiceID: "s"}},
 		Rollouts:     map[string]journal.Rollout{"s/1": {ServiceID: "s", RolloutGeneration: 1, ImageDigest: "example.test/image@sha256:abc"}},
-		Assignments:  map[string]journal.Assignment{},
+		Assignments:  journal.NewRowMap(map[string]journal.Assignment{}),
 	}
 	for _, id := range []string{"keep", "update", "remove"} {
-		state.Assignments[id] = journal.Assignment{ID: id, ServiceID: "s", AgentID: "agent", DeploymentID: "d", DesiredSpecRevision: 1, DesiredRolloutGeneration: 1}
+		state.Assignments.Set(id, journal.Assignment{ID: id, ServiceID: "s", AgentID: "agent", DeploymentID: "d", DesiredSpecRevision: 1, DesiredRolloutGeneration: 1})
 	}
 	live.applyTestState(*state)
 	d := New(Dependencies{Live: live})
@@ -64,13 +64,13 @@ func nextSync(t *testing.T, d *Delivery, previous *AgentSyncPlan) *AgentSyncPlan
 
 func TestAgentSyncPlanStartsUpdatesStopsAndNoOpCursor(t *testing.T) {
 	d, state, first := syncFixture(t)
-	updated := state.Assignments["update"]
+	updated := state.Assignments.Get("update")
 	updated.OperatorRestartNonce = 1
-	state.Assignments["update"] = updated
-	delete(state.Assignments, "remove")
-	added := state.Assignments["keep"]
+	state.Assignments.Set("update", updated)
+	state.Assignments.Delete("remove")
+	added := state.Assignments.Get("keep")
 	added.ID = "add"
-	state.Assignments["add"] = added
+	state.Assignments.Set("add", added)
 	applySyncFixture(t, d, state)
 	plan := nextSync(t, d, first)
 	if plan.Checkpoint != nil || len(plan.Diffs) != 1 {
@@ -114,9 +114,9 @@ func TestAgentSyncPlanRepairsSameCursorOverlayAndUsesRepairedBaseline(t *testing
 	}
 	d.AgentCheckpointSent(repaired.Checkpoint)
 	// A durable nonce update must retain the repaired observation fields.
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce = 2
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	plan := nextSync(t, d, repaired)
 	if plan.Checkpoint != nil || len(plan.Diffs) != 1 || len(plan.Diffs[0].Updates) != 1 || plan.Diffs[0].Updates[0].GetRestartObservation().GetRestartCount() != 2 {
@@ -126,9 +126,9 @@ func TestAgentSyncPlanRepairsSameCursorOverlayAndUsesRepairedBaseline(t *testing
 
 func TestAgentSyncBehindCursorStillRepairsInvalidInventory(t *testing.T) {
 	d, state, first := syncFixture(t)
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	var matching []*agentv1.ServiceCondition
 	for _, svc := range first.Checkpoint.GetServices() {
@@ -165,9 +165,9 @@ func TestAgentSyncPlanBoundsHistoryAndFallsBackAfterReset(t *testing.T) {
 	d, state, first := syncFixture(t)
 	previous := first
 	for i := 0; i < MaxDiffEntriesPerAgent+5; i++ {
-		a := state.Assignments["keep"]
+		a := state.Assignments.Get("keep")
 		a.OperatorRestartNonce++
-		state.Assignments["keep"] = a
+		state.Assignments.Set("keep", a)
 		applySyncFixture(t, d, state)
 		previous = nextSync(t, d, previous)
 		if previous.Checkpoint != nil {
@@ -179,9 +179,9 @@ func TestAgentSyncPlanBoundsHistoryAndFallsBackAfterReset(t *testing.T) {
 		t.Fatal("compacted cursor should require checkpoint")
 	}
 	d.live.ApplyProduct(journal.Applied{Projection: journal.NewProjection(*state), Reset: true}) // duplicate prefix must be ignored
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	state.LogIndex++
 	agent := state.Agents["agent"]
 	agent.DesiredRevision++
@@ -195,9 +195,9 @@ func TestAgentSyncPlanBoundsHistoryAndFallsBackAfterReset(t *testing.T) {
 func TestAgentSyncPlanOversizedPatchRequiresCheckpoint(t *testing.T) {
 	d, state, first := syncFixture(t)
 	for i := 0; i < MaxDiffAllocationsPerMessage+10; i++ {
-		a := state.Assignments["keep"]
+		a := state.Assignments.Get("keep")
 		a.ID = fmt.Sprintf("added-%03d", i)
-		state.Assignments[a.ID] = a
+		state.Assignments.Set(a.ID, a)
 	}
 	applySyncFixture(t, d, state)
 	if plan := nextSync(t, d, first); plan.Checkpoint == nil {
@@ -210,8 +210,8 @@ func TestAgentSyncPlanOversizedPatchRequiresCheckpoint(t *testing.T) {
 // destruction removes it, and checkpoint and diff agree at every step.
 func TestAgentSyncPinnedVolumeOutlivesWorkloadUntilDestroyed(t *testing.T) {
 	d, state, _ := syncFixture(t)
-	delete(state.Assignments, "remove")
-	delete(state.Assignments, "update")
+	state.Assignments.Delete("remove")
+	state.Assignments.Delete("update")
 	revision := state.Revisions["s/1"]
 	revision.SpecJSON = []byte(`{"runtime":{"volume":{"volumeName":"data","mountPath":"/var/lib/data"}}}`)
 	state.Revisions["s/1"] = revision
@@ -235,9 +235,9 @@ func TestAgentSyncPinnedVolumeOutlivesWorkloadUntilDestroyed(t *testing.T) {
 		return plan.Checkpoint.GetVolumes()
 	}
 
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.RolloutState = AllocationRolloutLost
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	stopped := nextSync(t, d, baseline)
 	if stopped.Checkpoint != nil || len(stopped.Diffs) != 1 {
@@ -280,9 +280,9 @@ func TestAgentSyncSkippedCallbackResetsHistoryAndWakesChangedAgents(t *testing.T
 	watch, cancel := d.live.Watch("agent")
 	defer cancel()
 	before := d.live.product
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	agent := state.Agents["agent"]
 	agent.DesiredRevision++
 	state.Agents["agent"] = agent
@@ -318,9 +318,9 @@ func TestAgentSyncSkippedCallbackResetsHistoryAndWakesChangedAgents(t *testing.T
 
 func TestAgentSyncUnrelatedCommitDoesNotInvalidateCapturedPlan(t *testing.T) {
 	d, state, first := syncFixture(t)
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	cursor := state.Agents["agent"].DesiredRevision
 	baseline := d.live.allocSync.baseline("agent", cursor)
@@ -340,14 +340,14 @@ func TestAgentSyncUnrelatedCommitDoesNotInvalidateCapturedPlan(t *testing.T) {
 
 func TestAgentSyncCommittedChangeRejectsCapturedDiff(t *testing.T) {
 	d, state, first := syncFixture(t)
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	cursor := state.Agents["agent"].DesiredRevision
 	baseline := d.live.allocSync.baseline("agent", cursor)
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	if d.live.allocSync.acceptDiff("agent", baseline, cursor, baseline.services, baseline.volumes,
 		storedDiff{Base: first.Cursor, Target: cursor}) {
@@ -361,15 +361,15 @@ func TestAgentSyncCommittedChangeRejectsCapturedDiff(t *testing.T) {
 
 func TestAgentCheckpointDelayedCallbackPreservesNewerBaseline(t *testing.T) {
 	d, state, first := syncFixture(t)
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	second := nextSync(t, d, first)
 	// Sending a newer prefix can finish before an earlier checkpoint callback.
 	d.AgentCheckpointSent(first.Checkpoint)
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	third := nextSync(t, d, second)
 	if third.Checkpoint != nil || len(third.Diffs) != 1 {
@@ -380,9 +380,9 @@ func TestAgentCheckpointDelayedCallbackPreservesNewerBaseline(t *testing.T) {
 func TestAgentCheckpointCommittedWhileSendingRequiresFreshBaseline(t *testing.T) {
 	d, state, first := syncFixture(t)
 	d.live.allocSync.reset()
-	a := state.Assignments["keep"]
+	a := state.Assignments.Get("keep")
 	a.OperatorRestartNonce++
-	state.Assignments["keep"] = a
+	state.Assignments.Set("keep", a)
 	applySyncFixture(t, d, state)
 	d.AgentCheckpointSent(first.Checkpoint)
 	if plan := nextSync(t, d, first); plan.Checkpoint == nil {

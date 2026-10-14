@@ -293,7 +293,7 @@ func (d *Delivery) recordStatusReport(ctx context.Context, authenticatedAgentID 
 	rolloutServiceIDs := make(map[string]struct{})
 	deploymentAllocationIDs := make(map[string]struct{})
 	for _, cond := range report.GetServices() {
-		assignment := durable.Assignments[cond.GetAllocationId()]
+		assignment := durable.Assignments.Get(cond.GetAllocationId())
 		generation := cond.GetDesiredRolloutGeneration()
 
 		phase, healthy := cond.GetPhase(), cond.GetHealthy()
@@ -383,7 +383,7 @@ func validateStatusInventory(durable journal.DurableState, authenticatedAgentID 
 		if cond.GetAllocationId() == "" || cond.GetServiceId() == "" {
 			return fmt.Errorf("%w: allocation_id and service_id are required", ErrAllocationOwnership)
 		}
-		assignment, ok := durable.Assignments[cond.GetAllocationId()]
+		assignment, ok := durable.Assignments.Lookup(cond.GetAllocationId())
 		if !ok || assignment.AgentID != authenticatedAgentID {
 			return fmt.Errorf("%w: allocation %q", ErrAllocationOwnership, cond.GetAllocationId())
 		}

@@ -473,9 +473,12 @@ func validateBuilder(cfg BuilderConfig) error {
 		}
 	}
 	switch cfg.Cache.Mode {
-	case "", "none", "content-addressed":
+	case "", "none", "service", "content-addressed":
 	default:
-		return fmt.Errorf("builder.cache.mode must be %q or %q", "none", "content-addressed")
+		return errors.New("builder.cache.mode must be none, service, or content-addressed")
+	}
+	if cfg.Cache.MaxBytes <= 0 {
+		return errors.New("builder.cache.maxBytes must be greater than 0")
 	}
 	if cfg.Profile.IsProduction() {
 		return validateProductionBuilder(cfg)

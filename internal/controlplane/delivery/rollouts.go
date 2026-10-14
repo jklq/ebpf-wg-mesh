@@ -275,9 +275,16 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 	for _, alloc := range plan.Allocations {
 		occupied[alloc.AgentID] = struct{}{}
 	}
+	var candidates []placementCandidate
+	if plan.PlacementSlots > 0 {
+		candidates, err = s.placementCandidatesQuerier(ctx, tx)
+		if err != nil {
+			return result, err
+		}
+	}
 	created := 0
 	for i := 0; i < plan.PlacementSlots; i++ {
-		agentID, err := d.chooseReplicaAgentTx(ctx, tx, service, occupied, "", false)
+		agentID, err := d.chooseReplicaAgentTx(ctx, tx, candidates, service, occupied, "", false)
 		if errors.Is(err, ErrNoPlacementAvailable) {
 			break
 		}
@@ -288,6 +295,7 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		if err != nil {
 			return result, err
 		}
+		reservePlacement(candidates, agentID, service.Spec)
 		occupied[agentID] = struct{}{}
 		result.AgentIDs = append(result.AgentIDs, alloc.AgentID)
 		result.Changed = true

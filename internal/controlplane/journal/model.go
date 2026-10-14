@@ -179,7 +179,7 @@ type DurableState struct {
 	LogIndex       int64
 	Services       map[string]ServiceIntent
 	Revisions      map[string]ServiceRevision
-	Assignments    map[string]Assignment
+	Assignments    RowMap[Assignment]
 	Rollouts       map[string]Rollout
 	Deployments    map[string]Deployment
 	Agents         map[string]AgentRegistration

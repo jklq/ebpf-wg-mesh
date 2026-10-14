@@ -21,11 +21,11 @@ func projectionFixture() DurableState {
 		Administration: map[string]AgentAdministration{"one": {AgentID: "one", CredentialRevokedAt: &now}},
 		Deployments:    map[string]Deployment{"d": {ID: "d", ServiceID: "s", SpecRevision: 1}},
 		Rollouts:       map[string]Rollout{"s/1": {ServiceID: "s", RolloutGeneration: 1, StrategyJSON: []byte(`{"maxSurge":1}`), CompletedAt: &now}},
-		Assignments: map[string]Assignment{
+		Assignments: NewRowMap(map[string]Assignment{
 			"a": {ID: "a", AgentID: "one", ServiceID: "s", DeploymentID: "d", DrainStartedAt: &now, DrainDeadline: &now},
 			"b": {ID: "b", AgentID: "one", ServiceID: "s", DeploymentID: "d"},
 			"c": {ID: "c", AgentID: "two", ServiceID: "t", DeploymentID: "d"},
-		},
+		}),
 		Volumes: map[string]Volume{"v": {ID: "v", EnvironmentID: "e"}},
 		Domains: map[string]Domain{"app.test": {Hostname: "app.test", ServiceID: "s"}},
 	}
@@ -47,7 +47,7 @@ func advanceProjection(t *testing.T, before *Projection, state DurableState) *Pr
 	clear(raw)
 	want := projectionRelations(NewProjection(next.DurableState).indexes)
 	for name, index := range projectionRelations(next.indexes) {
-		if !maps.EqualFunc(index, want[name], func(a, b map[string]int) bool { return maps.Equal(a, b) }) {
+		if !maps.EqualFunc(maps.Collect(index.All()), maps.Collect(want[name].All()), func(a, b map[string]int) bool { return maps.Equal(a, b) }) {
 			t.Fatalf("incremental %s differs from rebuilt relationships:\n got %+v\nwant %+v", name, index, want[name])
 		}
 	}
@@ -56,7 +56,7 @@ func advanceProjection(t *testing.T, before *Projection, state DurableState) *Pr
 
 func projectionRelations(p projectionIndexes) map[string]relation {
 	return map[string]relation{
-		"assignmentsByAgent": p.assignmentsByAgent, "assignmentsByService": p.assignmentsByService,
+		"assignmentsByAgent": p.assignmentsByAgent, "assignmentsByService": p.assignmentsByService, "assignmentsByDeployment": p.assignmentsByDeployment,
 		"servicesByEnvironment": p.servicesByEnvironment, "domainsByService": p.domainsByService,
 		"environmentsByAgent": p.environmentsByAgent, "agentsByEnvironment": p.agentsByEnvironment,
 		"environmentsByProject": p.environmentsByProject, "volumesByEnvironment": p.volumesByEnvironment,
@@ -81,8 +81,8 @@ func TestProjectionOwnsImportedSnapshotAndPreservesEarlierPrefixes(t *testing.T)
 	delete(state.Services, "t")
 	*state.Projects["p"].SystemKey = "changed"
 	*state.Environments["e"].CopiedFromEnvironmentID = "changed"
-	*state.Assignments["a"].DrainDeadline = time.Unix(9, 0)
-	*state.Assignments["a"].DrainStartedAt = time.Unix(10, 0)
+	*state.Assignments.Get("a").DrainDeadline = time.Unix(9, 0)
+	*state.Assignments.Get("a").DrainStartedAt = time.Unix(10, 0)
 	*state.Administration["one"].CredentialRevokedAt = time.Unix(11, 0)
 	*state.Rollouts["s/1"].CompletedAt = time.Unix(12, 0)
 	for _, raw := range [][]byte{state.Revisions["s/1"].SpecJSON, state.Revisions["s/1"].EnvCiphertext,
@@ -112,13 +112,13 @@ func TestProjectionOwnsImportedSnapshotAndPreservesEarlierPrefixes(t *testing.T)
 
 func TestProjectionMembershipCountsServiceMovesAndLostAssignments(t *testing.T) {
 	p := NewProjection(projectionFixture())
-	if got := p.EnvironmentIDsForAgent("one"); !slices.Equal(got, []string{"e"}) || p.indexes.agentsByEnvironment["e"]["one"] != 2 {
+	if got := p.EnvironmentIDsForAgent("one"); !slices.Equal(got, []string{"e"}) || p.indexes.agentsByEnvironment.Get("e")["one"] != 2 {
 		t.Fatalf("two assignments did not retain counted membership: %v", got)
 	}
 	next := p.DurableState.Clone()
-	delete(next.Assignments, "a")
+	next.Assignments.Delete("a")
 	p = advanceProjection(t, p, next)
-	if got := p.AgentIDsForEnvironment("e"); !slices.Equal(got, []string{"one"}) || p.indexes.agentsByEnvironment["e"]["one"] != 1 {
+	if got := p.AgentIDsForEnvironment("e"); !slices.Equal(got, []string{"one"}) || p.indexes.agentsByEnvironment.Get("e")["one"] != 1 {
 		t.Fatalf("removing one replica removed the peer: %v", got)
 	}
 	// No assignment changes accompany a service move. Both directions of network
@@ -136,16 +136,16 @@ func TestProjectionMembershipCountsServiceMovesAndLostAssignments(t *testing.T) 
 		t.Fatalf("service move changed old membership: %v", got)
 	}
 	next = p.DurableState.Clone()
-	a := next.Assignments["b"]
+	a := next.Assignments.Get("b")
 	a.RolloutState = "lost"
-	next.Assignments["b"] = a
+	next.Assignments.Set("b", a)
 	p = advanceProjection(t, p, next)
 	if len(p.EnvironmentIDsForAgent("one")) != 0 || !slices.Equal(p.AssignmentIDsForAgent("one"), []string{"b"}) {
 		t.Fatal("lost assignment must release peer scope while retaining its product identity")
 	}
 	next = p.DurableState.Clone()
 	a.RolloutState = "serving"
-	next.Assignments["b"] = a
+	next.Assignments.Set("b", a)
 	p = advanceProjection(t, p, next)
 	if got := p.EnvironmentIDsForAgent("one"); !slices.Equal(got, []string{"f"}) {
 		t.Fatalf("restored assignment did not restore peer scope: %v", got)
@@ -166,7 +166,7 @@ func TestProjectionPrunesEmptyGroupsAndRecreatesThemWithinOneBatch(t *testing.T)
 	}
 	p = advanceProjection(t, p, DurableState{ClusterID: p.ClusterID})
 	for name, index := range projectionRelations(p.indexes) {
-		if len(index) != 0 {
+		if index.Len() != 0 {
 			t.Fatalf("deletion retained empty %s groups: %v", name, index)
 		}
 	}
@@ -174,5 +174,43 @@ func TestProjectionPrunesEmptyGroupsAndRecreatesThemWithinOneBatch(t *testing.T)
 	restored := NewProjection(projectionFixture())
 	if got := restored.AgentIDsForEnvironment("e"); !slices.Equal(got, []string{"one"}) {
 		t.Fatalf("rebuilt projection lost restored relationships: %v", got)
+	}
+}
+
+func TestProjectionChecksChangedReservationsAndDeletedOwners(t *testing.T) {
+	state := projectionFixture()
+	a, b := state.Assignments.Get("a"), state.Assignments.Get("b")
+	a.AllocationIPv4, b.AllocationIPv4 = "10.0.0.1", "10.0.0.2"
+	state.Assignments.Set("a", a)
+	state.Assignments.Set("b", b)
+	p := NewProjection(state)
+	initial := projectionJSON(t, p.DurableState)
+	conflict := b
+	conflict.AllocationIPv4 = a.AllocationIPv4
+	if _, err := p.Preview(Batch{Assignments: []Change[Assignment]{{Key: "b", Value: &conflict}}}); err == nil {
+		t.Fatal("duplicate address accepted")
+	}
+	a.AllocationIPv4, b.AllocationIPv4 = b.AllocationIPv4, a.AllocationIPv4
+	next, err := p.Preview(Batch{Assignments: []Change[Assignment]{{Key: "a", Value: &a}, {Key: "b", Value: &b}}})
+	if err != nil {
+		t.Fatalf("atomic address swap: %v", err)
+	}
+	if next.addresses.Get("10.0.0.1") != "b" || projectionJSON(t, p.DurableState) != initial {
+		t.Fatal("swap damaged old reservations")
+	}
+	for name, batch := range map[string]Batch{
+		"agent":      {Agents: []Change[AgentRegistration]{{Key: "one"}}},
+		"service":    {Services: []Change[ServiceIntent]{{Key: "s"}}},
+		"deployment": {Deployments: []Change[Deployment]{{Key: "d"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := p.Preview(batch); err == nil {
+				t.Fatal("deletion stranded an unchanged assignment")
+			}
+		})
+	}
+	_, err = p.Preview(Batch{Agents: []Change[AgentRegistration]{{Key: "one"}}, Assignments: []Change[Assignment]{{Key: "a"}, {Key: "b"}}})
+	if err != nil {
+		t.Fatalf("deleting an owner together with its assignments: %v", err)
 	}
 }

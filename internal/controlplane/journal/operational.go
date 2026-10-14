@@ -32,7 +32,7 @@ func recordOperationalDependencies(ctx context.Context, tx *sql.Tx, base Durable
 		}
 		for _, key := range keys {
 			if table == TableAssignments {
-				add(base.Assignments[key].ServiceID)
+				add(base.Assignments.Get(key).ServiceID)
 			} else {
 				add(base.Deployments[key].ServiceID)
 			}

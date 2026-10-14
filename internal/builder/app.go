@@ -382,7 +382,8 @@ func (a *App) buildAndPush(ctx context.Context, job *platformv1.BuildJob) (strin
 
 func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob, archivePath, digest string, reporter *buildLogReporter) ExecutionSpec {
 	return ExecutionSpec{
-		BuildID: job.GetBuildId(),
+		BuildID:    job.GetBuildId(),
+		CacheScope: buildCacheScope(job),
 
 		SnapshotArchivePath: archivePath,
 		SnapshotDigest:      digest,
@@ -425,12 +426,16 @@ func (a *App) executionSpecForJob(ctx context.Context, job *platformv1.BuildJob,
 
 // cachePolicyForJob maps the configured cache mode to an execution cache policy.
 func (a *App) cachePolicyForJob(job *platformv1.BuildJob, digest string) CachePolicy {
+	if a.cfg.Cache.Mode == string(CacheModeService) {
+		return CachePolicy{Mode: CacheModeService, Key: ServiceCacheKey(buildCacheScope(job), job.GetSource().GetBuildRecipe(), a.cfg.RailpackFrontendImage), MaxBytes: a.cfg.Cache.MaxBytes}
+	}
 	if a.cfg.Cache.Mode != string(CacheModeContentAddressed) {
 		return CachePolicy{Mode: CacheModeNone}
 	}
 	return CachePolicy{
-		Mode: CacheModeContentAddressed,
-		Key:  ContentCacheKey(digest, job.GetSource().GetBuildRecipe(), a.cfg.RailpackFrontendImage),
+		Mode:     CacheModeContentAddressed,
+		Key:      ContentCacheKey(digest, job.GetSource().GetBuildRecipe(), a.cfg.RailpackFrontendImage),
+		MaxBytes: a.cfg.Cache.MaxBytes,
 	}
 }
 
@@ -688,4 +693,11 @@ func safeChildPath(root, child string) (string, error) {
 		return "", errors.New("workspace path escapes root")
 	}
 	return path, nil
+}
+
+func buildCacheScope(job *platformv1.BuildJob) string {
+	if job.GetProjectId() == "" || job.GetEnvironmentId() == "" || job.GetServiceId() == "" {
+		return ""
+	}
+	return job.GetProjectId() + "/" + job.GetEnvironmentId() + "/" + job.GetServiceId()
 }

@@ -21,7 +21,7 @@ func TestJournalKeepsOperationalClosureWithoutResidentHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	allocation := allocationForGeneration(t, store, service.ID, 1)[0]
-	deploymentID := initial.Assignments[allocation.ID].DeploymentID
+	deploymentID := initial.Assignments.Get(allocation.ID).DeploymentID
 	const latest = 129
 	historyID := func(n int) string { return fmt.Sprintf("%s/history/%d", service.ID, n) }
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {

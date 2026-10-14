@@ -1,6 +1,8 @@
 package delivery
 
 import (
+	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -43,5 +45,23 @@ func TestNextIPv4AddressFromSubnetAllocatesSequentiallyAndReusesGaps(t *testing.
 	}
 	if _, err := nextIPv4AddressFromSubnet("10.42.0.0/29", used); err == nil || !strings.Contains(err.Error(), "exhausted") {
 		t.Fatalf("expected subnet exhaustion, got %v", err)
+	}
+}
+
+func TestPlacementBatchReservesCapacityAndUpdatesLoadOrder(t *testing.T) {
+	d := &Delivery{store: &persistence{}}
+	spec := directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{CpuMillis: 1000, MemoryMebibytes: 64})
+	candidates := []placementCandidate{testCandidate("a", "region", "a", 0), testCandidate("b", "region", "b", 0)}
+	occupied := make(map[string]struct{})
+	for _, want := range []string{"a", "b", "a", "b"} {
+		id, err := d.chooseAgentForReplica(candidates, spec, occupied)
+		if err != nil || id != want {
+			t.Fatalf("agent = %s, %v, want %s", id, err, want)
+		}
+		reservePlacement(candidates, id, spec)
+		occupied[id] = struct{}{}
+	}
+	if _, err := d.chooseAgentForReplica(candidates, spec, occupied); !errors.Is(err, ErrNoPlacementAvailable) {
+		t.Fatalf("overcommitted batch capacity: %v", err)
 	}
 }

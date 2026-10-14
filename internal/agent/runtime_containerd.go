@@ -24,6 +24,10 @@ import (
 
 const defaultCPUCFSPeriod uint64 = 100_000
 
+const allocationReconcileConcurrency = 4
+
+// serviceEngine supports concurrent calls for different allocations. Calls for
+// one allocation and for workloads sharing a volume remain ordered by the runtime.
 type serviceEngine interface {
 	DiscoverServices(context.Context) ([]RuntimeResource, error)
 	EnsureService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
@@ -55,6 +59,7 @@ type ContainerdRuntime struct {
 	engine      serviceEngine
 	volumes     *volumestore.Store
 	probeHealth func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe
+	stateMu     sync.Mutex
 	ready       map[string]rolloutReadiness
 	clock       restartpolicy.Clock
 	rng         *rand.Rand
@@ -149,10 +154,12 @@ func (r *ContainerdRuntime) RestartManagedDashboard(ctx context.Context, state *
 		if !isManagedDashboardService(svc) {
 			continue
 		}
+		r.stateMu.Lock()
 		if r.forceStart == nil {
 			r.forceStart = make(map[string]bool)
 		}
 		r.forceStart[svc.GetAllocationId()] = true
+		r.stateMu.Unlock()
 		if err := r.engine.RemoveService(ctx, svc.GetAllocationId()); err != nil {
 			return fmt.Errorf("restart managed dashboard: %w", err)
 		}
@@ -190,6 +197,12 @@ func (r *ContainerdRuntime) volumeStore() (*volumestore.Store, error) {
 }
 
 func (r *ContainerdRuntime) ReconcileWithCleanup(ctx context.Context, state *agentv1.DesiredNodeState, allowCleanup bool) (*agentv1.StatusReport, error) {
+	return r.ReconcileWithProgress(ctx, state, allowCleanup, nil)
+}
+
+// Independent allocations progress concurrently; each shared volume's group
+// keeps desired order. Cleanup and volume provisioning finish before workers run.
+func (r *ContainerdRuntime) ReconcileWithProgress(ctx context.Context, state *agentv1.DesiredNodeState, allowCleanup bool, progress func(*agentv1.StatusReport)) (*agentv1.StatusReport, error) {
 	report := &agentv1.StatusReport{AgentId: state.GetAgentId()}
 	desiredServices := runtimeutil.IndexDesiredServices(state.GetServices())
 
@@ -212,16 +225,79 @@ func (r *ContainerdRuntime) ReconcileWithCleanup(ctx context.Context, state *age
 			pinned[volume.GetVolumeId()] = true
 		}
 	}
-	for _, svc := range state.GetServices() {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	services := state.GetServices()
+	groups := make([][]int, 0, len(services))
+	volumeGroups := make(map[string]int)
+	for i, svc := range services {
+		if volumeID := svc.GetVolumeId(); volumeID != "" {
+			if group, exists := volumeGroups[volumeID]; exists {
+				groups[group] = append(groups[group], i)
+				continue
+			}
+			volumeGroups[volumeID] = len(groups)
 		}
-		cond := r.reconcileService(ctx, svc, pinned)
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		report.Services = append(report.Services, cond)
+		groups = append(groups, []int{i})
 	}
+	type result struct {
+		index     int
+		condition *agentv1.ServiceCondition
+	}
+	jobs := make(chan []int, len(groups))
+	results := make(chan result, len(services))
+	for _, group := range groups {
+		jobs <- group
+	}
+	close(jobs)
+	var workers sync.WaitGroup
+	for range min(allocationReconcileConcurrency, len(groups)) {
+		workers.Go(func() {
+			for group := range jobs {
+				for _, i := range group {
+					if ctx.Err() != nil {
+						return
+					}
+					condition := r.reconcileService(ctx, services[i], pinned)
+					results <- result{index: i, condition: condition}
+				}
+			}
+		})
+	}
+	go func() { workers.Wait(); close(results) }()
+	conditions := make([]*agentv1.ServiceCondition, len(services))
+	// Coalesce status writes during large passes while publishing the first
+	// completed allocation immediately, even if another pull remains blocked.
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+	var pending []*agentv1.ServiceCondition
+	first := true
+	flush := func() {
+		if progress != nil && len(pending) > 0 && ctx.Err() == nil {
+			progress(&agentv1.StatusReport{AgentId: state.GetAgentId(), Volumes: report.Volumes, Services: pending})
+		}
+		pending = nil
+	}
+	collecting := true
+	for collecting {
+		select {
+		case result, ok := <-results:
+			if !ok {
+				collecting = false
+				continue
+			}
+			conditions[result.index] = result.condition
+			pending = append(pending, result.condition)
+			if first {
+				flush()
+				first = false
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	report.Services = conditions
 	return report, nil
 }
 
@@ -286,12 +362,14 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 	}
 	obs := r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
 	operatorNonce := svc.GetOperatorRestartNonce()
+	r.stateMu.Lock()
 	if r.forceStart[svc.GetAllocationId()] {
 		if obs.GetAppliedOperatorRestartNonce() >= operatorNonce {
 			operatorNonce = obs.GetAppliedOperatorRestartNonce() + 1
 		}
 		delete(r.forceStart, svc.GetAllocationId())
 	}
+	r.stateMu.Unlock()
 	var status serviceStatus
 	var created bool
 	if shouldPreserveTerminalObservation(r.now(), svc.GetSpec().GetRuntime().GetRestart(), obs, svc.GetDesiredRolloutGeneration(), operatorNonce) {
@@ -314,7 +392,7 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		}
 		if created {
 			status.Running = true
-			delete(r.ready, svc.GetAllocationId())
+			r.forgetReadiness(svc.GetAllocationId())
 		}
 	}
 	if status.DiskExhausted {
@@ -327,7 +405,7 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 			cond.Message = err.Error()
 			return cond
 		}
-		delete(r.ready, svc.GetAllocationId())
+		r.forgetReadiness(svc.GetAllocationId())
 		status.Running = false
 	}
 	livenessFailed := false
@@ -339,7 +417,7 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 				cond.Message = err.Error()
 				return cond
 			}
-			delete(r.ready, svc.GetAllocationId())
+			r.forgetReadiness(svc.GetAllocationId())
 			status.Running = false
 			_ = reason
 		}
@@ -381,7 +459,7 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 				cond.Message = err.Error()
 				return cond
 			}
-			delete(r.ready, svc.GetAllocationId())
+			r.forgetReadiness(svc.GetAllocationId())
 			var err error
 			status, created, err = r.engine.EnsureService(ctx, svc)
 			if err != nil {
@@ -420,9 +498,9 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 		return cond
 	}
 	if created {
-		delete(r.ready, svc.GetAllocationId())
+		r.forgetReadiness(svc.GetAllocationId())
 	}
-	if ready, ok := r.ready[svc.GetAllocationId()]; ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
+	if ready, ok := r.readiness(svc.GetAllocationId()); ok && ready.rolloutGeneration == svc.GetDesiredRolloutGeneration() {
 		cond.Healthy = true
 		cond.HealthyIpv4Ports = append([]int32(nil), ready.healthyIPv4Ports...)
 		cond.HealthyIpv6Ports = append([]int32(nil), ready.healthyIPv6Ports...)
@@ -434,10 +512,10 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 	if probeHealth == nil {
 		probeHealth = probeServiceHealthInNamespace
 	}
-	ipv4Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv4, svc)
-	ipv6Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv6, svc)
+	ipv4Probe, ipv6Probe := probeHealthFamilies(ctx, probeHealth, status, svc)
 	if ipv4Probe.healthy || ipv6Probe.healthy {
 		ports := runtimeutil.ReadinessPorts(svc)
+		r.stateMu.Lock()
 		if r.ready == nil {
 			r.ready = make(map[string]rolloutReadiness)
 		}
@@ -446,6 +524,7 @@ func (r *ContainerdRuntime) finishRunningCondition(ctx context.Context, cond *ag
 			healthyIPv4Ports:  healthyFamilyPorts(ipv4Probe.healthy, ports),
 			healthyIPv6Ports:  healthyFamilyPorts(ipv6Probe.healthy, ports),
 		}
+		r.stateMu.Unlock()
 		cond.Healthy = true
 		cond.HealthyIpv4Ports = healthyFamilyPorts(ipv4Probe.healthy, ports)
 		cond.HealthyIpv6Ports = healthyFamilyPorts(ipv6Probe.healthy, ports)
@@ -463,7 +542,7 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 	if check == nil {
 		return "", false
 	}
-	ready, ok := r.ready[svc.GetAllocationId()]
+	ready, ok := r.readiness(svc.GetAllocationId())
 	if !ok || ready.rolloutGeneration != svc.GetDesiredRolloutGeneration() {
 		if explicitHTTPHealthCheck(svc) != nil {
 			return "", false
@@ -474,8 +553,7 @@ func (r *ContainerdRuntime) livenessFailed(ctx context.Context, status serviceSt
 		probeHealth = probeServiceHealthInNamespace
 	}
 	livenessSvc := protoCloneDesiredWithHealth(svc, check)
-	ipv4Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv4, livenessSvc)
-	ipv6Probe := probeHealth(ctx, status.NetworkNamespacePath, status.AllocationIPv6, livenessSvc)
+	ipv4Probe, ipv6Probe := probeHealthFamilies(ctx, probeHealth, status, livenessSvc)
 	if ctx.Err() != nil {
 		return "", false
 	}
@@ -605,7 +683,7 @@ func (r *ContainerdRuntime) pruneStaleServices(ctx context.Context, desired map[
 		if err := r.engine.RemoveService(ctx, allocationID); err != nil {
 			return err
 		}
-		delete(r.ready, allocationID)
+		r.forgetReadiness(allocationID)
 		if err := r.removeObservation(allocationID); err != nil {
 			return err
 		}
@@ -784,4 +862,30 @@ func (r *ContainerdRuntime) RecoveryResources(ctx context.Context) ([]recovery.F
 		resources = append(resources, recovery.FleetResource{Kind: "volume", ID: id})
 	}
 	return resources, nil
+}
+
+func (r *ContainerdRuntime) readiness(id string) (rolloutReadiness, bool) {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	ready, ok := r.ready[id]
+	return ready, ok
+}
+
+func (r *ContainerdRuntime) forgetReadiness(id string) {
+	r.stateMu.Lock()
+	defer r.stateMu.Unlock()
+	delete(r.ready, id)
+}
+
+func probeHealthFamilies(ctx context.Context, probe func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe, status serviceStatus, svc *agentv1.DesiredService) (serviceHealthProbe, serviceHealthProbe) {
+	ipv4 := make(chan serviceHealthProbe, 1)
+	go func() { ipv4 <- probe(ctx, status.NetworkNamespacePath, status.AllocationIPv4, svc) }()
+	ipv6 := probe(ctx, status.NetworkNamespacePath, status.AllocationIPv6, svc)
+	return <-ipv4, ipv6
+}
+
+func (r *ContainerdRuntime) RefreshDiskUsage(ctx context.Context) {
+	if engine, ok := r.engine.(diskAccountingRuntime); ok {
+		engine.RefreshDiskUsage(ctx)
+	}
 }

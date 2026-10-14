@@ -405,7 +405,10 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 		cfg.Network.DeniedCIDRs = DefaultBuilderDeniedCIDRs()
 	}
 	if cfg.Cache.Mode == "" {
-		cfg.Cache.Mode = "none"
+		cfg.Cache.Mode = "service"
+	}
+	if cfg.Cache.MaxBytes == 0 {
+		cfg.Cache.MaxBytes = DefaultBuilderCacheMaxBytes
 	}
 }
 
@@ -480,3 +483,6 @@ func FinalizeBuilder(cfg *BuilderConfig) error {
 	applyBuilderDefaults(cfg)
 	return validateBuilder(*cfg)
 }
+
+// DefaultBuilderCacheMaxBytes bounds retained layer data across all services.
+const DefaultBuilderCacheMaxBytes int64 = 10 << 30

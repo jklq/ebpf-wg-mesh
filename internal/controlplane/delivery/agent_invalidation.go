@@ -45,7 +45,7 @@ func AffectedAgentIDs(before, after *journal.Projection, batch journal.Batch) []
 		serviceEnvironment(id)
 	}
 	for _, c := range batch.Assignments {
-		old, next := before.Assignments[c.Key], after.Assignments[c.Key]
+		old, next := before.Assignments.Get(c.Key), after.Assignments.Get(c.Key)
 		add(agents, old.AgentID)
 		add(agents, next.AgentID)
 		serviceEnvironment(old.ServiceID)
@@ -88,10 +88,10 @@ func AffectedAgentIDs(before, after *journal.Projection, batch journal.Batch) []
 	}
 	for service := range services {
 		for _, id := range before.AssignmentIDsForService(service) {
-			add(agents, before.Assignments[id].AgentID)
+			add(agents, before.Assignments.Get(id).AgentID)
 		}
 		for _, id := range after.AssignmentIDsForService(service) {
-			add(agents, after.Assignments[id].AgentID)
+			add(agents, after.Assignments.Get(id).AgentID)
 		}
 	}
 	return keysOf(agents)

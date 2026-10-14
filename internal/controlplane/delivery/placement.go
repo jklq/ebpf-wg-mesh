@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -60,10 +61,14 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 		for _, alloc := range existing {
 			occupied[alloc.AgentID] = struct{}{}
 		}
+		candidates, err := s.placementCandidatesQuerier(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
 		placed := 0
 		failureReason := "no active healthy node satisfies the placement constraints"
 		for i := 0; i < needed; i++ {
-			agentID, err := d.chooseReplicaAgentTx(ctx, tx, service, occupied, preferredAgentID, i == 0 && preferredAgentID != "")
+			agentID, err := d.chooseReplicaAgentTx(ctx, tx, candidates, service, occupied, preferredAgentID, i == 0 && preferredAgentID != "")
 			if errors.Is(err, ErrNoPlacementAvailable) {
 				failureReason = strings.TrimSpace(strings.TrimPrefix(err.Error(), ErrNoPlacementAvailable.Error()+": "))
 				break
@@ -75,6 +80,7 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 			if err != nil {
 				return nil, err
 			}
+			reservePlacement(candidates, agentID, service.Spec)
 			existing = append(existing, alloc)
 			occupied[agentID] = struct{}{}
 			placed++
@@ -97,17 +103,12 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 	return append(existing, lost...), nil
 }
 
-func (d *Delivery) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, occupied map[string]struct{}, preferredAgentID string, usePreferred bool) (string, error) {
-	s := d.store
+func (d *Delivery) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, candidates []placementCandidate, service ServiceRecord, occupied map[string]struct{}, preferredAgentID string, usePreferred bool) (string, error) {
 	if volumeName := ServiceVolumeName(service.Spec); volumeName != "" {
-		return d.chooseVolumeAgentTx(ctx, tx, service, volumeName)
+		return d.chooseVolumeAgentTx(ctx, tx, candidates, service, volumeName)
 	}
 	if usePreferred && preferredAgentID != "" {
 		if _, taken := occupied[preferredAgentID]; !taken {
-			candidates, err := s.placementCandidatesQuerier(ctx, tx)
-			if err != nil {
-				return "", err
-			}
 			for _, candidate := range candidates {
 				if candidate.ID == preferredAgentID && candidateEligible(candidate, service.Spec) {
 					return preferredAgentID, nil
@@ -115,13 +116,13 @@ func (d *Delivery) chooseReplicaAgentTx(ctx context.Context, tx *sql.Tx, service
 			}
 		}
 	}
-	return d.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, occupied)
+	return d.chooseAgentForReplica(candidates, service.Spec, occupied)
 }
 
 // chooseVolumeAgentTx places a volume-backed service on the node holding its
 // volume. A volume that has never been placed is pinned to the node chosen for
 // its first allocation, in the same transaction; it never moves afterwards.
-func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, volumeName string) (string, error) {
+func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, candidates []placementCandidate, service ServiceRecord, volumeName string) (string, error) {
 	s := d.store
 	var volumeID string
 	var pinned sql.NullString
@@ -131,10 +132,6 @@ func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, service 
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("%w: %q", ErrVolumeNotFound, volumeName)
 	}
-	if err != nil {
-		return "", err
-	}
-	candidates, err := s.placementCandidatesQuerier(ctx, tx)
 	if err != nil {
 		return "", err
 	}
@@ -150,7 +147,7 @@ func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, service 
 		}
 		return "", fmt.Errorf("%w: %s", ErrNoPlacementAvailable, s.volumeNodeUnavailableReason(ctx, tx, volumeName, pinned.String))
 	}
-	agentID, err := d.chooseAgentForReplicaQuerier(ctx, tx, service.Spec, map[string]struct{}{})
+	agentID, err := d.chooseAgentForReplica(candidates, service.Spec, map[string]struct{}{})
 	if err != nil {
 		return "", err
 	}
@@ -184,6 +181,11 @@ func (d *Delivery) chooseAgentForReplicaQuerier(ctx context.Context, q ServiceQu
 	if err != nil {
 		return "", err
 	}
+	return d.chooseAgentForReplica(candidates, spec, occupied)
+}
+
+func (d *Delivery) chooseAgentForReplica(candidates []placementCandidate, spec *platformv1.ServiceSpec, occupied map[string]struct{}) (string, error) {
+	s := d.store
 	if agentID := firstEligibleReplicaAgent(candidates, spec, s.reservedAgentIDs, occupied, true, true); agentID != "" {
 		return agentID, nil
 	}
@@ -421,4 +423,33 @@ func trailingNumber(value string) int {
 		return 0
 	}
 	return number
+}
+
+// Keep the batch's usage and least-loaded ordering current after each insert.
+func reservePlacement(candidates []placementCandidate, agentID string, spec *platformv1.ServiceSpec) {
+	for i := range candidates {
+		if candidates[i].ID == agentID {
+			candidates[i].ServiceCount++
+			candidates[i].UsedCPUMillis += spec.GetRuntime().GetCpuMillis()
+			candidates[i].UsedMemoryMebibytes += spec.GetRuntime().GetMemoryMebibytes()
+			break
+		}
+	}
+	slices.SortFunc(candidates, func(a, b placementCandidate) int {
+		if a.HostType != b.HostType {
+			if a.HostType == config.HostStable {
+				return -1
+			}
+			if b.HostType == config.HostStable {
+				return 1
+			}
+		}
+		if a.ServiceCount < b.ServiceCount {
+			return -1
+		}
+		if a.ServiceCount > b.ServiceCount {
+			return 1
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 }

@@ -607,8 +607,8 @@ func TestFinalizeBuilderCacheMode(t *testing.T) {
 	if err := FinalizeBuilder(&cfg); err != nil {
 		t.Fatalf("FinalizeBuilder: %v", err)
 	}
-	if cfg.Cache.Mode != "none" {
-		t.Fatalf("cache mode must default to none, got %q", cfg.Cache.Mode)
+	if cfg.Cache.Mode != "service" {
+		t.Fatalf("cache mode must default to service, got %q", cfg.Cache.Mode)
 	}
 	cfg.Cache.Mode = "content-addressed"
 	if err := FinalizeBuilder(&cfg); err != nil {

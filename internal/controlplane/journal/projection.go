@@ -1,6 +1,7 @@
 package journal
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 )
@@ -11,7 +12,8 @@ import (
 // Live hold the same projection; live observations remain separately owned.
 type Projection struct {
 	DurableState
-	indexes projectionIndexes
+	indexes   projectionIndexes
+	addresses RowMap[string]
 }
 
 // NewProjection imports an owned snapshot. Normal journal replay uses advance,
@@ -23,6 +25,13 @@ func NewProjection(state DurableState) *Projection {
 func newProjection(state DurableState) *Projection {
 	p := &Projection{DurableState: state}
 	p.indexes = updateIndexes(projectionIndexes{}, DurableState{}, state, Diff(DurableState{}, state))
+	for id, a := range state.Assignments.All() {
+		for _, address := range []string{a.AllocationIPv4, a.AllocationIPv6} {
+			if address != "" {
+				p.addresses.Set(address, id)
+			}
+		}
+	}
 	return p
 }
 
@@ -31,7 +40,11 @@ func (p *Projection) advance(entry Entry) (*Projection, Batch, error) {
 	if err != nil {
 		return p, Batch{}, err
 	}
-	return &Projection{DurableState: state, indexes: updateIndexes(p.indexes, p.DurableState, state, batch)}, batch, nil
+	next, err := p.project(state, batch)
+	if err != nil {
+		return p, Batch{}, err
+	}
+	return next, batch, nil
 }
 
 // Preview applies the resolved SQL effects before their agent revision bumps.
@@ -41,7 +54,68 @@ func (p *Projection) Preview(batch Batch) (*Projection, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Projection{DurableState: state, indexes: updateIndexes(p.indexes, p.DurableState, state, batch)}, nil
+	return p.project(state, batch)
+}
+
+func (p *Projection) project(state DurableState, batch Batch) (*Projection, error) {
+	addresses := p.addresses
+	affected := make(map[string]struct{}, len(batch.Assignments))
+	// Release all changed reservations before validating replacements, allowing
+	// address swaps and delete/recreate within a single atomic batch.
+	for _, c := range batch.Assignments {
+		affected[c.Key] = struct{}{}
+		a := p.Assignments.Get(c.Key)
+		for _, address := range []string{a.AllocationIPv4, a.AllocationIPv6} {
+			if address != "" {
+				addresses.Delete(address)
+			}
+		}
+	}
+	for _, c := range batch.Agents {
+		if c.Value == nil {
+			for id := range p.indexes.assignmentsByAgent.Get(c.Key) {
+				affected[id] = struct{}{}
+			}
+		}
+	}
+	for _, c := range batch.Services {
+		if c.Value == nil {
+			for id := range p.indexes.assignmentsByService.Get(c.Key) {
+				affected[id] = struct{}{}
+			}
+		}
+	}
+	for _, c := range batch.Deployments {
+		if c.Value == nil {
+			for id := range p.indexes.assignmentsByDeployment.Get(c.Key) {
+				affected[id] = struct{}{}
+			}
+		}
+	}
+	for id := range affected {
+		a, exists := state.Assignments.Lookup(id)
+		if !exists {
+			continue
+		}
+		if err := state.validateAssignment(id, a); err != nil {
+			return nil, err
+		}
+	}
+	for _, c := range batch.Assignments {
+		if c.Value == nil {
+			continue
+		}
+		for _, address := range []string{c.Value.AllocationIPv4, c.Value.AllocationIPv6} {
+			if address == "" {
+				continue
+			}
+			if owner, exists := addresses.Lookup(address); exists {
+				return nil, fmt.Errorf("address %s reserved by both %s and %s", address, owner, c.Key)
+			}
+			addresses.Set(address, c.Key)
+		}
+	}
+	return &Projection{DurableState: state, indexes: updateIndexes(p.indexes, p.DurableState, state, batch), addresses: addresses}, nil
 }
 
 func (p *Projection) AssignmentIDsForAgent(id string) []string {
@@ -81,10 +155,10 @@ func (p *Projection) DestructionIDsForAgent(id string) []string {
 
 // A membership count retains environment peers until their last non-lost
 // assignment disappears. The same relation machinery handles ordinary sets.
-type relation map[string]map[string]int
+type relation struct{ RowMap[map[string]int] }
 
 func (r relation) keys(key string) []string {
-	keys := slices.Collect(maps.Keys(r[key]))
+	keys := slices.Collect(maps.Keys(r.Get(key)))
 	slices.Sort(keys)
 	return keys
 }
@@ -101,35 +175,32 @@ func (e *relationEditor) add(key, member string, delta int) {
 		return
 	}
 	if e.owned == nil {
-		e.next = maps.Clone(e.next)
-		if e.next == nil {
-			e.next = make(relation)
-		}
 		e.owned = make(map[string]bool)
 	}
+	bucket := e.next.Get(key)
 	if !e.owned[key] {
-		e.next[key] = maps.Clone(e.next[key])
-		if e.next[key] == nil {
-			e.next[key] = make(map[string]int)
-		}
+		bucket = maps.Clone(bucket)
 		e.owned[key] = true
 	}
-	n := e.next[key][member] + delta
+	if bucket == nil {
+		bucket = make(map[string]int)
+	}
+	n := bucket[member] + delta
 	if n > 0 {
-		if e.next[key] == nil {
-			e.next[key] = make(map[string]int)
-		}
-		e.next[key][member] = n
+		bucket[member] = n
 	} else {
-		delete(e.next[key], member)
-		if len(e.next[key]) == 0 {
-			delete(e.next, key)
-		}
+		delete(bucket, member)
+	}
+	if len(bucket) == 0 {
+		e.next.Delete(key)
+	} else {
+		e.next.Set(key, bucket)
 	}
 }
 
 type projectionIndexes struct {
 	assignmentsByAgent, assignmentsByService    relation
+	assignmentsByDeployment                     relation
 	servicesByEnvironment, domainsByService     relation
 	environmentsByAgent, agentsByEnvironment    relation
 	environmentsByProject, volumesByEnvironment relation
@@ -138,6 +209,7 @@ type projectionIndexes struct {
 
 func updateIndexes(previous projectionIndexes, before, after DurableState, batch Batch) projectionIndexes {
 	assignmentsByAgent, assignmentsByService := editRelation(previous.assignmentsByAgent), editRelation(previous.assignmentsByService)
+	assignmentsByDeployment := editRelation(previous.assignmentsByDeployment)
 	environmentsByAgent, agentsByEnvironment := editRelation(previous.environmentsByAgent), editRelation(previous.agentsByEnvironment)
 	servicesByEnvironment, domainsByService := editRelation(previous.servicesByEnvironment), editRelation(previous.domainsByService)
 	environmentsByProject, volumesByEnvironment := editRelation(previous.environmentsByProject), editRelation(previous.volumesByEnvironment)
@@ -189,13 +261,17 @@ func updateIndexes(previous projectionIndexes, before, after DurableState, batch
 	// its assignments, even when the assignments themselves have not changed.
 	for _, c := range batch.Services {
 		if before.Services[c.Key].EnvironmentID != after.Services[c.Key].EnvironmentID {
-			for id := range previous.assignmentsByService[c.Key] {
+			for id := range previous.assignmentsByService.Get(c.Key) {
 				changedAssignments[id] = struct{}{}
 			}
 		}
 	}
 	for id := range changedAssignments {
-		old, next := before.Assignments[id], after.Assignments[id]
+		old, next := before.Assignments.Get(id), after.Assignments.Get(id)
+		if old.DeploymentID != next.DeploymentID {
+			assignmentsByDeployment.add(old.DeploymentID, id, -1)
+			assignmentsByDeployment.add(next.DeploymentID, id, 1)
+		}
 		if old.AgentID != next.AgentID {
 			assignmentsByAgent.add(old.AgentID, id, -1)
 			assignmentsByAgent.add(next.AgentID, id, 1)
@@ -218,7 +294,7 @@ func updateIndexes(previous projectionIndexes, before, after DurableState, batch
 			agentsByEnvironment.add(nextEnv, next.AgentID, 1)
 		}
 	}
-	return projectionIndexes{assignmentsByAgent.next, assignmentsByService.next, servicesByEnvironment.next, domainsByService.next,
+	return projectionIndexes{assignmentsByAgent.next, assignmentsByService.next, assignmentsByDeployment.next, servicesByEnvironment.next, domainsByService.next,
 		environmentsByAgent.next, agentsByEnvironment.next, environmentsByProject.next, volumesByEnvironment.next,
 		volumesByAgent.next, destructionsByAgent.next}
 }

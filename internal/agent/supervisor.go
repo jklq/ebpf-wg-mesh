@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"google.golang.org/protobuf/proto"
 )
 
 type workloadSupervisor struct {
@@ -67,6 +68,21 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 		}
 		s.run(ctx)
 	}()
+	if disk, ok := s.runtime.(diskAccountingRuntime); ok && !s.recoveryPaused {
+		go func() {
+			ticker := time.NewTicker(diskEnforcementInterval)
+			defer ticker.Stop()
+			for {
+				disk.RefreshDiskUsage(ctx)
+				s.requestReconcile()
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	}
 	if source, ok := s.runtime.(RuntimeEventSource); ok && !s.recoveryPaused {
 		events, eventErrors := source.ReconcileEvents(ctx)
 		go runtimeEventReconcileLoop(ctx, events, eventErrors, func() {
@@ -81,8 +97,6 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 func (s *workloadSupervisor) run(ctx context.Context) {
 	ticker := time.NewTicker(reconcileSafetyInterval)
 	defer ticker.Stop()
-	diskTicker := time.NewTicker(diskEnforcementInterval)
-	defer diskTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -91,8 +105,6 @@ func (s *workloadSupervisor) run(ctx context.Context) {
 			s.reconcile(ctx, "desired-state")
 		case <-ticker.C:
 			s.reconcile(ctx, "safety-resync")
-		case <-diskTicker.C:
-			s.reconcile(ctx, "disk-enforcement")
 		}
 	}
 }
@@ -234,7 +246,26 @@ func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
 		return
 	}
 	allowCleanup := summary.Initialization == initializationReady && !s.recoveryPaused
-	report, err := s.runtime.ReconcileWithCleanup(ctx, desired, allowCleanup)
+	var report *agentv1.StatusReport
+	if runtime, ok := s.runtime.(progressRuntime); ok {
+		previous, readErr := s.store.currentReport()
+		if readErr != nil {
+			slog.Error("read prior runtime report", "error", readErr)
+			return
+		}
+		if previous == nil {
+			previous = &agentv1.StatusReport{Services: summary.Allocations}
+		}
+		report, err = runtime.ReconcileWithProgress(ctx, desired, allowCleanup, func(partial *agentv1.StatusReport) {
+			if ctx.Err() != nil {
+				return
+			}
+			previous = mergeProgressReport(desired, previous, partial)
+			s.recordRuntimeReport(previous, summary, allowCleanup)
+		})
+	} else {
+		report, err = s.runtime.ReconcileWithCleanup(ctx, desired, allowCleanup)
+	}
 	if ctx.Err() != nil {
 		return
 	}
@@ -246,20 +277,7 @@ func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
 		slog.Error("runtime reconciliation returned no observation", "agent_id", s.agentID, "cursor", desired.GetReconciliationCursor(), "source", source)
 		return
 	}
-	stampReportGeneration(report, summary)
-	report.AgentId = s.agentID
-	report.RecoveryMode = !allowCleanup
-	persisted, changed, err := s.store.recordReport(report)
-	if err != nil {
-		slog.Error("persist runtime observation", "agent_id", s.agentID, "cursor", desired.GetReconciliationCursor(), "error", err)
-		return
-	}
-	if changed && persisted != nil {
-		select {
-		case s.reports <- struct{}{}:
-		default:
-		}
-	}
+	s.recordRuntimeReport(report, summary, allowCleanup)
 	inventory, discoverErr := s.runtime.DiscoverRuntimeResources(ctx)
 	if discoverErr != nil {
 		slog.Warn("refresh runtime inventory", "agent_id", s.agentID, "error", discoverErr)
@@ -284,3 +302,41 @@ func (s *workloadSupervisor) CurrentReport() (*agentv1.StatusReport, error) {
 func (s *workloadSupervisor) Summary() (localStateSummary, error) { return s.store.summary() }
 
 func (s *workloadSupervisor) Ready() bool { return s.ready.Load() }
+
+func (s *workloadSupervisor) recordRuntimeReport(report *agentv1.StatusReport, summary localStateSummary, allowCleanup bool) {
+	stampReportGeneration(report, summary)
+	report.AgentId = s.agentID
+	report.RecoveryMode = !allowCleanup
+	persisted, changed, err := s.store.recordReport(report)
+	if err != nil {
+		slog.Error("persist runtime observation", "agent_id", s.agentID, "cursor", report.GetReconciliationCursor(), "error", err)
+		return
+	}
+	if changed && persisted != nil {
+		select {
+		case s.reports <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// Reports carry a complete desired inventory even while some workers are still
+// running. Keep their last matching observation instead of withdrawing readiness.
+func mergeProgressReport(desired *agentv1.DesiredNodeState, previous, partial *agentv1.StatusReport) *agentv1.StatusReport {
+	conditions := make(map[string]*agentv1.ServiceCondition)
+	for _, condition := range previous.GetServices() {
+		conditions[condition.GetAllocationId()] = condition
+	}
+	for _, condition := range partial.GetServices() {
+		conditions[condition.GetAllocationId()] = condition
+	}
+	report := &agentv1.StatusReport{AgentId: desired.GetAgentId(), Volumes: partial.GetVolumes()}
+	for _, svc := range desired.GetServices() {
+		condition := conditions[svc.GetAllocationId()]
+		if condition == nil || condition.GetPhase() == "" || condition.GetDesiredSpecRevision() != svc.GetDesiredSpecRevision() || condition.GetDesiredRolloutGeneration() != svc.GetDesiredRolloutGeneration() {
+			condition = &agentv1.ServiceCondition{AllocationId: svc.GetAllocationId(), ServiceId: svc.GetServiceId(), DesiredSpecRevision: svc.GetDesiredSpecRevision(), DesiredRolloutGeneration: svc.GetDesiredRolloutGeneration(), AllocationIpv4: svc.GetPrivateIpv4(), AllocationIpv6: svc.GetPrivateIpv6(), Phase: "Pending"}
+		}
+		report.Services = append(report.Services, proto.Clone(condition).(*agentv1.ServiceCondition))
+	}
+	return report
+}

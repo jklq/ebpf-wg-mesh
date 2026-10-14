@@ -132,7 +132,7 @@ func (s *allocSync) applied(before *journal.Projection, update journal.Applied) 
 	// history or invalidate a sync plan currently being rendered for another node.
 	byAgent := make(map[string]map[string]bool)
 	for id := range changedAssignmentIDs(before, after, update.Batches) {
-		for _, agentID := range []string{before.Assignments[id].AgentID, after.Assignments[id].AgentID} {
+		for _, agentID := range []string{before.Assignments.Get(id).AgentID, after.Assignments.Get(id).AgentID} {
 			if agentID == "" {
 				continue
 			}

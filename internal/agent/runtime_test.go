@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,6 +23,7 @@ import (
 )
 
 type fakeEngine struct {
+	mu         sync.Mutex
 	ensured    []string
 	inspected  []string
 	removed    []string
@@ -35,10 +38,14 @@ type fakeEngine struct {
 }
 
 func (f *fakeEngine) DiscoverServices(context.Context) ([]RuntimeResource, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return append([]RuntimeResource(nil), f.inventory...), nil
 }
 
 func (f *fakeEngine) DrainService(_ context.Context, allocationID string, _ time.Time) (bool, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.drainCalls = append(f.drainCalls, allocationID)
 	return f.drained[allocationID], f.forced[allocationID], nil
 }
@@ -84,6 +91,8 @@ func TestPersistDesiredServiceDoesNotRewriteUnchangedState(t *testing.T) {
 }
 
 func (f *fakeEngine) EnsureService(_ context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.ensured = append(f.ensured, svc.GetAllocationId())
 	created := f.created[svc.GetAllocationId()] || f.missing[svc.GetAllocationId()]
 	delete(f.missing, svc.GetAllocationId())
@@ -100,6 +109,8 @@ func (f *fakeEngine) EnsureService(_ context.Context, svc *agentv1.DesiredServic
 // (the next EnsureService call will create it) or missing is set, or when the
 // recorded status belongs to a stale rollout generation.
 func (f *fakeEngine) InspectService(_ context.Context, svc *agentv1.DesiredService) (serviceStatus, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.inspected = append(f.inspected, svc.GetAllocationId())
 	if f.missing[svc.GetAllocationId()] || f.created[svc.GetAllocationId()] {
 		return serviceStatus{}, false, nil
@@ -117,6 +128,8 @@ func (f *fakeEngine) InspectService(_ context.Context, svc *agentv1.DesiredServi
 }
 
 func (f *fakeEngine) RemoveService(_ context.Context, allocationID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removed = append(f.removed, allocationID)
 	return nil
 }
@@ -165,6 +178,7 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 		created: map[string]bool{"alloc-1": true},
 	}
 	var probedNamespace string
+	var probeMu sync.Mutex
 	runtime := &ContainerdRuntime{
 		cfg: config.AgentConfig{
 			Runtime: config.RuntimeConfig{
@@ -174,7 +188,9 @@ func TestContainerdRuntimeReconcilePersistsDesiredStateAndCallsEngine(t *testing
 		},
 		engine: engine,
 		probeHealth: func(_ context.Context, namespacePath, _ string, _ *agentv1.DesiredService) serviceHealthProbe {
+			probeMu.Lock()
 			probedNamespace = namespacePath
+			probeMu.Unlock()
 			return serviceHealthProbe{configured: true, healthy: true}
 		},
 	}
@@ -467,7 +483,7 @@ func TestContainerdRuntimeStopsCheckingAfterRolloutBecomesReady(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	checks := 0
+	var checks atomic.Int32
 	runtime := &ContainerdRuntime{
 		cfg: config.AgentConfig{Runtime: config.RuntimeConfig{
 			DataDir: dir, VolumesDir: filepath.Join(dir, "volumes"),
@@ -479,8 +495,8 @@ func TestContainerdRuntimeStopsCheckingAfterRolloutBecomesReady(t *testing.T) {
 			created: map[string]bool{},
 		},
 		probeHealth: func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe {
-			checks++
-			if checks <= 2 {
+			checks.Add(1)
+			if checks.Load() <= 2 {
 				return serviceHealthProbe{configured: true, failureReason: "HTTP port 8080: status 503"}
 			}
 			return serviceHealthProbe{configured: true, healthy: true}
@@ -518,16 +534,16 @@ func TestContainerdRuntimeStopsCheckingAfterRolloutBecomesReady(t *testing.T) {
 			t.Fatalf("expected ready rollout, got %+v", report.GetServices()[0])
 		}
 	}
-	if checks != 4 {
-		t.Fatalf("expected checks to stop after readiness passes, got %d", checks)
+	if checks.Load() != 4 {
+		t.Fatalf("expected checks to stop after readiness passes, got %d", checks.Load())
 	}
 
 	service.DesiredRolloutGeneration = 2
 	if _, err := runtime.Reconcile(context.Background(), state); err != nil {
 		t.Fatalf("Reconcile new rollout: %v", err)
 	}
-	if checks != 6 {
-		t.Fatalf("expected a new rollout to run readiness again, got %d checks", checks)
+	if checks.Load() != 6 {
+		t.Fatalf("expected a new rollout to run readiness again, got %d checks", checks.Load())
 	}
 }
 

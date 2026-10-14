@@ -14,12 +14,12 @@ func TestIngressHandoverRequiresEveryServingObservation(t *testing.T) {
 	state := journal.DurableState{
 		ClusterID: "test", LogIndex: 1,
 		Domains: map[string]journal.Domain{"web.example": {Hostname: "web.example", ServiceID: "web", TargetPort: 8080}},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"a":         {ID: "a", ServiceID: "web", AgentID: "agent", DesiredRolloutGeneration: 2, RolloutState: AllocationRolloutServing},
 			"b":         {ID: "b", ServiceID: "web", AgentID: "agent", DesiredRolloutGeneration: 2, RolloutState: AllocationRolloutServing},
 			"candidate": {ID: "candidate", ServiceID: "web", AgentID: "agent", RolloutState: AllocationRolloutStarting},
 			"unrouted":  {ID: "unrouted", ServiceID: "internal", AgentID: "other", RolloutState: AllocationRolloutServing},
-		},
+		}),
 	}
 	become := func() {
 		t.Helper()
@@ -73,8 +73,8 @@ func TestIngressHandoverRequiresEveryServingObservation(t *testing.T) {
 	become()
 	assertPending()
 	state.LogIndex++
-	delete(state.Assignments, "a")
-	delete(state.Assignments, "b")
+	state.Assignments.Delete("a")
+	state.Assignments.Delete("b")
 	l.applyTestState(state)
 	if !l.Publishing() {
 		t.Fatal("durable withdrawal blocked on absent observations")

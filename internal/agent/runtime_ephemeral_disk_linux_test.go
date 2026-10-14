@@ -144,6 +144,7 @@ func newDiskTestRuntime(t *testing.T, cfg config.AgentConfig, engine serviceEngi
 
 func reconcileOnceForDiskTest(t *testing.T, ctx context.Context, runtime *ContainerdRuntime, state *agentv1.DesiredNodeState) *agentv1.ServiceCondition {
 	t.Helper()
+	runtime.RefreshDiskUsage(ctx)
 	report, err := runtime.Reconcile(ctx, state)
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)

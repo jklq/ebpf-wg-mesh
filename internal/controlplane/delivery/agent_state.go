@@ -76,7 +76,7 @@ func workloadIdentities(product *journal.Projection, agentID string) ([]*agentv1
 	for _, environmentID := range product.EnvironmentIDsForAgent(agentID) {
 		for _, serviceID := range product.ServiceIDsForEnvironment(environmentID) {
 			for _, assignmentID := range product.AssignmentIDsForService(serviceID) {
-				a := live.Assignments[assignmentID]
+				a := live.Assignments.Get(assignmentID)
 				if a.RolloutState != AllocationRolloutLost {
 					assignments = append(assignments, a)
 				}
@@ -141,7 +141,7 @@ func (l *Live) agentView(agentID string) (*agentView, error) {
 	}
 	observations := make(map[liveObsKey]AllocationObservation)
 	for id := range assignmentIDs {
-		a := product.Assignments[id]
+		a := product.Assignments.Get(id)
 		key := liveObsKey{AllocationID: id, Generation: a.DesiredRolloutGeneration}
 		if obs, ok := l.observations[key]; ok {
 			observations[key] = obs
@@ -174,7 +174,7 @@ func (v *agentView) services(assignmentIDs []string) ([]*agentv1.DesiredService,
 	product := v.product
 	var assignments []journal.Assignment
 	for _, id := range assignmentIDs {
-		a, exists := product.Assignments[id]
+		a, exists := product.Assignments.Lookup(id)
 		if exists && a.AgentID == v.agentID && a.RolloutState != AllocationRolloutLost {
 			assignments = append(assignments, a)
 		}
@@ -250,7 +250,7 @@ func (v *agentView) internalHostsForEnvironment(environmentID string) []*agentv1
 	for _, serviceID := range product.ServiceIDsForEnvironment(environmentID) {
 		service := durable.Services[serviceID]
 		for _, assignmentID := range product.AssignmentIDsForService(serviceID) {
-			assignment := durable.Assignments[assignmentID]
+			assignment := durable.Assignments.Get(assignmentID)
 			rec := allocationRecordFromAssignment(durable, assignment)
 			obs, hasObs := v.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
 			rec = overlayAllocation(rec, obs, hasObs)

@@ -152,13 +152,13 @@ func TestRejectedStatusReportDoesNotConsumeSequence(t *testing.T) {
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
 		Services:  map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"alloc": {
 				ID: "alloc", ServiceID: "svc", AgentID: "agent",
 				DesiredRolloutGeneration: 1, DesiredSpecRevision: 1,
 				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2",
 			},
-		},
+		}),
 	})
 	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
 		t.Fatal(err)
@@ -188,13 +188,13 @@ func TestStatusReportPublishesInvalidationForEvidenceOnlyObservation(t *testing.
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
 		Services:  map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"alloc": {
 				ID: "alloc", ServiceID: "svc", AgentID: "agent",
 				DesiredRolloutGeneration: 1, DesiredSpecRevision: 1,
 				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2",
 			},
-		},
+		}),
 	})
 	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
 		t.Fatal(err)
@@ -272,13 +272,13 @@ func TestStatusReportPublishesInvalidationWhenEvaluationChangesNothing(t *testin
 		LogIndex:  1,
 		Agents:    map[string]journal.AgentRegistration{"agent": {ID: "agent", CreatedAt: now}},
 		Services:  map[string]journal.ServiceIntent{"svc": {ID: "svc"}},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"alloc": {
 				ID: "alloc", ServiceID: "svc", AgentID: "agent",
 				DesiredRolloutGeneration: 1, DesiredSpecRevision: 1,
 				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2",
 			},
-		},
+		}),
 	})
 	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
 		t.Fatal(err)
@@ -383,9 +383,9 @@ func TestLiveAdmissionReevaluatedOnStatusReport(t *testing.T) {
 		Administration: map[string]journal.AgentAdministration{
 			"agent": {AgentID: "agent", LifecycleState: string(AgentStateActive)},
 		},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"alloc": {ID: "alloc", ServiceID: "svc", AgentID: "agent", DesiredSpecRevision: 1, DesiredRolloutGeneration: 1, RolloutState: AllocationRolloutServing},
-		},
+		}),
 	})
 	// The session begins before the agent started its allocation: not yet schedulable.
 	if err := l.BeginSession("agent", "s1", nil, []string{"alloc"}, true); err != nil {
@@ -819,13 +819,13 @@ func TestLiveDesiredStateUsesMemory(t *testing.T) {
 		Deployments: map[string]journal.Deployment{
 			"dep": {ID: "dep", ServiceID: "svc"},
 		},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"alloc": {
 				ID: "alloc", ServiceID: "svc", DeploymentID: "dep", AgentID: "agent",
 				DesiredSpecRevision: 1, DesiredRolloutGeneration: 1, RolloutState: AllocationRolloutServing,
 				AllocationIPv4: "10.0.0.2", AllocationIPv6: "fd00::2", Intent: allocationIntentRun,
 			},
-		},
+		}),
 		Domains: map[string]journal.Domain{
 			"web.example": {Hostname: "web.example", ServiceID: "svc", TargetPort: 8080},
 		},
@@ -874,7 +874,7 @@ func TestAllocationsByServiceTracksAppliedDurableMutations(t *testing.T) {
 			Revisions:   map[string]journal.ServiceRevision{"svc/1": {ServiceID: "svc", SpecRevision: 1, SpecJSON: raw}},
 			Rollouts:    map[string]journal.Rollout{"svc/1": {ServiceID: "svc", RolloutGeneration: 1, State: "in_progress"}},
 			Deployments: map[string]journal.Deployment{"dep": {ID: "dep", ServiceID: "svc"}},
-			Assignments: assignments,
+			Assignments: journal.NewRowMap(assignments),
 		}
 	}
 
@@ -919,10 +919,10 @@ func TestAllocationsByEnvironmentUsesOneConsistentLiveView(t *testing.T) {
 			"service-b": {ID: "service-b", EnvironmentID: "environment-1"},
 			"service-c": {ID: "service-c", EnvironmentID: "environment-2"},
 		},
-		Assignments: map[string]journal.Assignment{
+		Assignments: journal.NewRowMap(map[string]journal.Assignment{
 			"allocation-a": {ID: "allocation-a", ServiceID: "service-a", AgentID: "agent-1"},
 			"allocation-c": {ID: "allocation-c", ServiceID: "service-c", AgentID: "agent-2"},
-		},
+		}),
 	})
 
 	got, err := l.AllocationsByEnvironmentIfServing("environment-1")

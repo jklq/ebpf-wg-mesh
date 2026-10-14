@@ -33,7 +33,7 @@ func readProductState(ctx context.Context, tx *sql.Tx) (DurableState, error) {
 		Projects:       make(map[string]Project),
 		Services:       make(map[string]ServiceIntent),
 		Revisions:      make(map[string]ServiceRevision),
-		Assignments:    make(map[string]Assignment),
+		Assignments:    RowMap[Assignment]{},
 		Rollouts:       make(map[string]Rollout),
 		Deployments:    make(map[string]Deployment),
 		Agents:         make(map[string]AgentRegistration),
@@ -343,9 +343,15 @@ var productTables = []productTable{
 	},
 	{
 		name: "allocation_assignments", keySQL: "id::TEXT", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
-		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Assignments, key, raw) },
+		decode: func(s *DurableState, key string, raw []byte) error {
+			value, err := decodeValue[Assignment](raw)
+			if err == nil {
+				s.Assignments.Set(key, value)
+			}
+			return err
+		},
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Assignments, keys, keyedRead[Assignment]{
+			changes, err := resolveChanges(ctx, tx, assignmentSubset(base.Assignments, keys), keys, keyedRead[Assignment]{
 				name: "allocation_assignments", keySQL: "id::TEXT", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
 				decode: decodeValue[Assignment], where: singleKeyWhereID,
 			})
@@ -500,4 +506,15 @@ func decodeValue[T any](raw []byte) (T, error) {
 		return value, err
 	}
 	return normalized, nil
+}
+
+// Resolution compares only recorded keys, even for large assignment tables.
+func assignmentSubset(rows RowMap[Assignment], keys []string) map[string]Assignment {
+	result := make(map[string]Assignment, len(keys))
+	for _, key := range keys {
+		if value, exists := rows.Lookup(key); exists {
+			result[key] = value
+		}
+	}
+	return result
 }
