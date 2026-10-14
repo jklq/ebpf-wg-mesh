@@ -108,7 +108,7 @@ func TestCompactControlPlaneResourceProbe(t *testing.T) {
 		Profile:      config.ProfileDevelopment,
 		Node:         config.NodeConfig{ID: "system-test-agent", Name: "compact", AdvertiseAddr: "fd00:44::10", Resources: config.NodeResourcesConfig{CPUMillis: 2000, MemoryMebibytes: 2048, ReservedCPUMillis: 1000, ReservedMemoryMebibytes: 1536}},
 		ControlPlane: config.ControlPlaneClientConfig{Addresses: []string{cp.server.InternalAddr()}, TLS: config.ClientTLSConfig{CAFile: caPath, ServerName: "localhost", BootstrapToken: "system-test-bootstrap"}},
-		Runtime:      config.RuntimeConfig{DataDir: dataDir, VolumesDir: filepath.Join(dataDir, "volumes"), Snapshotter: "native", VolumeBackend: "directory"},
+		Runtime:      config.RuntimeConfig{DataDir: dataDir, VolumesDir: filepath.Join(dataDir, "volumes"), Snapshotter: "auto", VolumeBackend: "directory"},
 		Containerd:   config.ContainerdConfig{Socket: "/run/containerd/containerd.sock", Namespace: "compact-probe"},
 		Mesh:         config.MeshConfig{Host: config.HostConfig{IPv6: "fd00:44::10"}, WireGuard: config.WireGuard{InterfaceName: "wg-compact", PrivateKey: privateKey, ListenPort: 51820, AdvertiseEndpoint: "[fd00:44::10]:51820"}},
 	}

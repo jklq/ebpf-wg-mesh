@@ -46,8 +46,8 @@ type Config struct {
 	MonitorTokenFile    string                      `json:"monitorTokenFile,omitempty"`
 	IngressHealthListen string                      `json:"ingressHealthListen,omitempty"`
 	// AlarmWebhookURL receives operator alarms from scheduled operations
-	// (credential renewal today) and is passed to the control plane for its
-	// certificate alarms. Empty disables alarms; there is no default.
+	// (credential renewal and registry collection) and is passed to the control
+	// plane for its certificate alarms. Empty disables alarms; there is no default.
 	AlarmWebhookURL string `json:"alarmWebhookUrl,omitempty"`
 }
 

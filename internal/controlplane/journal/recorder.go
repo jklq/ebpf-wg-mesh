@@ -69,10 +69,7 @@ func recordServiceTree(ctx context.Context, tx *sql.Tx, serviceID string) error 
 		table Table
 		sql   string
 	}{
-		{TableRevisions, `SELECT service_id::TEXT || '/' || spec_revision::TEXT FROM service_revisions WHERE service_id = $1`},
-		{TableRollouts, `SELECT service_id::TEXT || '/' || rollout_generation::TEXT FROM service_rollouts WHERE service_id = $1`},
 		{TableAssignments, `SELECT id::TEXT FROM allocation_assignments WHERE service_id = $1`},
-		{TableDeployments, `SELECT id::TEXT FROM deployments WHERE service_id = $1`},
 	}
 	for _, query := range queries {
 		if err := recordQuery(ctx, tx, query.table, query.sql, serviceID); err != nil {

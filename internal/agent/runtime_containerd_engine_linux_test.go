@@ -237,7 +237,7 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 		Runtime: config.RuntimeConfig{
 			DataDir:     dataDir,
 			VolumesDir:  filepath.Join(dataDir, "volumes"),
-			Snapshotter: "native",
+			Snapshotter: "auto",
 		},
 		Containerd: config.ContainerdConfig{
 			Socket:    socket,
@@ -255,6 +255,7 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 	if err != nil {
 		t.Skipf("containerd engine unavailable: %v", err)
 	}
+	cfg.Runtime.Snapshotter = engine.(*containerdEngine).cfg.Runtime.Snapshotter
 	t.Cleanup(func() {
 		if err := engine.Close(); err != nil {
 			t.Errorf("close containerd engine: %v", err)

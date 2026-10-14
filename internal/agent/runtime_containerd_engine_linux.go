@@ -49,6 +49,7 @@ type containerdEngine struct {
 	cfg                     config.AgentConfig
 	client                  *containerd.Client
 	imageMu                 sync.Mutex
+	diskUsage               diskUsageCache
 	cni                     cni.CNI
 	logSinkMu               sync.RWMutex
 	logSink                 LogSink
@@ -74,6 +75,16 @@ func newContainerdEngine(cfg config.AgentConfig, volumes *volumestore.Store) (se
 	)
 	if err != nil {
 		return nil, fmt.Errorf("connect containerd: %w", err)
+	}
+	if cfg.Runtime.Snapshotter == "auto" || cfg.Runtime.Snapshotter == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		cfg.Runtime.Snapshotter, err = selectSnapshotter(ctx, client)
+		cancel()
+		if err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+		slog.Info("selected containerd snapshotter", "snapshotter", cfg.Runtime.Snapshotter)
 	}
 	netPlugin, err := cni.New(
 		cni.WithPluginDir([]string{defaultCNIPluginDir}),
@@ -399,6 +410,7 @@ func (e *containerdEngine) removeService(ctx context.Context, allocationID strin
 	ctx = e.namespaced(ctx)
 	containerID := containerName(allocationID)
 	e.clearOOM(containerID)
+	e.diskUsage.remove(containerID)
 	var errs []error
 	container, err := e.client.LoadContainer(ctx, containerID)
 	if err == nil {
@@ -511,6 +523,7 @@ func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container 
 	}
 	e.clearOOM(containerID)
 	errs = append(errs, e.collectUnusedImagesLocked(ctx))
+	e.diskUsage.remove(containerID)
 	return errors.Join(errs...)
 }
 
@@ -604,12 +617,13 @@ func (e *containerdEngine) ephemeralDiskLimit() int64 {
 }
 
 func (e *containerdEngine) ephemeralDiskExhausted(ctx context.Context, containerID string) bool {
-	written, err := e.ephemeralDiskBytes(ctx, containerID)
+	written, err := e.diskUsage.usage(containerID, time.Now(), func() (int64, error) {
+		return e.ephemeralDiskBytes(ctx, containerID)
+	})
 	if err != nil {
 		if !errdefs.IsNotFound(err) {
 			slog.Warn("measure ephemeral disk usage", "container_id", containerID, "error", err)
 		}
-		return false
 	}
 	return written > e.ephemeralDiskLimit()
 }

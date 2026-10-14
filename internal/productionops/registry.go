@@ -22,6 +22,7 @@ func (r *Runner) registryConfiguration(pl deploy.Placement, uploadSecret string)
 	s := r.Plan.Installation.Storage[name]
 	c := r.Config.Storage[name]
 	storage := map[string]any{}
+	storage["delete"] = map[string]any{"enabled": true}
 	switch c.Kind {
 	case "directory":
 		storage["filesystem"] = map[string]any{"rootdirectory": s.Path}

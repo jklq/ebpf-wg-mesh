@@ -290,7 +290,7 @@ func applyAgentDefaults(cfg *AgentConfig) {
 		cfg.Runtime.VolumesDir = cfg.Runtime.DataDir + "/volumes"
 	}
 	if cfg.Runtime.Snapshotter == "" {
-		cfg.Runtime.Snapshotter = "native"
+		cfg.Runtime.Snapshotter = "auto"
 	}
 	if cfg.Runtime.VolumeBackend == "" {
 		cfg.Runtime.VolumeBackend = "loop"

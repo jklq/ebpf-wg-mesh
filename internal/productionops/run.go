@@ -247,10 +247,9 @@ func Run(ctx context.Context, args []string, out io.Writer) error {
 // alarmFailure pages the operator about a failed scheduled operation and
 // returns err, annotated when the alarm itself could not be sent. Only
 // timer-driven operations alarm; an operator at the terminal already sees
-// interactive failures. Renewal retries hourly on its timer, so a lasting
-// failure alarms again each round until fixed.
+// interactive failures. A lasting failure alarms again on each scheduled retry.
 func (r *Runner) alarmFailure(ctx context.Context, operation string, err error) error {
-	if operation != "credential-renew" {
+	if operation != "credential-renew" && operation != "registry-gc" {
 		return err
 	}
 	sender, aerr := alarm.New(r.Config.AlarmWebhookURL, "operations")
@@ -263,6 +262,10 @@ func (r *Runner) alarmFailure(ctx context.Context, operation string, err error) 
 		Message:    err.Error(),
 		NextAction: "inspect the credentials timer on a completion host; internal certificates expire 24h after issue and renewal retries hourly",
 	}
+	if operation == "registry-gc" {
+		event.Event = "registry_gc_failed"
+		event.NextAction = "inspect the registry-gc service on a completion host; it retries every minute and preserves upload gates when collector shutdown is uncertain"
+	}
 	if serr := sender.Send(context.WithoutCancel(ctx), event); serr != nil {
 		return fmt.Errorf("%w (alarm also failed: %v)", err, serr)
 	}
@@ -274,6 +277,8 @@ func (r *Runner) Execute(ctx context.Context, args []string) error {
 	switch args[0] {
 	case "credential-renew":
 		return r.renewCredentials(ctx)
+	case "registry-gc":
+		return r.collectRegistry(ctx)
 	case "database-credentials":
 		return r.databaseCredentials(ctx, false)
 	case "database-upgrade":
@@ -365,6 +370,8 @@ func (r *Runner) Verify(ctx context.Context, args []string) (any, error) {
 		switch name {
 		case "credential-renew":
 			return nil, r.credentials(ctx, true)
+		case "registry-gc":
+			return nil, r.verifyRegistryGC(ctx)
 		case "backup-complete":
 			return r.backupEvidence(ctx)
 		case "drain", "retire", "verify-drain", "verify-retirement":

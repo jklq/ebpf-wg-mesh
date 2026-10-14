@@ -60,7 +60,7 @@ func startLocalAgent(ctx context.Context, stackCfg localStackConfig, stateDir st
 		Runtime: config.RuntimeConfig{
 			DataDir:        agentDir,
 			VolumesDir:     filepath.Join(agentDir, "volumes"),
-			Snapshotter:    "native",
+			Snapshotter:    "auto",
 			DisableCgroups: true,
 			VolumeBackend:  "directory",
 		},

@@ -197,17 +197,19 @@ func (r *Runner) credentialTimers(ctx context.Context, active bool) error {
 			}
 			seen[host] = true
 			pl := deploy.Placement{Host: host}
-			name := "platform-" + p.Installation.ID + "-recovery-credentials"
 			script := ""
-			for _, suffix := range []string{".timer", ".service"} {
-				if active && suffix == ".service" {
-					continue
+			for _, job := range []string{"credentials", "registry-gc"} {
+				name := "platform-" + p.Installation.ID + "-recovery-" + job
+				for _, suffix := range []string{".timer", ".service"} {
+					if active && suffix == ".service" {
+						continue
+					}
+					action := "stop"
+					if active {
+						action = "start"
+					}
+					script += "if systemctl cat " + shell(name+suffix) + " >/dev/null 2>&1; then systemctl " + action + " " + shell(name+suffix) + "; fi\n"
 				}
-				action := "stop"
-				if active {
-					action = "start"
-				}
-				script += "if systemctl cat " + shell(name+suffix) + " >/dev/null 2>&1; then systemctl " + action + " " + shell(name+suffix) + "; fi\n"
 			}
 			if _, err := r.remote(ctx, p, pl, script); err != nil {
 				if !r.Plan.Recovery || r.verifyHostFenced(ctx, p, pl.Host) != nil {

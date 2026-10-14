@@ -86,7 +86,8 @@ func (d *Delivery) PruneBuildArtifacts(ctx context.Context, now time.Time) (int6
 
 // CollectExpiredImages retries durable manifest deletions. Holding the queue row
 // lock across the idempotent delete fences concurrent collectors. Registry blob
-// collection is the storage operator's job; external direct images are never deleted.
+// collection runs separately through the scheduled registry-gc operation;
+// external direct images are never deleted.
 func (d *Delivery) CollectExpiredImages(ctx context.Context) (int, error) {
 	if d.imageDeleter == nil {
 		return 0, nil

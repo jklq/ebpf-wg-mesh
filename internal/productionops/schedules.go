@@ -163,9 +163,10 @@ func (r *Runner) completionTimer(ctx context.Context, verify bool) error {
 			}
 		}
 		if !verify {
-			script.WriteString("systemctl daemon-reload\nsystemctl enable --now " + shell(name+".timer") + " " + shell(name+"-credentials.timer") + "\n")
+			script.WriteString("systemctl daemon-reload\nsystemctl enable --now " + shell(name+".timer") + " " + shell(name+"-credentials.timer") + " " + shell(name+"-registry-gc.timer") + "\n")
 		}
 		script.WriteString("systemctl is-active --quiet " + shell(name+".timer") + "\nsystemctl is-active --quiet " + shell(name+"-credentials.timer") + "\n")
+		script.WriteString("systemctl is-active --quiet " + shell(name+"-registry-gc.timer") + "\n")
 		if _, err = r.remote(ctx, r.Plan, deploy.Placement{Host: id}, script.String()); err != nil {
 			return err
 		}
@@ -188,6 +189,8 @@ func (r *Runner) completionUnits() map[string]string {
 	renewal := "[Unit]\nDescription=Renew native platform credentials\nAfter=network-online.target\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=10min\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " credential-renew\n"
 	renewalTimer := "[Timer]\nOnBootSec=10min\nOnUnitActiveSec=1h\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
 	units := map[string]string{name + ".service": service, name + ".timer": timer, name + "-credentials.service": renewal, name + "-credentials.timer": renewalTimer}
+	units[name+"-registry-gc.service"] = "[Unit]\nDescription=Collect unreferenced registry blobs\nAfter=network-online.target\nStartLimitIntervalSec=0\n[Service]\nType=oneshot\nUMask=0077\nTimeoutStartSec=12min\nRestart=on-failure\nRestartSec=1min\nExecStart=" + binary + " --plan " + planPath + " --config " + config + " registry-gc\n"
+	units[name+"-registry-gc.timer"] = "[Timer]\nOnCalendar=*-*-* 03:00:00\nRandomizedDelaySec=15min\nPersistent=true\n[Install]\nWantedBy=timers.target\n"
 	return units
 }
 
@@ -219,7 +222,7 @@ func (r *Runner) priorMaintenance(ctx context.Context, stop bool) error {
 		}
 		name := "platform-" + prior.Installation.ID + "-recovery"
 		var script strings.Builder
-		for _, service := range []string{name, name + "-credentials"} {
+		for _, service := range []string{name, name + "-credentials", name + "-registry-gc"} {
 			timer, job := shell(service+".timer"), shell(service+".service")
 			// A retry after partial resume pauses the current authority while
 			// retaining the already verified replacement schedules.

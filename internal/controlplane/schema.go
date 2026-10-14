@@ -376,6 +376,7 @@ var currentSchema = []string{
 				REFERENCES service_revisions(service_id, spec_revision)
 		)`,
 	`CREATE INDEX idx_service_rollouts_in_progress ON service_rollouts(state, created_at, service_id)`,
+	`CREATE INDEX idx_service_rollouts_spec ON service_rollouts(service_id, spec_revision)`,
 	`CREATE TABLE deployments (
 			id TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,
@@ -405,6 +406,7 @@ var currentSchema = []string{
 			ON deployments(service_id, rollout_generation DESC, created_at DESC, id)`,
 	`CREATE INDEX idx_deployments_service_updated
 			ON deployments(service_id, updated_at DESC, id)`,
+	`CREATE INDEX idx_deployments_service_spec ON deployments(service_id, spec_revision)`,
 	`ALTER TABLE allocation_assignments ADD CONSTRAINT fk_allocation_assignment_deployment
 			FOREIGN KEY (deployment_id, service_id) REFERENCES deployments(id, service_id)`,
 	`CREATE TABLE deployment_transitions (

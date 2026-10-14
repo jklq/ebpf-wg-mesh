@@ -78,6 +78,9 @@ func scanProductRows(rows *sql.Rows, state *DurableState, table productTable) er
 }
 
 func resolveRecorded(ctx context.Context, tx *sql.Tx, base DurableState, recorded map[Table]map[string]struct{}) (Batch, error) {
+	if err := recordOperationalDependencies(ctx, tx, base, recorded); err != nil {
+		return Batch{}, err
+	}
 	batch := Batch{BaseIndex: base.LogIndex}
 	for _, table := range productTables {
 		keys := sortedKeys(recorded[table.id()])
@@ -257,6 +260,41 @@ func serviceChildLiveFilter(table, column string) string {
 			  AND (s.deleted_at IS NOT NULL OR e.deleted_at IS NOT NULL OR p.deleted_at IS NOT NULL))`
 }
 
+// History remains in PostgreSQL. The projection keeps current intent, unfinished
+// work and the rows referenced by allocations, including draining generations.
+const deploymentOperationalFilter = `(is_current OR state IN
+	('staged', 'queued_build', 'building', 'scheduling', 'image_pull', 'starting', 'readiness', 'active', 'draining')
+	OR EXISTS (SELECT 1 FROM allocation_assignments a WHERE a.deployment_id = deployments.id))`
+
+const rolloutOperationalFilter = `(state IN ('pending_build', 'in_progress')
+	OR EXISTS (SELECT 1 FROM service_delivery_status d WHERE d.service_id = service_rollouts.service_id
+		AND d.current_rollout_generation = service_rollouts.rollout_generation)
+	OR EXISTS (SELECT 1 FROM allocation_assignments a WHERE a.service_id = service_rollouts.service_id
+		AND a.desired_rollout_generation = service_rollouts.rollout_generation))`
+
+const revisionOperationalFilter = `(EXISTS (SELECT 1 FROM services s WHERE s.id = service_revisions.service_id
+		AND s.current_spec_revision = service_revisions.spec_revision)
+	OR EXISTS (SELECT 1 FROM allocation_assignments a WHERE a.service_id = service_revisions.service_id
+		AND a.desired_spec_revision = service_revisions.spec_revision)
+	OR EXISTS (SELECT 1 FROM service_rollouts WHERE service_id = service_revisions.service_id
+		AND spec_revision = service_revisions.spec_revision AND ` + rolloutOperationalFilter + `)
+	OR EXISTS (SELECT 1 FROM deployments WHERE service_id = service_revisions.service_id
+		AND spec_revision = service_revisions.spec_revision AND ` + deploymentOperationalFilter + `))`
+
+func operationalFilter(table string) string {
+	filter := serviceChildLiveFilter(table, "service_id")
+	switch table {
+	case "service_revisions":
+		return filter + ` AND ` + revisionOperationalFilter
+	case "service_rollouts":
+		return filter + ` AND ` + rolloutOperationalFilter
+	case "deployments":
+		return filter + ` AND ` + deploymentOperationalFilter
+	default:
+		panic("unknown operational table: " + table)
+	}
+}
+
 const volumeLiveFilter = `volumes.deleted_at IS NULL
 		AND NOT EXISTS (SELECT 1 FROM environments e JOIN projects p ON p.id = e.project_id
 			WHERE e.id = volumes.environment_id
@@ -293,11 +331,11 @@ var productTables = []productTable{
 		},
 	},
 	{
-		name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: serviceChildLiveFilter("service_revisions", "service_id"),
+		name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: operationalFilter("service_revisions"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Revisions, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Revisions, keys, keyedRead[ServiceRevision]{
-				name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: serviceChildLiveFilter("service_revisions", "service_id"),
+				name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: operationalFilter("service_revisions"),
 				decode: decodeValue[ServiceRevision], where: pairKeyWhereRevisions,
 			})
 			return Batch{Revisions: changes}, err
@@ -315,22 +353,22 @@ var productTables = []productTable{
 		},
 	},
 	{
-		name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: serviceChildLiveFilter("service_rollouts", "service_id"),
+		name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: operationalFilter("service_rollouts"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Rollouts, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Rollouts, keys, keyedRead[Rollout]{
-				name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: serviceChildLiveFilter("service_rollouts", "service_id"),
+				name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: operationalFilter("service_rollouts"),
 				decode: decodeValue[Rollout], where: pairKeyWhereRollouts,
 			})
 			return Batch{Rollouts: changes}, err
 		},
 	},
 	{
-		name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: serviceChildLiveFilter("deployments", "service_id"),
+		name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: operationalFilter("deployments"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Deployments, key, raw) },
 		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
 			changes, err := resolveChanges(ctx, tx, base.Deployments, keys, keyedRead[Deployment]{
-				name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: serviceChildLiveFilter("deployments", "service_id"),
+				name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: operationalFilter("deployments"),
 				decode: decodeValue[Deployment], where: singleKeyWhereID,
 			})
 			return Batch{Deployments: changes}, err

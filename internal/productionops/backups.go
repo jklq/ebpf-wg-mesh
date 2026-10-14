@@ -396,6 +396,19 @@ func (r *Runner) finalize(ctx context.Context, verify bool) error {
 			}
 		}
 		_, err := r.nativeRecovery(ctx, "finalize")
+		if err != nil {
+			return err
+		}
+		db, err := r.db(ctx, false)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if err := ensureRegistryGCAdmission(ctx, db); err != nil {
+			return err
+		}
+		_, err = db.ExecContext(ctx, `INSERT INTO recovery.registry_gc_admission(installation,plan_id) VALUES($1,$2)
+			ON CONFLICT(installation) DO UPDATE SET plan_id=excluded.plan_id`, r.Plan.Installation.ID, r.Plan.ID)
 		return err
 	}
 	db, err := r.db(ctx, false)
