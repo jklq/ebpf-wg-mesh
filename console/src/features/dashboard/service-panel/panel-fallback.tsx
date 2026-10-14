@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { Loader2, RefreshCw, X } from "lucide-react";
 import { Button } from "#/components/ui/button";
+import { PanelTabSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 import { colors, fonts, sizes, space } from "#/styles/tokens.stylex";
 
@@ -47,7 +48,6 @@ const styles = stylex.create({
 		paddingTop: "18px",
 		paddingBottom: "1.75rem",
 	},
-	loading: { display: "flex", alignItems: "center" },
 });
 export function ServicePanelFallback({
 	service,
@@ -85,9 +85,7 @@ export function ServicePanelFallback({
 			</div>
 			<div {...stylex.props(styles.body)}>
 				<div {...stylex.props(styles.content)}>
-					<div {...stylex.props(styles.loading)}>
-						<Loader2 size={13} {...stylex.props(styles.spinner)} />
-					</div>
+					<PanelTabSkeleton />
 				</div>
 			</div>
 		</>

@@ -20,6 +20,7 @@ import {
 	reconcileCurrentDeployment,
 	shouldRenderDeploymentHistoryEntry,
 } from "#/features/dashboard/service-panel/deployments/panel-deployments-helpers";
+import { DeploymentCardSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
 import { shortSha } from "#/features/dashboard/shared/service-utils";
 import { usePolling } from "#/hooks/use-polling";
 import type {
@@ -306,6 +307,9 @@ export function PanelDeployments({
 					</div>
 				)}
 				<div {...stylex.props(styles.liveDeployments)}>
+					{deploymentsLoading && liveDeployments.length === 0 && (
+						<DeploymentCardSkeleton />
+					)}
 					{liveDeployments.map((entry) => (
 						<DeploymentCard
 							key={entry.id}

@@ -1,23 +1,12 @@
 import * as stylex from "@stylexjs/stylex";
+import { Globe, KeyRound, Layers, RefreshCw, Settings, X } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useId, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { TabList } from "#/components/ui/tabs";
-import { EditableServiceHeaderName } from "#/features/dashboard/service-panel/editable-service-name";
-import { ServiceStatusBadge } from "#/features/dashboard/service-panel/service-status-badge";
-import { colors, sizes, space } from "#/styles/tokens.stylex";
-
-const spin = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
-
-import {
-	Globe,
-	KeyRound,
-	Layers,
-	Loader2,
-	RefreshCw,
-	Settings,
-	X,
-} from "lucide-react";
-import { lazy, Suspense, useCallback, useEffect, useId, useState } from "react";
 import { PanelDeployments } from "#/features/dashboard/service-panel/deployments/panel-deployments";
+import { EditableServiceHeaderName } from "#/features/dashboard/service-panel/editable-service-name";
+import { PanelTabSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
+import { ServiceStatusBadge } from "#/features/dashboard/service-panel/service-status-badge";
 import type { DashboardTab } from "#/features/dashboard/shared/types";
 import type {
 	DashboardHomeState,
@@ -25,6 +14,7 @@ import type {
 	DashboardServiceRecord,
 	DashboardServiceStatus,
 } from "#/lib/dashboard/core/types.server";
+import { colors, sizes, space } from "#/styles/tokens.stylex";
 
 const loadVariables = () =>
 	import("#/features/dashboard/service-panel/variables/panel-variables");
@@ -196,9 +186,7 @@ export function ServicePanel({
 function PanelTabFallback() {
 	return (
 		<div {...stylex.props(styles.tabContent)}>
-			<div {...stylex.props(styles.tabLoading)}>
-				<Loader2 size={13} {...stylex.props(styles.spinner)} />
-			</div>
+			<PanelTabSkeleton />
 		</div>
 	);
 }
@@ -236,12 +224,4 @@ const styles = stylex.create({
 		paddingTop: "18px",
 		paddingBottom: "1.75rem",
 	},
-	tabLoading: {
-		display: "flex",
-		alignItems: "center",
-		gap: "0.375rem",
-		fontSize: "13px",
-		color: colors.muted,
-	},
-	spinner: { animation: `${spin} 1s linear infinite` },
 });
