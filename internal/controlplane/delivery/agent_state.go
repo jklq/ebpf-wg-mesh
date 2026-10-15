@@ -316,6 +316,8 @@ func assignedNodeConfigForAgent(product *journal.Projection, mesh config.Control
 		WireguardInterfaceName: mesh.InterfaceName,
 		WireguardAddresses:     []string{agent.WireguardIPv6},
 		WireguardListenPort:    int32(agent.WireguardListenPort),
+		IngressPrefixes:        append([]string(nil), mesh.IngressCIDRs...),
+		PlatformPrefixes:       append([]string(nil), mesh.PlatformCIDRs...),
 	}
 	identities, err := workloadIdentities(product, agentID)
 	assigned.WorkloadIdentities = identities

@@ -60,6 +60,23 @@ type containerdEngine struct {
 	workloadCgroupParent    string
 	ephemeralDiskLimitBytes int64
 	volumes                 *volumestore.Store
+	usageMu                 sync.RWMutex
+	usage                   usageObserver
+}
+
+func (e *containerdEngine) SetUsageObserver(o usageObserver) {
+	e.usageMu.Lock()
+	defer e.usageMu.Unlock()
+	e.usage = o
+}
+
+func (e *containerdEngine) observeAllocation(allocationID string, final bool) {
+	e.usageMu.RLock()
+	o := e.usage
+	e.usageMu.RUnlock()
+	if o != nil {
+		o.ObserveAllocation(allocationID, final)
+	}
 }
 
 func (e *containerdEngine) SetRecoveryPaused(paused bool) { e.recoveryPaused = paused }
@@ -318,6 +335,7 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 	if err := task.Start(ctx); err != nil {
 		return cleanup(fmt.Errorf("start task %s: %w", containerID, err))
 	}
+	e.observeAllocation(svc.GetAllocationId(), false)
 	return serviceStatus{
 		AppliedSpecRevision:      svc.GetDesiredSpecRevision(),
 		AppliedRolloutGeneration: svc.GetDesiredRolloutGeneration(),
@@ -494,6 +512,7 @@ func (e *containerdEngine) DrainService(ctx context.Context, allocationID string
 			}
 		}
 	}
+	e.observeAllocation(allocationID, true)
 	if _, err := task.Delete(ctx); err != nil && !errdefs.IsNotFound(err) {
 		return false, forced, fmt.Errorf("delete drained task %s: %w", containerID, err)
 	}
@@ -528,6 +547,8 @@ func (e *containerdEngine) cleanupStoppedService(ctx context.Context, container 
 }
 
 func (e *containerdEngine) deleteTask(ctx context.Context, task containerd.Task, containerID string) error {
+	// Capture final counters before the task and its cgroup disappear.
+	e.observeAllocation(allocationIDFromContainer(containerID), true)
 	exitCh, err := task.Wait(ctx)
 	if err != nil && !errdefs.IsNotFound(err) {
 		return err

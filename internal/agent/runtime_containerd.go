@@ -58,6 +58,7 @@ type ContainerdRuntime struct {
 	cfg         config.AgentConfig
 	engine      serviceEngine
 	volumes     *volumestore.Store
+	usage       usageObserver
 	probeHealth func(context.Context, string, string, *agentv1.DesiredService) serviceHealthProbe
 	stateMu     sync.Mutex
 	ready       map[string]rolloutReadiness
@@ -149,6 +150,13 @@ func (r *ContainerdRuntime) SetLogSink(sink LogSink) {
 	r.engine.SetLogSink(sink)
 }
 
+func (r *ContainerdRuntime) SetUsageObserver(o usageObserver) {
+	r.usage = o
+	if engine, ok := r.engine.(interface{ SetUsageObserver(usageObserver) }); ok {
+		engine.SetUsageObserver(o)
+	}
+}
+
 func (r *ContainerdRuntime) RestartManagedDashboard(ctx context.Context, state *agentv1.DesiredNodeState) error {
 	for _, svc := range state.GetServices() {
 		if !isManagedDashboardService(svc) {
@@ -216,6 +224,13 @@ func (r *ContainerdRuntime) ReconcileWithProgress(ctx context.Context, state *ag
 	volumes, err := r.volumeStore()
 	if err != nil {
 		return nil, err
+	}
+	if r.usage != nil && allowCleanup {
+		for _, volume := range state.GetVolumes() {
+			if volume.GetDestroy() {
+				r.usage.ObserveVolume(volume.GetVolumeId(), true)
+			}
+		}
 	}
 	report.Volumes = volumes.Reconcile(state.GetVolumes(), allowCleanup)
 
@@ -832,6 +847,10 @@ func validHealthCheckPath(path string) bool {
 
 func containerName(allocationID string) string {
 	return "platform-" + allocationID
+}
+
+func allocationIDFromContainer(containerID string) string {
+	return strings.TrimPrefix(containerID, "platform-")
 }
 
 func maxInt32(v int32, fallback int32) int32 {

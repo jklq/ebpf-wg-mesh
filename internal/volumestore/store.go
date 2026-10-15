@@ -8,6 +8,7 @@ package volumestore
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -238,3 +239,56 @@ func roundUsage(used int64) int64 {
 
 // Inventory lists durable volumes without ensuring, mounting, resizing or deleting them.
 func (s *Store) Inventory() ([]string, error) { return s.onDisk() }
+
+// Usage returns the exact used bytes of one volume: allocated filesystem
+// blocks including metadata, distinct from capacity and from a sparse
+// image's length. An unmounted or unreadable filesystem is unknown, not
+// zero, and fails.
+func (s *Store) Usage(id string) (int64, error) {
+	root, err := s.root(id)
+	if err != nil {
+		return 0, err
+	}
+	if s.kind == BackendLoop {
+		if _, err := s.backend.dataPath(root); err != nil {
+			return 0, err
+		}
+		used, _, _, err := s.backend.usage(root, 0)
+		return used, err
+	}
+	return exactDirectoryUsage(root)
+}
+
+func exactDirectoryUsage(root string) (int64, error) {
+	var used int64
+	seen := map[[2]uint64]bool{}
+	err := filepath.WalkDir(root, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		bytes, dev, ino, nlink, ok := allocatedBytes(info)
+		if !ok {
+			if entry.Type().IsRegular() {
+				used += info.Size()
+			}
+			return nil
+		}
+		if nlink > 1 {
+			key := [2]uint64{dev, ino}
+			if seen[key] {
+				return nil
+			}
+			seen[key] = true
+		}
+		used += bytes
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("measure exact volume usage: %w", err)
+	}
+	return used, nil
+}

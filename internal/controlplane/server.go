@@ -63,6 +63,7 @@ type Server struct {
 	delivery        *deliverycore.Delivery
 	logStore        *logs.LogStore
 	usage           *usage.Store
+	alarms          *alarm.Sender
 	logEmitter      *logs.LogEmitter
 	logIngester     *logs.AsyncIngester
 	logSpoolDir     string
@@ -313,6 +314,10 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		webhookHandler = source.NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
 
+	usageAlarms, err := alarm.New(cfg.AlarmWebhookURL, "controlplane")
+	if err != nil {
+		return nil, fmt.Errorf("configure alarms: %w", err)
+	}
 	usageStore := usage.New(store.db, usage.Config{
 		RawRetention:    time.Duration(cfg.Usage.RawRetentionDays) * 24 * time.Hour,
 		HourlyRetention: time.Duration(cfg.Usage.HourlyRetentionDays) * 24 * time.Hour,
@@ -354,6 +359,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withReplicaAddresses(cfg.ReplicaAddresses),
 		withLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
 		withLogIngester(logIngester),
+		withUsageIngest(usageStore),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
 	buildOperations := newBuildOperations(store.db, store.source, delivery, policy, policy, withBuilderLogEmitter(logEmitter))
@@ -407,6 +413,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		delivery:        delivery,
 		logStore:        logStore,
 		usage:           usageStore,
+		alarms:          usageAlarms,
 		logEmitter:      logEmitter,
 		logIngester:     logIngester,
 		notifier:        notifier,
@@ -675,6 +682,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { s.buildArtifactRetentionLoop(ctx); errCh <- nil }()
 	go func() { errCh <- s.deletionGC(ctx) }()
 	go func() { s.usageMaintenanceLoop(ctx); errCh <- nil }()
+	go func() { s.usageMonitorLoop(ctx); errCh <- nil }()
 	select {
 	case <-ctx.Done():
 		return nil

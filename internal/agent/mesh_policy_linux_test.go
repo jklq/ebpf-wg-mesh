@@ -16,6 +16,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/firewall"
 	"ebof-wg-mesh/internal/meshstate"
+	"ebof-wg-mesh/internal/metering"
 	"ebof-wg-mesh/internal/testutil"
 
 	"github.com/vishvananda/netlink"
@@ -34,6 +35,41 @@ func TestMeshPolicyAllowDenyUnknown(t *testing.T) {
 	}
 	for _, endpoint := range harness.unknownEndpoints() {
 		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
+}
+
+// TestMeshPolicyEgressCounting verifies allowed private output is counted
+// once at the allocation interface and denied output is not counted.
+func TestMeshPolicyEgressCounting(t *testing.T) {
+	harness := startMeshPolicyHarness(t, true)
+	a := harness.workload("a")
+	b := harness.workload("b")
+	c := harness.workload("c")
+	source := metering.EgressSourceFor(harness.cfg.WireGuard.InterfaceName)
+	totalPrivate := func() uint64 {
+		counters, _, err := source.Read()
+		if err != nil {
+			t.Fatalf("read usage counters: %v", err)
+		}
+		var total uint64
+		for _, c := range counters {
+			total += c[2] // private class, UsageEgress field order
+		}
+		return total
+	}
+	before := totalPrivate()
+	for _, endpoint := range b.endpoints() {
+		waitForMeshHTTP(t, a.netns, endpoint.ip, endpoint.port, b.marker)
+	}
+	if after := totalPrivate(); after <= before {
+		t.Fatalf("private egress did not increase: before=%d after=%d", before, after)
+	}
+	deniedBefore := totalPrivate()
+	for _, endpoint := range c.endpoints() {
+		assertMeshUnreachable(t, a.netns, endpoint.ip, endpoint.port)
+	}
+	if after := totalPrivate(); after != deniedBefore {
+		t.Fatalf("denied traffic was counted: before=%d after=%d", deniedBefore, after)
 	}
 }
 

@@ -75,7 +75,49 @@ func CheckRestoredDatabase(ctx context.Context, db *sql.DB, p Point, consoleSche
 	if err := checkConsoleTokens(ctx, db, quote(consoleSchema), consoleKeys); err != nil {
 		return err
 	}
+	if err := checkUsageProducers(ctx, db, p.Snapshot.UsageProducers); err != nil {
+		return err
+	}
 	return checkDatabaseIntegrity(ctx, db, consoleSchema)
+}
+
+// checkUsageProducers verifies restored usage cursors match the recovery
+// point exactly. A cursor ahead means replay overshot the point; a cursor
+// behind means agents would resend records the point already accepted.
+func checkUsageProducers(ctx context.Context, db *sql.DB, expected []UsageProducerCursor) error {
+	var exists bool
+	if err := db.QueryRowContext(ctx, `SELECT to_regclass('usage_producers') IS NOT NULL`).Scan(&exists); err != nil {
+		return err
+	}
+	if !exists {
+		if len(expected) > 0 {
+			return fmt.Errorf("restored database lacks usage producers present at the recovery point")
+		}
+		return nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT installation_id, producer_id, agent_id, state, accepted_through
+	 FROM usage_producers ORDER BY installation_id, producer_id`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var actual []UsageProducerCursor
+	for rows.Next() {
+		var cursor UsageProducerCursor
+		var accepted int64
+		if err := rows.Scan(&cursor.InstallationID, &cursor.ProducerID, &cursor.AgentID, &cursor.State, &accepted); err != nil {
+			return err
+		}
+		cursor.AcceptedThrough = uint64(accepted)
+		actual = append(actual, cursor)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if string(jsonBytes(actual)) != string(jsonBytes(expected)) {
+		return fmt.Errorf("restored usage producer cursors differ from the recovery point")
+	}
+	return nil
 }
 
 // checkDatabaseIntegrity replaces the CockroachDB SCRUB pass: every index

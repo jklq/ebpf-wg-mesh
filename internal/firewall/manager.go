@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cilium/ebpf"
@@ -104,6 +106,10 @@ func Start(ctx context.Context, cfg config.MeshRuntimeConfig, ownership *meshsta
 	}
 	if ms, ok := spec.Maps["interface_role_map"]; ok && cfg.Firewall.MaxContainers > 0 {
 		ms.MaxEntries = uint32(cfg.Firewall.MaxContainers + 16)
+	}
+	if ms, ok := spec.Maps["usage_counters"]; ok && cfg.Firewall.MaxContainers > 0 {
+		// Live plus recently ended epochs awaiting their final record.
+		ms.MaxEntries = uint32(2 * cfg.Firewall.MaxContainers)
 	}
 
 	if ownership == nil || ownership.InterfaceName != cfg.WireGuard.InterfaceName {
@@ -228,7 +234,82 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 	m.configuredByKey = next
 	m.seedByIP = nextSeeds
 	m.cfg = cfg
+	return m.applyTrafficClassesLocked(cfg)
+}
+
+const (
+	trafficIngress  uint8 = 1
+	trafficPlatform uint8 = 2
+)
+
+// applyTrafficClassesLocked rewrites the trusted destination classes used
+// for egress metering and ingress admission. m.mu must be held.
+func (m *Manager) applyTrafficClassesLocked(cfg config.MeshRuntimeConfig) error {
+	want := map[firewallIdentityKey]uint8{}
+	for _, list := range []struct {
+		prefixes []string
+		class    uint8
+	}{{cfg.IngressPrefixes, trafficIngress}, {cfg.PlatformPrefixes, trafficPlatform}} {
+		for _, raw := range list.prefixes {
+			prefix, err := netip.ParsePrefix(raw)
+			if err != nil {
+				if addr, aerr := netip.ParseAddr(raw); aerr == nil {
+					prefix = netip.PrefixFrom(addr, addr.BitLen())
+				} else {
+					return fmt.Errorf("parse traffic class prefix %q: %w", raw, err)
+				}
+			}
+			want[identityKeyForPrefix(prefix)] = list.class
+		}
+	}
+	var key firewallIdentityKey
+	var class uint8
+	iter := m.objs.TrafficClassTrie.Iterate()
+	for iter.Next(&key, &class) {
+		if _, keep := want[key]; !keep {
+			if err := m.objs.TrafficClassTrie.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				return err
+			}
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return err
+	}
+	for k, c := range want {
+		if err := m.objs.TrafficClassTrie.Put(k, c); err != nil {
+			return fmt.Errorf("write traffic class trie: %w", err)
+		}
+	}
 	return nil
+}
+
+// usageTokenForTask derives the egress counter token (cgroup ID) from the
+// task PID. It is accepted only when the cgroup directory is the container's.
+func usageTokenForTask(pid uint32, containerID string) (uint64, error) {
+	raw, err := os.ReadFile(fmt.Sprintf("/proc/%d/cgroup", pid))
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		path, ok := strings.CutPrefix(line, "0::")
+		if !ok {
+			continue
+		}
+		path = strings.TrimSpace(path)
+		if filepath.Base(path) != containerID {
+			return 0, fmt.Errorf("task cgroup %s does not belong to container %s", path, containerID)
+		}
+		info, err := os.Stat(filepath.Join("/sys/fs/cgroup", path))
+		if err != nil {
+			return 0, err
+		}
+		st, ok := info.Sys().(*syscall.Stat_t)
+		if !ok || st.Ino == 0 {
+			return 0, fmt.Errorf("cgroup %s has no inode identity", path)
+		}
+		return st.Ino, nil
+	}
+	return 0, fmt.Errorf("task pid %d has no cgroup v2 path", pid)
 }
 
 func (m *Manager) eventLoop(ctx context.Context) {
@@ -378,7 +459,7 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		Name:       fmt.Sprintf("ct_%d", ifindex),
 		Type:       ebpf.LRUHash,
 		KeySize:    uint32(binary.Size(firewallConnectionKey{})),
-		ValueSize:  8,
+		ValueSize:  uint32(binary.Size(firewallConntrackValue{})),
 		MaxEntries: uint32(m.cfg.Firewall.ConntrackInnerEntries),
 	}
 	innerMap, err := ebpf.NewMap(innerSpec)
@@ -403,10 +484,22 @@ func (m *Manager) handleTaskStart(ctx context.Context, evt *eventsapi.TaskStart)
 		return fmt.Errorf("insert inner map into conntrack_matrix: %w", err)
 	}
 
+	// The egress counter token is the task cgroup ID. Create its counter
+	// entry before the policy can count, so the entry is never evicted.
+	token, tokenErr := usageTokenForTask(evt.Pid, evt.ContainerID)
+	if tokenErr != nil {
+		slog.Warn("derive usage token; egress for this task is unattributed", "container", evt.ContainerID, "error", tokenErr)
+	} else {
+		zeros := make([]firewallUsageCounters, ebpf.MustPossibleCPU())
+		if err := m.objs.UsageCounters.Update(token, zeros, ebpf.UpdateNoExist); err != nil && !errors.Is(err, ebpf.ErrKeyExist) {
+			slog.Warn("create usage counter entry", "container", evt.ContainerID, "error", err)
+		}
+	}
 	policy := firewallContainerPolicy{
 		NetworkIdentity: identity.NetworkIdentity,
 		Ipv4:            identity.IPv4.As4(),
 		Ipv6:            addrAs16(identity.IPv6),
+		UsageToken:      token,
 	}
 	if err := m.objs.ContainerPolicyMap.Put(ifKey, policy); err != nil {
 		_ = m.objs.ConntrackMatrix.Delete(ifKey)

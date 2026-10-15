@@ -21,6 +21,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/controlplane/usage"
 	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/restartpolicy"
@@ -46,6 +47,7 @@ type agentService struct {
 	dashboardTrustedAgentID string
 	dashboardCallerID       string
 	registry                *registry.Policy
+	usage                   *usage.Store
 	replicaAddresses        []string
 	liveOwner               liveOwner
 	syncs                   atomic.Int64
@@ -124,6 +126,11 @@ func withLogIngester(ingester *logs.AsyncIngester) agentServiceOption {
 	return func(service *agentService) {
 		service.logIngester = ingester
 	}
+}
+
+// withUsageIngest enables durable usage report ingestion on Sync sessions.
+func withUsageIngest(store *usage.Store) agentServiceOption {
+	return func(service *agentService) { service.usage = store }
 }
 
 func withReplicaAddresses(addresses []string) agentServiceOption {
@@ -321,6 +328,51 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 	go func() {
 		sendErr <- s.sendLoop(ctx, stream, &streamSendMu, hello.AgentId, hello.GetSessionId(), hello.GetClusterId(), epoch, hello, notifyCh, ownerChanged)
 	}()
+	// Usage ingestion runs in a session worker so a slow database never
+	// stalls heartbeats. Capacity 1 matches one report in flight.
+	usageReports := make(chan *agentv1.UsageReport, 1)
+	usageErr := make(chan error, 1)
+	if s.usage != nil {
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case report := <-usageReports:
+					ack, err := s.usage.Ingest(ctx, usage.Producer{
+						InstallationID:     s.recoveryAuthority.InstallationID,
+						AgentID:            hello.GetAgentId(),
+						SessionIncarnation: hello.GetSessionIncarnation(),
+					}, report)
+					switch {
+					case err == nil:
+						if serr := sendLocked(&streamSendMu, stream, &agentv1.AgentServerMessage{
+							Payload: &agentv1.AgentServerMessage_UsageAcknowledgement{UsageAcknowledgement: ack}}); serr != nil {
+							select {
+							case usageErr <- serr:
+							default:
+							}
+							return
+						}
+					case errors.Is(err, usage.ErrStaleSession), errors.Is(err, usage.ErrProducerSuperseded), errors.Is(err, usage.ErrForeignProducer):
+						select {
+						case usageErr <- status.Errorf(codes.FailedPrecondition, "usage report: %v", err):
+						default:
+						}
+						return
+					case errors.Is(err, usage.ErrInvalidReport):
+						select {
+						case usageErr <- status.Errorf(codes.InvalidArgument, "usage report: %v", err):
+						default:
+						}
+						return
+					default:
+						slog.Warn("usage ingest", "agent_id", hello.GetAgentId(), "error", err)
+					}
+				}
+			}
+		}()
+	}
 	s.notifier.Notify(hello.AgentId)
 
 	type receivedMessage struct {
@@ -348,6 +400,8 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 		case result := <-received:
 			msg, err = result.message, result.err
 		case err := <-sendErr:
+			return err
+		case err := <-usageErr:
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
@@ -434,6 +488,19 @@ func (s *agentService) Sync(stream agentv1.AgentControl_SyncServer) error {
 			streamSendMu.Unlock()
 			if err != nil {
 				return status.Errorf(codes.Internal, "log batch ack: %v", err)
+			}
+		case *agentv1.AgentClientMessage_UsageReport:
+			report := payload.UsageReport
+			if report.GetAgentId() != hello.GetAgentId() || report.GetSessionId() != hello.GetSessionId() {
+				return status.Error(codes.PermissionDenied, "usage report does not match session")
+			}
+			if s.usage == nil {
+				return status.Error(codes.Unimplemented, "usage ingestion is not configured")
+			}
+			select {
+			case usageReports <- report:
+			default:
+				return status.Error(codes.Unavailable, "usage ingestion is busy")
 			}
 		}
 	}

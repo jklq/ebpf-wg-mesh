@@ -367,6 +367,17 @@ type AgentConfig struct {
 	Containerd    ContainerdConfig
 	Mesh          MeshConfig
 	Logs          AgentLogShippingConfig
+	Metering      MeteringConfig
+}
+
+// MeteringConfig bounds the agent's durable usage journal.
+type MeteringConfig struct {
+	// JournalMaxBytes caps stored usage records. Unacknowledged records are
+	// never evicted; collection pauses at the cap. Defaults to 256 MiB.
+	JournalMaxBytes int64
+	// AckedRetentionHours keeps acknowledged records resendable after a
+	// control-plane restore. Defaults to 24.
+	AckedRetentionHours int
 }
 
 // AgentLogShippingConfig bounds the agent's durable log pipeline. Zero values select documented
@@ -503,6 +514,10 @@ type MeshRuntimeConfig struct {
 	Firewall             FirewallConfig
 	WorkloadPoolCIDR     string
 	WorkloadIPv4PoolCIDR string
+	// Trusted platform address classes for egress metering and ingress
+	// admission, assigned by the control plane.
+	IngressPrefixes  []string
+	PlatformPrefixes []string
 }
 
 type HostConfig struct {

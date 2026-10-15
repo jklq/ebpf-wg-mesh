@@ -52,6 +52,8 @@ func Agent(args []string) (config.AgentConfig, error) {
 	intFlag(fs, &cfg.Logs.FlushBatchSize, "logs-flush-batch-size", "AGENT_LOGS_FLUSH_BATCH_SIZE", 100, "")
 	intFlag(fs, &cfg.Logs.FlushIntervalSeconds, "logs-flush-interval-seconds", "AGENT_LOGS_FLUSH_INTERVAL_SECONDS", 1, "")
 	intFlag(fs, &cfg.Logs.ReplayWindowSeconds, "logs-replay-window-seconds", "AGENT_LOGS_REPLAY_WINDOW_SECONDS", 300, "spool replay window after a reconnect")
+	int64Flag(fs, &cfg.Metering.JournalMaxBytes, "usage-journal-max-bytes", "AGENT_USAGE_JOURNAL_MAX_BYTES", 256<<20, "usage journal cap under the data dir; collection pauses at the cap")
+	intFlag(fs, &cfg.Metering.AckedRetentionHours, "usage-acked-retention-hours", "AGENT_USAGE_ACKED_RETENTION_HOURS", 24, "how long acknowledged usage records stay resendable")
 	stringFlag(fs, &cfg.Containerd.Socket, "containerd-socket", "AGENT_CONTAINERD_SOCKET", "/run/containerd/containerd.sock", "")
 	stringFlag(fs, &cfg.Containerd.Namespace, "containerd-namespace", "AGENT_CONTAINERD_NAMESPACE", "default", "")
 	stringFlag(fs, &cfg.Containerd.EnvironmentLabel, "containerd-environment-label", "AGENT_CONTAINERD_ENVIRONMENT_LABEL", meshlabels.DefaultEnvironmentKey, "")

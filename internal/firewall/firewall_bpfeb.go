@@ -24,11 +24,19 @@ type firewallConnectionKey struct {
 	Pad2     uint16
 }
 
+type firewallConntrackValue struct {
+	_            structs.HostLayout
+	SeenNs       uint64
+	Flags        uint64
+	PendingBytes uint64
+}
+
 type firewallContainerPolicy struct {
 	_               structs.HostLayout
 	NetworkIdentity uint32
 	Ipv4            [4]uint8
 	Ipv6            [16]uint8
+	UsageToken      uint64
 }
 
 type firewallHostIpValue struct {
@@ -49,6 +57,12 @@ type firewallIdentityValue struct {
 	VethIfindex     uint32
 }
 
+type firewallUsageCounters struct {
+	_     structs.HostLayout
+	Bytes [5]uint64
+}
+
+// loadFirewall returns the embedded CollectionSpec for firewall.
 func loadFirewall() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_FirewallBytes)
 	spec, err := ebpf.LoadCollectionSpecFromReader(reader)
@@ -59,6 +73,15 @@ func loadFirewall() (*ebpf.CollectionSpec, error) {
 	return spec, err
 }
 
+// loadFirewallObjects loads firewall and converts it into a struct.
+//
+// The following types are suitable as obj argument:
+//
+//	*firewallObjects
+//	*firewallPrograms
+//	*firewallMaps
+//
+// See ebpf.CollectionSpec.LoadAndAssign documentation for details.
 func loadFirewallObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	spec, err := loadFirewall()
 	if err != nil {
@@ -68,17 +91,26 @@ func loadFirewallObjects(obj interface{}, opts *ebpf.CollectionOptions) error {
 	return spec.LoadAndAssign(obj, opts)
 }
 
+// firewallSpecs contains maps and programs before they are loaded into the kernel.
+//
+// It can be passed ebpf.CollectionSpec.Assign.
 type firewallSpecs struct {
 	firewallProgramSpecs
 	firewallMapSpecs
 	firewallVariableSpecs
 }
 
+// firewallProgramSpecs contains programs before they are loaded into the kernel.
+//
+// It can be passed ebpf.CollectionSpec.Assign.
 type firewallProgramSpecs struct {
 	TcxEgress  *ebpf.ProgramSpec `ebpf:"tcx_egress"`
 	TcxIngress *ebpf.ProgramSpec `ebpf:"tcx_ingress"`
 }
 
+// firewallMapSpecs contains maps before they are loaded into the kernel.
+//
+// It can be passed ebpf.CollectionSpec.Assign.
 type firewallMapSpecs struct {
 	ClusterIdentityTrie    *ebpf.MapSpec `ebpf:"cluster_identity_trie"`
 	ConntrackInnerTemplate *ebpf.MapSpec `ebpf:"conntrack_inner_template"`
@@ -86,11 +118,20 @@ type firewallMapSpecs struct {
 	ContainerPolicyMap     *ebpf.MapSpec `ebpf:"container_policy_map"`
 	InterfaceRoleMap       *ebpf.MapSpec `ebpf:"interface_role_map"`
 	LocalNodeMap           *ebpf.MapSpec `ebpf:"local_node_map"`
+	TrafficClassTrie       *ebpf.MapSpec `ebpf:"traffic_class_trie"`
+	UsageCounters          *ebpf.MapSpec `ebpf:"usage_counters"`
+	UsageUnattributed      *ebpf.MapSpec `ebpf:"usage_unattributed"`
 }
 
+// firewallVariableSpecs contains global variables before they are loaded into the kernel.
+//
+// It can be passed ebpf.CollectionSpec.Assign.
 type firewallVariableSpecs struct {
 }
 
+// firewallObjects contains all objects after they have been loaded into the kernel.
+//
+// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallObjects struct {
 	firewallPrograms
 	firewallMaps
@@ -104,6 +145,9 @@ func (o *firewallObjects) Close() error {
 	)
 }
 
+// firewallMaps contains all maps after they have been loaded into the kernel.
+//
+// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallMaps struct {
 	ClusterIdentityTrie    *ebpf.Map `ebpf:"cluster_identity_trie"`
 	ConntrackInnerTemplate *ebpf.Map `ebpf:"conntrack_inner_template"`
@@ -111,6 +155,9 @@ type firewallMaps struct {
 	ContainerPolicyMap     *ebpf.Map `ebpf:"container_policy_map"`
 	InterfaceRoleMap       *ebpf.Map `ebpf:"interface_role_map"`
 	LocalNodeMap           *ebpf.Map `ebpf:"local_node_map"`
+	TrafficClassTrie       *ebpf.Map `ebpf:"traffic_class_trie"`
+	UsageCounters          *ebpf.Map `ebpf:"usage_counters"`
+	UsageUnattributed      *ebpf.Map `ebpf:"usage_unattributed"`
 }
 
 func (m *firewallMaps) Close() error {
@@ -121,12 +168,21 @@ func (m *firewallMaps) Close() error {
 		m.ContainerPolicyMap,
 		m.InterfaceRoleMap,
 		m.LocalNodeMap,
+		m.TrafficClassTrie,
+		m.UsageCounters,
+		m.UsageUnattributed,
 	)
 }
 
+// firewallVariables contains all global variables after they have been loaded into the kernel.
+//
+// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallVariables struct {
 }
 
+// firewallPrograms contains all programs after they have been loaded into the kernel.
+//
+// It can be passed to loadFirewallObjects or ebpf.CollectionSpec.LoadAndAssign.
 type firewallPrograms struct {
 	TcxEgress  *ebpf.Program `ebpf:"tcx_egress"`
 	TcxIngress *ebpf.Program `ebpf:"tcx_ingress"`

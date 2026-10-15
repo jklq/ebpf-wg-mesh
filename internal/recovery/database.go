@@ -221,6 +221,25 @@ func ReadSnapshot(ctx context.Context, db *sql.DB, installation, consoleSchema s
 	if err := readSecretProbes(ctx, tx, &s, identifier); err != nil {
 		return s, "", err
 	}
+	var hasUsage bool
+	if err := tx.QueryRowContext(ctx, `SELECT to_regclass('usage_producers') IS NOT NULL`).Scan(&hasUsage); err != nil {
+		return s, "", err
+	}
+	if hasUsage {
+		if err := query(`SELECT installation_id, producer_id, agent_id, state, accepted_through
+		 FROM usage_producers ORDER BY installation_id, producer_id`, func(rows *sql.Rows) error {
+			var cursor UsageProducerCursor
+			var accepted int64
+			if err := rows.Scan(&cursor.InstallationID, &cursor.ProducerID, &cursor.AgentID, &cursor.State, &accepted); err != nil {
+				return err
+			}
+			cursor.AcceptedThrough = uint64(accepted)
+			s.UsageProducers = append(s.UsageProducers, cursor)
+			return nil
+		}); err != nil {
+			return s, "", fmt.Errorf("usage producer inventory: %w", err)
+		}
+	}
 	unique := map[string]Requirement{}
 	for _, r := range s.Requirements {
 		k := identity(r)

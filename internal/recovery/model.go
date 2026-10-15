@@ -62,6 +62,19 @@ type Snapshot struct {
 	Identities     map[string][]string `json:"identities"`
 	Schema         int                 `json:"schema"`
 	ConsoleSchema  int                 `json:"consoleSchema"`
+	// UsageProducers pins each usage producer's durable cursor. After a
+	// restore, agents resend from the restored cursor; records pruned past
+	// it become explicit lost-record gaps, never silent double counts.
+	UsageProducers []UsageProducerCursor `json:"usageProducers,omitempty"`
+}
+
+// UsageProducerCursor is one usage journal's accepted position.
+type UsageProducerCursor struct {
+	InstallationID  string `json:"installationId"`
+	ProducerID      string `json:"producerId"`
+	AgentID         string `json:"agentId"`
+	State           string `json:"state"`
+	AcceptedThrough uint64 `json:"acceptedThrough"`
 }
 
 // Database identifies the physical backup chain and archived WAL range a

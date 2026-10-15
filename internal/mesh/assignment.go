@@ -13,6 +13,8 @@ type Assignment struct {
 	WireGuardAddresses []string
 	Peers              []config.PeerConfig
 	IdentitySeeds      []config.IdentitySeed
+	IngressPrefixes    []string
+	PlatformPrefixes   []string
 }
 
 func AssignmentFrom(assigned *agentv1.AssignedNodeConfig) Assignment {
@@ -22,6 +24,8 @@ func AssignmentFrom(assigned *agentv1.AssignedNodeConfig) Assignment {
 		WorkloadIPv6Subnet: assigned.GetWorkloadIpv6Subnet(),
 		WorkloadIPv6Pool:   assigned.GetWorkloadIpv6Pool(),
 		WireGuardAddresses: append([]string(nil), assigned.GetWireguardAddresses()...),
+		IngressPrefixes:    append([]string(nil), assigned.GetIngressPrefixes()...),
+		PlatformPrefixes:   append([]string(nil), assigned.GetPlatformPrefixes()...),
 	}
 	for _, identity := range assigned.GetWorkloadIdentities() {
 		assignment.IdentitySeeds = append(assignment.IdentitySeeds, config.IdentitySeed{
@@ -57,5 +61,7 @@ func RuntimeConfig(cfg config.AgentConfig, assignment Assignment) config.MeshRun
 		Firewall:             cfg.Mesh.Firewall,
 		WorkloadPoolCIDR:     assignment.WorkloadIPv6Pool,
 		WorkloadIPv4PoolCIDR: assignment.WorkloadIPv4Pool,
+		IngressPrefixes:      append([]string(nil), assignment.IngressPrefixes...),
+		PlatformPrefixes:     append([]string(nil), assignment.PlatformPrefixes...),
 	}
 }

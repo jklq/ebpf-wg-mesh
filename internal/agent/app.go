@@ -18,8 +18,10 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/mesh"
+	"ebof-wg-mesh/internal/metering"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/recovery"
+	"ebof-wg-mesh/internal/volumestore"
 
 	"github.com/google/uuid"
 	"google.golang.org/grpc/credentials"
@@ -35,6 +37,7 @@ type App struct {
 	stateStore           *localStateStore
 	supervisor           *workloadSupervisor
 	logShipper           *logShipper
+	meter                *metering.Meter
 	healthStop           func(context.Context) error
 	controlPlaneAddr     string
 	deadOwners           map[string]time.Time
@@ -93,6 +96,10 @@ func (a *App) Close() error {
 		_ = a.logShipper.Close()
 		a.logShipper = nil
 	}
+	if a.meter != nil {
+		_ = a.meter.Close()
+		a.meter = nil
+	}
 	if a.mesh != nil {
 		_ = a.mesh.Close()
 	}
@@ -142,6 +149,40 @@ func (a *App) Run(ctx context.Context) error {
 	a.logShipper = shipper
 	if runtimeWithLogs, ok := a.runtime.(logSinkRuntime); ok {
 		runtimeWithLogs.SetLogSink(shipper)
+	}
+	// Usage metering is best-effort at startup: a journal failure is logged
+	// and alarmed through health, never blocks workload supervision.
+	if a.recoveryAuthority.InstallationID != "" {
+		volumes, verr := volumestore.New(a.cfg.Runtime.VolumesDir, volumestore.Backend(a.cfg.Runtime.VolumeBackend))
+		if verr != nil {
+			slog.Warn("open volume store for metering", "error", verr)
+		}
+		var volumeSource metering.VolumeSource
+		if volumes != nil {
+			volumeSource = volumeUsageSource{store: volumes}
+		}
+		meter, merr := metering.Open(metering.Config{
+			Dir:             filepath.Join(a.cfg.Runtime.DataDir, "usage"),
+			InstallationID:  a.recoveryAuthority.InstallationID,
+			AgentID:         a.cfg.Node.ID,
+			MaxBytes:        a.cfg.Metering.JournalMaxBytes,
+			AckedRetention:  time.Duration(a.cfg.Metering.AckedRetentionHours) * time.Hour,
+			Allocations:     metering.CgroupSource(""),
+			Volumes:         volumeSource,
+			Egress:          metering.EgressSourceFor(a.cfg.Mesh.WireGuard.InterfaceName),
+			HostCPUs:        int32(a.cfg.Node.Resources.AdvertisedCPUMillis() / 1000),
+			HostMemoryBytes: a.cfg.Node.Resources.AdvertisedMemoryMebibytes() << 20,
+		})
+		if merr != nil {
+			slog.Error("open usage metering", "error", merr)
+		} else {
+			a.meter = meter
+			if rt, ok := a.runtime.(usageRuntime); ok {
+				rt.SetUsageObserver(meter)
+			}
+			go meter.Run(ctx)
+			go meter.Deliver(ctx)
+		}
 	}
 	if err := a.supervisor.Start(ctx, store.clusterIdentity()); err != nil {
 		_ = store.Close()
@@ -485,6 +526,10 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 		a.logShipper.Attach(sendLogs)
 		defer a.logShipper.Detach()
 	}
+	if a.meter != nil {
+		a.meter.Attach(a.cfg.Node.ID, sessionID, send)
+		defer a.meter.Detach()
+	}
 	go a.heartbeatLoop(sessionCtx, sessionID, send)
 	credentialTicker := time.NewTicker(credentialCheckInterval)
 	defer credentialTicker.Stop()
@@ -659,6 +704,12 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			if ack := result.message.GetLogBatchAck(); ack != nil {
 				// Log acknowledgements have no BatchEnd marker.
 				completeAck(ack.GetBatchId())
+				continue
+			}
+			if ack := result.message.GetUsageAcknowledgement(); ack != nil {
+				if a.meter != nil {
+					a.meter.Acknowledge(ack)
+				}
 				continue
 			}
 			if end := result.message.GetBatchEnd(); end != nil {
