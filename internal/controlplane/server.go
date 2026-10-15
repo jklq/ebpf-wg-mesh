@@ -28,6 +28,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"ebof-wg-mesh/internal/controlplane/usage"
 	"ebof-wg-mesh/internal/controlplane/xds"
 
 	"connectrpc.com/connect"
@@ -61,6 +62,7 @@ type Server struct {
 	signingScopes   []string
 	delivery        *deliverycore.Delivery
 	logStore        *logs.LogStore
+	usage           *usage.Store
 	logEmitter      *logs.LogEmitter
 	logIngester     *logs.AsyncIngester
 	logSpoolDir     string
@@ -311,6 +313,10 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		webhookHandler = source.NewGitHubWebhookHandler(store.source, cfg.GitHub.WebhookSecret, webhookProcessor)
 	}
 
+	usageStore := usage.New(store.db, usage.Config{
+		RawRetention:    time.Duration(cfg.Usage.RawRetentionDays) * 24 * time.Hour,
+		HourlyRetention: time.Duration(cfg.Usage.HourlyRetentionDays) * 24 * time.Hour,
+	})
 	platformService := newPlatformService(
 		store.platform(),
 		notifier,
@@ -323,6 +329,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withCertificates(certs),
 		withPlatformEvents(platformEvents),
 		withPlatformLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
+		withUsage(usageStore, store.authorizer()),
 	)
 	consoleCallers := strings.Join(cfg.ConsoleCallerIDs, ",")
 	if cfg.Dashboard.Enabled {
@@ -399,6 +406,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		signingScopes:   requiredSigningScopes,
 		delivery:        delivery,
 		logStore:        logStore,
+		usage:           usageStore,
 		logEmitter:      logEmitter,
 		logIngester:     logIngester,
 		notifier:        notifier,
@@ -666,6 +674,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { s.sourceArchiveRetentionLoop(ctx); errCh <- nil }()
 	go func() { s.buildArtifactRetentionLoop(ctx); errCh <- nil }()
 	go func() { errCh <- s.deletionGC(ctx) }()
+	go func() { s.usageMaintenanceLoop(ctx); errCh <- nil }()
 	select {
 	case <-ctx.Done():
 		return nil

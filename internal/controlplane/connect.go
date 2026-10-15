@@ -320,6 +320,14 @@ func (a connectPlatformService) ListAgents(ctx context.Context, req *connect.Req
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) GetProjectUsage(ctx context.Context, req *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error) {
+	result, err := a.service.GetProjectUsage(ctx, req.Msg)
+	if err != nil {
+		return nil, toConnectError(err)
+	}
+	return connect.NewResponse(result), nil
+}
+
 func (a connectPlatformService) ListBuildAttempts(ctx context.Context, req *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
 	result, err := a.service.ListBuildAttempts(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

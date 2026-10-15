@@ -13,6 +13,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/usage"
 )
 
 // Volume sizes are whole mebibytes so a loop image never ends mid-block.
@@ -187,6 +188,9 @@ func (d *Delivery) recordVolumeReport(ctx context.Context, agentID string, repor
 				`DELETE FROM volume_destructions WHERE volume_id = $1 AND agent_id = $2`, volumeID, agentID); err != nil {
 				return err
 			}
+			if err := usage.EndVolume(ctx, tx, volumeID); err != nil {
+				return err
+			}
 		}
 		return nil
 	})
@@ -224,6 +228,13 @@ func RequestVolumeDestructionsTx(ctx context.Context, tx *sql.Tx, now time.Time,
 	}
 	if scanErr != nil {
 		return scanErr
+	}
+	ids := make([]string, 0, len(targets))
+	for _, target := range targets {
+		ids = append(ids, target.volumeID)
+	}
+	if err := usage.CaptureVolumeDeletion(ctx, tx, ids); err != nil {
+		return err
 	}
 	for _, target := range targets {
 		if _, err := journal.DestructionRow(target.volumeID).Exec(ctx, tx,

@@ -35,6 +35,12 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Deletion.GCIntervalSeconds <= 0 {
 		cfg.Deletion.GCIntervalSeconds = 60
 	}
+	if cfg.Usage.RawRetentionDays <= 0 {
+		cfg.Usage.RawRetentionDays = 30
+	}
+	if cfg.Usage.HourlyRetentionDays <= 0 {
+		cfg.Usage.HourlyRetentionDays = 90
+	}
 
 	if cfg.Database.MaxOpenConns <= 0 {
 		cfg.Database.MaxOpenConns = 8

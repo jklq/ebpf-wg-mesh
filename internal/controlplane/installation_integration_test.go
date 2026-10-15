@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"database/sql"
 	"errors"
+	"fmt"
 	"math/big"
 	"path/filepath"
 	"strings"
@@ -95,7 +96,7 @@ func TestStartupAndReadinessAllowAdditiveSchemaOverlapUntilCleanup(t *testing.T)
 		t.Fatal(err)
 	}
 	execInstallation(t, db, `ALTER TABLE projects ADD COLUMN future_label TEXT NULL`)
-	execInstallation(t, db, `UPDATE schema_migrations SET version=44,min_compatible_version=43`)
+	execInstallation(t, db, fmt.Sprintf(`UPDATE schema_migrations SET version=%d,min_compatible_version=%d`, currentSchemaVersion+1, currentSchemaVersion))
 	if err := handle.validateSchema(ctx); err != nil {
 		t.Fatal("old binary rejected an additive schema", err)
 	}
@@ -106,10 +107,10 @@ func TestStartupAndReadinessAllowAdditiveSchemaOverlapUntilCleanup(t *testing.T)
 		t.Fatal("bootstrap attempted to downgrade compatible schema", err)
 	}
 	var version int
-	if err := db.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != 44 {
+	if err := db.QueryRow(`SELECT version FROM schema_migrations`).Scan(&version); err != nil || version != currentSchemaVersion+1 {
 		t.Fatal("bootstrap rewrote expanded schema", err)
 	}
-	execInstallation(t, db, `UPDATE schema_migrations SET min_compatible_version=44`)
+	execInstallation(t, db, fmt.Sprintf(`UPDATE schema_migrations SET min_compatible_version=%d`, currentSchemaVersion+1))
 	if err := handle.validateSchema(ctx); err == nil {
 		t.Fatal("cleanup admitted the obsolete binary")
 	}
@@ -120,7 +121,7 @@ func TestStartupAndReadinessAllowAdditiveSchemaOverlapUntilCleanup(t *testing.T)
 	if err := handle.validateSchema(ctx); err == nil {
 		t.Fatal("legacy future schema was assumed compatible")
 	}
-	execInstallation(t, db, `UPDATE schema_migrations SET version=43`)
+	execInstallation(t, db, fmt.Sprintf(`UPDATE schema_migrations SET version=%d`, currentSchemaVersion))
 	if err := handle.validateSchema(ctx); err != nil {
 		t.Fatal("existing schema without metadata was rejected", err)
 	}

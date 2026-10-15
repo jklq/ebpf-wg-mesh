@@ -215,6 +215,9 @@ const (
 	// PlatformServiceListBuildAttemptsProcedure is the fully-qualified name of the PlatformService's
 	// ListBuildAttempts RPC.
 	PlatformServiceListBuildAttemptsProcedure = "/platform.v1.PlatformService/ListBuildAttempts"
+	// PlatformServiceGetProjectUsageProcedure is the fully-qualified name of the PlatformService's
+	// GetProjectUsage RPC.
+	PlatformServiceGetProjectUsageProcedure = "/platform.v1.PlatformService/GetProjectUsage"
 	// BuilderServiceClaimBuildProcedure is the fully-qualified name of the BuilderService's ClaimBuild
 	// RPC.
 	BuilderServiceClaimBuildProcedure = "/platform.v1.BuilderService/ClaimBuild"
@@ -316,6 +319,7 @@ type PlatformServiceClient interface {
 	ListServiceArtifacts(context.Context, *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error)
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
+	GetProjectUsage(context.Context, *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error)
 }
 
 // NewPlatformServiceClient constructs a client for the platform.v1.PlatformService service. By
@@ -683,6 +687,12 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("ListBuildAttempts")),
 			connect.WithClientOptions(opts...),
 		),
+		getProjectUsage: connect.NewClient[platformv1.GetProjectUsageRequest, platformv1.ProjectUsage](
+			httpClient,
+			baseURL+PlatformServiceGetProjectUsageProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("GetProjectUsage")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -747,6 +757,7 @@ type platformServiceClient struct {
 	listServiceArtifacts        *connect.Client[platformv1.ListServiceArtifactsRequest, platformv1.ListServiceArtifactsResponse]
 	listAgents                  *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
 	listBuildAttempts           *connect.Client[platformv1.ListBuildAttemptsRequest, platformv1.ListBuildAttemptsResponse]
+	getProjectUsage             *connect.Client[platformv1.GetProjectUsageRequest, platformv1.ProjectUsage]
 }
 
 // ListWorkspaces calls platform.v1.PlatformService.ListWorkspaces.
@@ -1044,6 +1055,11 @@ func (c *platformServiceClient) ListBuildAttempts(ctx context.Context, req *conn
 	return c.listBuildAttempts.CallUnary(ctx, req)
 }
 
+// GetProjectUsage calls platform.v1.PlatformService.GetProjectUsage.
+func (c *platformServiceClient) GetProjectUsage(ctx context.Context, req *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error) {
+	return c.getProjectUsage.CallUnary(ctx, req)
+}
+
 // PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
 	ListWorkspaces(context.Context, *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error)
@@ -1105,6 +1121,7 @@ type PlatformServiceHandler interface {
 	ListServiceArtifacts(context.Context, *connect.Request[platformv1.ListServiceArtifactsRequest]) (*connect.Response[platformv1.ListServiceArtifactsResponse], error)
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
+	GetProjectUsage(context.Context, *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error)
 }
 
 // NewPlatformServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1468,6 +1485,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("ListBuildAttempts")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceGetProjectUsageHandler := connect.NewUnaryHandler(
+		PlatformServiceGetProjectUsageProcedure,
+		svc.GetProjectUsage,
+		connect.WithSchema(platformServiceMethods.ByName("GetProjectUsage")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/platform.v1.PlatformService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PlatformServiceListWorkspacesProcedure:
@@ -1588,6 +1611,8 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceListAgentsHandler.ServeHTTP(w, r)
 		case PlatformServiceListBuildAttemptsProcedure:
 			platformServiceListBuildAttemptsHandler.ServeHTTP(w, r)
+		case PlatformServiceGetProjectUsageProcedure:
+			platformServiceGetProjectUsageHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1831,6 +1856,10 @@ func (UnimplementedPlatformServiceHandler) ListAgents(context.Context, *connect.
 
 func (UnimplementedPlatformServiceHandler) ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListBuildAttempts is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) GetProjectUsage(context.Context, *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetProjectUsage is not implemented"))
 }
 
 // BuilderServiceClient is a client for the platform.v1.BuilderService service.

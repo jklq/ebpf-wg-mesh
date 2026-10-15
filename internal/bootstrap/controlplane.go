@@ -13,6 +13,7 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	var cfg config.ControlPlaneConfig
 	var profile string
 	var bootstrapUsers []bootstrapUserSpec
+	var ingressCIDRs, platformCIDRs string
 	var dashboardUsers []bootstrapUserSpec
 	var internalServerNames string
 	var agentBootstrapTokens string
@@ -139,12 +140,18 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &cfg.Mesh.WorkloadIPv4PoolCIDR, "mesh-workload-ipv4-pool-cidr", "CONTROLPLANE_MESH_WORKLOAD_IPV4_POOL_CIDR", "10.200.0.0/16", "")
 	intFlag(fs, &cfg.Mesh.WorkloadIPv4NodePrefixBits, "mesh-workload-ipv4-node-prefix-bits", "CONTROLPLANE_MESH_WORKLOAD_IPV4_NODE_PREFIX_BITS", 24, "")
 	intFlag(fs, &cfg.Mesh.PersistentKeepaliveSeconds, "mesh-persistent-keepalive-seconds", "CONTROLPLANE_MESH_PERSISTENT_KEEPALIVE_SECONDS", 5, "")
+	stringFlag(fs, &ingressCIDRs, "mesh-ingress-cidrs", "CONTROLPLANE_MESH_INGRESS_CIDRS", "", "comma-separated ingress proxy source prefixes; output to them is public egress through ingress")
+	stringFlag(fs, &platformCIDRs, "mesh-platform-cidrs", "CONTROLPLANE_MESH_PLATFORM_CIDRS", "", "comma-separated platform service prefixes; output to them is platform traffic")
+	intFlag(fs, &cfg.Usage.RawRetentionDays, "usage-raw-retention-days", "CONTROLPLANE_USAGE_RAW_RETENTION_DAYS", 30, "how long raw usage intervals are kept")
+	intFlag(fs, &cfg.Usage.HourlyRetentionDays, "usage-hourly-retention-days", "CONTROLPLANE_USAGE_HOURLY_RETENTION_DAYS", 90, "how long hourly usage aggregates are kept")
 	fs.Var(bootstrapUsersFlag{users: &bootstrapUsers}, "bootstrap-user", "user-id:email[:project1,project2][+operator]")
 	fs.Var(bootstrapUsersFlag{users: &dashboardUsers}, "dashboard-dev-user", "user-id:email")
 
 	if err := fs.Parse(args); err != nil {
 		return config.ControlPlaneConfig{}, err
 	}
+	cfg.Mesh.IngressCIDRs = splitCommaList(ingressCIDRs)
+	cfg.Mesh.PlatformCIDRs = splitCommaList(platformCIDRs)
 	normalized, err := config.NormalizeProfile(profile)
 	if err != nil {
 		return config.ControlPlaneConfig{}, err

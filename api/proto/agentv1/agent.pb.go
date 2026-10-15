@@ -118,6 +118,196 @@ func (SnapshotScope) EnumDescriptor() ([]byte, []int) {
 	return file_agent_proto_rawDescGZIP(), []int{1}
 }
 
+// Resource usage metering. Quantities are integers in resource units:
+// CPU microseconds, byte-milliseconds for memory and volumes, and bytes for
+// network output. Arbitrary-precision integers travel as canonical decimal
+// strings. docs/resource-usage.md defines each meter.
+type UsageResourceKind int32
+
+const (
+	UsageResourceKind_USAGE_RESOURCE_KIND_UNSPECIFIED UsageResourceKind = 0
+	UsageResourceKind_USAGE_RESOURCE_KIND_ALLOCATION  UsageResourceKind = 1
+	UsageResourceKind_USAGE_RESOURCE_KIND_VOLUME      UsageResourceKind = 2
+)
+
+// Enum value maps for UsageResourceKind.
+var (
+	UsageResourceKind_name = map[int32]string{
+		0: "USAGE_RESOURCE_KIND_UNSPECIFIED",
+		1: "USAGE_RESOURCE_KIND_ALLOCATION",
+		2: "USAGE_RESOURCE_KIND_VOLUME",
+	}
+	UsageResourceKind_value = map[string]int32{
+		"USAGE_RESOURCE_KIND_UNSPECIFIED": 0,
+		"USAGE_RESOURCE_KIND_ALLOCATION":  1,
+		"USAGE_RESOURCE_KIND_VOLUME":      2,
+	}
+)
+
+func (x UsageResourceKind) Enum() *UsageResourceKind {
+	p := new(UsageResourceKind)
+	*p = x
+	return p
+}
+
+func (x UsageResourceKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageResourceKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_proto_enumTypes[2].Descriptor()
+}
+
+func (UsageResourceKind) Type() protoreflect.EnumType {
+	return &file_agent_proto_enumTypes[2]
+}
+
+func (x UsageResourceKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageResourceKind.Descriptor instead.
+func (UsageResourceKind) EnumDescriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{2}
+}
+
+type UsageRecordKind int32
+
+const (
+	UsageRecordKind_USAGE_RECORD_KIND_UNSPECIFIED UsageRecordKind = 0
+	// Quantities measured over the record interval.
+	UsageRecordKind_USAGE_RECORD_KIND_MEASUREMENT UsageRecordKind = 1
+	// The resource existed during the interval but was not measured. A gap
+	// carries no quantities.
+	UsageRecordKind_USAGE_RECORD_KIND_GAP UsageRecordKind = 2
+)
+
+// Enum value maps for UsageRecordKind.
+var (
+	UsageRecordKind_name = map[int32]string{
+		0: "USAGE_RECORD_KIND_UNSPECIFIED",
+		1: "USAGE_RECORD_KIND_MEASUREMENT",
+		2: "USAGE_RECORD_KIND_GAP",
+	}
+	UsageRecordKind_value = map[string]int32{
+		"USAGE_RECORD_KIND_UNSPECIFIED": 0,
+		"USAGE_RECORD_KIND_MEASUREMENT": 1,
+		"USAGE_RECORD_KIND_GAP":         2,
+	}
+)
+
+func (x UsageRecordKind) Enum() *UsageRecordKind {
+	p := new(UsageRecordKind)
+	*p = x
+	return p
+}
+
+func (x UsageRecordKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageRecordKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_proto_enumTypes[3].Descriptor()
+}
+
+func (UsageRecordKind) Type() protoreflect.EnumType {
+	return &file_agent_proto_enumTypes[3]
+}
+
+func (x UsageRecordKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageRecordKind.Descriptor instead.
+func (UsageRecordKind) EnumDescriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{3}
+}
+
+// UsageQuality values are bits of UsageRecord.quality.
+type UsageQuality int32
+
+const (
+	UsageQuality_USAGE_QUALITY_UNSPECIFIED UsageQuality = 0
+	// Counter deltas span a collection gap or an unobserved epoch start.
+	// Their distribution inside the interval is unknown.
+	UsageQuality_USAGE_QUALITY_UNCERTAIN_TIMING UsageQuality = 1
+	// Gauge coverage is shorter than the interval.
+	UsageQuality_USAGE_QUALITY_GAUGE_GAP UsageQuality = 2
+	// The wall clock stepped forward. The UTC interval is longer than the
+	// monotonic duration_ms.
+	UsageQuality_USAGE_QUALITY_CLOCK_STEP UsageQuality = 4
+	// The wall clock is behind the producer timeline, so UTC times can lead
+	// real time.
+	UsageQuality_USAGE_QUALITY_CLOCK_SKEW UsageQuality = 8
+	// First record of the counter epoch.
+	UsageQuality_USAGE_QUALITY_EPOCH_START UsageQuality = 16
+	// Last record of the counter epoch.
+	UsageQuality_USAGE_QUALITY_EPOCH_END          UsageQuality = 32
+	UsageQuality_USAGE_QUALITY_CPU_UNAVAILABLE    UsageQuality = 64
+	UsageQuality_USAGE_QUALITY_MEMORY_UNAVAILABLE UsageQuality = 128
+	// The epoch has no egress counter. Its output is unknown, not zero.
+	UsageQuality_USAGE_QUALITY_EGRESS_UNAVAILABLE UsageQuality = 256
+	// The volume filesystem could not be read. Its usage is unknown, not zero.
+	UsageQuality_USAGE_QUALITY_VOLUME_UNKNOWN UsageQuality = 512
+)
+
+// Enum value maps for UsageQuality.
+var (
+	UsageQuality_name = map[int32]string{
+		0:   "USAGE_QUALITY_UNSPECIFIED",
+		1:   "USAGE_QUALITY_UNCERTAIN_TIMING",
+		2:   "USAGE_QUALITY_GAUGE_GAP",
+		4:   "USAGE_QUALITY_CLOCK_STEP",
+		8:   "USAGE_QUALITY_CLOCK_SKEW",
+		16:  "USAGE_QUALITY_EPOCH_START",
+		32:  "USAGE_QUALITY_EPOCH_END",
+		64:  "USAGE_QUALITY_CPU_UNAVAILABLE",
+		128: "USAGE_QUALITY_MEMORY_UNAVAILABLE",
+		256: "USAGE_QUALITY_EGRESS_UNAVAILABLE",
+		512: "USAGE_QUALITY_VOLUME_UNKNOWN",
+	}
+	UsageQuality_value = map[string]int32{
+		"USAGE_QUALITY_UNSPECIFIED":        0,
+		"USAGE_QUALITY_UNCERTAIN_TIMING":   1,
+		"USAGE_QUALITY_GAUGE_GAP":          2,
+		"USAGE_QUALITY_CLOCK_STEP":         4,
+		"USAGE_QUALITY_CLOCK_SKEW":         8,
+		"USAGE_QUALITY_EPOCH_START":        16,
+		"USAGE_QUALITY_EPOCH_END":          32,
+		"USAGE_QUALITY_CPU_UNAVAILABLE":    64,
+		"USAGE_QUALITY_MEMORY_UNAVAILABLE": 128,
+		"USAGE_QUALITY_EGRESS_UNAVAILABLE": 256,
+		"USAGE_QUALITY_VOLUME_UNKNOWN":     512,
+	}
+)
+
+func (x UsageQuality) Enum() *UsageQuality {
+	p := new(UsageQuality)
+	*p = x
+	return p
+}
+
+func (x UsageQuality) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (UsageQuality) Descriptor() protoreflect.EnumDescriptor {
+	return file_agent_proto_enumTypes[4].Descriptor()
+}
+
+func (UsageQuality) Type() protoreflect.EnumType {
+	return &file_agent_proto_enumTypes[4]
+}
+
+func (x UsageQuality) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use UsageQuality.Descriptor instead.
+func (UsageQuality) EnumDescriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{4}
+}
+
 type AgentHello struct {
 	state                   protoimpl.MessageState `protogen:"open.v1"`
 	AgentId                 string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -706,8 +896,15 @@ type AssignedNodeConfig struct {
 	WorkloadIpv6Pool       string                 `protobuf:"bytes,7,opt,name=workload_ipv6_pool,json=workloadIpv6Pool,proto3" json:"workload_ipv6_pool,omitempty"`
 	WorkloadIpv4Subnet     string                 `protobuf:"bytes,8,opt,name=workload_ipv4_subnet,json=workloadIpv4Subnet,proto3" json:"workload_ipv4_subnet,omitempty"`
 	WorkloadIpv4Pool       string                 `protobuf:"bytes,9,opt,name=workload_ipv4_pool,json=workloadIpv4Pool,proto3" json:"workload_ipv4_pool,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Trusted platform address classes. Allocation output to an ingress
+	// prefix is a response through public ingress, which is public egress even
+	// when the proxy address is private. Allocation output to a platform
+	// prefix is platform traffic. Ingress prefixes may also open connections
+	// to allocations. Only the control plane sets these; allocations cannot.
+	IngressPrefixes  []string `protobuf:"bytes,10,rep,name=ingress_prefixes,json=ingressPrefixes,proto3" json:"ingress_prefixes,omitempty"`
+	PlatformPrefixes []string `protobuf:"bytes,11,rep,name=platform_prefixes,json=platformPrefixes,proto3" json:"platform_prefixes,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *AssignedNodeConfig) Reset() {
@@ -801,6 +998,20 @@ func (x *AssignedNodeConfig) GetWorkloadIpv4Pool() string {
 		return x.WorkloadIpv4Pool
 	}
 	return ""
+}
+
+func (x *AssignedNodeConfig) GetIngressPrefixes() []string {
+	if x != nil {
+		return x.IngressPrefixes
+	}
+	return nil
+}
+
+func (x *AssignedNodeConfig) GetPlatformPrefixes() []string {
+	if x != nil {
+		return x.PlatformPrefixes
+	}
+	return nil
 }
 
 type WorkloadIdentity struct {
@@ -2743,6 +2954,668 @@ func (x *LogBatchAck) GetBatchId() uint64 {
 	return 0
 }
 
+// UsageEgress counts logical IP bytes an allocation emitted at its
+// host-side interface, by trusted traffic class. Only public_direct_bytes and
+// public_ingress_bytes are public egress.
+type UsageEgress struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	PublicDirectBytes  uint64                 `protobuf:"varint,1,opt,name=public_direct_bytes,json=publicDirectBytes,proto3" json:"public_direct_bytes,omitempty"`
+	PublicIngressBytes uint64                 `protobuf:"varint,2,opt,name=public_ingress_bytes,json=publicIngressBytes,proto3" json:"public_ingress_bytes,omitempty"`
+	PrivateBytes       uint64                 `protobuf:"varint,3,opt,name=private_bytes,json=privateBytes,proto3" json:"private_bytes,omitempty"`
+	PlatformBytes      uint64                 `protobuf:"varint,4,opt,name=platform_bytes,json=platformBytes,proto3" json:"platform_bytes,omitempty"`
+	ProbeBytes         uint64                 `protobuf:"varint,5,opt,name=probe_bytes,json=probeBytes,proto3" json:"probe_bytes,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *UsageEgress) Reset() {
+	*x = UsageEgress{}
+	mi := &file_agent_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageEgress) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageEgress) ProtoMessage() {}
+
+func (x *UsageEgress) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageEgress.ProtoReflect.Descriptor instead.
+func (*UsageEgress) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *UsageEgress) GetPublicDirectBytes() uint64 {
+	if x != nil {
+		return x.PublicDirectBytes
+	}
+	return 0
+}
+
+func (x *UsageEgress) GetPublicIngressBytes() uint64 {
+	if x != nil {
+		return x.PublicIngressBytes
+	}
+	return 0
+}
+
+func (x *UsageEgress) GetPrivateBytes() uint64 {
+	if x != nil {
+		return x.PrivateBytes
+	}
+	return 0
+}
+
+func (x *UsageEgress) GetPlatformBytes() uint64 {
+	if x != nil {
+		return x.PlatformBytes
+	}
+	return 0
+}
+
+func (x *UsageEgress) GetProbeBytes() uint64 {
+	if x != nil {
+		return x.ProbeBytes
+	}
+	return 0
+}
+
+// UsageRecord is one sealed, immutable interval of one resource. The
+// producer encodes it once; retransmissions carry identical bytes.
+type UsageRecord struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	InstallationId string                 `protobuf:"bytes,1,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	ProducerId     string                 `protobuf:"bytes,2,opt,name=producer_id,json=producerId,proto3" json:"producer_id,omitempty"`
+	Sequence       uint64                 `protobuf:"varint,3,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Kind           UsageRecordKind        `protobuf:"varint,4,opt,name=kind,proto3,enum=agent.v1.UsageRecordKind" json:"kind,omitempty"`
+	ResourceKind   UsageResourceKind      `protobuf:"varint,5,opt,name=resource_kind,json=resourceKind,proto3,enum=agent.v1.UsageResourceKind" json:"resource_kind,omitempty"`
+	// The allocation or volume ID. It names the control-plane attribution
+	// that authorizes this producer's agent to report the resource.
+	ResourceId   string                 `protobuf:"bytes,6,opt,name=resource_id,json=resourceId,proto3" json:"resource_id,omitempty"`
+	CounterEpoch string                 `protobuf:"bytes,7,opt,name=counter_epoch,json=counterEpoch,proto3" json:"counter_epoch,omitempty"`
+	BootId       string                 `protobuf:"bytes,8,opt,name=boot_id,json=bootId,proto3" json:"boot_id,omitempty"`
+	Start        *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=start,proto3" json:"start,omitempty"`
+	End          *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=end,proto3" json:"end,omitempty"`
+	// Monotonic elapsed duration. It equals end - start unless the record has
+	// USAGE_QUALITY_CLOCK_STEP.
+	DurationMs             int64        `protobuf:"varint,11,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
+	MeterVersion           string       `protobuf:"bytes,12,opt,name=meter_version,json=meterVersion,proto3" json:"meter_version,omitempty"`
+	Quality                uint32       `protobuf:"varint,13,opt,name=quality,proto3" json:"quality,omitempty"`
+	CpuMicroseconds        uint64       `protobuf:"varint,14,opt,name=cpu_microseconds,json=cpuMicroseconds,proto3" json:"cpu_microseconds,omitempty"`
+	MemoryByteMilliseconds string       `protobuf:"bytes,15,opt,name=memory_byte_milliseconds,json=memoryByteMilliseconds,proto3" json:"memory_byte_milliseconds,omitempty"`
+	MemoryCoveredMs        int64        `protobuf:"varint,16,opt,name=memory_covered_ms,json=memoryCoveredMs,proto3" json:"memory_covered_ms,omitempty"`
+	VolumeByteMilliseconds string       `protobuf:"bytes,17,opt,name=volume_byte_milliseconds,json=volumeByteMilliseconds,proto3" json:"volume_byte_milliseconds,omitempty"`
+	VolumeCoveredMs        int64        `protobuf:"varint,18,opt,name=volume_covered_ms,json=volumeCoveredMs,proto3" json:"volume_covered_ms,omitempty"`
+	Egress                 *UsageEgress `protobuf:"bytes,19,opt,name=egress,proto3" json:"egress,omitempty"`
+	GapReason              string       `protobuf:"bytes,20,opt,name=gap_reason,json=gapReason,proto3" json:"gap_reason,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *UsageRecord) Reset() {
+	*x = UsageRecord{}
+	mi := &file_agent_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageRecord) ProtoMessage() {}
+
+func (x *UsageRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageRecord.ProtoReflect.Descriptor instead.
+func (*UsageRecord) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *UsageRecord) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetProducerId() string {
+	if x != nil {
+		return x.ProducerId
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *UsageRecord) GetKind() UsageRecordKind {
+	if x != nil {
+		return x.Kind
+	}
+	return UsageRecordKind_USAGE_RECORD_KIND_UNSPECIFIED
+}
+
+func (x *UsageRecord) GetResourceKind() UsageResourceKind {
+	if x != nil {
+		return x.ResourceKind
+	}
+	return UsageResourceKind_USAGE_RESOURCE_KIND_UNSPECIFIED
+}
+
+func (x *UsageRecord) GetResourceId() string {
+	if x != nil {
+		return x.ResourceId
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetCounterEpoch() string {
+	if x != nil {
+		return x.CounterEpoch
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetBootId() string {
+	if x != nil {
+		return x.BootId
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Start
+	}
+	return nil
+}
+
+func (x *UsageRecord) GetEnd() *timestamppb.Timestamp {
+	if x != nil {
+		return x.End
+	}
+	return nil
+}
+
+func (x *UsageRecord) GetDurationMs() int64 {
+	if x != nil {
+		return x.DurationMs
+	}
+	return 0
+}
+
+func (x *UsageRecord) GetMeterVersion() string {
+	if x != nil {
+		return x.MeterVersion
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetQuality() uint32 {
+	if x != nil {
+		return x.Quality
+	}
+	return 0
+}
+
+func (x *UsageRecord) GetCpuMicroseconds() uint64 {
+	if x != nil {
+		return x.CpuMicroseconds
+	}
+	return 0
+}
+
+func (x *UsageRecord) GetMemoryByteMilliseconds() string {
+	if x != nil {
+		return x.MemoryByteMilliseconds
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetMemoryCoveredMs() int64 {
+	if x != nil {
+		return x.MemoryCoveredMs
+	}
+	return 0
+}
+
+func (x *UsageRecord) GetVolumeByteMilliseconds() string {
+	if x != nil {
+		return x.VolumeByteMilliseconds
+	}
+	return ""
+}
+
+func (x *UsageRecord) GetVolumeCoveredMs() int64 {
+	if x != nil {
+		return x.VolumeCoveredMs
+	}
+	return 0
+}
+
+func (x *UsageRecord) GetEgress() *UsageEgress {
+	if x != nil {
+		return x.Egress
+	}
+	return nil
+}
+
+func (x *UsageRecord) GetGapReason() string {
+	if x != nil {
+		return x.GapReason
+	}
+	return ""
+}
+
+// UsageProducerHealth is the producer's journal and collection state.
+type UsageProducerHealth struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	JournalBytes          int64                  `protobuf:"varint,1,opt,name=journal_bytes,json=journalBytes,proto3" json:"journal_bytes,omitempty"`
+	JournalCapacityBytes  int64                  `protobuf:"varint,2,opt,name=journal_capacity_bytes,json=journalCapacityBytes,proto3" json:"journal_capacity_bytes,omitempty"`
+	UnacknowledgedRecords uint64                 `protobuf:"varint,3,opt,name=unacknowledged_records,json=unacknowledgedRecords,proto3" json:"unacknowledged_records,omitempty"`
+	OldestUnacknowledged  *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=oldest_unacknowledged,json=oldestUnacknowledged,proto3" json:"oldest_unacknowledged,omitempty"`
+	// Estimated time until the journal is full at the current record rate.
+	OfflineCapacitySeconds int64 `protobuf:"varint,5,opt,name=offline_capacity_seconds,json=offlineCapacitySeconds,proto3" json:"offline_capacity_seconds,omitempty"`
+	// Set while the journal cannot hold new records.
+	ExhaustedSince *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=exhausted_since,json=exhaustedSince,proto3" json:"exhausted_since,omitempty"`
+	// Cumulative gap records produced by this journal.
+	GapRecords uint64 `protobuf:"varint,7,opt,name=gap_records,json=gapRecords,proto3" json:"gap_records,omitempty"`
+	// Cumulative output bytes the kernel counted without an epoch counter.
+	UnattributedEgressBytes uint64 `protobuf:"varint,8,opt,name=unattributed_egress_bytes,json=unattributedEgressBytes,proto3" json:"unattributed_egress_bytes,omitempty"`
+	LastError               string `protobuf:"bytes,9,opt,name=last_error,json=lastError,proto3" json:"last_error,omitempty"`
+	HostCpus                int32  `protobuf:"varint,10,opt,name=host_cpus,json=hostCpus,proto3" json:"host_cpus,omitempty"`
+	HostMemoryBytes         int64  `protobuf:"varint,11,opt,name=host_memory_bytes,json=hostMemoryBytes,proto3" json:"host_memory_bytes,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *UsageProducerHealth) Reset() {
+	*x = UsageProducerHealth{}
+	mi := &file_agent_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageProducerHealth) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageProducerHealth) ProtoMessage() {}
+
+func (x *UsageProducerHealth) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageProducerHealth.ProtoReflect.Descriptor instead.
+func (*UsageProducerHealth) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *UsageProducerHealth) GetJournalBytes() int64 {
+	if x != nil {
+		return x.JournalBytes
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetJournalCapacityBytes() int64 {
+	if x != nil {
+		return x.JournalCapacityBytes
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetUnacknowledgedRecords() uint64 {
+	if x != nil {
+		return x.UnacknowledgedRecords
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetOldestUnacknowledged() *timestamppb.Timestamp {
+	if x != nil {
+		return x.OldestUnacknowledged
+	}
+	return nil
+}
+
+func (x *UsageProducerHealth) GetOfflineCapacitySeconds() int64 {
+	if x != nil {
+		return x.OfflineCapacitySeconds
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetExhaustedSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExhaustedSince
+	}
+	return nil
+}
+
+func (x *UsageProducerHealth) GetGapRecords() uint64 {
+	if x != nil {
+		return x.GapRecords
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetUnattributedEgressBytes() uint64 {
+	if x != nil {
+		return x.UnattributedEgressBytes
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetLastError() string {
+	if x != nil {
+		return x.LastError
+	}
+	return ""
+}
+
+func (x *UsageProducerHealth) GetHostCpus() int32 {
+	if x != nil {
+		return x.HostCpus
+	}
+	return 0
+}
+
+func (x *UsageProducerHealth) GetHostMemoryBytes() int64 {
+	if x != nil {
+		return x.HostMemoryBytes
+	}
+	return 0
+}
+
+// UsageReport carries a contiguous run of journal records. The agent keeps
+// every record until UsageAcknowledgement confirms durable acceptance.
+// Usage acknowledgements are independent of desired-state acknowledgements
+// and status reports.
+type UsageReport struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AgentId        string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	SessionId      string                 `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	InstallationId string                 `protobuf:"bytes,3,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
+	// Durable journal identity. Transport sessions never change it.
+	ProducerId string         `protobuf:"bytes,4,opt,name=producer_id,json=producerId,proto3" json:"producer_id,omitempty"`
+	ReportId   uint64         `protobuf:"varint,5,opt,name=report_id,json=reportId,proto3" json:"report_id,omitempty"`
+	Records    []*UsageRecord `protobuf:"bytes,6,rep,name=records,proto3" json:"records,omitempty"`
+	// All usage before this time is in records at or before the last record
+	// of this report.
+	SealedThrough *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=sealed_through,json=sealedThrough,proto3" json:"sealed_through,omitempty"`
+	// Highest sequence the producer can no longer resend because it pruned
+	// the record after an earlier acknowledgement. Set only when the control
+	// plane cursor is behind that point, for example after a database restore.
+	LostThrough   uint64               `protobuf:"varint,8,opt,name=lost_through,json=lostThrough,proto3" json:"lost_through,omitempty"`
+	Health        *UsageProducerHealth `protobuf:"bytes,9,opt,name=health,proto3" json:"health,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UsageReport) Reset() {
+	*x = UsageReport{}
+	mi := &file_agent_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageReport) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageReport) ProtoMessage() {}
+
+func (x *UsageReport) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageReport.ProtoReflect.Descriptor instead.
+func (*UsageReport) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *UsageReport) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *UsageReport) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *UsageReport) GetInstallationId() string {
+	if x != nil {
+		return x.InstallationId
+	}
+	return ""
+}
+
+func (x *UsageReport) GetProducerId() string {
+	if x != nil {
+		return x.ProducerId
+	}
+	return ""
+}
+
+func (x *UsageReport) GetReportId() uint64 {
+	if x != nil {
+		return x.ReportId
+	}
+	return 0
+}
+
+func (x *UsageReport) GetRecords() []*UsageRecord {
+	if x != nil {
+		return x.Records
+	}
+	return nil
+}
+
+func (x *UsageReport) GetSealedThrough() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SealedThrough
+	}
+	return nil
+}
+
+func (x *UsageReport) GetLostThrough() uint64 {
+	if x != nil {
+		return x.LostThrough
+	}
+	return 0
+}
+
+func (x *UsageReport) GetHealth() *UsageProducerHealth {
+	if x != nil {
+		return x.Health
+	}
+	return nil
+}
+
+type UsageRejection struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sequence      uint64                 `protobuf:"varint,1,opt,name=sequence,proto3" json:"sequence,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UsageRejection) Reset() {
+	*x = UsageRejection{}
+	mi := &file_agent_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageRejection) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageRejection) ProtoMessage() {}
+
+func (x *UsageRejection) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageRejection.ProtoReflect.Descriptor instead.
+func (*UsageRejection) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *UsageRejection) GetSequence() uint64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
+}
+
+func (x *UsageRejection) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// UsageAcknowledgement is sent only after PostgreSQL commits the report.
+type UsageAcknowledgement struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	ProducerId string                 `protobuf:"bytes,1,opt,name=producer_id,json=producerId,proto3" json:"producer_id,omitempty"`
+	ReportId   uint64                 `protobuf:"varint,2,opt,name=report_id,json=reportId,proto3" json:"report_id,omitempty"`
+	// Contiguous durable cursor. Every sequence through this value is stored,
+	// either accepted or rejected with a reason. The producer resends from the
+	// next sequence.
+	AcceptedThrough uint64            `protobuf:"varint,3,opt,name=accepted_through,json=acceptedThrough,proto3" json:"accepted_through,omitempty"`
+	Rejections      []*UsageRejection `protobuf:"bytes,4,rep,name=rejections,proto3" json:"rejections,omitempty"`
+	// Set when a record conflicts with an accepted record under the same
+	// identity. The producer stops delivery until an operator intervenes.
+	Conflict      string `protobuf:"bytes,5,opt,name=conflict,proto3" json:"conflict,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UsageAcknowledgement) Reset() {
+	*x = UsageAcknowledgement{}
+	mi := &file_agent_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageAcknowledgement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageAcknowledgement) ProtoMessage() {}
+
+func (x *UsageAcknowledgement) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageAcknowledgement.ProtoReflect.Descriptor instead.
+func (*UsageAcknowledgement) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *UsageAcknowledgement) GetProducerId() string {
+	if x != nil {
+		return x.ProducerId
+	}
+	return ""
+}
+
+func (x *UsageAcknowledgement) GetReportId() uint64 {
+	if x != nil {
+		return x.ReportId
+	}
+	return 0
+}
+
+func (x *UsageAcknowledgement) GetAcceptedThrough() uint64 {
+	if x != nil {
+		return x.AcceptedThrough
+	}
+	return 0
+}
+
+func (x *UsageAcknowledgement) GetRejections() []*UsageRejection {
+	if x != nil {
+		return x.Rejections
+	}
+	return nil
+}
+
+func (x *UsageAcknowledgement) GetConflict() string {
+	if x != nil {
+		return x.Conflict
+	}
+	return ""
+}
+
 type AgentClientMessage struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Payload:
@@ -2752,6 +3625,7 @@ type AgentClientMessage struct {
 	//	*AgentClientMessage_StatusReport
 	//	*AgentClientMessage_LogBatch
 	//	*AgentClientMessage_Acknowledgement
+	//	*AgentClientMessage_UsageReport
 	Payload       isAgentClientMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2759,7 +3633,7 @@ type AgentClientMessage struct {
 
 func (x *AgentClientMessage) Reset() {
 	*x = AgentClientMessage{}
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2771,7 +3645,7 @@ func (x *AgentClientMessage) String() string {
 func (*AgentClientMessage) ProtoMessage() {}
 
 func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2784,7 +3658,7 @@ func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentClientMessage.ProtoReflect.Descriptor instead.
 func (*AgentClientMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{25}
+	return file_agent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *AgentClientMessage) GetPayload() isAgentClientMessage_Payload {
@@ -2839,6 +3713,15 @@ func (x *AgentClientMessage) GetAcknowledgement() *DesiredStateAcknowledgement {
 	return nil
 }
 
+func (x *AgentClientMessage) GetUsageReport() *UsageReport {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentClientMessage_UsageReport); ok {
+			return x.UsageReport
+		}
+	}
+	return nil
+}
+
 type isAgentClientMessage_Payload interface {
 	isAgentClientMessage_Payload()
 }
@@ -2863,6 +3746,10 @@ type AgentClientMessage_Acknowledgement struct {
 	Acknowledgement *DesiredStateAcknowledgement `protobuf:"bytes,5,opt,name=acknowledgement,proto3,oneof"`
 }
 
+type AgentClientMessage_UsageReport struct {
+	UsageReport *UsageReport `protobuf:"bytes,6,opt,name=usage_report,json=usageReport,proto3,oneof"`
+}
+
 func (*AgentClientMessage_Hello) isAgentClientMessage_Payload() {}
 
 func (*AgentClientMessage_Heartbeat) isAgentClientMessage_Payload() {}
@@ -2872,6 +3759,8 @@ func (*AgentClientMessage_StatusReport) isAgentClientMessage_Payload() {}
 func (*AgentClientMessage_LogBatch) isAgentClientMessage_Payload() {}
 
 func (*AgentClientMessage_Acknowledgement) isAgentClientMessage_Payload() {}
+
+func (*AgentClientMessage_UsageReport) isAgentClientMessage_Payload() {}
 
 // Terminates one server batch on the Sync stream. A batch is applied as a
 // unit: the agent withholds status publication until this marker, so an
@@ -2886,7 +3775,7 @@ type SyncBatchEnd struct {
 
 func (x *SyncBatchEnd) Reset() {
 	*x = SyncBatchEnd{}
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2898,7 +3787,7 @@ func (x *SyncBatchEnd) String() string {
 func (*SyncBatchEnd) ProtoMessage() {}
 
 func (x *SyncBatchEnd) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2911,7 +3800,7 @@ func (x *SyncBatchEnd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncBatchEnd.ProtoReflect.Descriptor instead.
 func (*SyncBatchEnd) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{26}
+	return file_agent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *SyncBatchEnd) GetSessionId() string {
@@ -2932,6 +3821,7 @@ type AgentServerMessage struct {
 	//	*AgentServerMessage_ReplicaEndpoints
 	//	*AgentServerMessage_BatchEnd
 	//	*AgentServerMessage_LogBatchAck
+	//	*AgentServerMessage_UsageAcknowledgement
 	Payload       isAgentServerMessage_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2939,7 +3829,7 @@ type AgentServerMessage struct {
 
 func (x *AgentServerMessage) Reset() {
 	*x = AgentServerMessage{}
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2951,7 +3841,7 @@ func (x *AgentServerMessage) String() string {
 func (*AgentServerMessage) ProtoMessage() {}
 
 func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2964,7 +3854,7 @@ func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentServerMessage.ProtoReflect.Descriptor instead.
 func (*AgentServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{27}
+	return file_agent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *AgentServerMessage) GetPayload() isAgentServerMessage_Payload {
@@ -3037,6 +3927,15 @@ func (x *AgentServerMessage) GetLogBatchAck() *LogBatchAck {
 	return nil
 }
 
+func (x *AgentServerMessage) GetUsageAcknowledgement() *UsageAcknowledgement {
+	if x != nil {
+		if x, ok := x.Payload.(*AgentServerMessage_UsageAcknowledgement); ok {
+			return x.UsageAcknowledgement
+		}
+	}
+	return nil
+}
+
 type isAgentServerMessage_Payload interface {
 	isAgentServerMessage_Payload()
 }
@@ -3072,6 +3971,10 @@ type AgentServerMessage_LogBatchAck struct {
 	LogBatchAck *LogBatchAck `protobuf:"bytes,7,opt,name=log_batch_ack,json=logBatchAck,proto3,oneof"`
 }
 
+type AgentServerMessage_UsageAcknowledgement struct {
+	UsageAcknowledgement *UsageAcknowledgement `protobuf:"bytes,8,opt,name=usage_acknowledgement,json=usageAcknowledgement,proto3,oneof"`
+}
+
 func (*AgentServerMessage_DesiredState) isAgentServerMessage_Payload() {}
 
 func (*AgentServerMessage_AllocationDiff) isAgentServerMessage_Payload() {}
@@ -3085,6 +3988,8 @@ func (*AgentServerMessage_ReplicaEndpoints) isAgentServerMessage_Payload() {}
 func (*AgentServerMessage_BatchEnd) isAgentServerMessage_Payload() {}
 
 func (*AgentServerMessage_LogBatchAck) isAgentServerMessage_Payload() {}
+
+func (*AgentServerMessage_UsageAcknowledgement) isAgentServerMessage_Payload() {}
 
 var File_agent_proto protoreflect.FileDescriptor
 
@@ -3148,7 +4053,7 @@ const file_agent_proto_rawDesc = "" +
 	"\bendpoint\x18\x04 \x01(\tR\bendpoint\x12\x1f\n" +
 	"\vallowed_ips\x18\x05 \x03(\tR\n" +
 	"allowedIps\x12@\n" +
-	"\x1cpersistent_keepalive_seconds\x18\x06 \x01(\x05R\x1apersistentKeepaliveSeconds\"\xef\x03\n" +
+	"\x1cpersistent_keepalive_seconds\x18\x06 \x01(\x05R\x1apersistentKeepaliveSeconds\"\xc7\x04\n" +
 	"\x12AssignedNodeConfig\x120\n" +
 	"\x14workload_ipv6_subnet\x18\x01 \x01(\tR\x12workloadIpv6Subnet\x128\n" +
 	"\x18wireguard_interface_name\x18\x02 \x01(\tR\x16wireguardInterfaceName\x12/\n" +
@@ -3158,7 +4063,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x13workload_identities\x18\x06 \x03(\v2\x1a.agent.v1.WorkloadIdentityR\x12workloadIdentities\x12,\n" +
 	"\x12workload_ipv6_pool\x18\a \x01(\tR\x10workloadIpv6Pool\x120\n" +
 	"\x14workload_ipv4_subnet\x18\b \x01(\tR\x12workloadIpv4Subnet\x12,\n" +
-	"\x12workload_ipv4_pool\x18\t \x01(\tR\x10workloadIpv4Pool\"\xef\x01\n" +
+	"\x12workload_ipv4_pool\x18\t \x01(\tR\x10workloadIpv4Pool\x12)\n" +
+	"\x10ingress_prefixes\x18\n" +
+	" \x03(\tR\x0fingressPrefixes\x12+\n" +
+	"\x11platform_prefixes\x18\v \x03(\tR\x10platformPrefixes\"\xef\x01\n" +
 	"\x10WorkloadIdentity\x12#\n" +
 	"\rworkload_ipv6\x18\x01 \x01(\tR\fworkloadIpv6\x12%\n" +
 	"\x0eenvironment_id\x18\x02 \x01(\tR\renvironmentId\x12)\n" +
@@ -3368,17 +4276,90 @@ const file_agent_proto_rawDesc = "" +
 	"\x05drops\x18\x04 \x03(\v2\x1b.platform.v1.LogDropSummaryR\x05drops\x12\x19\n" +
 	"\bbatch_id\x18\x05 \x01(\x04R\abatchId\"(\n" +
 	"\vLogBatchAck\x12\x19\n" +
-	"\bbatch_id\x18\x01 \x01(\x04R\abatchId\"\xcc\x02\n" +
+	"\bbatch_id\x18\x01 \x01(\x04R\abatchId\"\xdc\x01\n" +
+	"\vUsageEgress\x12.\n" +
+	"\x13public_direct_bytes\x18\x01 \x01(\x04R\x11publicDirectBytes\x120\n" +
+	"\x14public_ingress_bytes\x18\x02 \x01(\x04R\x12publicIngressBytes\x12#\n" +
+	"\rprivate_bytes\x18\x03 \x01(\x04R\fprivateBytes\x12%\n" +
+	"\x0eplatform_bytes\x18\x04 \x01(\x04R\rplatformBytes\x12\x1f\n" +
+	"\vprobe_bytes\x18\x05 \x01(\x04R\n" +
+	"probeBytes\"\xc8\x06\n" +
+	"\vUsageRecord\x12'\n" +
+	"\x0finstallation_id\x18\x01 \x01(\tR\x0einstallationId\x12\x1f\n" +
+	"\vproducer_id\x18\x02 \x01(\tR\n" +
+	"producerId\x12\x1a\n" +
+	"\bsequence\x18\x03 \x01(\x04R\bsequence\x12-\n" +
+	"\x04kind\x18\x04 \x01(\x0e2\x19.agent.v1.UsageRecordKindR\x04kind\x12@\n" +
+	"\rresource_kind\x18\x05 \x01(\x0e2\x1b.agent.v1.UsageResourceKindR\fresourceKind\x12\x1f\n" +
+	"\vresource_id\x18\x06 \x01(\tR\n" +
+	"resourceId\x12#\n" +
+	"\rcounter_epoch\x18\a \x01(\tR\fcounterEpoch\x12\x17\n" +
+	"\aboot_id\x18\b \x01(\tR\x06bootId\x120\n" +
+	"\x05start\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\x05start\x12,\n" +
+	"\x03end\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\x03end\x12\x1f\n" +
+	"\vduration_ms\x18\v \x01(\x03R\n" +
+	"durationMs\x12#\n" +
+	"\rmeter_version\x18\f \x01(\tR\fmeterVersion\x12\x18\n" +
+	"\aquality\x18\r \x01(\rR\aquality\x12)\n" +
+	"\x10cpu_microseconds\x18\x0e \x01(\x04R\x0fcpuMicroseconds\x128\n" +
+	"\x18memory_byte_milliseconds\x18\x0f \x01(\tR\x16memoryByteMilliseconds\x12*\n" +
+	"\x11memory_covered_ms\x18\x10 \x01(\x03R\x0fmemoryCoveredMs\x128\n" +
+	"\x18volume_byte_milliseconds\x18\x11 \x01(\tR\x16volumeByteMilliseconds\x12*\n" +
+	"\x11volume_covered_ms\x18\x12 \x01(\x03R\x0fvolumeCoveredMs\x12-\n" +
+	"\x06egress\x18\x13 \x01(\v2\x15.agent.v1.UsageEgressR\x06egress\x12\x1d\n" +
+	"\n" +
+	"gap_reason\x18\x14 \x01(\tR\tgapReason\"\xbc\x04\n" +
+	"\x13UsageProducerHealth\x12#\n" +
+	"\rjournal_bytes\x18\x01 \x01(\x03R\fjournalBytes\x124\n" +
+	"\x16journal_capacity_bytes\x18\x02 \x01(\x03R\x14journalCapacityBytes\x125\n" +
+	"\x16unacknowledged_records\x18\x03 \x01(\x04R\x15unacknowledgedRecords\x12O\n" +
+	"\x15oldest_unacknowledged\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x14oldestUnacknowledged\x128\n" +
+	"\x18offline_capacity_seconds\x18\x05 \x01(\x03R\x16offlineCapacitySeconds\x12C\n" +
+	"\x0fexhausted_since\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x0eexhaustedSince\x12\x1f\n" +
+	"\vgap_records\x18\a \x01(\x04R\n" +
+	"gapRecords\x12:\n" +
+	"\x19unattributed_egress_bytes\x18\b \x01(\x04R\x17unattributedEgressBytes\x12\x1d\n" +
+	"\n" +
+	"last_error\x18\t \x01(\tR\tlastError\x12\x1b\n" +
+	"\thost_cpus\x18\n" +
+	" \x01(\x05R\bhostCpus\x12*\n" +
+	"\x11host_memory_bytes\x18\v \x01(\x03R\x0fhostMemoryBytes\"\xfc\x02\n" +
+	"\vUsageReport\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x02 \x01(\tR\tsessionId\x12'\n" +
+	"\x0finstallation_id\x18\x03 \x01(\tR\x0einstallationId\x12\x1f\n" +
+	"\vproducer_id\x18\x04 \x01(\tR\n" +
+	"producerId\x12\x1b\n" +
+	"\treport_id\x18\x05 \x01(\x04R\breportId\x12/\n" +
+	"\arecords\x18\x06 \x03(\v2\x15.agent.v1.UsageRecordR\arecords\x12A\n" +
+	"\x0esealed_through\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\rsealedThrough\x12!\n" +
+	"\flost_through\x18\b \x01(\x04R\vlostThrough\x125\n" +
+	"\x06health\x18\t \x01(\v2\x1d.agent.v1.UsageProducerHealthR\x06health\"D\n" +
+	"\x0eUsageRejection\x12\x1a\n" +
+	"\bsequence\x18\x01 \x01(\x04R\bsequence\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xd5\x01\n" +
+	"\x14UsageAcknowledgement\x12\x1f\n" +
+	"\vproducer_id\x18\x01 \x01(\tR\n" +
+	"producerId\x12\x1b\n" +
+	"\treport_id\x18\x02 \x01(\x04R\breportId\x12)\n" +
+	"\x10accepted_through\x18\x03 \x01(\x04R\x0facceptedThrough\x128\n" +
+	"\n" +
+	"rejections\x18\x04 \x03(\v2\x18.agent.v1.UsageRejectionR\n" +
+	"rejections\x12\x1a\n" +
+	"\bconflict\x18\x05 \x01(\tR\bconflict\"\x88\x03\n" +
 	"\x12AgentClientMessage\x12,\n" +
 	"\x05hello\x18\x01 \x01(\v2\x14.agent.v1.AgentHelloH\x00R\x05hello\x128\n" +
 	"\theartbeat\x18\x02 \x01(\v2\x18.agent.v1.AgentHeartbeatH\x00R\theartbeat\x12=\n" +
 	"\rstatus_report\x18\x03 \x01(\v2\x16.agent.v1.StatusReportH\x00R\fstatusReport\x121\n" +
 	"\tlog_batch\x18\x04 \x01(\v2\x12.agent.v1.LogBatchH\x00R\blogBatch\x12Q\n" +
-	"\x0facknowledgement\x18\x05 \x01(\v2%.agent.v1.DesiredStateAcknowledgementH\x00R\x0facknowledgementB\t\n" +
+	"\x0facknowledgement\x18\x05 \x01(\v2%.agent.v1.DesiredStateAcknowledgementH\x00R\x0facknowledgement\x12:\n" +
+	"\fusage_report\x18\x06 \x01(\v2\x15.agent.v1.UsageReportH\x00R\vusageReportB\t\n" +
 	"\apayload\"-\n" +
 	"\fSyncBatchEnd\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\x01 \x01(\tR\tsessionId\"\xfc\x03\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\xd3\x04\n" +
 	"\x12AgentServerMessage\x12A\n" +
 	"\rdesired_state\x18\x01 \x01(\v2\x1a.agent.v1.DesiredNodeStateH\x00R\fdesiredState\x12C\n" +
 	"\x0fallocation_diff\x18\x02 \x01(\v2\x18.agent.v1.AllocationDiffH\x00R\x0eallocationDiff\x12J\n" +
@@ -3386,7 +4367,8 @@ const file_agent_proto_rawDesc = "" +
 	"\x10pull_credentials\x18\x04 \x01(\v2\x1b.agent.v1.PullCredentialSetH\x00R\x0fpullCredentials\x12I\n" +
 	"\x11replica_endpoints\x18\x05 \x01(\v2\x1a.agent.v1.ReplicaEndpointsH\x00R\x10replicaEndpoints\x125\n" +
 	"\tbatch_end\x18\x06 \x01(\v2\x16.agent.v1.SyncBatchEndH\x00R\bbatchEnd\x12;\n" +
-	"\rlog_batch_ack\x18\a \x01(\v2\x15.agent.v1.LogBatchAckH\x00R\vlogBatchAckB\t\n" +
+	"\rlog_batch_ack\x18\a \x01(\v2\x15.agent.v1.LogBatchAckH\x00R\vlogBatchAck\x12U\n" +
+	"\x15usage_acknowledgement\x18\b \x01(\v2\x1e.agent.v1.UsageAcknowledgementH\x00R\x14usageAcknowledgementB\t\n" +
 	"\apayload*m\n" +
 	"\x10AllocationIntent\x12!\n" +
 	"\x1dALLOCATION_INTENT_UNSPECIFIED\x10\x00\x12\x19\n" +
@@ -3394,7 +4376,27 @@ const file_agent_proto_rawDesc = "" +
 	"\x17ALLOCATION_INTENT_DRAIN\x10\x02*I\n" +
 	"\rSnapshotScope\x12\x1e\n" +
 	"\x1aSNAPSHOT_SCOPE_UNSPECIFIED\x10\x00\x12\x18\n" +
-	"\x14SNAPSHOT_SCOPE_AGENT\x10\x012\xff\x01\n" +
+	"\x14SNAPSHOT_SCOPE_AGENT\x10\x01*|\n" +
+	"\x11UsageResourceKind\x12#\n" +
+	"\x1fUSAGE_RESOURCE_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eUSAGE_RESOURCE_KIND_ALLOCATION\x10\x01\x12\x1e\n" +
+	"\x1aUSAGE_RESOURCE_KIND_VOLUME\x10\x02*r\n" +
+	"\x0fUsageRecordKind\x12!\n" +
+	"\x1dUSAGE_RECORD_KIND_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dUSAGE_RECORD_KIND_MEASUREMENT\x10\x01\x12\x19\n" +
+	"\x15USAGE_RECORD_KIND_GAP\x10\x02*\xfa\x02\n" +
+	"\fUsageQuality\x12\x1d\n" +
+	"\x19USAGE_QUALITY_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eUSAGE_QUALITY_UNCERTAIN_TIMING\x10\x01\x12\x1b\n" +
+	"\x17USAGE_QUALITY_GAUGE_GAP\x10\x02\x12\x1c\n" +
+	"\x18USAGE_QUALITY_CLOCK_STEP\x10\x04\x12\x1c\n" +
+	"\x18USAGE_QUALITY_CLOCK_SKEW\x10\b\x12\x1d\n" +
+	"\x19USAGE_QUALITY_EPOCH_START\x10\x10\x12\x1b\n" +
+	"\x17USAGE_QUALITY_EPOCH_END\x10 \x12!\n" +
+	"\x1dUSAGE_QUALITY_CPU_UNAVAILABLE\x10@\x12%\n" +
+	" USAGE_QUALITY_MEMORY_UNAVAILABLE\x10\x80\x01\x12%\n" +
+	" USAGE_QUALITY_EGRESS_UNAVAILABLE\x10\x80\x02\x12!\n" +
+	"\x1cUSAGE_QUALITY_VOLUME_UNKNOWN\x10\x80\x042\xff\x01\n" +
 	"\fAgentControl\x12;\n" +
 	"\x06Enroll\x12\x17.agent.v1.EnrollRequest\x1a\x18.agent.v1.EnrollResponse\x12j\n" +
 	" IssueManagedDashboardCertificate\x12,.agent.v1.ManagedDashboardCertificateRequest\x1a\x18.agent.v1.EnrollResponse\x12F\n" +
@@ -3412,105 +4414,127 @@ func file_agent_proto_rawDescGZIP() []byte {
 	return file_agent_proto_rawDescData
 }
 
-var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_agent_proto_goTypes = []any{
 	(AllocationIntent)(0),                      // 0: agent.v1.AllocationIntent
 	(SnapshotScope)(0),                         // 1: agent.v1.SnapshotScope
-	(*AgentHello)(nil),                         // 2: agent.v1.AgentHello
-	(*RuntimeResource)(nil),                    // 3: agent.v1.RuntimeResource
-	(*EnrollRequest)(nil),                      // 4: agent.v1.EnrollRequest
-	(*EnrollResponse)(nil),                     // 5: agent.v1.EnrollResponse
-	(*ManagedDashboardCertificateRequest)(nil), // 6: agent.v1.ManagedDashboardCertificateRequest
-	(*WireGuardPeer)(nil),                      // 7: agent.v1.WireGuardPeer
-	(*AssignedNodeConfig)(nil),                 // 8: agent.v1.AssignedNodeConfig
-	(*WorkloadIdentity)(nil),                   // 9: agent.v1.WorkloadIdentity
-	(*AgentHeartbeat)(nil),                     // 10: agent.v1.AgentHeartbeat
-	(*DesiredVolume)(nil),                      // 11: agent.v1.DesiredVolume
-	(*DesiredService)(nil),                     // 12: agent.v1.DesiredService
-	(*InternalHost)(nil),                       // 13: agent.v1.InternalHost
-	(*DesiredNodeState)(nil),                   // 14: agent.v1.DesiredNodeState
-	(*AllocationDiff)(nil),                     // 15: agent.v1.AllocationDiff
-	(*AllocationCredential)(nil),               // 16: agent.v1.AllocationCredential
-	(*PullCredentialSet)(nil),                  // 17: agent.v1.PullCredentialSet
-	(*NodeConfigUpdate)(nil),                   // 18: agent.v1.NodeConfigUpdate
-	(*ReplicaEndpoints)(nil),                   // 19: agent.v1.ReplicaEndpoints
-	(*DesiredStateAcknowledgement)(nil),        // 20: agent.v1.DesiredStateAcknowledgement
-	(*VolumeCondition)(nil),                    // 21: agent.v1.VolumeCondition
-	(*ServiceCondition)(nil),                   // 22: agent.v1.ServiceCondition
-	(*StatusReport)(nil),                       // 23: agent.v1.StatusReport
-	(*LogEntry)(nil),                           // 24: agent.v1.LogEntry
-	(*LogBatch)(nil),                           // 25: agent.v1.LogBatch
-	(*LogBatchAck)(nil),                        // 26: agent.v1.LogBatchAck
-	(*AgentClientMessage)(nil),                 // 27: agent.v1.AgentClientMessage
-	(*SyncBatchEnd)(nil),                       // 28: agent.v1.SyncBatchEnd
-	(*AgentServerMessage)(nil),                 // 29: agent.v1.AgentServerMessage
-	nil,                                        // 30: agent.v1.LogEntry.AttributesEntry
-	(*timestamppb.Timestamp)(nil),              // 31: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil),     // 32: platform.v1.ResolvedServiceSpec
-	(*platformv1.RestartObservation)(nil),      // 33: platform.v1.RestartObservation
-	(platformv1.ServiceLogType)(0),             // 34: platform.v1.ServiceLogType
-	(*platformv1.LogDropSummary)(nil),          // 35: platform.v1.LogDropSummary
+	(UsageResourceKind)(0),                     // 2: agent.v1.UsageResourceKind
+	(UsageRecordKind)(0),                       // 3: agent.v1.UsageRecordKind
+	(UsageQuality)(0),                          // 4: agent.v1.UsageQuality
+	(*AgentHello)(nil),                         // 5: agent.v1.AgentHello
+	(*RuntimeResource)(nil),                    // 6: agent.v1.RuntimeResource
+	(*EnrollRequest)(nil),                      // 7: agent.v1.EnrollRequest
+	(*EnrollResponse)(nil),                     // 8: agent.v1.EnrollResponse
+	(*ManagedDashboardCertificateRequest)(nil), // 9: agent.v1.ManagedDashboardCertificateRequest
+	(*WireGuardPeer)(nil),                      // 10: agent.v1.WireGuardPeer
+	(*AssignedNodeConfig)(nil),                 // 11: agent.v1.AssignedNodeConfig
+	(*WorkloadIdentity)(nil),                   // 12: agent.v1.WorkloadIdentity
+	(*AgentHeartbeat)(nil),                     // 13: agent.v1.AgentHeartbeat
+	(*DesiredVolume)(nil),                      // 14: agent.v1.DesiredVolume
+	(*DesiredService)(nil),                     // 15: agent.v1.DesiredService
+	(*InternalHost)(nil),                       // 16: agent.v1.InternalHost
+	(*DesiredNodeState)(nil),                   // 17: agent.v1.DesiredNodeState
+	(*AllocationDiff)(nil),                     // 18: agent.v1.AllocationDiff
+	(*AllocationCredential)(nil),               // 19: agent.v1.AllocationCredential
+	(*PullCredentialSet)(nil),                  // 20: agent.v1.PullCredentialSet
+	(*NodeConfigUpdate)(nil),                   // 21: agent.v1.NodeConfigUpdate
+	(*ReplicaEndpoints)(nil),                   // 22: agent.v1.ReplicaEndpoints
+	(*DesiredStateAcknowledgement)(nil),        // 23: agent.v1.DesiredStateAcknowledgement
+	(*VolumeCondition)(nil),                    // 24: agent.v1.VolumeCondition
+	(*ServiceCondition)(nil),                   // 25: agent.v1.ServiceCondition
+	(*StatusReport)(nil),                       // 26: agent.v1.StatusReport
+	(*LogEntry)(nil),                           // 27: agent.v1.LogEntry
+	(*LogBatch)(nil),                           // 28: agent.v1.LogBatch
+	(*LogBatchAck)(nil),                        // 29: agent.v1.LogBatchAck
+	(*UsageEgress)(nil),                        // 30: agent.v1.UsageEgress
+	(*UsageRecord)(nil),                        // 31: agent.v1.UsageRecord
+	(*UsageProducerHealth)(nil),                // 32: agent.v1.UsageProducerHealth
+	(*UsageReport)(nil),                        // 33: agent.v1.UsageReport
+	(*UsageRejection)(nil),                     // 34: agent.v1.UsageRejection
+	(*UsageAcknowledgement)(nil),               // 35: agent.v1.UsageAcknowledgement
+	(*AgentClientMessage)(nil),                 // 36: agent.v1.AgentClientMessage
+	(*SyncBatchEnd)(nil),                       // 37: agent.v1.SyncBatchEnd
+	(*AgentServerMessage)(nil),                 // 38: agent.v1.AgentServerMessage
+	nil,                                        // 39: agent.v1.LogEntry.AttributesEntry
+	(*timestamppb.Timestamp)(nil),              // 40: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil),     // 41: platform.v1.ResolvedServiceSpec
+	(*platformv1.RestartObservation)(nil),      // 42: platform.v1.RestartObservation
+	(platformv1.ServiceLogType)(0),             // 43: platform.v1.ServiceLogType
+	(*platformv1.LogDropSummary)(nil),          // 44: platform.v1.LogDropSummary
 }
 var file_agent_proto_depIdxs = []int32{
-	3,  // 0: agent.v1.AgentHello.runtime_resources:type_name -> agent.v1.RuntimeResource
-	22, // 1: agent.v1.AgentHello.allocations:type_name -> agent.v1.ServiceCondition
-	31, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
-	7,  // 3: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
-	9,  // 4: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
-	32, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
-	13, // 6: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
-	33, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
+	6,  // 0: agent.v1.AgentHello.runtime_resources:type_name -> agent.v1.RuntimeResource
+	25, // 1: agent.v1.AgentHello.allocations:type_name -> agent.v1.ServiceCondition
+	40, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	10, // 3: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
+	12, // 4: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
+	41, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	16, // 6: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
+	42, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
 	0,  // 8: agent.v1.DesiredService.intent:type_name -> agent.v1.AllocationIntent
-	31, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
-	31, // 10: agent.v1.DesiredService.created_at:type_name -> google.protobuf.Timestamp
-	11, // 11: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
-	12, // 12: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	31, // 13: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
-	8,  // 14: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
+	40, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
+	40, // 10: agent.v1.DesiredService.created_at:type_name -> google.protobuf.Timestamp
+	14, // 11: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
+	15, // 12: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
+	40, // 13: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	11, // 14: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
 	1,  // 15: agent.v1.DesiredNodeState.scope:type_name -> agent.v1.SnapshotScope
-	31, // 16: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
-	12, // 17: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
-	12, // 18: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
-	11, // 19: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
-	31, // 20: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
-	31, // 21: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
-	16, // 22: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
-	31, // 23: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
-	8,  // 24: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
-	31, // 25: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
-	31, // 26: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
-	33, // 27: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
-	21, // 28: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	22, // 29: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	31, // 30: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	34, // 31: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	30, // 32: agent.v1.LogEntry.attributes:type_name -> agent.v1.LogEntry.AttributesEntry
-	24, // 33: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	35, // 34: agent.v1.LogBatch.drops:type_name -> platform.v1.LogDropSummary
-	2,  // 35: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	10, // 36: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	23, // 37: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	25, // 38: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	20, // 39: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
-	14, // 40: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	15, // 41: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
-	18, // 42: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
-	17, // 43: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
-	19, // 44: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
-	28, // 45: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
-	26, // 46: agent.v1.AgentServerMessage.log_batch_ack:type_name -> agent.v1.LogBatchAck
-	4,  // 47: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	6,  // 48: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	27, // 49: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	5,  // 50: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	5,  // 51: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	29, // 52: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	50, // [50:53] is the sub-list for method output_type
-	47, // [47:50] is the sub-list for method input_type
-	47, // [47:47] is the sub-list for extension type_name
-	47, // [47:47] is the sub-list for extension extendee
-	0,  // [0:47] is the sub-list for field type_name
+	40, // 16: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
+	15, // 17: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
+	15, // 18: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
+	14, // 19: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
+	40, // 20: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
+	40, // 21: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
+	19, // 22: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
+	40, // 23: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
+	11, // 24: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
+	40, // 25: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
+	40, // 26: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
+	42, // 27: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	24, // 28: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	25, // 29: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	40, // 30: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	43, // 31: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	39, // 32: agent.v1.LogEntry.attributes:type_name -> agent.v1.LogEntry.AttributesEntry
+	27, // 33: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	44, // 34: agent.v1.LogBatch.drops:type_name -> platform.v1.LogDropSummary
+	3,  // 35: agent.v1.UsageRecord.kind:type_name -> agent.v1.UsageRecordKind
+	2,  // 36: agent.v1.UsageRecord.resource_kind:type_name -> agent.v1.UsageResourceKind
+	40, // 37: agent.v1.UsageRecord.start:type_name -> google.protobuf.Timestamp
+	40, // 38: agent.v1.UsageRecord.end:type_name -> google.protobuf.Timestamp
+	30, // 39: agent.v1.UsageRecord.egress:type_name -> agent.v1.UsageEgress
+	40, // 40: agent.v1.UsageProducerHealth.oldest_unacknowledged:type_name -> google.protobuf.Timestamp
+	40, // 41: agent.v1.UsageProducerHealth.exhausted_since:type_name -> google.protobuf.Timestamp
+	31, // 42: agent.v1.UsageReport.records:type_name -> agent.v1.UsageRecord
+	40, // 43: agent.v1.UsageReport.sealed_through:type_name -> google.protobuf.Timestamp
+	32, // 44: agent.v1.UsageReport.health:type_name -> agent.v1.UsageProducerHealth
+	34, // 45: agent.v1.UsageAcknowledgement.rejections:type_name -> agent.v1.UsageRejection
+	5,  // 46: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	13, // 47: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	26, // 48: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	28, // 49: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	23, // 50: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
+	33, // 51: agent.v1.AgentClientMessage.usage_report:type_name -> agent.v1.UsageReport
+	17, // 52: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	18, // 53: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
+	21, // 54: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
+	20, // 55: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
+	22, // 56: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
+	37, // 57: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
+	29, // 58: agent.v1.AgentServerMessage.log_batch_ack:type_name -> agent.v1.LogBatchAck
+	35, // 59: agent.v1.AgentServerMessage.usage_acknowledgement:type_name -> agent.v1.UsageAcknowledgement
+	7,  // 60: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	9,  // 61: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	36, // 62: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	8,  // 63: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	8,  // 64: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	38, // 65: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	63, // [63:66] is the sub-list for method output_type
+	60, // [60:63] is the sub-list for method input_type
+	60, // [60:60] is the sub-list for extension type_name
+	60, // [60:60] is the sub-list for extension extendee
+	0,  // [0:60] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -3518,14 +4542,15 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
-	file_agent_proto_msgTypes[25].OneofWrappers = []any{
+	file_agent_proto_msgTypes[31].OneofWrappers = []any{
 		(*AgentClientMessage_Hello)(nil),
 		(*AgentClientMessage_Heartbeat)(nil),
 		(*AgentClientMessage_StatusReport)(nil),
 		(*AgentClientMessage_LogBatch)(nil),
 		(*AgentClientMessage_Acknowledgement)(nil),
+		(*AgentClientMessage_UsageReport)(nil),
 	}
-	file_agent_proto_msgTypes[27].OneofWrappers = []any{
+	file_agent_proto_msgTypes[33].OneofWrappers = []any{
 		(*AgentServerMessage_DesiredState)(nil),
 		(*AgentServerMessage_AllocationDiff)(nil),
 		(*AgentServerMessage_NodeConfigUpdate)(nil),
@@ -3533,14 +4558,15 @@ func file_agent_proto_init() {
 		(*AgentServerMessage_ReplicaEndpoints)(nil),
 		(*AgentServerMessage_BatchEnd)(nil),
 		(*AgentServerMessage_LogBatchAck)(nil),
+		(*AgentServerMessage_UsageAcknowledgement)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   29,
+			NumEnums:      5,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

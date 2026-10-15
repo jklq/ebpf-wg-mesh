@@ -86,6 +86,14 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Deletion.GCIntervalSeconds <= 0 {
 		return errors.New("controlplane.deletion.gcIntervalSeconds must be greater than 0")
 	}
+	if cfg.Usage.RawRetentionDays < 2 || cfg.Usage.HourlyRetentionDays < cfg.Usage.RawRetentionDays {
+		return errors.New("controlplane.usage: raw retention must be at least 2 days and hourly retention at least raw retention")
+	}
+	for _, cidr := range append(append([]string(nil), cfg.Mesh.IngressCIDRs...), cfg.Mesh.PlatformCIDRs...) {
+		if _, err := netip.ParsePrefix(cidr); err != nil {
+			return fmt.Errorf("controlplane.mesh traffic class prefix %q: %w", cidr, err)
+		}
+	}
 
 	if cfg.Ingress.PublicAddr == "" {
 		return errors.New("controlplane.ingress.publicAddr is required")

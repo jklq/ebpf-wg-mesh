@@ -12,6 +12,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/usage"
 	"ebof-wg-mesh/internal/recovery"
 	"net/netip"
 
@@ -587,14 +588,14 @@ func (s *persistence) insertAllocationAssignmentTx(ctx context.Context, tx *sql.
 		assignment.DrainStartedAt, assignment.DrainDeadline, assignment.CreatedAt, assignment.UpdatedAt); err != nil {
 		return err
 	}
-	return nil
+	return usage.RecordAllocation(ctx, tx, assignment.ID, assignment.ServiceID, assignment.DeploymentID, assignment.AgentID, assignment.CreatedAt)
 }
 
 func (s *persistence) deleteAllocationAssignmentTx(ctx context.Context, tx *sql.Tx, allocationID string) error {
 	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `DELETE FROM allocation_assignments WHERE id = $1`, allocationID); err != nil {
 		return err
 	}
-	return nil
+	return usage.EndAllocation(ctx, tx, allocationID)
 }
 
 func (s *persistence) markAssignmentLostTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {

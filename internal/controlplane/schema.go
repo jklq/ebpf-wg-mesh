@@ -1,9 +1,9 @@
 package controlplane
 
-const currentSchemaVersion = 43
+const currentSchemaVersion = 44
 
 // Increase only when the binary requires structures absent from older schemas.
-const minimumSchemaVersion = 43
+const minimumSchemaVersion = 44
 
 const recoveryAuthoritySchema = `CREATE TABLE recovery_runtime_authority (singleton BOOL PRIMARY KEY CHECK (singleton = TRUE), installation TEXT NOT NULL, generation TEXT NOT NULL, paused BOOL NOT NULL)`
 const recoveryReservationsSchema = `CREATE TABLE recovery_network_reservations (

@@ -1359,6 +1359,130 @@ message LinkGitHubRepositoryRequest {
   string github_user_access_token = 3 [debug_redact = true];
 }
 
+// Resource usage. Quantities stay in resource units: CPU microseconds,
+// byte-milliseconds for memory and volumes, and bytes for network output.
+// docs/resource-usage.md defines each meter, its coverage, and buckets.
+enum UsageResolution {
+  USAGE_RESOLUTION_UNSPECIFIED = 0;
+  // One-minute buckets from raw intervals. Ranges up to 24 hours.
+  USAGE_RESOLUTION_MINUTE = 1;
+  // One-hour buckets from hourly aggregates. Ranges up to 31 days.
+  USAGE_RESOLUTION_HOUR = 2;
+  // One UTC day per bucket from hourly aggregates. Ranges up to 366 days.
+  USAGE_RESOLUTION_DAY = 3;
+}
+
+// GetProjectUsageRequest selects a UTC range. The range is widened to whole
+// buckets. An interval belongs to the bucket that contains its start.
+message GetProjectUsageRequest {
+  string project_id = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  UsageResolution resolution = 4;
+  string environment_id = 5;
+  string service_id = 6;
+  string allocation_id = 7;
+  string volume_id = 8;
+  // Include a bucket series for each resource, for breakdowns and export.
+  bool resource_buckets = 9;
+}
+
+// UsageQuantities holds exact accumulated integers as decimal strings, the
+// coverage behind them, and averages derived from that coverage.
+message UsageQuantities {
+  string cpu_microseconds = 1;
+  // Total cgroup memory, including attributable page cache and kernel
+  // memory, integrated over valid samples.
+  string memory_byte_milliseconds = 2;
+  // Used filesystem blocks, including filesystem metadata.
+  string volume_byte_milliseconds = 3;
+  // Part of volume_byte_milliseconds measured after the volume, or an
+  // ancestor, was deleted and while its data was still retained.
+  string retained_volume_byte_milliseconds = 4;
+  // public_direct_bytes plus public_ingress_bytes.
+  string public_egress_bytes = 5;
+  string public_direct_bytes = 6;
+  string public_ingress_bytes = 7;
+  string private_bytes = 8;
+  string platform_bytes = 9;
+  string probe_bytes = 10;
+  // Resource time covered by measurement intervals.
+  int64 measured_milliseconds = 11;
+  // Resource time inside explicit gaps. Gaps carry no quantities.
+  int64 gap_milliseconds = 12;
+  int64 memory_covered_milliseconds = 13;
+  int64 volume_covered_milliseconds = 14;
+  // Resource time whose counter values are exact in total but whose
+  // distribution inside the interval is unknown.
+  int64 uncertain_milliseconds = 15;
+  // Averages over window_milliseconds. Gauge averages scale each resource's
+  // covered integral to its measured time. They are derived values.
+  int64 window_milliseconds = 16;
+  double average_vcpu = 17;
+  double average_memory_bytes = 18;
+  double average_volume_bytes = 19;
+  // True when any contributing interval had partial gauge coverage or
+  // uncertain timing.
+  bool estimated = 20;
+}
+
+message UsageBucket {
+  google.protobuf.Timestamp start = 1;
+  google.protobuf.Timestamp end = 2;
+  UsageQuantities usage = 3;
+  // False when the bucket ends after the measurement watermark. Later
+  // records can still add to an incomplete bucket.
+  bool complete = 4;
+}
+
+message UsageResource {
+  // "allocation" or "volume".
+  string kind = 1;
+  string resource_id = 2;
+  string environment_id = 3;
+  string environment_name = 4;
+  // The service of an allocation.
+  string service_id = 5;
+  // The service name for an allocation, or the volume name.
+  string name = 6;
+  string deployment_id = 7;
+  // When the resource, or an ancestor, was deleted. Volume data can stay
+  // retained after this time.
+  google.protobuf.Timestamp deleted_at = 8;
+  google.protobuf.Timestamp first_start = 9;
+  google.protobuf.Timestamp last_end = 10;
+  UsageQuantities usage = 11;
+  repeated UsageBucket buckets = 12;
+}
+
+message UsageGap {
+  string resource_kind = 1;
+  string resource_id = 2;
+  google.protobuf.Timestamp start = 3;
+  google.protobuf.Timestamp end = 4;
+  string reason = 5;
+}
+
+message ProjectUsage {
+  string project_id = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+  UsageResolution resolution = 4;
+  string meter_version = 5;
+  UsageQuantities total = 6;
+  repeated UsageBucket buckets = 7;
+  repeated UsageResource resources = 8;
+  repeated UsageGap gaps = 9;
+  bool gaps_truncated = 10;
+  // Usage before this time is complete for the project's current
+  // resources. Unset when no current resource has reported.
+  google.protobuf.Timestamp watermark = 11;
+  bool stale = 12;
+  string stale_reason = 13;
+  // Data older than this time has passed retention for the resolution.
+  google.protobuf.Timestamp retained_since = 14;
+}
+
 service PlatformService {
   rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
   rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace);
@@ -1424,6 +1548,7 @@ service PlatformService {
   rpc ListServiceArtifacts(ListServiceArtifactsRequest) returns (ListServiceArtifactsResponse);
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
   rpc ListBuildAttempts(ListBuildAttemptsRequest) returns (ListBuildAttemptsResponse);
+  rpc GetProjectUsage(GetProjectUsageRequest) returns (ProjectUsage);
 }
 
 message BuilderWorker {

@@ -188,6 +188,12 @@ func resetTestStore(t *testing.T, store *persistence) {
 	t.Helper()
 
 	tables := []string{
+		"usage_intervals",
+		"usage_hourly",
+		"usage_resource_progress",
+		"usage_producer_gaps",
+		"usage_producers",
+		"usage_attributions",
 		"xds_node_observations",
 		"ingress_nodes",
 		"xds_publications",

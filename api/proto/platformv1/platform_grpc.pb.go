@@ -79,6 +79,7 @@ const (
 	PlatformService_ListServiceArtifacts_FullMethodName        = "/platform.v1.PlatformService/ListServiceArtifacts"
 	PlatformService_ListAgents_FullMethodName                  = "/platform.v1.PlatformService/ListAgents"
 	PlatformService_ListBuildAttempts_FullMethodName           = "/platform.v1.PlatformService/ListBuildAttempts"
+	PlatformService_GetProjectUsage_FullMethodName             = "/platform.v1.PlatformService/GetProjectUsage"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -144,6 +145,7 @@ type PlatformServiceClient interface {
 	ListServiceArtifacts(ctx context.Context, in *ListServiceArtifactsRequest, opts ...grpc.CallOption) (*ListServiceArtifactsResponse, error)
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
 	ListBuildAttempts(ctx context.Context, in *ListBuildAttemptsRequest, opts ...grpc.CallOption) (*ListBuildAttemptsResponse, error)
+	GetProjectUsage(ctx context.Context, in *GetProjectUsageRequest, opts ...grpc.CallOption) (*ProjectUsage, error)
 }
 
 type platformServiceClient struct {
@@ -744,6 +746,16 @@ func (c *platformServiceClient) ListBuildAttempts(ctx context.Context, in *ListB
 	return out, nil
 }
 
+func (c *platformServiceClient) GetProjectUsage(ctx context.Context, in *GetProjectUsageRequest, opts ...grpc.CallOption) (*ProjectUsage, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ProjectUsage)
+	err := c.cc.Invoke(ctx, PlatformService_GetProjectUsage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PlatformServiceServer is the server API for PlatformService service.
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
@@ -807,6 +819,7 @@ type PlatformServiceServer interface {
 	ListServiceArtifacts(context.Context, *ListServiceArtifactsRequest) (*ListServiceArtifactsResponse, error)
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
 	ListBuildAttempts(context.Context, *ListBuildAttemptsRequest) (*ListBuildAttemptsResponse, error)
+	GetProjectUsage(context.Context, *GetProjectUsageRequest) (*ProjectUsage, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
@@ -993,6 +1006,9 @@ func (UnimplementedPlatformServiceServer) ListAgents(context.Context, *emptypb.E
 }
 func (UnimplementedPlatformServiceServer) ListBuildAttempts(context.Context, *ListBuildAttemptsRequest) (*ListBuildAttemptsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListBuildAttempts not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetProjectUsage(context.Context, *GetProjectUsageRequest) (*ProjectUsage, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetProjectUsage not implemented")
 }
 func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
 func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
@@ -2077,6 +2093,24 @@ func _PlatformService_ListBuildAttempts_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_GetProjectUsage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetProjectUsageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetProjectUsage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetProjectUsage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetProjectUsage(ctx, req.(*GetProjectUsageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2319,6 +2353,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListBuildAttempts",
 			Handler:    _PlatformService_ListBuildAttempts_Handler,
+		},
+		{
+			MethodName: "GetProjectUsage",
+			Handler:    _PlatformService_GetProjectUsage_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

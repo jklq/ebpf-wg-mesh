@@ -92,6 +92,13 @@ message AssignedNodeConfig {
   string workload_ipv6_pool = 7;
   string workload_ipv4_subnet = 8;
   string workload_ipv4_pool = 9;
+  // Trusted platform address classes. Allocation output to an ingress
+  // prefix is a response through public ingress, which is public egress even
+  // when the proxy address is private. Allocation output to a platform
+  // prefix is platform traffic. Ingress prefixes may also open connections
+  // to allocations. Only the control plane sets these; allocations cannot.
+  repeated string ingress_prefixes = 10;
+  repeated string platform_prefixes = 11;
 }
 
 message WorkloadIdentity {
@@ -352,6 +359,151 @@ message LogBatchAck {
   uint64 batch_id = 1;
 }
 
+// Resource usage metering. Quantities are integers in resource units:
+// CPU microseconds, byte-milliseconds for memory and volumes, and bytes for
+// network output. Arbitrary-precision integers travel as canonical decimal
+// strings. docs/resource-usage.md defines each meter.
+enum UsageResourceKind {
+  USAGE_RESOURCE_KIND_UNSPECIFIED = 0;
+  USAGE_RESOURCE_KIND_ALLOCATION = 1;
+  USAGE_RESOURCE_KIND_VOLUME = 2;
+}
+
+enum UsageRecordKind {
+  USAGE_RECORD_KIND_UNSPECIFIED = 0;
+  // Quantities measured over the record interval.
+  USAGE_RECORD_KIND_MEASUREMENT = 1;
+  // The resource existed during the interval but was not measured. A gap
+  // carries no quantities.
+  USAGE_RECORD_KIND_GAP = 2;
+}
+
+// UsageQuality values are bits of UsageRecord.quality.
+enum UsageQuality {
+  USAGE_QUALITY_UNSPECIFIED = 0;
+  // Counter deltas span a collection gap or an unobserved epoch start.
+  // Their distribution inside the interval is unknown.
+  USAGE_QUALITY_UNCERTAIN_TIMING = 1;
+  // Gauge coverage is shorter than the interval.
+  USAGE_QUALITY_GAUGE_GAP = 2;
+  // The wall clock stepped forward. The UTC interval is longer than the
+  // monotonic duration_ms.
+  USAGE_QUALITY_CLOCK_STEP = 4;
+  // The wall clock is behind the producer timeline, so UTC times can lead
+  // real time.
+  USAGE_QUALITY_CLOCK_SKEW = 8;
+  // First record of the counter epoch.
+  USAGE_QUALITY_EPOCH_START = 16;
+  // Last record of the counter epoch.
+  USAGE_QUALITY_EPOCH_END = 32;
+  USAGE_QUALITY_CPU_UNAVAILABLE = 64;
+  USAGE_QUALITY_MEMORY_UNAVAILABLE = 128;
+  // The epoch has no egress counter. Its output is unknown, not zero.
+  USAGE_QUALITY_EGRESS_UNAVAILABLE = 256;
+  // The volume filesystem could not be read. Its usage is unknown, not zero.
+  USAGE_QUALITY_VOLUME_UNKNOWN = 512;
+}
+
+// UsageEgress counts logical IP bytes an allocation emitted at its
+// host-side interface, by trusted traffic class. Only public_direct_bytes and
+// public_ingress_bytes are public egress.
+message UsageEgress {
+  uint64 public_direct_bytes = 1;
+  uint64 public_ingress_bytes = 2;
+  uint64 private_bytes = 3;
+  uint64 platform_bytes = 4;
+  uint64 probe_bytes = 5;
+}
+
+// UsageRecord is one sealed, immutable interval of one resource. The
+// producer encodes it once; retransmissions carry identical bytes.
+message UsageRecord {
+  string installation_id = 1;
+  string producer_id = 2;
+  uint64 sequence = 3;
+  UsageRecordKind kind = 4;
+  UsageResourceKind resource_kind = 5;
+  // The allocation or volume ID. It names the control-plane attribution
+  // that authorizes this producer's agent to report the resource.
+  string resource_id = 6;
+  string counter_epoch = 7;
+  string boot_id = 8;
+  google.protobuf.Timestamp start = 9;
+  google.protobuf.Timestamp end = 10;
+  // Monotonic elapsed duration. It equals end - start unless the record has
+  // USAGE_QUALITY_CLOCK_STEP.
+  int64 duration_ms = 11;
+  string meter_version = 12;
+  uint32 quality = 13;
+  uint64 cpu_microseconds = 14;
+  string memory_byte_milliseconds = 15;
+  int64 memory_covered_ms = 16;
+  string volume_byte_milliseconds = 17;
+  int64 volume_covered_ms = 18;
+  UsageEgress egress = 19;
+  string gap_reason = 20;
+}
+
+// UsageProducerHealth is the producer's journal and collection state.
+message UsageProducerHealth {
+  int64 journal_bytes = 1;
+  int64 journal_capacity_bytes = 2;
+  uint64 unacknowledged_records = 3;
+  google.protobuf.Timestamp oldest_unacknowledged = 4;
+  // Estimated time until the journal is full at the current record rate.
+  int64 offline_capacity_seconds = 5;
+  // Set while the journal cannot hold new records.
+  google.protobuf.Timestamp exhausted_since = 6;
+  // Cumulative gap records produced by this journal.
+  uint64 gap_records = 7;
+  // Cumulative output bytes the kernel counted without an epoch counter.
+  uint64 unattributed_egress_bytes = 8;
+  string last_error = 9;
+  int32 host_cpus = 10;
+  int64 host_memory_bytes = 11;
+}
+
+// UsageReport carries a contiguous run of journal records. The agent keeps
+// every record until UsageAcknowledgement confirms durable acceptance.
+// Usage acknowledgements are independent of desired-state acknowledgements
+// and status reports.
+message UsageReport {
+  string agent_id = 1;
+  string session_id = 2;
+  string installation_id = 3;
+  // Durable journal identity. Transport sessions never change it.
+  string producer_id = 4;
+  uint64 report_id = 5;
+  repeated UsageRecord records = 6;
+  // All usage before this time is in records at or before the last record
+  // of this report.
+  google.protobuf.Timestamp sealed_through = 7;
+  // Highest sequence the producer can no longer resend because it pruned
+  // the record after an earlier acknowledgement. Set only when the control
+  // plane cursor is behind that point, for example after a database restore.
+  uint64 lost_through = 8;
+  UsageProducerHealth health = 9;
+}
+
+message UsageRejection {
+  uint64 sequence = 1;
+  string reason = 2;
+}
+
+// UsageAcknowledgement is sent only after PostgreSQL commits the report.
+message UsageAcknowledgement {
+  string producer_id = 1;
+  uint64 report_id = 2;
+  // Contiguous durable cursor. Every sequence through this value is stored,
+  // either accepted or rejected with a reason. The producer resends from the
+  // next sequence.
+  uint64 accepted_through = 3;
+  repeated UsageRejection rejections = 4;
+  // Set when a record conflicts with an accepted record under the same
+  // identity. The producer stops delivery until an operator intervenes.
+  string conflict = 5;
+}
+
 message AgentClientMessage {
   oneof payload {
     AgentHello hello = 1;
@@ -359,6 +511,7 @@ message AgentClientMessage {
     StatusReport status_report = 3;
     LogBatch log_batch = 4;
     DesiredStateAcknowledgement acknowledgement = 5;
+    UsageReport usage_report = 6;
   }
 }
 
@@ -382,6 +535,7 @@ message AgentServerMessage {
     // durably written). The replay window still covers crash gaps
     // between acceptance and durable ingest.
     LogBatchAck log_batch_ack = 7;
+    UsageAcknowledgement usage_acknowledgement = 8;
   }
 }
 

@@ -13,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/routing"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"ebof-wg-mesh/internal/controlplane/usage"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -35,6 +36,8 @@ type platformService struct {
 	platformDomainSuffix string
 	events               *platformEvents
 	liveOwner            liveOwner
+	usage                *usage.Store
+	authz                *authz.Authorizer
 }
 
 type platformStore interface {

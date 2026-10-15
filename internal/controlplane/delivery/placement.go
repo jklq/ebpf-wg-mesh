@@ -17,6 +17,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/journal"
+	"ebof-wg-mesh/internal/controlplane/usage"
 )
 
 func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, preferredAgentID string, now time.Time) ([]AllocationRecord, error) {
@@ -153,6 +154,9 @@ func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, candidat
 	}
 	if _, err := journal.VolumeRow(volumeID).Exec(ctx, tx,
 		`UPDATE volumes SET agent_id = $1, staged = false WHERE id = $2 AND agent_id IS NULL`, agentID, volumeID); err != nil {
+		return "", err
+	}
+	if err := usage.RecordVolume(ctx, tx, volumeID, agentID); err != nil {
 		return "", err
 	}
 	return agentID, nil

@@ -241,6 +241,13 @@ type DeletionConfig struct {
 	GCIntervalSeconds int
 }
 
+// UsageConfig bounds resource usage retention. Producer cursors that
+// prevent replay are kept beyond both windows.
+type UsageConfig struct {
+	RawRetentionDays    int
+	HourlyRetentionDays int
+}
+
 // DirectImageConfig governs how user-supplied direct-image references are resolved against external registries.
 type DirectImageConfig struct {
 	// AllowedPrivateRegistryHosts lists registry hosts (host[:port]) the control plane may resolve
@@ -269,6 +276,7 @@ type ControlPlaneConfig struct {
 	SourceArchives   SourceArchiveConfig
 	SecretKeys       SecretKeysConfig
 	Deletion         DeletionConfig
+	Usage            UsageConfig
 	DirectImages     DirectImageConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig
@@ -282,6 +290,13 @@ type ControlPlaneConfig struct {
 }
 
 type ControlPlaneMeshConfig struct {
+	// IngressCIDRs are the trusted source addresses of ingress proxies. They
+	// may open connections to allocations, and allocation output to them is
+	// public egress through ingress even when the addresses are private.
+	IngressCIDRs []string
+	// PlatformCIDRs are platform service addresses. Allocation output to
+	// them is platform traffic, not public egress.
+	PlatformCIDRs              []string
 	InterfaceName              string
 	ListenPort                 int
 	NetworkCIDR                string

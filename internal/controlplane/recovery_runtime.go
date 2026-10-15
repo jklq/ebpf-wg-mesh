@@ -36,7 +36,7 @@ func recoveryReadMethod(method string) bool {
 		return false
 	}
 	switch name {
-	case "ListProjects", "GetProject", "PreviewProjectDeletion", "ListEnvironments", "GetEnvironment", "PreviewEnvironmentDeletion", "GetService", "ListServices", "PreviewVolumeDeletion", "ListVolumes", "GetDomainBinding", "ListDomainBindings", "GetServiceStatus", "ListServiceLogs", "ListServiceDeployments", "ListServiceArtifacts", "ListAgents", "ListBuildAttempts", "ListFleet", "ListBuilders", "GetBuildScheduler":
+	case "ListProjects", "GetProject", "PreviewProjectDeletion", "ListEnvironments", "GetEnvironment", "PreviewEnvironmentDeletion", "GetService", "ListServices", "PreviewVolumeDeletion", "ListVolumes", "GetDomainBinding", "ListDomainBindings", "GetServiceStatus", "ListServiceLogs", "ListServiceDeployments", "ListServiceArtifacts", "ListAgents", "ListBuildAttempts", "GetProjectUsage", "ListFleet", "ListBuilders", "GetBuildScheduler":
 		return true
 	}
 	return false
