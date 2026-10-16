@@ -44,7 +44,10 @@ type Config struct {
 	RegistryService     string                      `json:"registryService"`
 	SourceConfig        string                      `json:"sourceConfig,omitempty"`
 	MonitorTokenFile    string                      `json:"monitorTokenFile,omitempty"`
-	IngressHealthListen string                      `json:"ingressHealthListen,omitempty"`
+	// MetricsTokenFile, when set, holds the shared Prometheus scrape bearer
+	// token injected into Go components and the Prometheus configuration.
+	MetricsTokenFile    string `json:"metricsTokenFile,omitempty"`
+	IngressHealthListen string `json:"ingressHealthListen,omitempty"`
 	// AlarmWebhookURL receives operator alarms from scheduled operations
 	// (credential renewal and registry collection) and is passed to the control
 	// plane for its certificate alarms. Empty disables alarms; there is no default.
@@ -144,6 +147,9 @@ func (c Config) Validate() error {
 	}
 	if !identifier.MatchString(c.Database.Name) || !identifier.MatchString(c.Console.Schema) || !identifier.MatchString(c.Database.PgBackRestStanza) || c.InternalServerName == "" || c.PlatformDomain == "" {
 		return fmt.Errorf("database, console, backup stanza and TLS service identities are required")
+	}
+	if c.MetricsTokenFile != "" && (!filepath.IsAbs(c.MetricsTokenFile) || filepath.Clean(c.MetricsTokenFile) != c.MetricsTokenFile) {
+		return fmt.Errorf("metricsTokenFile must be an absolute clean path")
 	}
 	for _, probe := range c.Probes {
 		if err := probe.Validate(); err != nil {

@@ -72,6 +72,24 @@
       "certFile": "{configDir}/certs/node.crt",
       "keyFile": "{configDir}/certs/node.key",
       "status": 200
+    },
+    "prometheus": {
+      "url": "http://{socketHost}:9099/-/ready",
+      "status": 200,
+      "bodyContains": "ready"
+    },
+    "grafana": {
+      "url": "http://{socketHost}:3001/api/health",
+      "status": 200,
+      "bodyContains": "\"database\""
+    },
+    "tempo": {
+      "url": "http://{socketHost}:3200/ready",
+      "status": 200
+    },
+    "otel-collector": {
+      "url": "http://{socketHost}:13133/healthz",
+      "status": 200
     }
   },
   "endpointProbes": {
@@ -116,5 +134,6 @@
         "profile": "active"
       }
     }
-  }
+  },
+  "metricsTokenFile": "/etc/platform/metrics-token"
 }

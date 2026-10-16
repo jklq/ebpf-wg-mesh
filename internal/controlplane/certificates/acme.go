@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"golang.org/x/crypto/acme"
 )
@@ -66,7 +67,7 @@ func NewACMEIssuer(cfg config.ACMEConfig, accounts AccountStore) (*ACMEIssuer, e
 	return &ACMEIssuer{
 		cfg:      cfg,
 		accounts: accounts,
-		http:     &http.Client{Transport: transport, Timeout: time.Minute},
+		http:     telemetry.HTTPClient(&http.Client{Transport: transport, Timeout: time.Minute}),
 	}, nil
 }
 

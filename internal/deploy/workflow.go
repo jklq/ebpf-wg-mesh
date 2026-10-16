@@ -53,7 +53,11 @@ var deploymentWorkflow = []workflowPhase{
 	{"builder", []string{"console"}, deploymentModes, ""},
 	{"agent", []string{"builder"}, deploymentModes, ""},
 	{"envoy", []string{"agent"}, deploymentModes, ""},
-	{"database-verify", []string{"envoy"}, manualModes, "database-verify"},
+	{"tempo", []string{"envoy"}, deploymentModes, ""},
+	{"otel-collector", []string{"tempo"}, deploymentModes, ""},
+	{"prometheus", []string{"otel-collector"}, deploymentModes, ""},
+	{"grafana", []string{"prometheus"}, deploymentModes, ""},
+	{"database-verify", []string{"grafana"}, manualModes, "database-verify"},
 	{"storage-verify", []string{"database-verify"}, manualModes, "storage-verify"},
 	{"retire", []string{"storage-verify"}, deploymentModes, ""},
 	{"schema-backfill", []string{"retire"}, upgradeMode, ""},
@@ -84,7 +88,11 @@ var restoreWorkflow = []workflowPhase{
 	{"agent", []string{"console"}, restoreMode, ""},
 	{"envoy", []string{"agent"}, restoreMode, ""},
 	{"builder", []string{"envoy"}, restoreMode, ""},
-	{"inventory", []string{"builder"}, restoreMode, "recovery-inventory"},
+	{"tempo", []string{"builder"}, restoreMode, ""},
+	{"otel-collector", []string{"tempo"}, restoreMode, ""},
+	{"prometheus", []string{"otel-collector"}, restoreMode, ""},
+	{"grafana", []string{"prometheus"}, restoreMode, ""},
+	{"inventory", []string{"grafana"}, restoreMode, "recovery-inventory"},
 	{"reserve", []string{"inventory"}, restoreMode, "recovery-reserve"},
 	{"approve", []string{"reserve"}, restoreMode, "recovery-approve"},
 	{"reconcile", []string{"approve"}, restoreMode, "recovery-reconcile"},
@@ -219,7 +227,7 @@ func (p Plan) validateWorkflow() error {
 			return err
 		}
 	}
-	for phase, role := range map[string]Role{"database-runtime": Database, "registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy} {
+	for phase, role := range map[string]Role{"database-runtime": Database, "registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy, "tempo": Tempo, "otel-collector": OTelCollector, "prometheus": Prometheus, "grafana": Grafana} {
 		steps := groups[phase]
 		for n := 0; n < len(steps); {
 			if steps[n].Placement == nil {
@@ -284,7 +292,7 @@ func (p Plan) validateWorkflow() error {
 
 const maxRolloutWave = 16
 
-var rolloutRoles = map[string]Role{"registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy}
+var rolloutRoles = map[string]Role{"registry": Registry, "controlplane": ControlPlane, "console": Console, "builder": Builder, "agent": Agent, "envoy": Envoy, "tempo": Tempo, "otel-collector": OTelCollector, "prometheus": Prometheus, "grafana": Grafana}
 
 func rolloutWave(role Role, replicas int) int {
 	limit := replicas / 4

@@ -11,6 +11,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/logpipeline"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -325,4 +326,5 @@ func (s *logShipper) flush() {
 		slog.Warn("commit log spool", "agent_id", s.agentID, "error", err)
 		return
 	}
+	telemetry.RecordLogLines(context.Background(), "agent", int64(len(entries)), int64(dropped))
 }

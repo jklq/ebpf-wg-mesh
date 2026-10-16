@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/telemetry"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -209,7 +210,11 @@ func (s *workloadSupervisor) lockUpdate() {
 }
 
 func (s *workloadSupervisor) reconcile(ctx context.Context, source string) {
+	started := time.Now()
+	outcome := "success"
+	defer func() { telemetry.RecordReconcile(ctx, "agent_supervisor", outcome, time.Since(started)) }()
 	if s.recoveryPaused && (!s.recoveryCheckpoints || source != "desired-state" && source != "startup-restore") {
+		outcome = "paused"
 		return
 	}
 	s.reconcileMu.Lock()

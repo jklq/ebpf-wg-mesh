@@ -15,6 +15,7 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 - [CONTEXT.md](CONTEXT.md): domain vocabulary.
 - [Storage operations](docs/storage-operations.md): snapshots, resident history, and scheduled registry collection.
 - [Resource usage](docs/resource-usage.md): CPU, memory, volume, and public egress meters, delivery, retention, and gaps.
+- [Observability](docs/observability.md): OpenTelemetry traces, Prometheus metrics, wide-event logs, and the optional bundled Grafana/Tempo/Collector deployment.
 - [GitHub project](https://github.com/users/jklq/projects/6): backlog and priorities.
 
 ## Build

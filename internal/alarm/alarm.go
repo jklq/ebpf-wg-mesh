@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"ebof-wg-mesh/internal/telemetry"
 )
 
 const (
@@ -53,7 +55,7 @@ func New(rawURL, source string) (*Sender, error) {
 	return &Sender{
 		url:    strings.TrimSpace(rawURL),
 		source: strings.TrimSpace(source),
-		client: &http.Client{Timeout: sendTimeout},
+		client: telemetry.HTTPClient(&http.Client{Timeout: sendTimeout}),
 		now:    time.Now,
 	}, nil
 }

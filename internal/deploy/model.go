@@ -28,9 +28,19 @@ const (
 	Registry     Role = "registry"
 	Builder      Role = "builder"
 	Agent        Role = "agent"
+	// Optional observability roles. Omitting a component (or setting
+	// replicas to 0) disables it; the platform runs identically without
+	// them, and their loss never gates platform availability.
+	Prometheus    Role = "prometheus"
+	Grafana       Role = "grafana"
+	Tempo         Role = "tempo"
+	OTelCollector Role = "otel-collector"
 )
 
-var Roles = []Role{Database, ControlPlane, Console, Envoy, Registry, Builder, Agent}
+var Roles = []Role{Database, ControlPlane, Console, Envoy, Registry, Builder, Agent, Tempo, OTelCollector, Prometheus, Grafana}
+
+// ObservabilityRoles are the optional, best-effort telemetry components.
+var ObservabilityRoles = []Role{Tempo, OTelCollector, Prometheus, Grafana}
 
 // DatabaseOSUser is the unprivileged account the PostgreSQL primary runs
 // as; its server refuses to run as root. Installation creates it and owns

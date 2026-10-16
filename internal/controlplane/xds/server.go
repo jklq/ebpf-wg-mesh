@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/identity"
+	"ebof-wg-mesh/internal/telemetry"
 
 	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	clusterservice "github.com/envoyproxy/go-control-plane/envoy/service/cluster/v3"
@@ -151,7 +152,7 @@ func (s *Server) GRPCServer(tlsConfig *tls.Config, revocations *identity.Certifi
 		}
 	}
 	s.revocations = revocations
-	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), grpc.ChainStreamInterceptor(append(streams[:len(streams):len(streams)], s.secureStream)...), grpc.UnaryInterceptor(s.secureUnary),
+	grpcServer := grpc.NewServer(grpc.Creds(credentials.NewTLS(cfg)), telemetry.GRPCServerStatsHandler(), grpc.ChainStreamInterceptor(append(append([]grpc.StreamServerInterceptor{telemetry.GRPCStreamInterceptor()}, streams[:len(streams):len(streams)]...), s.secureStream)...), grpc.ChainUnaryInterceptor(telemetry.GRPCUnaryInterceptor(), s.secureUnary),
 		grpc.KeepaliveParams(keepalive.ServerParameters{MaxConnectionAge: time.Hour, MaxConnectionAgeGrace: time.Minute}))
 	discoveryv3.RegisterAggregatedDiscoveryServiceServer(grpcServer, s.xds)
 	endpointservice.RegisterEndpointDiscoveryServiceServer(grpcServer, s.xds)

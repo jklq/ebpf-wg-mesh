@@ -17,6 +17,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/balancer/roundrobin"
@@ -132,7 +133,7 @@ func New(cfg config.BuilderConfig) (*App, error) {
 		addresses = append(addresses, resolver.Address{Addr: address})
 	}
 	seeds.InitialState(resolver.State{Addresses: addresses})
-	conn, err := grpc.DialContext(ctx, "platform-builder:///replicas", grpc.WithResolvers(seeds), grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`), grpc.WithTransportCredentials(creds), grpc.WithDisableRetry(), grpc.WithBlock())
+	conn, err := grpc.DialContext(ctx, "platform-builder:///replicas", grpc.WithResolvers(seeds), grpc.WithDefaultServiceConfig(`{"loadBalancingConfig":[{"round_robin":{}}]}`), grpc.WithTransportCredentials(creds), telemetry.GRPCClientStatsHandler(), grpc.WithChainUnaryInterceptor(telemetry.GRPCUnaryClientInterceptor()), grpc.WithDisableRetry(), grpc.WithBlock())
 	if err != nil {
 		return nil, fmt.Errorf("dial control plane: %w", err)
 	}
@@ -237,7 +238,28 @@ func (a *App) Run(ctx context.Context) error {
 	}
 }
 
-func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) error {
+var builderTracer = telemetry.Tracer("ebof-wg-mesh/builder")
+
+func (a *App) executeJob(ctx context.Context, job *platformv1.BuildJob) (err error) {
+	started := time.Now()
+	ctx, op := telemetry.StartSpanOperation(ctx, builderTracer, "build", "builder.build",
+		telemetry.String("build.id", job.GetBuildId()),
+		telemetry.String("builder.id", a.cfg.ID),
+		telemetry.String("executor", a.executor.Name()),
+	)
+	defer func() {
+		outcome := "succeeded"
+		var failure *buildFailureError
+		switch {
+		case err == nil:
+		case errors.As(err, &failure):
+			outcome = failure.kind
+		default:
+			outcome = "failed"
+		}
+		telemetry.RecordBuild(ctx, outcome, a.executor.Name(), time.Since(started))
+		op.End(ctx, err, outcome)
+	}()
 	jobCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 

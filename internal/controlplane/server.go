@@ -42,6 +42,9 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/telemetry"
+
+	"connectrpc.com/otelconnect"
 
 	"google.golang.org/grpc"
 )
@@ -348,8 +351,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		time.Duration(cfg.Failover.UnhealthyThresholdSeconds)*time.Second)
 	drain := newReplicaDrain()
 	internal := grpc.NewServer(
-		grpc.ChainUnaryInterceptor(internalAuth.UnaryServerInterceptor(), recoveryUnary(admission.Paused)),
-		grpc.ChainStreamInterceptor(drain.streamInterceptor, internalAuth.StreamServerInterceptor(), recoveryStreams(admission.Paused)),
+		telemetry.GRPCServerStatsHandler(),
+		grpc.ChainUnaryInterceptor(telemetry.GRPCUnaryInterceptor(), internalAuth.UnaryServerInterceptor(), recoveryUnary(admission.Paused)),
+		grpc.ChainStreamInterceptor(telemetry.GRPCStreamInterceptor(), drain.streamInterceptor, internalAuth.StreamServerInterceptor(), recoveryStreams(admission.Paused)),
 	)
 	agentv1.RegisterAgentControlServer(internal, newAgentService(
 		store.fleet, delivery, logStore, notifier, authority, dashboard,
@@ -371,7 +375,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		return nil, fmt.Errorf("listen internal grpc: %w", err)
 	}
 	internalHTTP := &http.Server{
-		Handler:   dualProtocolHandler(internal, recoveryHTTP(admission.Paused, newConnectHandler(internalAuth, connectPlatformService{platformService}, connectOpsService{opsService}))),
+		Handler:   telemetry.HTTPHandler(dualProtocolHandler(internal, recoveryHTTP(admission.Paused, newConnectHandler(internalAuth, connectPlatformService{platformService}, connectOpsService{opsService}))), "controlplane-internal"),
 		TLSConfig: authority.HTTPConfig(),
 	}
 	xdsLn, err := net.Listen("tcp", cfg.Ingress.XDSListen)
@@ -390,7 +394,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			return nil, fmt.Errorf("listen registry auth: %w", err)
 		}
 		registryHTTP = &http.Server{
-			Handler:           registryAuth,
+			Handler:           telemetry.HTTPHandler(registryAuth, "registry-auth"),
 			ReadHeaderTimeout: 5 * time.Second,
 			IdleTimeout:       time.Minute,
 		}
@@ -1007,8 +1011,16 @@ func serveInternalHTTP(server *http.Server, ln net.Listener) error {
 }
 
 func newConnectHandler(internalAuth *identity.InternalAuth, platformService platformv1connect.PlatformServiceHandler, opsService platformv1connect.OpsServiceHandler) http.Handler {
+	// otelconnect creates the span first, the wide-event interceptor
+	// enriches and finalizes it, then auth runs inside both.
+	otelInterceptor, err := otelconnect.NewInterceptor()
+	var interceptors []connect.Interceptor
+	if err == nil && otelInterceptor != nil {
+		interceptors = append(interceptors, otelInterceptor)
+	}
+	interceptors = append(interceptors, telemetry.ConnectInterceptor(), internalAuth.ConnectInterceptor())
 	options := []connect.HandlerOption{
-		connect.WithInterceptors(internalAuth.ConnectInterceptor()),
+		connect.WithInterceptors(interceptors...),
 	}
 	mux := http.NewServeMux()
 	mux.Handle(platformv1connect.NewPlatformServiceHandler(platformService, options...))

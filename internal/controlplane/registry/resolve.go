@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"crypto/sha256"
+	"ebof-wg-mesh/internal/telemetry"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -69,7 +70,7 @@ func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPRes
 	owned.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("registry redirect refused")
 	}
-	owned.Transport = approvedDialTransport(client.Transport, allowedPrivateHosts)
+	owned.Transport = telemetry.HTTPTransport(approvedDialTransport(client.Transport, allowedPrivateHosts))
 	return &HTTPResolver{client: &owned, baseTransport: client.Transport, allowedPrivateHosts: allowedPrivateHosts}
 }
 
@@ -79,7 +80,7 @@ func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPRes
 func (r *HTTPResolver) clientForTrustedRealm(authority string) *http.Client {
 	approved := append(append([]string(nil), r.allowedPrivateHosts...), authority)
 	clone := *r.client
-	clone.Transport = approvedDialTransport(r.baseTransport, approved)
+	clone.Transport = telemetry.HTTPTransport(approvedDialTransport(r.baseTransport, approved))
 	return &clone
 }
 

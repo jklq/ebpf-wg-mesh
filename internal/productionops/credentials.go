@@ -65,6 +65,18 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 	if err != nil {
 		return err
 	}
+	metricsToken := ""
+	if r.Config.MetricsTokenFile != "" {
+		raw, err := os.ReadFile(r.Config.MetricsTokenFile)
+		if err != nil {
+			return fmt.Errorf("read metrics token: %w", err)
+		}
+		metricsToken = strings.TrimSpace(string(raw))
+		if metricsToken == "" || strings.ContainsAny(metricsToken, "\n\r \t") {
+			return fmt.Errorf("metrics token file must hold one non-empty token")
+		}
+	}
+	obs := r.observability(metricsToken)
 	for _, pl := range r.Plan.Placements {
 		if pl.Role == deploy.Database {
 			continue
@@ -408,6 +420,14 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				return err
 			}
 			files["registry.yaml"] = b
+		}
+		obs.telemetryEnv(pl, env)
+		if rendered, err := obs.render(pl); err != nil {
+			return err
+		} else {
+			for name, data := range rendered {
+				files[name] = data
+			}
 		}
 		probe, ok := r.Config.Probes[pl.Role]
 		if !ok {

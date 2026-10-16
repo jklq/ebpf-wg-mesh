@@ -67,8 +67,12 @@ func TestUpgradeHandsOverListenersAndKeepsAnUnchangedDatabase(t *testing.T) {
 	if peak := p.Upgrade.Peak["a"]; peak.MemoryMiB != p.Reservations["a"].MemoryMiB+i.Components[ControlPlane].Resources.MemoryMiB {
 		t.Fatalf("overlap budget %+v for reservations %+v", peak, p.Reservations["a"])
 	}
-	if len(p.Upgrade.Limitations) != 2 {
-		t.Fatalf("agent and builder limitations hidden: %v", p.Upgrade.Limitations)
+	// Agent and builder disclose their restart behavior; single-replica
+	// observability roles in the fixture disclose theirs too.
+	for _, role := range []string{"agent", "builder"} {
+		if !slices.ContainsFunc(p.Upgrade.Limitations, func(l string) bool { return strings.Contains(l, role) }) {
+			t.Fatalf("agent and builder limitations hidden: %v", p.Upgrade.Limitations)
+		}
 	}
 
 	r.Programs[Database] = nextRelease(r, "r44").Programs[Database]

@@ -41,6 +41,8 @@ secrets:
         file: /etc/platform/recovery.key
     ssh:
         file: /etc/platform/ssh
+    grafana-admin-password:
+        file: /etc/platform/grafana-admin-password
 hosts:
     - id: a
       binding:
@@ -78,6 +80,10 @@ hosts:
         - registry
         - builder
         - agent
+        - prometheus
+        - grafana
+        - tempo
+        - otel-collector
       failureDomain: hetzner/a
       region: oslo
       network:
@@ -162,6 +168,48 @@ components:
         distinctDomains: false
         storage:
             - registry
+    # Optional observability stack. Omit these components (or set replicas: 0)
+    # to run without bundled metrics/traces; see docs/observability.md.
+    prometheus:
+        replicas: 1
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 500
+            memoryMiB: 1024
+            diskGiB: 10
+        distinctDomains: false
+        storage:
+            - observability
+    grafana:
+        replicas: 1
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 250
+            memoryMiB: 512
+            diskGiB: 2
+        distinctDomains: false
+        storage:
+            - observability
+        secretEnv:
+            GF_SECURITY_ADMIN_PASSWORD: grafana-admin-password
+    tempo:
+        replicas: 1
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 500
+            memoryMiB: 1024
+            diskGiB: 10
+        distinctDomains: false
+        storage:
+            - observability
+    otel-collector:
+        replicas: 1
+        reliableReplicas: 1
+        resources:
+            cpuMillis: 250
+            memoryMiB: 512
+            diskGiB: 1
+        distinctDomains: false
 storage:
     archives:
         path: /var/lib/platform/archives
@@ -175,6 +223,11 @@ storage:
         replicated: false
     registry:
         path: /var/lib/registry
+        hosts:
+            - a
+        replicated: false
+    observability:
+        path: /var/lib/platform/observability
         hosts:
             - a
         replicated: false

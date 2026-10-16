@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -76,7 +77,7 @@ func NewGitHubClient(cfg config.GitHubAppConfig) (*GitHubClient, error) {
 	}
 	return &GitHubClient{
 		cfg:        cfg,
-		client:     &http.Client{Timeout: 15 * time.Second},
+		client:     telemetry.HTTPClient(&http.Client{Timeout: 15 * time.Second}),
 		signingKey: signingKey,
 		tokens:     make(map[int64]githubInstallationToken),
 	}, nil

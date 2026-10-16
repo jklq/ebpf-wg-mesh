@@ -120,7 +120,7 @@ func TestAcceptanceTopologies(t *testing.T) {
 		i.Hosts[1].Reliability = "intermittent"
 		i.Hosts[1].Trusted = false
 		inv.Hosts["b"] = HostStatus{Online: true, ServerID: "2", Architecture: "amd64", Capacity: i.Hosts[1].Capacity, Capabilities: i.Hosts[1].Capabilities}
-		for _, role := range []Role{Database, ControlPlane, Console, Envoy, Registry} {
+		for _, role := range []Role{Database, ControlPlane, Console, Envoy, Registry, Tempo, OTelCollector, Prometheus, Grafana} {
 			c := i.Components[role]
 			c.Replicas = 1
 			c.ReliableReplicas = 1

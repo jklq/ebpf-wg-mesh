@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"github.com/golang-jwt/jwt/v5"
 
@@ -247,6 +248,18 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 		return nil, status.Error(codes.PermissionDenied, "unsupported method")
 	}
 
+	// Actor context for the wide event: who acted, never credentials or
+	// assertion contents. User email stays out of telemetry; the stable
+	// user ID is the support-safe correlation key.
+	if authenticated {
+		telemetry.Set(ctx,
+			telemetry.String("caller.class", string(caller.Class)),
+			telemetry.String("caller.id", caller.ID),
+		)
+	}
+	if delegated {
+		telemetry.Set(ctx, telemetry.String("user.id", delegatedUser.UserID))
+	}
 	return ctx, nil
 }
 

@@ -21,6 +21,7 @@ import (
 	"ebof-wg-mesh/internal/metering"
 	"ebof-wg-mesh/internal/reconciliation"
 	"ebof-wg-mesh/internal/recovery"
+	"ebof-wg-mesh/internal/telemetry"
 	"ebof-wg-mesh/internal/volumestore"
 
 	"github.com/google/uuid"
@@ -320,9 +321,26 @@ func (a *App) readyReport(context.Context) health.Report {
 	return report
 }
 
-func (a *App) runSession(ctx context.Context) error {
+var agentTracer = telemetry.Tracer("ebof-wg-mesh/agent")
+
+func (a *App) runSession(ctx context.Context) (err error) {
 	a.sessionEstablishedAt = time.Time{}
 	slog.Info("starting agent session", "agent_id", a.cfg.Node.ID)
+	ctx, op := telemetry.StartSpanOperation(ctx, agentTracer, "agent_session", "agent.session",
+		telemetry.String("agent.id", a.cfg.Node.ID))
+	defer func() {
+		outcome := "error"
+		switch {
+		case err == nil:
+			outcome = "connected"
+		case errors.Is(err, errRotateSession):
+			outcome = "rotated"
+		case errors.Is(err, errRedirectOwner):
+			outcome = "redirected"
+		}
+		telemetry.RecordAgentSession(ctx, outcome)
+		op.End(ctx, err, outcome)
+	}()
 	creds, certNotAfter, clusterID, err := a.clientCredentials(ctx)
 	if err != nil {
 		return fmt.Errorf("build control plane credentials: %w", err)

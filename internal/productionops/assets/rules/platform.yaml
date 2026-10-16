@@ -1,0 +1,113 @@
+# Platform recording and alert rules. Alerts fire on unsampled metrics
+# (wide-event counters and transport histograms), never on sampled traces.
+# Every alert names the next operator action; pair with docs/observability.md.
+groups:
+  - name: platform.recording
+    interval: 30s
+    rules:
+      - record: platform:rpc_error_ratio:rate5m
+        expr: |
+          sum(rate(platform_operations_total{kind="rpc",outcome="error"}[5m]))
+          / clamp_min(sum(rate(platform_operations_total{kind="rpc"}[5m])), 0.001)
+      - record: platform:rpc_latency_p95:rate5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(rpc_server_call_duration_seconds_bucket[5m])))
+      - record: platform:build_failure_ratio:rate15m
+        expr: |
+          sum(rate(platform_builds_total{outcome!="succeeded"}[15m]))
+          / clamp_min(sum(rate(platform_builds_total[15m])), 0.001)
+
+  - name: platform.availability
+    rules:
+      - alert: PlatformTargetDown
+        expr: up{job=~"platform-.*|prometheus|tempo|otel-collector|grafana"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} is not scrapeable"
+          action: "Check the systemd unit on the host, then its /readyz probe; if the process is up, verify the metrics listen address and scrape token."
+
+      - alert: ControlPlaneHighErrorRate
+        expr: platform:rpc_error_ratio:rate5m > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Control-plane RPC error ratio above 5% for 5m"
+          action: "Open Platform Overview, break errors down by rpc_method, then follow an exemplar into Tempo for the failing trace."
+
+      - alert: ControlPlaneHighLatency
+        expr: platform:rpc_latency_p95:rate5m > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Control-plane RPC p95 latency above 1s for 10m"
+          action: "Compare DB operation p95 on Platform Overview; if DB is flat, inspect the slowest trace exemplars in Tempo."
+
+      - alert: DatabasePoolSaturated
+        expr: db_sql_connection_open / clamp_min(db_sql_connection_max_open, 1) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Platform DB connection pool above 90% for 5m"
+          action: "Check DB operation p95 and long-running traces; raise CONTROLPLANE_DB_MAX_OPEN_CONNS only after ruling out slow queries."
+
+      - alert: DatabaseSlowOperations
+        expr: histogram_quantile(0.95, sum by (le) (rate(db_client_operation_duration_seconds_bucket[5m]))) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DB operation p95 above 500ms for 10m"
+          action: "Inspect PostgreSQL load and the traces whose db spans dominate; statement text is intentionally absent from telemetry."
+
+  - name: platform.fleet
+    rules:
+      - alert: BuildFailureRateHigh
+        expr: platform:build_failure_ratio:rate15m > 0.25 and sum(rate(platform_builds_total[15m])) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "More than 25% of builds failing over 15m"
+          action: "Break platform_builds_total down by outcome on Fleet and Builds; fetch/push failures point at registry/source storage, build failures at the executor."
+
+      - alert: AgentSessionFlapping
+        expr: sum by (instance) (rate(platform_agent_sessions_total{outcome="error"}[10m])) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent {{ $labels.instance }} is repeatedly losing its control-plane session"
+          action: "Check agent logs for the session error, certificate expiry, and reachability to every control-plane replica."
+
+      - alert: WorkloadLogsDropping
+        expr: sum by (source) (rate(platform_log_drops_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Workload log lines are being shed ({{ $labels.source }})"
+          action: "Find the noisy allocation from gap rows in the log store; raise spool/rate budgets only if the volume is legitimate."
+
+  - name: platform.observability
+    rules:
+      - alert: TraceExportFailing
+        expr: sum(rate(otelcol_exporter_send_failed_spans_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Collector cannot export spans to Tempo"
+          action: "Check Tempo readiness (http://tempo:3200/ready) and collector logs; platform metrics and logs are unaffected."
+
+      - alert: PrometheusCardinalityJump
+        expr: prometheus_tsdb_head_series > 500000
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Prometheus head series above 500k"
+          action: "Find the new label: query topk(20, count by (__name__) ({__name__=~\".+\"})) and fix the instrument that added an unbounded label."

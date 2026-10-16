@@ -22,6 +22,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/localteststack"
+	"ebof-wg-mesh/internal/telemetry"
 	"ebof-wg-mesh/internal/testdb"
 	"ebof-wg-mesh/internal/testutil"
 )
@@ -69,6 +70,14 @@ func exitOnSecondSignal(ctx context.Context) {
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	// One process hosts every component here, so dev-stack telemetry uses a
+	// single service identity; set OTEL_EXPORTER_OTLP_ENDPOINT and
+	// TELEMETRY_METRICS_LISTEN to feed a local Collector/Prometheus.
+	if tel, err := telemetry.Setup(ctx, telemetry.ConfigFromEnv("localteststack")); err != nil {
+		log.Printf("telemetry setup failed; continuing without export: %v", err)
+	} else {
+		defer func() { _ = tel.Shutdown(context.Background()) }()
+	}
 	go exitOnSecondSignal(ctx)
 
 	repoRoot, err := os.Getwd()

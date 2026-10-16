@@ -5,12 +5,16 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/XSAM/otelsql"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel/attribute"
 )
 
 // postgresProvider is the PostgreSQL adapter. It is the only place in the
@@ -18,9 +22,37 @@ import (
 // SQLSTATE retry codes, and version reporting.
 type postgresProvider struct{}
 
-func (postgresProvider) Name() string       { return ProviderPostgres }
-func (postgresProvider) DefaultPort() int   { return 5432 }
-func (postgresProvider) driverName() string { return "pgx" }
+func (postgresProvider) Name() string     { return ProviderPostgres }
+func (postgresProvider) DefaultPort() int { return 5432 }
+
+var instrumentedDriver = sync.OnceValue(func() string {
+	// One wrapped driver for every pool: query spans carry the operation
+	// class only (DisableQuery keeps statement text and any literals out
+	// of telemetry), and pool gauges come from RegisterDBStatsMetrics.
+	name, err := otelsql.Register("pgx",
+		otelsql.WithAttributes(attribute.String("db.system", "postgresql")),
+		otelsql.WithSpanOptions(otelsql.SpanOptions{
+			DisableQuery:         true,
+			OmitConnResetSession: true,
+			OmitConnectorConnect: true,
+			OmitConnPrepare:      true,
+		}),
+		otelsql.WithSpanNameFormatter(func(_ context.Context, method otelsql.Method, query string) string {
+			fields := strings.Fields(query)
+			if len(fields) == 0 {
+				return string(method)
+			}
+			return string(method) + " " + strings.ToUpper(fields[0])
+		}),
+	)
+	if err != nil {
+		slog.Warn("platformdb: otelsql driver registration failed; database spans disabled", "error", err)
+		return "pgx"
+	}
+	return name
+})
+
+func (postgresProvider) driverName() string { return instrumentedDriver() }
 
 // WithSchema returns rawURL with the connection's search_path pinned to
 // schema (falling back to public for provider-owned objects). pgx passes
@@ -88,6 +120,12 @@ func (p postgresProvider) Open(ctx context.Context, cfg Config) (*sql.DB, error)
 	if err := db.PingContext(ctx); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	if _, err := otelsql.RegisterDBStatsMetrics(db, otelsql.WithAttributes(
+		attribute.String("db.system", "postgresql"),
+		attribute.String("db.namespace", cfg.Schema),
+	)); err != nil {
+		slog.Warn("platformdb: pool stats metrics unavailable", "error", err)
 	}
 	return db, nil
 }

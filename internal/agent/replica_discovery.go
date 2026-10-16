@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -146,7 +147,7 @@ func shouldWalkNextReplica(err error) bool {
 }
 
 func dialControlPlane(_ context.Context, address string, creds credentials.TransportCredentials) (*grpc.ClientConn, error) {
-	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(creds))
+	conn, err := grpc.NewClient(address, grpc.WithTransportCredentials(creds), telemetry.GRPCClientStatsHandler(), grpc.WithChainUnaryInterceptor(telemetry.GRPCUnaryClientInterceptor()))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errReplicaDial, err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/telemetry"
 )
 
 // Deleter deletes only build repositories in the operator's platform registry.
@@ -26,10 +27,10 @@ func (d *Deleter) SetRecoveryProtection(protect func(context.Context, string) er
 }
 
 func NewDeleter(cfg config.RegistryConfig, auth *Auth) *Deleter {
-	return &Deleter{policy: NewPolicy(cfg, auth), auth: auth, client: &http.Client{
+	return &Deleter{policy: NewPolicy(cfg, auth), auth: auth, client: telemetry.HTTPClient(&http.Client{
 		Timeout:       15 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("registry delete redirect refused") },
-	}}
+	})}
 }
 
 func (d *Deleter) DeleteImage(ctx context.Context, ref string) error {

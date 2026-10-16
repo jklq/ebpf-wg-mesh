@@ -34,6 +34,10 @@ dependencies:
     bun: 1.3.11
     postgresql: '17.4'
     containerd: 1.7.30
+    prometheus: 3.5.0
+    grafana: 12.1.0
+    tempo: 2.8.2
+    otelcol-contrib: 0.135.0
 images:
     builder-sandbox: registry.example.com/platform/builder-sandbox@sha256:1111111111111111111111111111111111111111111111111111111111111111
     railpack-frontend: ghcr.io/railwayapp/railpack-frontend@sha256:1111111111111111111111111111111111111111111111111111111111111111
@@ -354,6 +358,154 @@ programs:
                 - '{tool.operations}'
                 - verify-retirement
                 - registry
+                - '{instance}'
+    prometheus:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r43/prometheus
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - '--config.file={configDir}/prometheus.yaml'
+            - '--storage.tsdb.path={stateDir}/tsdb'
+            - '--storage.tsdb.retention.time=30d'
+            - --storage.tsdb.wal-compression
+            - '--web.listen-address={socketHost}:9099'
+            - --web.enable-remote-write-receiver
+            - --web.enable-otlp-receiver
+            - '--enable-feature=exemplar-storage'
+        ready:
+            - '{tool.operations}'
+            - ready
+            - prometheus
+            - '{instance}'
+            - '{configDir}/probe.json'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - prometheus
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - prometheus
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - prometheus
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - prometheus
+                - '{instance}'
+    grafana:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r43/grafana
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - --config
+            - '{configDir}/grafana.ini'
+        ready:
+            - '{tool.operations}'
+            - ready
+            - grafana
+            - '{instance}'
+            - '{configDir}/probe.json'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - grafana
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - grafana
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - grafana
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - grafana
+                - '{instance}'
+    tempo:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r43/tempo
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - '-config.file={configDir}/tempo.yaml'
+        ready:
+            - '{tool.operations}'
+            - ready
+            - tempo
+            - '{instance}'
+            - '{configDir}/probe.json'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - tempo
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - tempo
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - tempo
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - tempo
+                - '{instance}'
+    otel-collector:
+        artifacts:
+            amd64:
+                url: https://releases.example.com/r43/otel-collector
+                sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+        args:
+            - '--config={configDir}/collector.yaml'
+        ready:
+            - '{tool.operations}'
+            - ready
+            - otel-collector
+            - '{instance}'
+            - '{configDir}/probe.json'
+        drain:
+            command:
+                - '{tool.operations}'
+                - drain
+                - otel-collector
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-drain
+                - otel-collector
+                - '{instance}'
+        retire:
+            command:
+                - '{tool.operations}'
+                - retire
+                - otel-collector
+                - '{instance}'
+            verify:
+                - '{tool.operations}'
+                - verify-retirement
+                - otel-collector
                 - '{instance}'
 hooks:
     rolling-prepare:

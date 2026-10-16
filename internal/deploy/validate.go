@@ -264,6 +264,15 @@ func (i Installation) Validate(r Release) error {
 			return fmt.Errorf("complete installation requires %s", role)
 		}
 	}
+	// Observability is optional as a stack but coherent when enabled: the
+	// rendered Grafana datasources and Collector pipeline assume their
+	// backends exist.
+	if i.Components[Grafana].Replicas > 0 && i.Components[Prometheus].Replicas == 0 {
+		return fmt.Errorf("grafana requires a prometheus component to query")
+	}
+	if i.Components[OTelCollector].Replicas > 0 && i.Components[Tempo].Replicas == 0 {
+		return fmt.Errorf("otel-collector requires a tempo component to export traces to")
+	}
 	for _, name := range RequiredHooks() {
 		if !r.SchemaCompatibility && contains(rollingHooks, name) {
 			continue

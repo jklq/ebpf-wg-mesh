@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"ebof-wg-mesh/internal/reconciliation"
+	"ebof-wg-mesh/internal/telemetry"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -51,6 +52,10 @@ type Probe func(context.Context) Report
 
 func NewMux(ready Probe) *http.ServeMux {
 	mux := http.NewServeMux()
+	// Prometheus metrics share the health listener unless a dedicated
+	// TELEMETRY_METRICS_LISTEN is configured. Handler enforces the scrape
+	// token when one is set and 404s before telemetry setup.
+	mux.Handle("/metrics", telemetry.Handler())
 	mux.HandleFunc(LivenessPath, ServeLiveness)
 	mux.HandleFunc("/admissionz", func(w http.ResponseWriter, r *http.Request) {
 		if ready == nil {

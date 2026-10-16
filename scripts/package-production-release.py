@@ -81,7 +81,7 @@ def main():
     parser.add_argument("--url-base", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--native-inputs", required=True, type=Path,
-                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: postgresql, initdb, pgbackrest, psql, envoy, registry, bun, aws, skopeo, buildkitd")
+                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: postgresql, initdb, pgbackrest, psql, envoy, registry, bun, aws, skopeo, buildkitd; optional observability: prometheus, grafana (tree, entry [bin/grafana, server]), tempo, otel-collector (otelcol-contrib binary) — omitted observability inputs drop those programs from the release")
     parser.add_argument("--images", required=True, type=Path,
                         help="JSON containing builder-sandbox and railpack-frontend repository@sha256 references")
     parser.add_argument("--architectures", default="amd64,arm64")
@@ -120,7 +120,12 @@ def main():
         run(["bun", "build", "--compile", f"--target={target}", "tooling/production-admin.ts", "--outfile", str(output / f"console-admin-{arch}")], cwd=ROOT / "console")
         with tempfile.TemporaryDirectory(prefix="platform-release-") as tmp:
             tmp = Path(tmp)
-            for name in ("postgresql", "initdb", "pgbackrest", "psql", "envoy", "registry", "aws", "skopeo", "buildkitd"):
+            for name in ("postgresql", "initdb", "pgbackrest", "psql", "envoy", "registry", "aws", "skopeo", "buildkitd", "prometheus", "grafana", "tempo", "otel-collector"):
+                if name not in inputs:
+                    # Observability inputs are optional; core inputs are not.
+                    if name in ("prometheus", "grafana", "tempo", "otel-collector"):
+                        continue
+                    raise ValueError(f"missing native input: {name}")
                 specification = inputs[name][arch]
                 source = Path(specification["path"]).resolve(strict=True)
                 artifact = output / f"{name}-{arch}"
@@ -146,10 +151,16 @@ def main():
             unpacked_sizes[output / f"console-{arch}"] = sum(path.stat().st_size for path in console_tree.rglob("*") if path.is_file())
         for name, role in release["programs"].items():
             artifact = output / f"{name}-{arch}"
+            if not artifact.is_file():
+                continue  # optional observability program without inputs
             role["artifacts"][arch] = {"url": f"{args.url_base.rstrip('/')}/{artifact.name}", "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(), "bytes": artifact.stat().st_size, "unpackedBytes": unpacked_sizes.get(artifact, 0)}
         for name, artifacts in release["tools"].items():
             artifact = output / f"{name}-{arch}"
             artifacts[arch] = {"url": f"{args.url_base.rstrip('/')}/{artifact.name}", "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(), "bytes": artifact.stat().st_size, "unpackedBytes": unpacked_sizes.get(artifact, 0)}
+    for name in ("prometheus", "grafana", "tempo", "otel-collector"):
+        if name in release["programs"] and not release["programs"][name]["artifacts"]:
+            del release["programs"][name]
+            print(f"observability program {name} omitted: no native inputs supplied")
     # JSON is a supported release format, and keeps a build independent of YAML
     # serializer ordering and aliases. No placeholder hashes survive packaging.
     (output / "release.json").write_text(json.dumps(release, indent=2) + "\n")

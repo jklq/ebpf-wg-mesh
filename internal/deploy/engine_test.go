@@ -255,7 +255,9 @@ func TestReturningHostRetiresEveryReplacedInstanceAndReleasesItsBudget(t *testin
 		t.Fatal(err)
 	}
 	state, err := store.Read()
-	if err != nil || len(state.Retained) != 4 {
+	// Console, controlplane, envoy, registry and the four observability
+	// roles keep lifecycle records while their host is unavailable.
+	if err != nil || len(state.Retained) != 8 {
 		t.Fatal("unavailable core instances lost their lifecycle records", state.Retained, err)
 	}
 	status.Online = true
@@ -277,7 +279,7 @@ func TestReturningHostRetiresEveryReplacedInstanceAndReleasesItsBudget(t *testin
 			retirements++
 		}
 	}
-	if retirements != 4 {
+	if retirements != 8 {
 		t.Fatal("returning units did not receive native retirement", retirements)
 	}
 	if err := engine.Apply(context.Background(), plan); err != nil {
@@ -288,7 +290,7 @@ func TestReturningHostRetiresEveryReplacedInstanceAndReleasesItsBudget(t *testin
 		t.Fatal("retired instances still retained", err)
 	}
 	next := build(t, i, r, state, inv, true)
-	if next.Reservations["a"] != expected.Sub(i.Components[ControlPlane].Resources).Sub(i.Components[Console].Resources).Sub(i.Components[Envoy].Resources).Sub(i.Components[Registry].Resources) {
+	if next.Reservations["a"] != expected.Sub(i.Components[ControlPlane].Resources).Sub(i.Components[Console].Resources).Sub(i.Components[Envoy].Resources).Sub(i.Components[Registry].Resources).Sub(i.Components[Tempo].Resources).Sub(i.Components[OTelCollector].Resources).Sub(i.Components[Prometheus].Resources).Sub(i.Components[Grafana].Resources) {
 		t.Fatal("retired resources were not released")
 	}
 }
