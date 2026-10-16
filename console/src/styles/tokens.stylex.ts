@@ -34,7 +34,7 @@ export const fonts = stylex.defineVars({
 
 export const sizes = stylex.defineVars({
 	header: "48px",
-	sidePanel: "40vw",
+	sidePanel: "60vw",
 });
 
 export const space = stylex.defineVars({

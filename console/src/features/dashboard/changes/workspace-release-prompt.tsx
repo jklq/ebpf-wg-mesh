@@ -79,6 +79,7 @@ export function WorkspaceReleasePrompt({
 				<Button
 					type="button"
 					variant="secondary"
+					styles={styles.promptButton}
 					onClick={() => release.setShowChangeDetails(true)}
 					disabled={release.totalUnappliedChanges === 0}
 				>
@@ -87,6 +88,7 @@ export function WorkspaceReleasePrompt({
 				<Button
 					type="button"
 					variant="primary"
+					styles={styles.promptButton}
 					onClick={release.handleDeployChanges}
 					disabled={
 						release.discardingChangeCount > 0 ||
@@ -126,13 +128,14 @@ const styles = stylex.create({
 	promptPosition: {
 		pointerEvents: "none",
 		position: "absolute",
-		top: { default: "18px", "@media (width < 40rem)": "0.75rem" },
+		top: { default: "1.125rem", "@media (width < 40rem)": "0.75rem" },
 		right: "0rem",
 		left: "0rem",
 		zIndex: "35",
+		containerType: "inline-size",
 		display: "flex",
-		justifyContent: "center",
-		paddingInline: space.xl,
+		justifyContent: "flex-start",
+		paddingInline: "1.125rem",
 	},
 	promptHiddenOnMobile: {
 		display: { default: "flex", "@media (width < 900px)": "none" },
@@ -140,11 +143,9 @@ const styles = stylex.create({
 	prompt: {
 		pointerEvents: "auto",
 		display: "flex",
-		width: "fit-content",
-		minWidth: "min(520px, 100%)",
 		maxWidth: "100%",
-		alignItems: { default: "center", "@media (width < 40rem)": "stretch" },
-		gap: "0.875rem",
+		alignItems: "center",
+		gap: space.sm,
 		overflow: "hidden",
 		borderStyle: "solid",
 		borderWidth: "1px",
@@ -152,11 +153,10 @@ const styles = stylex.create({
 		backgroundColor: colors.surface,
 		backgroundImage:
 			"linear-gradient(180deg,rgba(255,255,255,0.04),transparent 40%)",
-		paddingBlock: "11px",
-		paddingRight: space.md,
+		paddingBlock: space.sm,
+		paddingRight: space.sm,
 		paddingLeft: space.lg,
 		boxShadow: `inset 3px 0 0 ${colors.accent}, 0 16px 40px rgba(0,0,0,0.4)`,
-		flexDirection: { default: null, "@media (width < 40rem)": "column" },
 	},
 	promptError: {
 		borderColor: `color-mix(in oklab, ${colors.failed} 50%, transparent)`,
@@ -172,29 +172,31 @@ const styles = stylex.create({
 	promptCopy: {
 		display: "flex",
 		minWidth: "0rem",
-		flex: "1",
 		alignItems: "baseline",
 		gap: space.sm,
+		marginRight: space.sm,
 		overflow: "hidden",
-		flexWrap: { default: null, "@media (width < 40rem)": "wrap" },
+		whiteSpace: "nowrap",
 	},
 	promptTitle: {
-		flexShrink: "0",
-		fontFamily: fonts.display,
-		fontSize: "18px",
-		fontWeight: "500",
-		letterSpacing: "-0.02em",
-		color: colors.ink,
-	},
-	promptDetail: {
 		minWidth: "0rem",
 		overflow: "hidden",
+		textOverflow: "ellipsis",
+		fontFamily: fonts.display,
+		fontSize: "15px",
+		fontWeight: "500",
+		letterSpacing: "-0.01em",
+		color: colors.ink,
+	},
+	// The buttons keep their size; the detail goes first when space runs out.
+	promptDetail: {
+		display: { default: null, "@container (width < 30rem)": "none" },
+		flexShrink: "0",
 		fontFamily: fonts.mono,
 		fontSize: "11px",
-		textOverflow: "ellipsis",
-		whiteSpace: "nowrap",
 		color: colors.muted,
 	},
+	promptButton: { flexShrink: "0" },
 	promptErrorText: {
 		minWidth: "0rem",
 		overflow: "hidden",

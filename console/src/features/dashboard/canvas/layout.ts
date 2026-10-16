@@ -2,7 +2,7 @@ export const GRID_BOX = 128;
 export const NODE_W = GRID_BOX * 2;
 export const NODE_H = GRID_BOX;
 /** Must match sizes.sidePanel in styles/tokens.stylex.ts. */
-export const SIDE_PANEL_VIEWPORT_RATIO = 0.4;
+export const SIDE_PANEL_VIEWPORT_RATIO = 0.6;
 
 const COL_GAP = GRID_BOX * 3;
 const ROW_GAP = GRID_BOX * 2;
