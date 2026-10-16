@@ -144,6 +144,13 @@ func ControlPlane(args []string) (config.ControlPlaneConfig, error) {
 	stringFlag(fs, &platformCIDRs, "mesh-platform-cidrs", "CONTROLPLANE_MESH_PLATFORM_CIDRS", "", "comma-separated platform service prefixes; output to them is platform traffic")
 	intFlag(fs, &cfg.Usage.RawRetentionDays, "usage-raw-retention-days", "CONTROLPLANE_USAGE_RAW_RETENTION_DAYS", 30, "how long raw usage intervals are kept")
 	intFlag(fs, &cfg.Usage.HourlyRetentionDays, "usage-hourly-retention-days", "CONTROLPLANE_USAGE_HOURLY_RETENTION_DAYS", 90, "how long hourly usage aggregates are kept")
+	stringFlag(fs, &cfg.Billing.Mode, "billing-mode", "CONTROLPLANE_BILLING_MODE", "shadow", "usage billing mode: disabled, shadow (statements and dry-run restrictions, never charges), or enabled")
+	stringFlag(fs, &cfg.Billing.StripeSecretKey, "billing-stripe-secret-key", "CONTROLPLANE_BILLING_STRIPE_SECRET_KEY", "", "Stripe secret API key; required in enabled billing mode")
+	stringFlag(fs, &cfg.Billing.StripeWebhookSecret, "billing-stripe-webhook-secret", "CONTROLPLANE_BILLING_STRIPE_WEBHOOK_SECRET", "", "Stripe webhook signing secret; required in enabled billing mode")
+	stringFlag(fs, &cfg.Billing.CheckoutSuccessURL, "billing-checkout-success-url", "CONTROLPLANE_BILLING_CHECKOUT_SUCCESS_URL", "", "console URL Stripe Checkout returns to after a payment method is saved")
+	stringFlag(fs, &cfg.Billing.CheckoutCancelURL, "billing-checkout-cancel-url", "CONTROLPLANE_BILLING_CHECKOUT_CANCEL_URL", "", "console URL Stripe Checkout returns to when payment setup is cancelled")
+	stringFlag(fs, &cfg.Billing.StripeAPIBaseURL, "billing-stripe-api-base-url", "CONTROLPLANE_BILLING_STRIPE_API_BASE_URL", "", "Stripe API base URL override; empty uses the production Stripe API")
+	intFlag(fs, &cfg.Billing.MaintenanceSeconds, "billing-maintenance-seconds", "CONTROLPLANE_BILLING_MAINTENANCE_SECONDS", 60, "how often billing closes periods, evaluates budgets, and processes provider work")
 	fs.Var(bootstrapUsersFlag{users: &bootstrapUsers}, "bootstrap-user", "user-id:email[:project1,project2][+operator]")
 	fs.Var(bootstrapUsersFlag{users: &dashboardUsers}, "dashboard-dev-user", "user-id:email")
 

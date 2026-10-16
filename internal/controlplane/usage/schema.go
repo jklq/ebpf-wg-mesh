@@ -12,11 +12,15 @@ import (
 // catalog, so catalog deletion never cascades into usage history.
 var Schema = []string{
 	// Attribution is captured when the control plane assigns a resource to an
-	// agent. It outlives the catalog rows it copies.
+	// agent. It outlives the catalog rows it copies. workspace_id snapshots
+	// the billing payer at assignment time: a project that later moves to
+	// another workspace changes payer only for resources assigned afterwards.
+	// Managed platform resources have an empty workspace_id and are exempt.
 	`CREATE TABLE usage_attributions (
 		resource_kind TEXT NOT NULL CHECK (resource_kind IN ('allocation', 'volume')),
 		resource_id TEXT NOT NULL,
 		agent_id TEXT NOT NULL,
+		workspace_id TEXT NOT NULL DEFAULT '',
 		project_id TEXT NOT NULL,
 		environment_id TEXT NOT NULL,
 		service_id TEXT NOT NULL DEFAULT '',
@@ -29,6 +33,7 @@ var Schema = []string{
 		PRIMARY KEY (resource_kind, resource_id)
 	)`,
 	`CREATE INDEX idx_usage_attributions_project ON usage_attributions(project_id, resource_kind, resource_id)`,
+	`CREATE INDEX idx_usage_attributions_workspace ON usage_attributions(workspace_id, project_id, resource_kind, resource_id)`,
 	`CREATE INDEX idx_usage_attributions_current ON usage_attributions(agent_id) WHERE ended_at IS NULL`,
 	`CREATE TABLE usage_producers (
 		installation_id TEXT NOT NULL,

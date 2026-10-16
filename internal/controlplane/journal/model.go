@@ -6,11 +6,26 @@ import (
 )
 
 type Project struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Kind      string    `json:"kind"`
-	SystemKey *string   `json:"system_key"`
-	CreatedAt time.Time `json:"created_at"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Kind        string    `json:"kind"`
+	SystemKey   *string   `json:"system_key"`
+	WorkspaceID string    `json:"workspace_id"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// BillingRestriction is the durable execution restriction for one
+// workspace's billing account. Dry-run restrictions are shadow
+// observations; delivery enforces only Restricted && !DryRun.
+type BillingRestriction struct {
+	WorkspaceID   string     `json:"workspace_id"`
+	AccountID     string     `json:"account_id"`
+	Restricted    bool       `json:"restricted"`
+	GrowthBlocked bool       `json:"growth_blocked"`
+	DryRun        bool       `json:"dry_run"`
+	Reason        string     `json:"reason"`
+	Since         *time.Time `json:"since"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type ServiceIntent struct {
@@ -188,6 +203,7 @@ type DurableState struct {
 	Volumes        map[string]Volume
 	Destructions   map[string]VolumeDestruction
 	Domains        map[string]Domain
+	Restrictions   map[string]BillingRestriction
 }
 
 type Change[T any] struct {
@@ -209,4 +225,5 @@ type Batch struct {
 	Volumes        []Change[Volume]              `json:"volumes,omitempty"`
 	Destructions   []Change[VolumeDestruction]   `json:"volume_destructions,omitempty"`
 	Domains        []Change[Domain]              `json:"domains,omitempty"`
+	Restrictions   []Change[BillingRestriction]  `json:"billing_restrictions,omitempty"`
 }

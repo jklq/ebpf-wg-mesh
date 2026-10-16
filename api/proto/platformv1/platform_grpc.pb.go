@@ -80,6 +80,14 @@ const (
 	PlatformService_ListAgents_FullMethodName                  = "/platform.v1.PlatformService/ListAgents"
 	PlatformService_ListBuildAttempts_FullMethodName           = "/platform.v1.PlatformService/ListBuildAttempts"
 	PlatformService_GetProjectUsage_FullMethodName             = "/platform.v1.PlatformService/GetProjectUsage"
+	PlatformService_GetBillingAccount_FullMethodName           = "/platform.v1.PlatformService/GetBillingAccount"
+	PlatformService_ListBillingStatements_FullMethodName       = "/platform.v1.PlatformService/ListBillingStatements"
+	PlatformService_GetBillingStatement_FullMethodName         = "/platform.v1.PlatformService/GetBillingStatement"
+	PlatformService_UpdateBillingBudget_FullMethodName         = "/platform.v1.PlatformService/UpdateBillingBudget"
+	PlatformService_ChangeBillingPlan_FullMethodName           = "/platform.v1.PlatformService/ChangeBillingPlan"
+	PlatformService_StartBillingPaymentSetup_FullMethodName    = "/platform.v1.PlatformService/StartBillingPaymentSetup"
+	PlatformService_StartBillingActivation_FullMethodName      = "/platform.v1.PlatformService/StartBillingActivation"
+	PlatformService_CancelBillingAccount_FullMethodName        = "/platform.v1.PlatformService/CancelBillingAccount"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -146,6 +154,14 @@ type PlatformServiceClient interface {
 	ListAgents(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*ListAgentsResponse, error)
 	ListBuildAttempts(ctx context.Context, in *ListBuildAttemptsRequest, opts ...grpc.CallOption) (*ListBuildAttemptsResponse, error)
 	GetProjectUsage(ctx context.Context, in *GetProjectUsageRequest, opts ...grpc.CallOption) (*ProjectUsage, error)
+	GetBillingAccount(ctx context.Context, in *GetBillingAccountRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error)
+	ListBillingStatements(ctx context.Context, in *ListBillingStatementsRequest, opts ...grpc.CallOption) (*ListBillingStatementsResponse, error)
+	GetBillingStatement(ctx context.Context, in *GetBillingStatementRequest, opts ...grpc.CallOption) (*BillingStatement, error)
+	UpdateBillingBudget(ctx context.Context, in *UpdateBillingBudgetRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error)
+	ChangeBillingPlan(ctx context.Context, in *ChangeBillingPlanRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error)
+	StartBillingPaymentSetup(ctx context.Context, in *StartBillingPaymentSetupRequest, opts ...grpc.CallOption) (*StartBillingPaymentSetupResponse, error)
+	StartBillingActivation(ctx context.Context, in *StartBillingActivationRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error)
+	CancelBillingAccount(ctx context.Context, in *CancelBillingAccountRequest, opts ...grpc.CallOption) (*CancelBillingAccountResponse, error)
 }
 
 type platformServiceClient struct {
@@ -756,6 +772,86 @@ func (c *platformServiceClient) GetProjectUsage(ctx context.Context, in *GetProj
 	return out, nil
 }
 
+func (c *platformServiceClient) GetBillingAccount(ctx context.Context, in *GetBillingAccountRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BillingAccountSummary)
+	err := c.cc.Invoke(ctx, PlatformService_GetBillingAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) ListBillingStatements(ctx context.Context, in *ListBillingStatementsRequest, opts ...grpc.CallOption) (*ListBillingStatementsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListBillingStatementsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListBillingStatements_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetBillingStatement(ctx context.Context, in *GetBillingStatementRequest, opts ...grpc.CallOption) (*BillingStatement, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BillingStatement)
+	err := c.cc.Invoke(ctx, PlatformService_GetBillingStatement_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) UpdateBillingBudget(ctx context.Context, in *UpdateBillingBudgetRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BillingAccountSummary)
+	err := c.cc.Invoke(ctx, PlatformService_UpdateBillingBudget_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) ChangeBillingPlan(ctx context.Context, in *ChangeBillingPlanRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BillingAccountSummary)
+	err := c.cc.Invoke(ctx, PlatformService_ChangeBillingPlan_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) StartBillingPaymentSetup(ctx context.Context, in *StartBillingPaymentSetupRequest, opts ...grpc.CallOption) (*StartBillingPaymentSetupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StartBillingPaymentSetupResponse)
+	err := c.cc.Invoke(ctx, PlatformService_StartBillingPaymentSetup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) StartBillingActivation(ctx context.Context, in *StartBillingActivationRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BillingAccountSummary)
+	err := c.cc.Invoke(ctx, PlatformService_StartBillingActivation_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) CancelBillingAccount(ctx context.Context, in *CancelBillingAccountRequest, opts ...grpc.CallOption) (*CancelBillingAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelBillingAccountResponse)
+	err := c.cc.Invoke(ctx, PlatformService_CancelBillingAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PlatformServiceServer is the server API for PlatformService service.
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
@@ -820,6 +916,14 @@ type PlatformServiceServer interface {
 	ListAgents(context.Context, *emptypb.Empty) (*ListAgentsResponse, error)
 	ListBuildAttempts(context.Context, *ListBuildAttemptsRequest) (*ListBuildAttemptsResponse, error)
 	GetProjectUsage(context.Context, *GetProjectUsageRequest) (*ProjectUsage, error)
+	GetBillingAccount(context.Context, *GetBillingAccountRequest) (*BillingAccountSummary, error)
+	ListBillingStatements(context.Context, *ListBillingStatementsRequest) (*ListBillingStatementsResponse, error)
+	GetBillingStatement(context.Context, *GetBillingStatementRequest) (*BillingStatement, error)
+	UpdateBillingBudget(context.Context, *UpdateBillingBudgetRequest) (*BillingAccountSummary, error)
+	ChangeBillingPlan(context.Context, *ChangeBillingPlanRequest) (*BillingAccountSummary, error)
+	StartBillingPaymentSetup(context.Context, *StartBillingPaymentSetupRequest) (*StartBillingPaymentSetupResponse, error)
+	StartBillingActivation(context.Context, *StartBillingActivationRequest) (*BillingAccountSummary, error)
+	CancelBillingAccount(context.Context, *CancelBillingAccountRequest) (*CancelBillingAccountResponse, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
@@ -1009,6 +1113,30 @@ func (UnimplementedPlatformServiceServer) ListBuildAttempts(context.Context, *Li
 }
 func (UnimplementedPlatformServiceServer) GetProjectUsage(context.Context, *GetProjectUsageRequest) (*ProjectUsage, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProjectUsage not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetBillingAccount(context.Context, *GetBillingAccountRequest) (*BillingAccountSummary, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBillingAccount not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListBillingStatements(context.Context, *ListBillingStatementsRequest) (*ListBillingStatementsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListBillingStatements not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetBillingStatement(context.Context, *GetBillingStatementRequest) (*BillingStatement, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetBillingStatement not implemented")
+}
+func (UnimplementedPlatformServiceServer) UpdateBillingBudget(context.Context, *UpdateBillingBudgetRequest) (*BillingAccountSummary, error) {
+	return nil, status.Error(codes.Unimplemented, "method UpdateBillingBudget not implemented")
+}
+func (UnimplementedPlatformServiceServer) ChangeBillingPlan(context.Context, *ChangeBillingPlanRequest) (*BillingAccountSummary, error) {
+	return nil, status.Error(codes.Unimplemented, "method ChangeBillingPlan not implemented")
+}
+func (UnimplementedPlatformServiceServer) StartBillingPaymentSetup(context.Context, *StartBillingPaymentSetupRequest) (*StartBillingPaymentSetupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartBillingPaymentSetup not implemented")
+}
+func (UnimplementedPlatformServiceServer) StartBillingActivation(context.Context, *StartBillingActivationRequest) (*BillingAccountSummary, error) {
+	return nil, status.Error(codes.Unimplemented, "method StartBillingActivation not implemented")
+}
+func (UnimplementedPlatformServiceServer) CancelBillingAccount(context.Context, *CancelBillingAccountRequest) (*CancelBillingAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelBillingAccount not implemented")
 }
 func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
 func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
@@ -2111,6 +2239,150 @@ func _PlatformService_GetProjectUsage_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_GetBillingAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBillingAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetBillingAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetBillingAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetBillingAccount(ctx, req.(*GetBillingAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_ListBillingStatements_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListBillingStatementsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListBillingStatements(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListBillingStatements_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListBillingStatements(ctx, req.(*ListBillingStatementsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetBillingStatement_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetBillingStatementRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetBillingStatement(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetBillingStatement_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetBillingStatement(ctx, req.(*GetBillingStatementRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_UpdateBillingBudget_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UpdateBillingBudgetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).UpdateBillingBudget(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_UpdateBillingBudget_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).UpdateBillingBudget(ctx, req.(*UpdateBillingBudgetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_ChangeBillingPlan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ChangeBillingPlanRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ChangeBillingPlan(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ChangeBillingPlan_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ChangeBillingPlan(ctx, req.(*ChangeBillingPlanRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_StartBillingPaymentSetup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartBillingPaymentSetupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).StartBillingPaymentSetup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_StartBillingPaymentSetup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).StartBillingPaymentSetup(ctx, req.(*StartBillingPaymentSetupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_StartBillingActivation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StartBillingActivationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).StartBillingActivation(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_StartBillingActivation_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).StartBillingActivation(ctx, req.(*StartBillingActivationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_CancelBillingAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelBillingAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).CancelBillingAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_CancelBillingAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).CancelBillingAccount(ctx, req.(*CancelBillingAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2357,6 +2629,38 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetProjectUsage",
 			Handler:    _PlatformService_GetProjectUsage_Handler,
+		},
+		{
+			MethodName: "GetBillingAccount",
+			Handler:    _PlatformService_GetBillingAccount_Handler,
+		},
+		{
+			MethodName: "ListBillingStatements",
+			Handler:    _PlatformService_ListBillingStatements_Handler,
+		},
+		{
+			MethodName: "GetBillingStatement",
+			Handler:    _PlatformService_GetBillingStatement_Handler,
+		},
+		{
+			MethodName: "UpdateBillingBudget",
+			Handler:    _PlatformService_UpdateBillingBudget_Handler,
+		},
+		{
+			MethodName: "ChangeBillingPlan",
+			Handler:    _PlatformService_ChangeBillingPlan_Handler,
+		},
+		{
+			MethodName: "StartBillingPaymentSetup",
+			Handler:    _PlatformService_StartBillingPaymentSetup_Handler,
+		},
+		{
+			MethodName: "StartBillingActivation",
+			Handler:    _PlatformService_StartBillingActivation_Handler,
+		},
+		{
+			MethodName: "CancelBillingAccount",
+			Handler:    _PlatformService_CancelBillingAccount_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
@@ -2622,15 +2926,17 @@ var BuilderService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
-	OpsService_IngestGitHubWebhook_FullMethodName     = "/platform.v1.OpsService/IngestGitHubWebhook"
-	OpsService_ListFleet_FullMethodName               = "/platform.v1.OpsService/ListFleet"
-	OpsService_CreateAgent_FullMethodName             = "/platform.v1.OpsService/CreateAgent"
-	OpsService_UpdateAgent_FullMethodName             = "/platform.v1.OpsService/UpdateAgent"
-	OpsService_SetAgentLifecycle_FullMethodName       = "/platform.v1.OpsService/SetAgentLifecycle"
-	OpsService_ListBuilders_FullMethodName            = "/platform.v1.OpsService/ListBuilders"
-	OpsService_SetBuilderDrain_FullMethodName         = "/platform.v1.OpsService/SetBuilderDrain"
-	OpsService_GetBuildScheduler_FullMethodName       = "/platform.v1.OpsService/GetBuildScheduler"
-	OpsService_SetBuildSchedulerPaused_FullMethodName = "/platform.v1.OpsService/SetBuildSchedulerPaused"
+	OpsService_IngestGitHubWebhook_FullMethodName        = "/platform.v1.OpsService/IngestGitHubWebhook"
+	OpsService_IngestStripeWebhook_FullMethodName        = "/platform.v1.OpsService/IngestStripeWebhook"
+	OpsService_SetBillingCollectionPaused_FullMethodName = "/platform.v1.OpsService/SetBillingCollectionPaused"
+	OpsService_ListFleet_FullMethodName                  = "/platform.v1.OpsService/ListFleet"
+	OpsService_CreateAgent_FullMethodName                = "/platform.v1.OpsService/CreateAgent"
+	OpsService_UpdateAgent_FullMethodName                = "/platform.v1.OpsService/UpdateAgent"
+	OpsService_SetAgentLifecycle_FullMethodName          = "/platform.v1.OpsService/SetAgentLifecycle"
+	OpsService_ListBuilders_FullMethodName               = "/platform.v1.OpsService/ListBuilders"
+	OpsService_SetBuilderDrain_FullMethodName            = "/platform.v1.OpsService/SetBuilderDrain"
+	OpsService_GetBuildScheduler_FullMethodName          = "/platform.v1.OpsService/GetBuildScheduler"
+	OpsService_SetBuildSchedulerPaused_FullMethodName    = "/platform.v1.OpsService/SetBuildSchedulerPaused"
 )
 
 // OpsServiceClient is the client API for OpsService service.
@@ -2638,6 +2944,8 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type OpsServiceClient interface {
 	IngestGitHubWebhook(ctx context.Context, in *IngestGitHubWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	IngestStripeWebhook(ctx context.Context, in *IngestStripeWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+	SetBillingCollectionPaused(ctx context.Context, in *SetBillingCollectionPausedRequest, opts ...grpc.CallOption) (*BillingControlState, error)
 	ListFleet(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*Fleet, error)
 	CreateAgent(ctx context.Context, in *CreateAgentRequest, opts ...grpc.CallOption) (*AgentEnrollment, error)
 	UpdateAgent(ctx context.Context, in *UpdateAgentRequest, opts ...grpc.CallOption) (*Agent, error)
@@ -2660,6 +2968,26 @@ func (c *opsServiceClient) IngestGitHubWebhook(ctx context.Context, in *IngestGi
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, OpsService_IngestGitHubWebhook_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) IngestStripeWebhook(ctx context.Context, in *IngestStripeWebhookRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, OpsService_IngestStripeWebhook_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *opsServiceClient) SetBillingCollectionPaused(ctx context.Context, in *SetBillingCollectionPausedRequest, opts ...grpc.CallOption) (*BillingControlState, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BillingControlState)
+	err := c.cc.Invoke(ctx, OpsService_SetBillingCollectionPaused_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -2751,6 +3079,8 @@ func (c *opsServiceClient) SetBuildSchedulerPaused(ctx context.Context, in *SetB
 // for forward compatibility.
 type OpsServiceServer interface {
 	IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error)
+	IngestStripeWebhook(context.Context, *IngestStripeWebhookRequest) (*emptypb.Empty, error)
+	SetBillingCollectionPaused(context.Context, *SetBillingCollectionPausedRequest) (*BillingControlState, error)
 	ListFleet(context.Context, *emptypb.Empty) (*Fleet, error)
 	CreateAgent(context.Context, *CreateAgentRequest) (*AgentEnrollment, error)
 	UpdateAgent(context.Context, *UpdateAgentRequest) (*Agent, error)
@@ -2771,6 +3101,12 @@ type UnimplementedOpsServiceServer struct{}
 
 func (UnimplementedOpsServiceServer) IngestGitHubWebhook(context.Context, *IngestGitHubWebhookRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method IngestGitHubWebhook not implemented")
+}
+func (UnimplementedOpsServiceServer) IngestStripeWebhook(context.Context, *IngestStripeWebhookRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method IngestStripeWebhook not implemented")
+}
+func (UnimplementedOpsServiceServer) SetBillingCollectionPaused(context.Context, *SetBillingCollectionPausedRequest) (*BillingControlState, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetBillingCollectionPaused not implemented")
 }
 func (UnimplementedOpsServiceServer) ListFleet(context.Context, *emptypb.Empty) (*Fleet, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListFleet not implemented")
@@ -2831,6 +3167,42 @@ func _OpsService_IngestGitHubWebhook_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(OpsServiceServer).IngestGitHubWebhook(ctx, req.(*IngestGitHubWebhookRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_IngestStripeWebhook_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IngestStripeWebhookRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).IngestStripeWebhook(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_IngestStripeWebhook_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).IngestStripeWebhook(ctx, req.(*IngestStripeWebhookRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _OpsService_SetBillingCollectionPaused_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetBillingCollectionPausedRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OpsServiceServer).SetBillingCollectionPaused(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OpsService_SetBillingCollectionPaused_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OpsServiceServer).SetBillingCollectionPaused(ctx, req.(*SetBillingCollectionPausedRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2989,6 +3361,14 @@ var OpsService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "IngestGitHubWebhook",
 			Handler:    _OpsService_IngestGitHubWebhook_Handler,
+		},
+		{
+			MethodName: "IngestStripeWebhook",
+			Handler:    _OpsService_IngestStripeWebhook_Handler,
+		},
+		{
+			MethodName: "SetBillingCollectionPaused",
+			Handler:    _OpsService_SetBillingCollectionPaused_Handler,
 		},
 		{
 			MethodName: "ListFleet",

@@ -192,6 +192,19 @@ func (s *platformService) ApplyDeploymentAction(ctx context.Context, req *platfo
 	if err != nil {
 		return nil, err
 	}
+	switch req.GetAction() {
+	case platformv1.DeploymentAction_DEPLOYMENT_ACTION_RESTART,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_EXACT_REDEPLOY,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_ROLLBACK,
+		platformv1.DeploymentAction_DEPLOYMENT_ACTION_RETRY:
+		if s.authz != nil {
+			if scope, err := s.authz.AuthorizeService(ctx, user, req.GetServiceId(), authz.Write); err == nil {
+				if err := s.requireBillingGrowth(ctx, scope.WorkspaceID()); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
 	result, err := s.delivery.ApplyDeploymentAction(ctx, user, req.GetServiceId(), req.GetDeploymentId(), req.GetAction(), req.GetIdempotencyKey(), req.GetAllocationId())
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
@@ -233,6 +246,16 @@ func (s *platformService) ScaleService(ctx context.Context, req *platformv1.Scal
 	}
 	if strings.TrimSpace(req.GetServiceId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "service_id is required")
+	}
+	if s.authz != nil {
+		if scope, err := s.authz.AuthorizeService(ctx, user, req.GetServiceId(), authz.Write); err == nil {
+			if current, err := s.store.ServiceByID(ctx, user, req.GetServiceId()); err == nil &&
+				req.GetDesiredReplicaCount() > current.DesiredReplicaCount {
+				if err := s.requireBillingGrowth(ctx, scope.WorkspaceID()); err != nil {
+					return nil, err
+				}
+			}
+		}
 	}
 	service, allocations, index, err := s.delivery.ScaleService(ctx, user, req.GetServiceId(), req.GetDesiredReplicaCount())
 	if err != nil {

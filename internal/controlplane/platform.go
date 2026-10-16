@@ -8,6 +8,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/logs"
@@ -37,6 +38,7 @@ type platformService struct {
 	events               *platformEvents
 	liveOwner            liveOwner
 	usage                *usage.Store
+	billingSvc           *billing.Service
 	authz                *authz.Authorizer
 }
 
@@ -546,6 +548,13 @@ func (s *platformService) ReleaseEnvironment(ctx context.Context, req *platformv
 	user, err := authorizedUser(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if s.authz != nil {
+		if scope, err := s.authz.AuthorizeEnvironment(ctx, user, req.GetEnvironmentId(), authz.Write); err == nil {
+			if err := s.requireBillingGrowth(ctx, scope.WorkspaceID()); err != nil {
+				return nil, err
+			}
+		}
 	}
 	services, err := s.delivery.ReleaseEnvironment(ctx, user, req.GetEnvironmentId())
 	if err != nil {

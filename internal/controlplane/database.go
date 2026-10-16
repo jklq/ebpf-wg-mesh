@@ -14,6 +14,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
@@ -205,12 +206,15 @@ func (s *database) migrate(ctx context.Context) error {
 			return fmt.Errorf("populated database has no schema version; refusing to recreate or initialize it")
 		}
 
-		for _, stmt := range append(append([]string(nil), currentSchema...), usage.Schema...) {
+		for _, stmt := range append(append(append([]string(nil), currentSchema...), usage.Schema...), billing.Schema...) {
 			if _, err := tx.ExecContext(ctx, stmt); err != nil {
 				return fmt.Errorf("apply schema: %w", err)
 			}
 		}
 		if err := usage.EnsurePartitions(ctx, tx, time.Now()); err != nil {
+			return err
+		}
+		if err := billing.SeedTx(ctx, tx); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, applied_at) VALUES ($1, $2)`, currentSchemaVersion, time.Now().UTC()); err != nil {

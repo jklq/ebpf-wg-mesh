@@ -37,6 +37,7 @@ func readProductState(ctx context.Context, tx *sql.Tx) (DurableState, error) {
 		Volumes:        make(map[string]Volume),
 		Destructions:   make(map[string]VolumeDestruction),
 		Domains:        make(map[string]Domain),
+		Restrictions:   make(map[string]BillingRestriction),
 	}
 	for _, table := range productTables {
 		query := `SELECT ` + table.keySQL + `, ` + table.jsonSQL + ` FROM ` + table.name
@@ -72,7 +73,8 @@ func scanProductRows(rows *sql.Rows, state *DurableState, table productTable) er
 	return rows.Err()
 }
 
-const projectJSON = `jsonb_build_object('id', id, 'name', name, 'kind', kind, 'system_key', system_key, 'created_at', created_at)`
+const projectJSON = `jsonb_build_object('id', id, 'name', name, 'kind', kind, 'system_key', system_key, 'workspace_id', COALESCE(workspace_id, ''), 'created_at', created_at)`
+const restrictionJSON = `jsonb_build_object('workspace_id', workspace_id, 'account_id', account_id, 'restricted', restricted, 'growth_blocked', growth_blocked, 'dry_run', dry_run, 'reason', reason, 'since', since, 'updated_at', updated_at)`
 const serviceJSON = `jsonb_build_object(
 	'id', id,
 	'environment_id', environment_id,
@@ -223,6 +225,10 @@ var productTables = []productTable{
 	{
 		name: "domain_bindings", keySQL: "hostname::TEXT", jsonSQL: domainJSON, filter: domainLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Domains, key, raw) },
+	},
+	{
+		name: "billing_restrictions", keySQL: "workspace_id::TEXT", jsonSQL: restrictionJSON,
+		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Restrictions, key, raw) },
 	},
 }
 

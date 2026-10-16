@@ -5,7 +5,7 @@ The platform turns a project's desired application configuration into isolated, 
 ## Organization and isolation
 
 **Workspace**:
-The access-control container for a group of people and the projects they share. Membership and its role (admin, member, or viewer) apply to every project in the workspace. Usage and billing will be accounted per workspace.
+The access-control container for a group of people and the projects they share. Membership and its role (admin, member, or viewer) apply to every project in the workspace. Usage and billing are accounted per workspace.
 _Avoid_: Organization, team, tenant
 
 **Personal Workspace**:
@@ -79,6 +79,22 @@ The durable, user-visible sequence of deployment transitions. Runtime reports ma
 **Domain Binding**:
 A public hostname attached to one service port.
 _Avoid_: Domain, route
+
+## Billing
+
+**Billing Account**:
+The payer for exactly one workspace, holding its plan, payment details, credits, and budget. A resource's payer is fixed when the resource is assigned; managed platform projects have no billing account.
+_Avoid_: Customer, subscription
+
+**Billing Period**:
+One monthly charge interval of a billing account, anchored on the account's creation day, with its minimum, included usage, and prices fixed at its start.
+
+**Statement**:
+The frozen bill for one billing period: exact quantities and prices, allowance, credits, and the amount due. Corrections are new credit entries, never edits to a statement.
+_Avoid_: Invoice (the provider document that collects a statement)
+
+**Billing Restriction**:
+A durable limit on a workspace's execution derived from its billing state: growth blocked, or compute stopped. Desired state survives it; it is neither deletion nor agent administration.
 
 ## Platform operation
 

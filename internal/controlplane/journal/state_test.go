@@ -52,6 +52,38 @@ func TestReplayDurableStateAndDeadline(t *testing.T) {
 	}
 }
 
+func TestBillingRestrictionDiffApplyRoundtrip(t *testing.T) {
+	since := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	before := DurableState{ClusterID: "test", Restrictions: map[string]BillingRestriction{}}
+	after := before.Clone()
+	after.Projects = map[string]Project{"project": {ID: "project", WorkspaceID: "workspace-1"}}
+	after.Restrictions = map[string]BillingRestriction{
+		"workspace-1": {WorkspaceID: "workspace-1", AccountID: "account-1", Restricted: true, DryRun: true, Reason: "budget stop threshold reached", Since: &since, UpdatedAt: since},
+	}
+	batch := Diff(before, after)
+	if len(batch.Restrictions) != 1 || len(batch.Projects) != 1 {
+		t.Fatalf("diff = %+v", batch)
+	}
+	applied, err := before.Apply(testEntry(t, 1, batch))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := applied.Restrictions["workspace-1"]; !got.Restricted || !got.DryRun || got.Reason == "" {
+		t.Fatalf("restriction after apply = %+v", got)
+	}
+	if applied.Projects["project"].WorkspaceID != "workspace-1" {
+		t.Fatalf("project workspace after apply = %+v", applied.Projects["project"])
+	}
+	cleared := Diff(applied, DurableState{ClusterID: "test", LogIndex: 1, Restrictions: map[string]BillingRestriction{}, Projects: map[string]Project{}})
+	applied, err = applied.Apply(testEntry(t, 2, cleared))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied.Restrictions) != 0 {
+		t.Fatalf("restrictions after clear = %+v", applied.Restrictions)
+	}
+}
+
 func TestApplyRejectsInvalidBatchAtomically(t *testing.T) {
 	initial := DurableState{ClusterID: "test"}
 	state, err := initial.Apply(testEntry(t, 1, assignedBatch()))

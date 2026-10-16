@@ -22,10 +22,11 @@ const (
 // only report an allocation the control plane placed on its agent.
 func RecordAllocation(ctx context.Context, tx Execer, allocationID, serviceID, deploymentID, agentID string, at time.Time) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO usage_attributions(
-			resource_kind, resource_id, agent_id, project_id, environment_id, service_id,
+			resource_kind, resource_id, agent_id, workspace_id, project_id, environment_id, service_id,
 			deployment_id, environment_name, resource_name, created_at)
-		SELECT 'allocation', $1, $2, e.project_id, e.id, s.id, $3, e.name, s.name, $4
+		SELECT 'allocation', $1, $2, COALESCE(p.workspace_id, ''), e.project_id, e.id, s.id, $3, e.name, s.name, $4
 		  FROM services s JOIN environments e ON e.id = s.environment_id
+		  JOIN projects p ON p.id = e.project_id
 		 WHERE s.id = $5
 		ON CONFLICT (resource_kind, resource_id) DO NOTHING`,
 		allocationID, agentID, deploymentID, at.UTC(), serviceID)
@@ -47,10 +48,11 @@ func EndAllocation(ctx context.Context, tx Execer, allocationID string) error {
 // agent. A volume never moves after pinning.
 func RecordVolume(ctx context.Context, tx Execer, volumeID, agentID string) error {
 	_, err := tx.ExecContext(ctx, `INSERT INTO usage_attributions(
-			resource_kind, resource_id, agent_id, project_id, environment_id,
+			resource_kind, resource_id, agent_id, workspace_id, project_id, environment_id,
 			environment_name, resource_name, created_at)
-		SELECT 'volume', v.id, $2, e.project_id, e.id, e.name, v.name, statement_timestamp()
+		SELECT 'volume', v.id, $2, COALESCE(p.workspace_id, ''), e.project_id, e.id, e.name, v.name, statement_timestamp()
 		  FROM volumes v JOIN environments e ON e.id = v.environment_id
+		  JOIN projects p ON p.id = e.project_id
 		 WHERE v.id = $1
 		ON CONFLICT (resource_kind, resource_id) DO NOTHING`, volumeID, agentID)
 	if err != nil {

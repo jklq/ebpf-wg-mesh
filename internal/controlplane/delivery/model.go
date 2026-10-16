@@ -436,6 +436,7 @@ var (
 	ErrDomainAlreadyExists      = errors.New("domain binding already exists")
 	ErrInvalidPort              = errors.New("port must be an integer between 1 and 65535")
 	ErrNoPlacementAvailable     = errors.New("no healthy agent satisfies placement")
+	ErrBillingRestricted        = errors.New("billing restriction stops compute for this workspace")
 	ErrInvalidReplicaCount      = errors.New("desired replica count is invalid")
 	ErrVolumeReplicaUnsupported = errors.New("volume-backed services support a single replica")
 	ErrServiceDeleted           = errors.New("service is deleted")
