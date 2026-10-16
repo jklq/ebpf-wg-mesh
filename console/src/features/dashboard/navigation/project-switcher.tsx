@@ -8,6 +8,7 @@ const slideDown = stylex.keyframes({
 
 import { Link } from "@tanstack/react-router";
 import {
+	ChartColumn,
 	Check,
 	ChevronDown,
 	History,
@@ -130,6 +131,16 @@ export function ProjectSwitcher({ state }: { state: DashboardHomeState }) {
 						>
 							<Settings size={13} {...stylex.props(styles.menuIcon)} />
 							Project settings
+						</Link>
+						<Link
+							to="/projects/$projectId/usage"
+							params={{ projectId: project.id }}
+							role="menuitem"
+							{...stylex.props(menuLink.root)}
+							onClick={() => setOpen(false)}
+						>
+							<ChartColumn size={13} {...stylex.props(styles.menuIcon)} />
+							Usage
 						</Link>
 						<Link
 							to="/deleted"

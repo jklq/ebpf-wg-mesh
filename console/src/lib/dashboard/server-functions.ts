@@ -34,6 +34,11 @@ async function signedIn<A>(redirectTo: string, run: () => Promise<A>) {
 
 const deletableKind = z.enum(["project", "environment", "volume"]);
 const restorableKind = z.enum(["project", "environment", "service", "domain"]);
+const usageResolution = z.enum([
+	"USAGE_RESOLUTION_MINUTE",
+	"USAGE_RESOLUTION_HOUR",
+	"USAGE_RESOLUTION_DAY",
+]);
 const deploymentAction = z.enum([
 	"DEPLOYMENT_ACTION_RESTART",
 	"DEPLOYMENT_ACTION_EXACT_REDEPLOY",
@@ -254,6 +259,45 @@ export const loadProjectSettings = createServerFn({ method: "GET" })
 			).loadProjectSettingsFromSession(
 				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
 				data.projectId,
+			),
+		),
+	);
+
+export const loadProject = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) =>
+		z.object({ projectId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		signedIn(`/projects/${data.projectId}`, async () =>
+			(
+				await import("#/lib/dashboard/core/operations-lifecycle.server")
+			).loadProjectFromSession(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data.projectId,
+			),
+		),
+	);
+
+export const loadProjectUsage = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				projectId: identifier,
+				startTime: z.iso.datetime(),
+				endTime: z.iso.datetime(),
+				resolution: usageResolution,
+				serviceId: optionalIdentifier,
+				resourceBuckets: z.boolean().optional(),
+			})
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		signedIn(`/projects/${data.projectId}/usage`, async () =>
+			(
+				await import("#/lib/dashboard/core/operations-usage.server")
+			).loadProjectUsageFromSession(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data,
 			),
 		),
 	);

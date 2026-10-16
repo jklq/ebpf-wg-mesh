@@ -8,7 +8,12 @@ import type {
 
 import type { CreateServiceFastResult } from "#/lib/dashboard/core/types.server";
 
-export type DashboardTab = "deployments" | "variables" | "settings" | "domains";
+export type DashboardTab =
+	| "deployments"
+	| "variables"
+	| "settings"
+	| "domains"
+	| "usage";
 
 export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
 

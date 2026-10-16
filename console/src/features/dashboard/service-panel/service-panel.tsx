@@ -1,5 +1,13 @@
 import * as stylex from "@stylexjs/stylex";
-import { Globe, KeyRound, Layers, RefreshCw, Settings, X } from "lucide-react";
+import {
+	ChartColumn,
+	Globe,
+	KeyRound,
+	Layers,
+	RefreshCw,
+	Settings,
+	X,
+} from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useId, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { TabList } from "#/components/ui/tabs";
@@ -22,6 +30,8 @@ const loadDomains = () =>
 	import("#/features/dashboard/service-panel/domains/panel-domains");
 const loadSettings = () =>
 	import("#/features/dashboard/service-panel/settings/panel-settings");
+const loadUsage = () =>
+	import("#/features/dashboard/service-panel/usage/panel-usage");
 const VariablesPanel = lazy(() =>
 	loadVariables().then((module) => ({ default: module.PanelVariables })),
 );
@@ -31,11 +41,15 @@ const DomainsPanel = lazy(() =>
 const SettingsPanel = lazy(() =>
 	loadSettings().then((module) => ({ default: module.PanelSettings })),
 );
+const UsagePanel = lazy(() =>
+	loadUsage().then((module) => ({ default: module.PanelUsage })),
+);
 
 const tabs = [
 	{ id: "deployments", label: "Deployments", icon: <Layers size={11} /> },
 	{ id: "variables", label: "Variables", icon: <KeyRound size={11} /> },
 	{ id: "domains", label: "Domains", icon: <Globe size={11} /> },
+	{ id: "usage", label: "Usage", icon: <ChartColumn size={11} /> },
 	{ id: "settings", label: "Settings", icon: <Settings size={11} /> },
 ] as const;
 
@@ -75,9 +89,12 @@ export function ServicePanel({
 
 	useEffect(() => {
 		const preload = () => {
-			void Promise.all([loadVariables(), loadDomains(), loadSettings()]).catch(
-				() => undefined,
-			);
+			void Promise.all([
+				loadVariables(),
+				loadDomains(),
+				loadSettings(),
+				loadUsage(),
+			]).catch(() => undefined);
 		};
 		if (typeof window.requestIdleCallback === "function") {
 			const id = window.requestIdleCallback(preload);
@@ -175,6 +192,15 @@ export function ServicePanel({
 					{activeTab === "domains" && project && (
 						<div {...stylex.props(styles.tabContent)}>
 							<DomainsPanel service={service} state={state} status={status} />
+						</div>
+					)}
+					{activeTab === "usage" && project && (
+						<div {...stylex.props(styles.tabContent)}>
+							<UsagePanel
+								key={service.id}
+								service={service}
+								project={project}
+							/>
 						</div>
 					)}
 				</Suspense>

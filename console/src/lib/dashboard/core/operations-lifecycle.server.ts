@@ -14,6 +14,20 @@ import {
 import { PlatformService } from "#/lib/platform-gen/platform_pb";
 import { dateMillis } from "#/lib/time";
 
+export async function loadProjectFromSession(
+	runtime: DashboardRuntime,
+	projectId: string,
+): Promise<DashboardProject> {
+	const session = await requireSession(runtime);
+	return runtime.platform.call(
+		PlatformService.method.getProject,
+		session.user,
+		{
+			projectId,
+		},
+	);
+}
+
 export async function loadProjectSettingsFromSession(
 	runtime: DashboardRuntime,
 	projectId: string,

@@ -27,6 +27,7 @@ import { Route as AuthStartRouteImport } from './routes/auth/start'
 import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
 import { Route as WorkspaceDashboardRouteImport } from './routes/_workspace/dashboard'
 import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
+import { Route as ProjectsProjectIdUsageRouteImport } from './routes/projects/$projectId/usage'
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
 import { Route as WorkspaceWorkspaceSettingsRouteImport } from './routes/_workspace/workspace/settings'
 import { Route as WorkspaceWorkspacePeopleRouteImport } from './routes/_workspace/workspace/people'
@@ -122,6 +123,11 @@ const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   path: '/projects/$projectId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ProjectsProjectIdUsageRoute = ProjectsProjectIdUsageRouteImport.update({
+  id: '/projects/$projectId/usage',
+  path: '/projects/$projectId/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsProjectIdSettingsRoute =
   ProjectsProjectIdSettingsRouteImport.update({
     id: '/projects/$projectId/settings',
@@ -161,6 +167,7 @@ export interface FileRoutesByFullPath {
   '/workspace/people': typeof WorkspaceWorkspacePeopleRoute
   '/workspace/settings': typeof WorkspaceWorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/usage': typeof ProjectsProjectIdUsageRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRoutesByTo {
@@ -183,6 +190,7 @@ export interface FileRoutesByTo {
   '/workspace/people': typeof WorkspaceWorkspacePeopleRoute
   '/workspace/settings': typeof WorkspaceWorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/usage': typeof ProjectsProjectIdUsageRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRoutesById {
@@ -207,6 +215,7 @@ export interface FileRoutesById {
   '/_workspace/workspace/people': typeof WorkspaceWorkspacePeopleRoute
   '/_workspace/workspace/settings': typeof WorkspaceWorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
+  '/projects/$projectId/usage': typeof ProjectsProjectIdUsageRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
 }
 export interface FileRouteTypes {
@@ -231,6 +240,7 @@ export interface FileRouteTypes {
     | '/workspace/people'
     | '/workspace/settings'
     | '/projects/$projectId/settings'
+    | '/projects/$projectId/usage'
     | '/projects/$projectId/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -253,6 +263,7 @@ export interface FileRouteTypes {
     | '/workspace/people'
     | '/workspace/settings'
     | '/projects/$projectId/settings'
+    | '/projects/$projectId/usage'
     | '/projects/$projectId'
   id:
     | '__root__'
@@ -276,6 +287,7 @@ export interface FileRouteTypes {
     | '/_workspace/workspace/people'
     | '/_workspace/workspace/settings'
     | '/projects/$projectId/settings'
+    | '/projects/$projectId/usage'
     | '/projects/$projectId/'
   fileRoutesById: FileRoutesById
 }
@@ -297,6 +309,7 @@ export interface RootRouteChildren {
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
+  ProjectsProjectIdUsageRoute: typeof ProjectsProjectIdUsageRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
 }
 
@@ -428,6 +441,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/projects/$projectId/usage': {
+      id: '/projects/$projectId/usage'
+      path: '/projects/$projectId/usage'
+      fullPath: '/projects/$projectId/usage'
+      preLoaderRoute: typeof ProjectsProjectIdUsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/projects/$projectId/settings': {
       id: '/projects/$projectId/settings'
       path: '/projects/$projectId/settings'
@@ -486,6 +506,7 @@ const rootRouteChildren: RootRouteChildren = {
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,
   ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
+  ProjectsProjectIdUsageRoute: ProjectsProjectIdUsageRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
 }
 export const routeTree = rootRouteImport

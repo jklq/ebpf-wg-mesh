@@ -94,6 +94,23 @@ export type DashboardServiceLogPage = PlatformJson<
 export type DashboardDeploymentRecord = PlatformJson<
 	typeof Protocol.DeploymentRecordSchema
 >;
+export type DashboardProjectUsage = PlatformJson<
+	typeof Protocol.ProjectUsageSchema
+>;
+export type DashboardUsageQuantities = PlatformJson<
+	typeof Protocol.UsageQuantitiesSchema
+>;
+export type DashboardUsageBucket = PlatformJson<
+	typeof Protocol.UsageBucketSchema
+>;
+export type DashboardUsageResource = PlatformJson<
+	typeof Protocol.UsageResourceSchema
+>;
+export type DashboardUsageGap = PlatformJson<typeof Protocol.UsageGapSchema>;
+export type DashboardUsageResolution = Exclude<
+	Protocol.UsageResolutionJson,
+	"USAGE_RESOLUTION_UNSPECIFIED"
+>;
 export type DashboardProjectKind = Protocol.ProjectKindJson;
 export type RepositoryAccessState = Protocol.SourceAccessStateJson;
 export type DashboardBuildState = Protocol.BuildStateJson;
