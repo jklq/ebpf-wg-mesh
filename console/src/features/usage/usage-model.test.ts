@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+	axisMax,
+	axisTicks,
 	bucketState,
 	finiteDouble,
 	formatCpuTime,
@@ -102,6 +104,33 @@ describe("bucketState", () => {
 				usage,
 			),
 		).toBe("incomplete");
+	});
+});
+
+describe("axisMax", () => {
+	it("uses the limit while usage stays within it", () => {
+		expect(axisMax(0.1, 0.25, "vcpu")).toBe(0.25);
+		expect(axisMax(0, 512 * 1024 ** 2, "bytes")).toBe(512 * 1024 ** 2);
+	});
+
+	it("rounds above data with no or an exceeded limit", () => {
+		expect(axisMax(3, undefined, "vcpu")).toBe(4);
+		expect(axisMax(0.3, 0.25, "vcpu")).toBe(0.4);
+		expect(axisMax(300 * 1024, undefined, "bytes")).toBe(400 * 1024);
+	});
+});
+
+describe("axisTicks", () => {
+	it("steps in round numbers and ends on the axis top", () => {
+		expect(axisTicks(1, "vcpu")).toEqual([0, 0.25, 0.5, 0.75, 1]);
+		expect(axisTicks(0.25, "vcpu")).toEqual([0, 0.1, 0.2, 0.25]);
+		const mib = 1024 ** 2;
+		expect(axisTicks(256 * mib, "bytes")).toEqual([
+			0,
+			100 * mib,
+			200 * mib,
+			256 * mib,
+		]);
 	});
 });
 

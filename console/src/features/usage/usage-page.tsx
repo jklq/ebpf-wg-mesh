@@ -7,6 +7,7 @@ import { Notice } from "#/components/ui/notice";
 import { textStyles } from "#/components/ui/text";
 import { UsageChart } from "#/features/usage/usage-chart";
 import {
+	projectUsageRanges,
 	type UsageMetric,
 	type UsageRange,
 	usageCsv,
@@ -81,9 +82,9 @@ export function ProjectUsagePage({
 					)}
 					<Segmented
 						label="Time range"
-						options={Object.entries(usageRanges).map(([id, entry]) => ({
-							id: id as UsageRange,
-							label: entry.label,
+						options={projectUsageRanges.map((id) => ({
+							id,
+							label: usageRanges[id].label,
 						}))}
 						selected={range}
 						onSelect={setRange}

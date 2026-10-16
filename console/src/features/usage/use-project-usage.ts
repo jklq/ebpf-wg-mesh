@@ -7,18 +7,20 @@ import { formatError } from "#/lib/errors";
 
 const REFRESH_MS = 60_000;
 
-/** Loads a range of project usage and refreshes it every minute. */
+/** Loads a range of project usage and refreshes it every minute unless paused. */
 export function useProjectUsage({
 	projectId,
 	serviceId,
 	range,
 	initial,
+	paused = false,
 }: {
 	projectId: string;
 	serviceId?: string;
 	range: UsageRange;
 	/** Usage the route already loaded for the initial range. */
 	initial?: { usage: DashboardProjectUsage; loadedAtMs: number };
+	paused?: boolean;
 }) {
 	const [usage, setUsage] = useState(initial?.usage);
 	const [loadedAtMs, setLoadedAtMs] = useState(initial?.loadedAtMs);
@@ -53,7 +55,7 @@ export function useProjectUsage({
 		void load();
 	}, [load]);
 
-	usePolling(load, { enabled: true, intervalMs: REFRESH_MS });
+	usePolling(load, { enabled: !paused, intervalMs: REFRESH_MS });
 
 	return { usage, loadedAtMs, loading, error };
 }

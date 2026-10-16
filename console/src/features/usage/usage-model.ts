@@ -12,26 +12,56 @@ const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
 export const usageRanges = {
+	"15m": {
+		label: "15 min",
+		spanMs: 15 * MINUTE_MS,
+		stepMs: MINUTE_MS,
+		resolution: "USAGE_RESOLUTION_MINUTE",
+	},
+	"30m": {
+		label: "30 min",
+		spanMs: 30 * MINUTE_MS,
+		stepMs: MINUTE_MS,
+		resolution: "USAGE_RESOLUTION_MINUTE",
+	},
+	"1h": {
+		label: "1 hour",
+		spanMs: HOUR_MS,
+		stepMs: MINUTE_MS,
+		resolution: "USAGE_RESOLUTION_MINUTE",
+	},
+	"3h": {
+		label: "3 hours",
+		spanMs: 3 * HOUR_MS,
+		stepMs: MINUTE_MS,
+		resolution: "USAGE_RESOLUTION_MINUTE",
+	},
+	"6h": {
+		label: "6 hours",
+		spanMs: 6 * HOUR_MS,
+		stepMs: MINUTE_MS,
+		resolution: "USAGE_RESOLUTION_MINUTE",
+	},
 	"24h": {
-		label: "24 h",
+		label: "1 day",
 		spanMs: DAY_MS,
 		stepMs: MINUTE_MS,
 		resolution: "USAGE_RESOLUTION_MINUTE",
 	},
 	"7d": {
-		label: "7 d",
+		label: "7 days",
 		spanMs: 7 * DAY_MS,
 		stepMs: HOUR_MS,
 		resolution: "USAGE_RESOLUTION_HOUR",
 	},
 	"30d": {
-		label: "30 d",
+		label: "30 days",
 		spanMs: 30 * DAY_MS,
 		stepMs: HOUR_MS,
 		resolution: "USAGE_RESOLUTION_HOUR",
 	},
 	"90d": {
-		label: "90 d",
+		label: "90 days",
 		spanMs: 90 * DAY_MS,
 		stepMs: DAY_MS,
 		resolution: "USAGE_RESOLUTION_DAY",
@@ -46,6 +76,23 @@ export const usageRanges = {
 	}
 >;
 export type UsageRange = keyof typeof usageRanges;
+
+export const projectUsageRanges = [
+	"24h",
+	"7d",
+	"30d",
+	"90d",
+] as const satisfies readonly UsageRange[];
+export const serviceUsageRanges = [
+	"15m",
+	"30m",
+	"1h",
+	"3h",
+	"6h",
+	"24h",
+	"7d",
+	"30d",
+] as const satisfies readonly UsageRange[];
 
 /**
  * The query window for a range ending at the current bucket. The server widens
@@ -135,6 +182,70 @@ export function formatAverageBytes(bytes: number): string {
 export function formatByteHours(byteMilliseconds: string): string {
 	const byteHours = Number(byteMilliseconds) / HOUR_MS;
 	return `${formatBytes(byteHours)}·h`;
+}
+
+const AXIS_INTERVALS = 4;
+
+function niceStep(value: number): number {
+	const exponent = 10 ** Math.floor(Math.log10(value));
+	for (const multiple of [1, 2, 2.5, 5]) {
+		if (multiple * exponent >= value) return multiple * exponent;
+	}
+	return 10 * exponent;
+}
+
+function axisUnit(value: number, kind: "vcpu" | "bytes"): number {
+	return kind === "bytes" && value > 0
+		? 1024 ** Math.max(0, Math.floor(Math.log(value) / Math.log(1024)))
+		: 1;
+}
+
+/**
+ * The top of a chart's value axis: the limit when usage stays within it, else
+ * a round number above the data. Byte axes round within their binary unit so
+ * ticks read "128 MiB", not "134 MB".
+ */
+export function axisMax(
+	dataMax: number,
+	limit: number | undefined,
+	kind: "vcpu" | "bytes",
+): number {
+	if (limit && dataMax <= limit) return limit;
+	if (!(dataMax > 0)) return kind === "bytes" ? 4 * 1024 : 1;
+	const unit = axisUnit(dataMax, kind);
+	return niceStep(dataMax / unit / AXIS_INTERVALS) * AXIS_INTERVALS * unit;
+}
+
+/** Round steps up to the axis top, which is always a tick (often the limit). */
+export function axisTicks(max: number, kind: "vcpu" | "bytes"): number[] {
+	const unit = axisUnit(max, kind);
+	const step = niceStep(max / unit / AXIS_INTERVALS) * unit;
+	const ticks: number[] = [];
+	// Leave out a step that would crowd the top label.
+	for (let index = 0; index * step < max - step * 0.3; index++)
+		ticks.push(index * step);
+	return [...ticks, max];
+}
+
+/** Clock time for ranges within a day, else the date. */
+export function formatAxisTime(ms: number, spanMs: number): string {
+	return new Intl.DateTimeFormat(
+		"en",
+		spanMs <= DAY_MS
+			? { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }
+			: { month: "short", day: "numeric" },
+	).format(ms);
+}
+
+export function formatBucketTime(ms: number): string {
+	return new Intl.DateTimeFormat("en", {
+		month: "short",
+		day: "numeric",
+		hour: "2-digit",
+		minute: "2-digit",
+		hourCycle: "h23",
+		timeZoneName: "short",
+	}).format(ms);
 }
 
 export function formatByteCount(bytes: string): string {
