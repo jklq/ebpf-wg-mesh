@@ -3,6 +3,7 @@ import { ArrowLeft, Boxes, EyeOff, Globe2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { noticeStyles } from "#/components/ui/notice";
+import { BillingRestrictionHint } from "#/features/billing/billing-status";
 import { DeploymentHistoryRow } from "#/features/dashboard/service-panel/deployments/deployment-history-row";
 import {
 	isInProgressDeploymentState,
@@ -304,6 +305,7 @@ export function PanelDeployments({
 						{...stylex.props([noticeStyles.error, styles.deployRevisionError])}
 					>
 						{revisionDeployError}
+						<BillingRestrictionHint message={revisionDeployError} />
 					</div>
 				)}
 				<div {...stylex.props(styles.liveDeployments)}>

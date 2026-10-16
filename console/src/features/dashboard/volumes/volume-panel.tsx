@@ -14,6 +14,7 @@ import { DeleteResourceDialog } from "#/components/delete-resource-dialog";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
 import { noticeStyles } from "#/components/ui/notice";
+import { BillingRestrictionHint } from "#/features/billing/billing-status";
 import {
 	DEFAULT_VOLUME_MOUNT_PATH,
 	sizeGibError,
@@ -417,7 +418,12 @@ function GrowControl({
 					Grow to {targetGib} GiB
 				</Button>
 			)}
-			{error && <p {...stylex.props(noticeStyles.error)}>{error}</p>}
+			{error && (
+				<p {...stylex.props(noticeStyles.error)}>
+					{error}
+					<BillingRestrictionHint message={error} />
+				</p>
+			)}
 		</section>
 	);
 }

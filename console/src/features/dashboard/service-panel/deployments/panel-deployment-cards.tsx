@@ -1,5 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 import { noticeStyles } from "#/components/ui/notice";
+import { BillingRestrictionHint } from "#/features/billing/billing-status";
 import { DeploymentActionHistory } from "#/features/dashboard/service-panel/deployments/deployment-action-history";
 import { DeploymentActionsMenu } from "#/features/dashboard/service-panel/deployments/deployment-actions-menu";
 import { DeploymentCardHeader } from "#/features/dashboard/service-panel/deployments/deployment-card-header";
@@ -221,6 +222,7 @@ export function DeploymentCard({
 					{actionError && (
 						<div {...stylex.props([noticeStyles.error, styles.actionError])}>
 							{actionError}
+							<BillingRestrictionHint message={actionError} />
 						</div>
 					)}
 				</div>

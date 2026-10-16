@@ -83,3 +83,27 @@ export async function ingestGitHubWebhook(
 		throw toPlatformGatewayError("IngestGitHubWebhook", cause);
 	}
 }
+
+export type IngestStripeWebhookInput = {
+	/** The Stripe-Signature header, unchanged. */
+	signature: string;
+	/** The request body bytes, unchanged; Go verifies the signature over them. */
+	payload: Uint8Array;
+};
+
+export async function ingestStripeWebhook(
+	runtime: PlatformRuntimeConfig,
+	input: IngestStripeWebhookInput,
+): Promise<void> {
+	try {
+		await getTransport(runtime).unary(
+			OpsService.method.ingestStripeWebhook,
+			undefined,
+			undefined,
+			undefined,
+			input,
+		);
+	} catch (cause) {
+		throw toPlatformGatewayError("IngestStripeWebhook", cause);
+	}
+}

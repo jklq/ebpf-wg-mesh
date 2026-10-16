@@ -815,3 +815,122 @@ export const doMoveProject = createServerFn({ method: "POST" })
 			data,
 		),
 	);
+
+const planId = z.enum(["hobby", "pro"]);
+
+export const loadWorkspaceBilling = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.handler(async ({ data }) =>
+		signedIn("/workspace/billing", async () =>
+			(
+				await import("#/lib/dashboard/core/operations-billing.server")
+			).loadWorkspaceBilling(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data?.workspaceId,
+			),
+		),
+	);
+
+export const loadBillingSummary = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-billing.server")
+		).loadBillingSummaryFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data.workspaceId,
+		),
+	);
+
+export const loadBillingStatement = createServerFn({ method: "GET" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				workspaceId: optionalIdentifier,
+				statementId: identifier,
+				includeCsv: z.boolean().optional(),
+			})
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		signedIn(`/workspace/billing/statements/${data.statementId}`, async () =>
+			(
+				await import("#/lib/dashboard/core/operations-billing.server")
+			).loadBillingStatementFromSession(
+				(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+				data,
+			),
+		),
+	);
+
+export const doUpdateBillingBudget = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z
+			.object({
+				workspaceId: identifier,
+				budgetStopCents: z.string().regex(/^\d+$/),
+			})
+			.parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-billing.server")
+		).updateBillingBudgetFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doChangeBillingPlan = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier, planId }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-billing.server")
+		).changeBillingPlanFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doStartBillingActivation = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier, planId }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-billing.server")
+		).startBillingActivationFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		),
+	);
+
+export const doStartBillingPaymentSetup = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-billing.server")
+		).startBillingPaymentSetupFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data.workspaceId,
+		),
+	);
+
+export const doCancelBillingAccount = createServerFn({ method: "POST" })
+	.inputValidator((input: unknown) =>
+		z.object({ workspaceId: identifier }).parse(input),
+	)
+	.handler(async ({ data }) =>
+		(
+			await import("#/lib/dashboard/core/operations-billing.server")
+		).cancelBillingAccountFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data.workspaceId,
+		),
+	);

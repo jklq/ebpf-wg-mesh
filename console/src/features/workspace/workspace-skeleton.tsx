@@ -14,7 +14,9 @@ export function WorkspacePageSkeleton({
 			? "Projects"
 			: section === "people"
 				? "People"
-				: "Settings";
+				: section === "billing"
+					? "Billing"
+					: "Settings";
 	return (
 		<section
 			aria-label={`Loading ${title.toLowerCase()}`}

@@ -25,7 +25,12 @@ function WorkspaceLayout() {
 				(entry) =>
 					entry.routeId === "/_workspace/dashboard" ||
 					entry.routeId === "/_workspace/workspace/people" ||
-					entry.routeId === "/_workspace/workspace/settings",
+					entry.routeId === "/_workspace/workspace/settings" ||
+					entry.routeId === "/_workspace/workspace/billing/" ||
+					entry.routeId ===
+						"/_workspace/workspace/billing/statements/$statementId" ||
+					entry.routeId === "/_workspace/workspace/billing/checkout/success" ||
+					entry.routeId === "/_workspace/workspace/billing/checkout/cancel",
 			);
 			return {
 				shell: match?.loaderData?.shell,
@@ -49,7 +54,9 @@ function WorkspaceLayout() {
 			? "people"
 			: location.pathname === "/workspace/settings"
 				? "settings"
-				: "projects";
+				: location.pathname.startsWith("/workspace/billing")
+					? "billing"
+					: "projects";
 	if (!displayedShell)
 		return failed ? <Outlet /> : <WorkspaceShellSkeleton section={section} />;
 	const workspace = location.search.workspace

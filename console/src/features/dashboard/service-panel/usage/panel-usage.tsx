@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, LayoutGrid, Pause, Play, Rows2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Notice } from "#/components/ui/notice";
+import { ServiceCostIndicator } from "#/features/billing/project-cost-panel";
 import { UsageChartsSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
 import {
 	type ChartSeries,
@@ -129,6 +130,7 @@ export function PanelUsage({
 				</button>
 			</div>
 
+			<ServiceCostIndicator project={project} />
 			{error && <Notice>Could not load usage: {error}</Notice>}
 			{usage ? (
 				<>

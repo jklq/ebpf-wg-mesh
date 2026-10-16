@@ -6,6 +6,7 @@ import { fieldStyles, TextInput } from "#/components/ui/field";
 import { noticeStyles } from "#/components/ui/notice";
 import { PanelSection } from "#/components/ui/section";
 import { StatusDot } from "#/components/ui/status-dot";
+import { BillingRestrictionHint } from "#/features/billing/billing-status";
 import {
 	DEFAULT_VOLUME_MOUNT_PATH,
 	mountPathError,
@@ -191,7 +192,12 @@ export function VolumeSettings({
 					</p>
 				)}
 			</div>
-			{error && <p {...stylex.props(noticeStyles.error)}>{error}</p>}
+			{error && (
+				<p {...stylex.props(noticeStyles.error)}>
+					{error}
+					<BillingRestrictionHint message={error} />
+				</p>
+			)}
 		</PanelSection>
 	);
 }

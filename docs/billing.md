@@ -157,6 +157,28 @@ Rating stays internal; Stripe collects frozen statements:
 - a reconciliation pass syncs unsettled statements against Stripe to cover
   missing webhooks.
 
+The console's public `/webhooks/stripe` route is plumbing only: it bounds
+the body to the same 256 KiB, forwards the raw bytes and the
+`Stripe-Signature` header unchanged, and answers 200 only after
+`IngestStripeWebhook` accepts. Checkout returns to
+`/workspace/billing/checkout/success` and `/workspace/billing/checkout/cancel`
+(the remembered workspace selects the account); a saved card alone never
+activates paid service.
+
+## Console
+
+Billing lives under `/workspace/billing` in the workspace navigation. The
+console renders what the RPCs return and never prices anything: amounts are
+the control plane's cents, project totals add its allocated lines, and rates
+are re-expressed per readable unit (30-day month, GiB) with exact integers.
+Current-period figures refresh every minute and carry the watermark and gap
+time beside them. Plan prices are not exposed by an RPC yet, so plan choices
+show names only; the current period's pinned minimum and allowance are
+shown. Cancellation asks what happens to volumes, because kept volumes
+continue on storage-only periods, and shows the volume rate before
+confirming. Blocked actions show the backend's restriction error with a
+link to billing.
+
 Tax collection is not configured. Stripe integration alone does not
 establish tax obligations; configure Stripe Tax with finance review before
 paid launch. Refunds and corrections are explicit credit entries locally;

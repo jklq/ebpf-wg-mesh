@@ -39,7 +39,9 @@ import {
 import {
 	createPlatformGateway,
 	type IngestGitHubWebhookInput,
+	type IngestStripeWebhookInput,
 	ingestGitHubWebhook,
+	ingestStripeWebhook,
 } from "#/lib/platform-grpc/gateway.server";
 
 interface RuntimeConfig extends DashboardConfig {
@@ -163,6 +165,12 @@ export function forwardGitHubWebhook(
 	input: IngestGitHubWebhookInput,
 ): Promise<void> {
 	return ingestGitHubWebhook(getConfig(), input);
+}
+
+export function forwardStripeWebhook(
+	input: IngestStripeWebhookInput,
+): Promise<void> {
+	return ingestStripeWebhook(getConfig(), input);
 }
 
 function readConfig(): RuntimeConfig {

@@ -5,6 +5,7 @@ import { PageShell } from "#/components/layout/page-shell";
 import { Button } from "#/components/ui/button";
 import { Notice } from "#/components/ui/notice";
 import { textStyles } from "#/components/ui/text";
+import { ProjectCostPanel } from "#/features/billing/project-cost-panel";
 import { UsageChart } from "#/features/usage/usage-chart";
 import {
 	projectUsageRanges,
@@ -111,6 +112,8 @@ export function ProjectUsagePage({
 
 			{error && <Notice>Could not refresh usage: {error}</Notice>}
 			{exportError && <Notice>Could not export usage: {exportError}</Notice>}
+
+			<ProjectCostPanel project={project} />
 
 			{usage && (
 				<>

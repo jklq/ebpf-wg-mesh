@@ -62,6 +62,9 @@ export interface FakePlatformGateway extends PlatformGateway {
 	domainBindings: PlatformJson<typeof P.DomainBindingSchema>[];
 	nextRepositoryInspection?: PlatformJson<typeof P.InspectSourceResponseSchema>;
 	fleet: PlatformJson<typeof P.FleetSchema>;
+	billingSummary?: PlatformJson<typeof P.BillingAccountSummarySchema>;
+	billingStatements: PlatformJson<typeof P.BillingStatementSchema>[];
+	/** A ConnectError keeps its code; any other Error fails as Internal. */
 	errors: Partial<
 		Record<keyof typeof P.PlatformService.method | "listFleet", Error>
 	>;
@@ -117,6 +120,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 		domainBindings: [],
 		deletionPreview: jsonFixture(P.DeletionPreviewSchema, {}),
 		fleet: jsonFixture(P.FleetSchema, { capacity: {} }),
+		billingStatements: [],
 		errors: {},
 	};
 	function user(ctx: HandlerContext): DashboardUser {
@@ -131,6 +135,7 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 	}
 	function fail(operation: keyof typeof platform.errors) {
 		const error = platform.errors[operation];
+		if (error instanceof ConnectError) throw error;
 		if (error) throw new ConnectError(error.message, Code.Internal);
 	}
 	function project(id: string) {
@@ -205,6 +210,20 @@ export function createFakePlatformGateway(): FakePlatformGateway {
 			},
 		});
 		router.service(P.PlatformService, {
+			getBillingAccount() {
+				fail("getBillingAccount");
+				if (!platform.billingSummary)
+					throw new ConnectError("billing account", Code.NotFound);
+				return fromPlatformJson(
+					P.BillingAccountSummarySchema,
+					platform.billingSummary,
+				);
+			},
+			listBillingStatements() {
+				return fromPlatformJson(P.ListBillingStatementsResponseSchema, {
+					statements: platform.billingStatements,
+				});
+			},
 			listWorkspaces() {
 				return fromPlatformJson(P.ListWorkspacesResponseSchema, {
 					workspaces: platform.workspaces,

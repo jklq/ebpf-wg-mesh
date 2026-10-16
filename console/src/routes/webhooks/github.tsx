@@ -1,10 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { PlatformGatewayError } from "#/lib/dashboard/core/types.server";
+import {
+	readBoundedRequestBody,
+	WebhookPayloadTooLargeError,
+} from "#/lib/webhook-body.server";
 
 export const maxGitHubWebhookPayloadBytes = 2 << 20;
-
-export class WebhookPayloadTooLargeError extends Error {}
 
 export const Route = createFileRoute("/webhooks/github")({
 	server: {
@@ -12,7 +14,10 @@ export const Route = createFileRoute("/webhooks/github")({
 			POST: async ({ request }: { request: Request }) => {
 				let payload: Uint8Array;
 				try {
-					payload = await readBoundedRequestBody(request);
+					payload = await readBoundedRequestBody(
+						request,
+						maxGitHubWebhookPayloadBytes,
+					);
 				} catch (error) {
 					if (error instanceof WebhookPayloadTooLargeError) {
 						return new Response(error.message, { status: 413 });
@@ -80,49 +85,6 @@ function mapWebhookError(error: unknown): Response {
 		}
 	}
 	return new Response("enqueue webhook", { status: 500 });
-}
-
-export async function readBoundedRequestBody(
-	request: Request,
-	maxBytes = maxGitHubWebhookPayloadBytes,
-): Promise<Uint8Array> {
-	const contentLength = request.headers.get("content-length");
-	if (contentLength !== null) {
-		const parsed = Number(contentLength);
-		if (!Number.isSafeInteger(parsed) || parsed < 0) {
-			throw new Error("invalid content-length");
-		}
-		if (parsed > maxBytes) {
-			throw new WebhookPayloadTooLargeError("webhook payload too large");
-		}
-	}
-	if (!request.body) return new Uint8Array();
-
-	const reader = request.body.getReader();
-	const chunks: Uint8Array[] = [];
-	let total = 0;
-	try {
-		for (;;) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			total += value.byteLength;
-			if (total > maxBytes) {
-				await reader.cancel("webhook payload too large");
-				throw new WebhookPayloadTooLargeError("webhook payload too large");
-			}
-			chunks.push(value);
-		}
-	} finally {
-		reader.releaseLock();
-	}
-
-	const payload = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		payload.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
-	return payload;
 }
 
 function logWebhookForwardFailure(

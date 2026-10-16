@@ -1,6 +1,7 @@
 import * as stylex from "@stylexjs/stylex";
 import { Loader2, UploadCloud } from "lucide-react";
 import { Button } from "#/components/ui/button";
+import { BillingRestrictionHint } from "#/features/billing/billing-status";
 import { colors, fonts, sizes, space } from "#/styles/tokens.stylex";
 import {
 	deployActionLabel,
@@ -73,6 +74,7 @@ export function WorkspaceReleasePrompt({
 					{release.deployError && (
 						<span {...stylex.props(styles.promptErrorText)}>
 							{release.deployError}
+							<BillingRestrictionHint message={release.deployError} />
 						</span>
 					)}
 				</div>

@@ -3,6 +3,7 @@ import { Link, useRouter } from "@tanstack/react-router";
 import {
 	Check,
 	ChevronDown,
+	CreditCard,
 	History,
 	LayoutGrid,
 	LogOut,
@@ -26,7 +27,7 @@ import { doAnswerWorkspaceInvitation } from "#/lib/dashboard/server-functions";
 import { formatError } from "#/lib/errors";
 import { colors, fonts, motion, shape, space } from "#/styles/tokens.stylex";
 
-export type WorkspaceSection = "projects" | "people" | "settings";
+export type WorkspaceSection = "projects" | "people" | "billing" | "settings";
 
 /** Sidebar layout for workspace-level pages. */
 export function WorkspaceShell({
@@ -68,6 +69,13 @@ export function WorkspaceShell({
 						active={section === "people"}
 						icon={<Users size={14} />}
 						label="People"
+					/>
+					<NavLink
+						to="/workspace/billing"
+						workspaceId={shell.workspace.id}
+						active={section === "billing"}
+						icon={<CreditCard size={14} />}
+						label="Billing"
 					/>
 					<NavLink
 						to="/workspace/settings"
@@ -126,6 +134,7 @@ function NavLink({
 	to:
 		| "/dashboard"
 		| "/workspace/people"
+		| "/workspace/billing"
 		| "/workspace/settings"
 		| "/deleted"
 		| "/fleet";

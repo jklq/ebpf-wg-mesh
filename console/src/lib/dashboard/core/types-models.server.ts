@@ -111,6 +111,28 @@ export type DashboardUsageResolution = Exclude<
 	Protocol.UsageResolutionJson,
 	"USAGE_RESOLUTION_UNSPECIFIED"
 >;
+export type DashboardBillingSummary = PlatformJson<
+	typeof Protocol.BillingAccountSummarySchema
+>;
+export type DashboardBillingRestriction = PlatformJson<
+	typeof Protocol.BillingRestrictionStateSchema
+>;
+export type DashboardBillingProjectCost = PlatformJson<
+	typeof Protocol.BillingProjectCostSchema
+>;
+export type DashboardBillingRate = PlatformJson<
+	typeof Protocol.BillingRateSchema
+>;
+export type DashboardBillingStatement = PlatformJson<
+	typeof Protocol.BillingStatementSchema
+>;
+export type DashboardBillingStatementLine = PlatformJson<
+	typeof Protocol.BillingStatementLineSchema
+>;
+/** Billing reads fail with FailedPrecondition when the installation has billing off. */
+export type DashboardBillingAvailability =
+	| { available: true; summary: DashboardBillingSummary }
+	| { available: false; reason: string };
 export type DashboardProjectKind = Protocol.ProjectKindJson;
 export type RepositoryAccessState = Protocol.SourceAccessStateJson;
 export type DashboardBuildState = Protocol.BuildStateJson;

@@ -26,11 +26,11 @@ import type {
 } from "#/lib/dashboard/core/types.server";
 import { GitHubApiError } from "#/lib/dashboard/core/types.server";
 import { createDashboardTestHarness } from "#/lib/dashboard/testkit/harness.server";
-import { logoutRouteResponse } from "#/routes/logout";
 import {
 	readBoundedRequestBody,
 	WebhookPayloadTooLargeError,
-} from "#/routes/webhooks/github";
+} from "#/lib/webhook-body.server";
+import { logoutRouteResponse } from "#/routes/logout";
 
 afterEach(() => cleanup());
 

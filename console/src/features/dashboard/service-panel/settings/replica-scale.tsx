@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { fieldStyles, TextInput } from "#/components/ui/field";
 import { noticeStyles } from "#/components/ui/notice";
 import { PanelSection } from "#/components/ui/section";
+import { BillingRestrictionHint } from "#/features/billing/billing-status";
 import { useAutoQueuedPersist } from "#/hooks/use-auto-queued-persist";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 import { doScaleService } from "#/lib/dashboard/server-functions";
@@ -129,7 +130,10 @@ export function ReplicaScaleControls({
 			) : null}
 
 			{inputError || error ? (
-				<p {...stylex.props(noticeStyles.error)}>{inputError ?? error}</p>
+				<p {...stylex.props(noticeStyles.error)}>
+					{inputError ?? error}
+					<BillingRestrictionHint message={error} />
+				</p>
 			) : null}
 			{saving ? (
 				<p {...stylex.props(styles.volumeConstraint)}>Saving replica count…</p>

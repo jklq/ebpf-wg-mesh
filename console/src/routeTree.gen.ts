@@ -19,6 +19,7 @@ import { Route as FleetRouteImport } from './routes/fleet'
 import { Route as DeletedRouteImport } from './routes/deleted'
 import { Route as WorkspaceRouteImport } from './routes/_workspace'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as WebhooksStripeRouteImport } from './routes/webhooks/stripe'
 import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
 import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
 import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/environment-services'
@@ -31,6 +32,10 @@ import { Route as ProjectsProjectIdUsageRouteImport } from './routes/projects/$p
 import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
 import { Route as WorkspaceWorkspaceSettingsRouteImport } from './routes/_workspace/workspace/settings'
 import { Route as WorkspaceWorkspacePeopleRouteImport } from './routes/_workspace/workspace/people'
+import { Route as WorkspaceWorkspaceBillingIndexRouteImport } from './routes/_workspace/workspace/billing/index'
+import { Route as WorkspaceWorkspaceBillingStatementsStatementIdRouteImport } from './routes/_workspace/workspace/billing/statements/$statementId'
+import { Route as WorkspaceWorkspaceBillingCheckoutSuccessRouteImport } from './routes/_workspace/workspace/billing/checkout/success'
+import { Route as WorkspaceWorkspaceBillingCheckoutCancelRouteImport } from './routes/_workspace/workspace/billing/checkout/cancel'
 
 const SessionzRoute = SessionzRouteImport.update({
   id: '/sessionz',
@@ -79,6 +84,11 @@ const WorkspaceRoute = WorkspaceRouteImport.update({
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WebhooksStripeRoute = WebhooksStripeRouteImport.update({
+  id: '/webhooks/stripe',
+  path: '/webhooks/stripe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WebhooksGithubRoute = WebhooksGithubRouteImport.update({
@@ -146,6 +156,30 @@ const WorkspaceWorkspacePeopleRoute =
     path: '/workspace/people',
     getParentRoute: () => WorkspaceRoute,
   } as any)
+const WorkspaceWorkspaceBillingIndexRoute =
+  WorkspaceWorkspaceBillingIndexRouteImport.update({
+    id: '/workspace/billing/',
+    path: '/workspace/billing/',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
+const WorkspaceWorkspaceBillingStatementsStatementIdRoute =
+  WorkspaceWorkspaceBillingStatementsStatementIdRouteImport.update({
+    id: '/workspace/billing/statements/$statementId',
+    path: '/workspace/billing/statements/$statementId',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
+const WorkspaceWorkspaceBillingCheckoutSuccessRoute =
+  WorkspaceWorkspaceBillingCheckoutSuccessRouteImport.update({
+    id: '/workspace/billing/checkout/success',
+    path: '/workspace/billing/checkout/success',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
+const WorkspaceWorkspaceBillingCheckoutCancelRoute =
+  WorkspaceWorkspaceBillingCheckoutCancelRouteImport.update({
+    id: '/workspace/billing/checkout/cancel',
+    path: '/workspace/billing/checkout/cancel',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -164,11 +198,16 @@ export interface FileRoutesByFullPath {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/webhooks/stripe': typeof WebhooksStripeRoute
   '/workspace/people': typeof WorkspaceWorkspacePeopleRoute
   '/workspace/settings': typeof WorkspaceWorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/usage': typeof ProjectsProjectIdUsageRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/workspace/billing/': typeof WorkspaceWorkspaceBillingIndexRoute
+  '/workspace/billing/checkout/cancel': typeof WorkspaceWorkspaceBillingCheckoutCancelRoute
+  '/workspace/billing/checkout/success': typeof WorkspaceWorkspaceBillingCheckoutSuccessRoute
+  '/workspace/billing/statements/$statementId': typeof WorkspaceWorkspaceBillingStatementsStatementIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -187,11 +226,16 @@ export interface FileRoutesByTo {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/webhooks/stripe': typeof WebhooksStripeRoute
   '/workspace/people': typeof WorkspaceWorkspacePeopleRoute
   '/workspace/settings': typeof WorkspaceWorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/usage': typeof ProjectsProjectIdUsageRoute
   '/projects/$projectId': typeof ProjectsProjectIdIndexRoute
+  '/workspace/billing': typeof WorkspaceWorkspaceBillingIndexRoute
+  '/workspace/billing/checkout/cancel': typeof WorkspaceWorkspaceBillingCheckoutCancelRoute
+  '/workspace/billing/checkout/success': typeof WorkspaceWorkspaceBillingCheckoutSuccessRoute
+  '/workspace/billing/statements/$statementId': typeof WorkspaceWorkspaceBillingStatementsStatementIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -212,11 +256,16 @@ export interface FileRoutesById {
   '/events/environment-services': typeof EventsEnvironmentServicesRoute
   '/events/service-status': typeof EventsServiceStatusRoute
   '/webhooks/github': typeof WebhooksGithubRoute
+  '/webhooks/stripe': typeof WebhooksStripeRoute
   '/_workspace/workspace/people': typeof WorkspaceWorkspacePeopleRoute
   '/_workspace/workspace/settings': typeof WorkspaceWorkspaceSettingsRoute
   '/projects/$projectId/settings': typeof ProjectsProjectIdSettingsRoute
   '/projects/$projectId/usage': typeof ProjectsProjectIdUsageRoute
   '/projects/$projectId/': typeof ProjectsProjectIdIndexRoute
+  '/_workspace/workspace/billing/': typeof WorkspaceWorkspaceBillingIndexRoute
+  '/_workspace/workspace/billing/checkout/cancel': typeof WorkspaceWorkspaceBillingCheckoutCancelRoute
+  '/_workspace/workspace/billing/checkout/success': typeof WorkspaceWorkspaceBillingCheckoutSuccessRoute
+  '/_workspace/workspace/billing/statements/$statementId': typeof WorkspaceWorkspaceBillingStatementsStatementIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -237,11 +286,16 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/webhooks/stripe'
     | '/workspace/people'
     | '/workspace/settings'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/usage'
     | '/projects/$projectId/'
+    | '/workspace/billing/'
+    | '/workspace/billing/checkout/cancel'
+    | '/workspace/billing/checkout/success'
+    | '/workspace/billing/statements/$statementId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -260,11 +314,16 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/webhooks/stripe'
     | '/workspace/people'
     | '/workspace/settings'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/usage'
     | '/projects/$projectId'
+    | '/workspace/billing'
+    | '/workspace/billing/checkout/cancel'
+    | '/workspace/billing/checkout/success'
+    | '/workspace/billing/statements/$statementId'
   id:
     | '__root__'
     | '/'
@@ -284,11 +343,16 @@ export interface FileRouteTypes {
     | '/events/environment-services'
     | '/events/service-status'
     | '/webhooks/github'
+    | '/webhooks/stripe'
     | '/_workspace/workspace/people'
     | '/_workspace/workspace/settings'
     | '/projects/$projectId/settings'
     | '/projects/$projectId/usage'
     | '/projects/$projectId/'
+    | '/_workspace/workspace/billing/'
+    | '/_workspace/workspace/billing/checkout/cancel'
+    | '/_workspace/workspace/billing/checkout/success'
+    | '/_workspace/workspace/billing/statements/$statementId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -308,6 +372,7 @@ export interface RootRouteChildren {
   EventsEnvironmentServicesRoute: typeof EventsEnvironmentServicesRoute
   EventsServiceStatusRoute: typeof EventsServiceStatusRoute
   WebhooksGithubRoute: typeof WebhooksGithubRoute
+  WebhooksStripeRoute: typeof WebhooksStripeRoute
   ProjectsProjectIdSettingsRoute: typeof ProjectsProjectIdSettingsRoute
   ProjectsProjectIdUsageRoute: typeof ProjectsProjectIdUsageRoute
   ProjectsProjectIdIndexRoute: typeof ProjectsProjectIdIndexRoute
@@ -383,6 +448,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/webhooks/stripe': {
+      id: '/webhooks/stripe'
+      path: '/webhooks/stripe'
+      fullPath: '/webhooks/stripe'
+      preLoaderRoute: typeof WebhooksStripeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/webhooks/github': {
@@ -469,6 +541,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceWorkspacePeopleRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/_workspace/workspace/billing/': {
+      id: '/_workspace/workspace/billing/'
+      path: '/workspace/billing'
+      fullPath: '/workspace/billing/'
+      preLoaderRoute: typeof WorkspaceWorkspaceBillingIndexRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/_workspace/workspace/billing/statements/$statementId': {
+      id: '/_workspace/workspace/billing/statements/$statementId'
+      path: '/workspace/billing/statements/$statementId'
+      fullPath: '/workspace/billing/statements/$statementId'
+      preLoaderRoute: typeof WorkspaceWorkspaceBillingStatementsStatementIdRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/_workspace/workspace/billing/checkout/success': {
+      id: '/_workspace/workspace/billing/checkout/success'
+      path: '/workspace/billing/checkout/success'
+      fullPath: '/workspace/billing/checkout/success'
+      preLoaderRoute: typeof WorkspaceWorkspaceBillingCheckoutSuccessRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/_workspace/workspace/billing/checkout/cancel': {
+      id: '/_workspace/workspace/billing/checkout/cancel'
+      path: '/workspace/billing/checkout/cancel'
+      fullPath: '/workspace/billing/checkout/cancel'
+      preLoaderRoute: typeof WorkspaceWorkspaceBillingCheckoutCancelRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
   }
 }
 
@@ -476,12 +576,23 @@ interface WorkspaceRouteChildren {
   WorkspaceDashboardRoute: typeof WorkspaceDashboardRoute
   WorkspaceWorkspacePeopleRoute: typeof WorkspaceWorkspacePeopleRoute
   WorkspaceWorkspaceSettingsRoute: typeof WorkspaceWorkspaceSettingsRoute
+  WorkspaceWorkspaceBillingIndexRoute: typeof WorkspaceWorkspaceBillingIndexRoute
+  WorkspaceWorkspaceBillingCheckoutCancelRoute: typeof WorkspaceWorkspaceBillingCheckoutCancelRoute
+  WorkspaceWorkspaceBillingCheckoutSuccessRoute: typeof WorkspaceWorkspaceBillingCheckoutSuccessRoute
+  WorkspaceWorkspaceBillingStatementsStatementIdRoute: typeof WorkspaceWorkspaceBillingStatementsStatementIdRoute
 }
 
 const WorkspaceRouteChildren: WorkspaceRouteChildren = {
   WorkspaceDashboardRoute: WorkspaceDashboardRoute,
   WorkspaceWorkspacePeopleRoute: WorkspaceWorkspacePeopleRoute,
   WorkspaceWorkspaceSettingsRoute: WorkspaceWorkspaceSettingsRoute,
+  WorkspaceWorkspaceBillingIndexRoute: WorkspaceWorkspaceBillingIndexRoute,
+  WorkspaceWorkspaceBillingCheckoutCancelRoute:
+    WorkspaceWorkspaceBillingCheckoutCancelRoute,
+  WorkspaceWorkspaceBillingCheckoutSuccessRoute:
+    WorkspaceWorkspaceBillingCheckoutSuccessRoute,
+  WorkspaceWorkspaceBillingStatementsStatementIdRoute:
+    WorkspaceWorkspaceBillingStatementsStatementIdRoute,
 }
 
 const WorkspaceRouteWithChildren = WorkspaceRoute._addFileChildren(
@@ -505,6 +616,7 @@ const rootRouteChildren: RootRouteChildren = {
   EventsEnvironmentServicesRoute: EventsEnvironmentServicesRoute,
   EventsServiceStatusRoute: EventsServiceStatusRoute,
   WebhooksGithubRoute: WebhooksGithubRoute,
+  WebhooksStripeRoute: WebhooksStripeRoute,
   ProjectsProjectIdSettingsRoute: ProjectsProjectIdSettingsRoute,
   ProjectsProjectIdUsageRoute: ProjectsProjectIdUsageRoute,
   ProjectsProjectIdIndexRoute: ProjectsProjectIdIndexRoute,
