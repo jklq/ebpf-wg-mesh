@@ -16,6 +16,10 @@ test-linux-runtime-docker:
 test-unit-console:
 	bun --cwd=console run test:unit
 
+.PHONY: build-mcp
+build-mcp:
+	go build -o bin/platform-mcp ./cmd/mcp
+
 test-integration:
 	$(MAKE) test-integration-go
 	$(MAKE) test-integration-console

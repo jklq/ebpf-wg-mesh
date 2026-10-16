@@ -242,6 +242,15 @@ const (
 	// PlatformServiceCancelBillingAccountProcedure is the fully-qualified name of the PlatformService's
 	// CancelBillingAccount RPC.
 	PlatformServiceCancelBillingAccountProcedure = "/platform.v1.PlatformService/CancelBillingAccount"
+	// PlatformServiceCreateAPITokenProcedure is the fully-qualified name of the PlatformService's
+	// CreateAPIToken RPC.
+	PlatformServiceCreateAPITokenProcedure = "/platform.v1.PlatformService/CreateAPIToken"
+	// PlatformServiceListAPITokensProcedure is the fully-qualified name of the PlatformService's
+	// ListAPITokens RPC.
+	PlatformServiceListAPITokensProcedure = "/platform.v1.PlatformService/ListAPITokens"
+	// PlatformServiceRevokeAPITokenProcedure is the fully-qualified name of the PlatformService's
+	// RevokeAPIToken RPC.
+	PlatformServiceRevokeAPITokenProcedure = "/platform.v1.PlatformService/RevokeAPIToken"
 	// BuilderServiceClaimBuildProcedure is the fully-qualified name of the BuilderService's ClaimBuild
 	// RPC.
 	BuilderServiceClaimBuildProcedure = "/platform.v1.BuilderService/ClaimBuild"
@@ -358,6 +367,9 @@ type PlatformServiceClient interface {
 	StartBillingPaymentSetup(context.Context, *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error)
 	StartBillingActivation(context.Context, *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
 	CancelBillingAccount(context.Context, *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error)
+	CreateAPIToken(context.Context, *connect.Request[platformv1.CreateAPITokenRequest]) (*connect.Response[platformv1.CreateAPITokenResponse], error)
+	ListAPITokens(context.Context, *connect.Request[platformv1.ListAPITokensRequest]) (*connect.Response[platformv1.ListAPITokensResponse], error)
+	RevokeAPIToken(context.Context, *connect.Request[platformv1.RevokeAPITokenRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
 // NewPlatformServiceClient constructs a client for the platform.v1.PlatformService service. By
@@ -779,6 +791,24 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("CancelBillingAccount")),
 			connect.WithClientOptions(opts...),
 		),
+		createAPIToken: connect.NewClient[platformv1.CreateAPITokenRequest, platformv1.CreateAPITokenResponse](
+			httpClient,
+			baseURL+PlatformServiceCreateAPITokenProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("CreateAPIToken")),
+			connect.WithClientOptions(opts...),
+		),
+		listAPITokens: connect.NewClient[platformv1.ListAPITokensRequest, platformv1.ListAPITokensResponse](
+			httpClient,
+			baseURL+PlatformServiceListAPITokensProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListAPITokens")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeAPIToken: connect.NewClient[platformv1.RevokeAPITokenRequest, emptypb.Empty](
+			httpClient,
+			baseURL+PlatformServiceRevokeAPITokenProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("RevokeAPIToken")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -852,6 +882,9 @@ type platformServiceClient struct {
 	startBillingPaymentSetup    *connect.Client[platformv1.StartBillingPaymentSetupRequest, platformv1.StartBillingPaymentSetupResponse]
 	startBillingActivation      *connect.Client[platformv1.StartBillingActivationRequest, platformv1.BillingAccountSummary]
 	cancelBillingAccount        *connect.Client[platformv1.CancelBillingAccountRequest, platformv1.CancelBillingAccountResponse]
+	createAPIToken              *connect.Client[platformv1.CreateAPITokenRequest, platformv1.CreateAPITokenResponse]
+	listAPITokens               *connect.Client[platformv1.ListAPITokensRequest, platformv1.ListAPITokensResponse]
+	revokeAPIToken              *connect.Client[platformv1.RevokeAPITokenRequest, emptypb.Empty]
 }
 
 // ListWorkspaces calls platform.v1.PlatformService.ListWorkspaces.
@@ -1194,6 +1227,21 @@ func (c *platformServiceClient) CancelBillingAccount(ctx context.Context, req *c
 	return c.cancelBillingAccount.CallUnary(ctx, req)
 }
 
+// CreateAPIToken calls platform.v1.PlatformService.CreateAPIToken.
+func (c *platformServiceClient) CreateAPIToken(ctx context.Context, req *connect.Request[platformv1.CreateAPITokenRequest]) (*connect.Response[platformv1.CreateAPITokenResponse], error) {
+	return c.createAPIToken.CallUnary(ctx, req)
+}
+
+// ListAPITokens calls platform.v1.PlatformService.ListAPITokens.
+func (c *platformServiceClient) ListAPITokens(ctx context.Context, req *connect.Request[platformv1.ListAPITokensRequest]) (*connect.Response[platformv1.ListAPITokensResponse], error) {
+	return c.listAPITokens.CallUnary(ctx, req)
+}
+
+// RevokeAPIToken calls platform.v1.PlatformService.RevokeAPIToken.
+func (c *platformServiceClient) RevokeAPIToken(ctx context.Context, req *connect.Request[platformv1.RevokeAPITokenRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.revokeAPIToken.CallUnary(ctx, req)
+}
+
 // PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
 	ListWorkspaces(context.Context, *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error)
@@ -1264,6 +1312,9 @@ type PlatformServiceHandler interface {
 	StartBillingPaymentSetup(context.Context, *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error)
 	StartBillingActivation(context.Context, *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
 	CancelBillingAccount(context.Context, *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error)
+	CreateAPIToken(context.Context, *connect.Request[platformv1.CreateAPITokenRequest]) (*connect.Response[platformv1.CreateAPITokenResponse], error)
+	ListAPITokens(context.Context, *connect.Request[platformv1.ListAPITokensRequest]) (*connect.Response[platformv1.ListAPITokensResponse], error)
+	RevokeAPIToken(context.Context, *connect.Request[platformv1.RevokeAPITokenRequest]) (*connect.Response[emptypb.Empty], error)
 }
 
 // NewPlatformServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1681,6 +1732,24 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("CancelBillingAccount")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceCreateAPITokenHandler := connect.NewUnaryHandler(
+		PlatformServiceCreateAPITokenProcedure,
+		svc.CreateAPIToken,
+		connect.WithSchema(platformServiceMethods.ByName("CreateAPIToken")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceListAPITokensHandler := connect.NewUnaryHandler(
+		PlatformServiceListAPITokensProcedure,
+		svc.ListAPITokens,
+		connect.WithSchema(platformServiceMethods.ByName("ListAPITokens")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceRevokeAPITokenHandler := connect.NewUnaryHandler(
+		PlatformServiceRevokeAPITokenProcedure,
+		svc.RevokeAPIToken,
+		connect.WithSchema(platformServiceMethods.ByName("RevokeAPIToken")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/platform.v1.PlatformService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PlatformServiceListWorkspacesProcedure:
@@ -1819,6 +1888,12 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceStartBillingActivationHandler.ServeHTTP(w, r)
 		case PlatformServiceCancelBillingAccountProcedure:
 			platformServiceCancelBillingAccountHandler.ServeHTTP(w, r)
+		case PlatformServiceCreateAPITokenProcedure:
+			platformServiceCreateAPITokenHandler.ServeHTTP(w, r)
+		case PlatformServiceListAPITokensProcedure:
+			platformServiceListAPITokensHandler.ServeHTTP(w, r)
+		case PlatformServiceRevokeAPITokenProcedure:
+			platformServiceRevokeAPITokenHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -2098,6 +2173,18 @@ func (UnimplementedPlatformServiceHandler) StartBillingActivation(context.Contex
 
 func (UnimplementedPlatformServiceHandler) CancelBillingAccount(context.Context, *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CancelBillingAccount is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) CreateAPIToken(context.Context, *connect.Request[platformv1.CreateAPITokenRequest]) (*connect.Response[platformv1.CreateAPITokenResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CreateAPIToken is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) ListAPITokens(context.Context, *connect.Request[platformv1.ListAPITokensRequest]) (*connect.Response[platformv1.ListAPITokensResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListAPITokens is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) RevokeAPIToken(context.Context, *connect.Request[platformv1.RevokeAPITokenRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.RevokeAPIToken is not implemented"))
 }
 
 // BuilderServiceClient is a client for the platform.v1.BuilderService service.

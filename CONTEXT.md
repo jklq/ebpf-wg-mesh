@@ -111,3 +111,17 @@ One message the platform sends to the operator when automatic operation fails
 with service at risk. An alarm names the failed operation and the next
 operator action.
 _Avoid_: Alert, notification
+
+## Public integration
+
+**Public API**:
+The versioned REST/JSON surface (`/v1`) that external clients use with an
+API token. It translates the desired-application model above into stable
+public resources; it is not a second source of truth.
+_Avoid_: API gateway, external gRPC
+
+**API Token**:
+A scoped, revocable bearer credential that acts as its owning user: account,
+workspace, or project scope, at read or full access. Workspace membership
+authorization still applies live on every call.
+_Avoid_: API key (as a separate concept), personal access token

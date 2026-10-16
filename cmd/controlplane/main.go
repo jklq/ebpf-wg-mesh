@@ -39,6 +39,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "api-token" {
+		if err := bootstrap.RunAPIToken(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "signing-keys" {
 		if err := bootstrap.RunSigningKeys(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)

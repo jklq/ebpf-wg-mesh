@@ -1668,6 +1668,86 @@ message BillingControlState {
   string mode = 3;
 }
 
+// API tokens authenticate the public API (and clients built on it, such as
+// the MCP server). A token always acts as the user who created it; workspace
+// membership authorization still applies live on every call. The scope
+// additionally confines the token to one workspace, or to one environment of
+// one project. Only the SHA-256 hash of the secret is stored; the secret
+// itself is returned exactly once, at creation.
+enum APITokenScope {
+  API_TOKEN_SCOPE_UNSPECIFIED = 0;
+  // Every workspace the owning user belongs to.
+  API_TOKEN_SCOPE_ACCOUNT = 1;
+  // One workspace.
+  API_TOKEN_SCOPE_WORKSPACE = 2;
+  // One environment of one project.
+  API_TOKEN_SCOPE_PROJECT = 3;
+}
+
+enum APITokenAccess {
+  API_TOKEN_ACCESS_UNSPECIFIED = 0;
+  // Read operations only.
+  API_TOKEN_ACCESS_READ = 1;
+  // Reads and writes, bounded by the owner's workspace roles.
+  API_TOKEN_ACCESS_FULL = 2;
+}
+
+message APIToken {
+  string id = 1;
+  string name = 2;
+  // Display prefix of the secret, e.g. "wgm_Ab3dEf6h". Never the secret.
+  string prefix = 3;
+  APITokenScope scope = 4;
+  APITokenAccess access = 5;
+  // Set for workspace-scoped tokens, and for project-scoped tokens (the
+  // workspace that owned the project at creation; re-checked live).
+  string workspace_id = 6;
+  // Set for project-scoped tokens.
+  string project_id = 7;
+  string environment_id = 8;
+  string created_by_user_id = 9;
+  google.protobuf.Timestamp created_at = 10;
+  // Absent means the token does not expire.
+  google.protobuf.Timestamp expires_at = 11;
+  google.protobuf.Timestamp last_used_at = 12;
+  google.protobuf.Timestamp revoked_at = 13;
+}
+
+message CreateAPITokenRequest {
+  string name = 1;
+  APITokenScope scope = 2;
+  // Required for workspace scope. Ignored otherwise.
+  string workspace_id = 3;
+  // Required for project scope, together with environment_id.
+  string project_id = 4;
+  string environment_id = 5;
+  // Unspecified means full access.
+  APITokenAccess access = 6;
+  // Zero means the token does not expire.
+  int32 expires_in_days = 7;
+}
+
+message CreateAPITokenResponse {
+  APIToken token = 1;
+  // The plaintext secret. Returned only here; store it now.
+  string secret = 2 [debug_redact = true];
+}
+
+message ListAPITokensRequest {
+  // Empty lists the caller's own tokens. A workspace ID lists the tokens
+  // scoped to that workspace; the caller must administer the workspace.
+  string workspace_id = 1;
+  bool include_revoked = 2;
+}
+
+message ListAPITokensResponse {
+  repeated APIToken tokens = 1;
+}
+
+message RevokeAPITokenRequest {
+  string token_id = 1;
+}
+
 service PlatformService {
   rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
   rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace);
@@ -1742,6 +1822,10 @@ service PlatformService {
   rpc StartBillingPaymentSetup(StartBillingPaymentSetupRequest) returns (StartBillingPaymentSetupResponse);
   rpc StartBillingActivation(StartBillingActivationRequest) returns (BillingAccountSummary);
   rpc CancelBillingAccount(CancelBillingAccountRequest) returns (CancelBillingAccountResponse);
+
+  rpc CreateAPIToken(CreateAPITokenRequest) returns (CreateAPITokenResponse);
+  rpc ListAPITokens(ListAPITokensRequest) returns (ListAPITokensResponse);
+  rpc RevokeAPIToken(RevokeAPITokenRequest) returns (google.protobuf.Empty);
 }
 
 message BuilderWorker {

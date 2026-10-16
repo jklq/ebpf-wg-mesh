@@ -61,6 +61,9 @@ func ControlPlaneStartupContract(cfg ControlPlaneConfig) StartupContract {
 	if cfg.Registry.Host != "" {
 		features = append(features, "registry_auth")
 	}
+	if cfg.PublicAPI.Listen != "" {
+		features = append(features, "public_api")
+	}
 	if cfg.GitHub.Enabled {
 		features = append(features, "github")
 	}

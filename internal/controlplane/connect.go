@@ -368,6 +368,21 @@ func (a connectPlatformService) CancelBillingAccount(ctx context.Context, req *c
 	return connect.NewResponse(result), toConnectError(err)
 }
 
+func (a connectPlatformService) CreateAPIToken(ctx context.Context, req *connect.Request[platformv1.CreateAPITokenRequest]) (*connect.Response[platformv1.CreateAPITokenResponse], error) {
+	result, err := a.service.CreateAPIToken(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) ListAPITokens(ctx context.Context, req *connect.Request[platformv1.ListAPITokensRequest]) (*connect.Response[platformv1.ListAPITokensResponse], error) {
+	result, err := a.service.ListAPITokens(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) RevokeAPIToken(ctx context.Context, req *connect.Request[platformv1.RevokeAPITokenRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.RevokeAPIToken(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) ListBuildAttempts(ctx context.Context, req *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
 	result, err := a.service.ListBuildAttempts(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)

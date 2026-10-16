@@ -28,6 +28,17 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if err := validateServerTLS("controlplane.internalGrpc.tls", cfg.InternalGRPC.TLS); err != nil {
 		return err
 	}
+	if cfg.PublicAPI.Listen != "" {
+		if _, err := net.ResolveTCPAddr("tcp", cfg.PublicAPI.Listen); err != nil {
+			return fmt.Errorf("controlplane.publicApi.listen: %w", err)
+		}
+	}
+	if cfg.PublicAPI.RequestsPerHour < 0 {
+		return errors.New("controlplane.publicApi.requestsPerHour must be non-negative")
+	}
+	if cfg.PublicAPI.BurstPerSecond < 0 {
+		return errors.New("controlplane.publicApi.burstPerSecond must be non-negative")
+	}
 	if cfg.Database.URL == "" {
 		return errors.New("controlplane.database.url is required")
 	}

@@ -172,6 +172,15 @@ type GitHubAppConfig struct {
 	WebhookPath   string
 }
 
+// PublicAPIConfig governs the public REST/JSON API listener. The listener
+// serves plaintext HTTP on loopback by default; operators expose it
+// publicly behind TLS (for example ingress), never as bare HTTP.
+type PublicAPIConfig struct {
+	Listen          string
+	RequestsPerHour int
+	BurstPerSecond  int
+}
+
 type RegistryConfig struct {
 	Host                     string
 	NamespacePrefix          string
@@ -299,6 +308,7 @@ type ControlPlaneConfig struct {
 	Bootstrap        BootstrapConfig
 	GitHub           GitHubAppConfig
 	Registry         RegistryConfig
+	PublicAPI        PublicAPIConfig
 	Builder          ControlPlaneBuilderConfig
 	Failover         ControlPlaneFailoverConfig
 	Shutdown         ControlPlaneShutdownConfig

@@ -40,6 +40,7 @@ type platformService struct {
 	usage                *usage.Store
 	billingSvc           *billing.Service
 	authz                *authz.Authorizer
+	apiTokens            apiTokenStore
 }
 
 type platformStore interface {

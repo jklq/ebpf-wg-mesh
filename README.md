@@ -6,6 +6,7 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 - `cmd/agent`: fleet agent that supervises allocations on one node
 - `cmd/builder`: build worker that turns source snapshots into images
 - `cmd/platformctl`: installation planner and encrypted, resumable SSH deployment controller
+- `cmd/mcp`: MCP server (stdio + streamable HTTP) built on the public API
 - `console`: TanStack Start web app; owns browser auth and calls the control plane
 - `api/proto`: protobuf and generated gRPC bindings
 
@@ -16,6 +17,8 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 - [Storage operations](docs/storage-operations.md): snapshots, resident history, and scheduled registry collection.
 - [Resource usage](docs/resource-usage.md): CPU, memory, volume, and public egress meters, delivery, retention, and gaps.
 - [Observability](docs/observability.md): OpenTelemetry traces, Prometheus metrics, wide-event logs, and the optional bundled Grafana/Tempo/Collector deployment.
+- [Public API](docs/public-api.md): token-authenticated REST/JSON API for CI, scripts, and agents.
+- [MCP server](docs/mcp-server.md): AI-agent tools over the public API, editor setup, and the Railway mapping.
 - [Billing](docs/billing.md): workspace billing accounts, exact rating, statements, spend restrictions, Stripe collection, and the shadow-mode launch gate.
 - [GitHub project](https://github.com/users/jklq/projects/6): backlog and priorities.
 

@@ -85,6 +85,7 @@ type Server struct {
 	registry        *registry.Policy
 	registryAuth    *registry.Auth
 	registryHTTP    *http.Server
+	publicHTTP      *http.Server
 	github          *source.GitHubCatalog
 	webhooks        *source.GitHubWebhookProcessor
 	coordinator     *source.GitHubCoordinator
@@ -95,6 +96,7 @@ type Server struct {
 	buildStaleAfter time.Duration
 	internalLn      net.Listener
 	registryLn      net.Listener
+	publicLn        net.Listener
 	healthShutdown  func(context.Context) error
 	runMu           sync.Mutex
 	runCancel       context.CancelFunc
@@ -349,6 +351,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withPlatformLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
 		withUsage(usageStore, store.authorizer()),
 		withBilling(billingService, store.authorizer()),
+		withAPITokens(store.database, store.authorizer()),
 	)
 	consoleCallers := strings.Join(cfg.ConsoleCallerIDs, ",")
 	if cfg.Dashboard.Enabled {
@@ -412,6 +415,26 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			IdleTimeout:       time.Minute,
 		}
 	}
+	var publicLn net.Listener
+	var publicHTTP *http.Server
+	if strings.TrimSpace(cfg.PublicAPI.Listen) != "" {
+		publicLn, err = net.Listen("tcp", cfg.PublicAPI.Listen)
+		if err != nil {
+			_ = xdsLn.Close()
+			_ = internalLn.Close()
+			if registryLn != nil {
+				_ = registryLn.Close()
+			}
+			return nil, fmt.Errorf("listen public api: %w", err)
+		}
+		publicHTTP = &http.Server{
+			Handler:           newPublicAPIHandler(platformService, store.database, cfg.PublicAPI, admission.Paused),
+			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Second,
+			WriteTimeout:      60 * time.Second,
+			IdleTimeout:       time.Minute,
+		}
+	}
 
 	requiredSigningScopes := []string{signkeys.ScopeInternalCA, signkeys.ScopeUserAssertion}
 	if registryAuth != nil {
@@ -446,6 +469,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		registry:        policy,
 		registryAuth:    registryAuth,
 		registryHTTP:    registryHTTP,
+		publicHTTP:      publicHTTP,
 		github:          githubCatalog,
 		webhooks:        webhookProcessor,
 		coordinator:     githubCoordinator,
@@ -457,6 +481,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		internalLn:      internalLn,
 		internalHTTP:    internalHTTP,
 		registryLn:      registryLn,
+		publicLn:        publicLn,
 		runDone:         make(chan struct{}),
 		drain:           drain,
 	}
@@ -467,6 +492,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 			_ = internalLn.Close()
 			if registryLn != nil {
 				_ = registryLn.Close()
+			}
+			if publicLn != nil {
+				_ = publicLn.Close()
 			}
 			return nil, fmt.Errorf("listen health: %w", err)
 		}
@@ -579,6 +607,15 @@ func (s *Server) Run(ctx context.Context) error {
 	if s.registryHTTP != nil && s.registryLn != nil {
 		go func() {
 			err := s.registryHTTP.Serve(s.registryLn)
+			if errors.Is(err, http.ErrServerClosed) {
+				err = nil
+			}
+			errCh <- err
+		}()
+	}
+	if s.publicHTTP != nil && s.publicLn != nil {
+		go func() {
+			err := s.publicHTTP.Serve(s.publicLn)
 			if errors.Is(err, http.ErrServerClosed) {
 				err = nil
 			}
@@ -915,6 +952,15 @@ func (s *Server) Close() error {
 	if s.registryLn != nil {
 		_ = s.registryLn.Close()
 	}
+	if s.publicHTTP != nil {
+		err := s.publicHTTP.Close()
+		if !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+			errs = append(errs, err)
+		}
+	}
+	if s.publicLn != nil {
+		_ = s.publicLn.Close()
+	}
 	if s.store != nil {
 		if s.store.secrets != nil {
 			errs = append(errs, s.store.secrets.Close())
@@ -942,6 +988,14 @@ func (s *Server) RegistryAuthAddr() string {
 		return ""
 	}
 	return s.registryLn.Addr().String()
+}
+
+// PublicAPIAddr is the public REST API listen address, empty when disabled.
+func (s *Server) PublicAPIAddr() string {
+	if s == nil || s.publicLn == nil {
+		return ""
+	}
+	return s.publicLn.Addr().String()
 }
 
 // XDSAddr is the address Envoy instances subscribe to.

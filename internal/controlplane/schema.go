@@ -1,9 +1,9 @@
 package controlplane
 
-const currentSchemaVersion = 46
+const currentSchemaVersion = 47
 
 // Increase only when the binary requires structures absent from older schemas.
-const minimumSchemaVersion = 46
+const minimumSchemaVersion = 47
 
 const recoveryAuthoritySchema = `CREATE TABLE recovery_runtime_authority (singleton BOOL PRIMARY KEY CHECK (singleton = TRUE), installation TEXT NOT NULL, generation TEXT NOT NULL, paused BOOL NOT NULL)`
 const recoveryReservationsSchema = `CREATE TABLE recovery_network_reservations (
@@ -119,6 +119,31 @@ var currentSchema = []string{
 			ON projects(workspace_id, name) WHERE kind = 'user'`,
 	`CREATE UNIQUE INDEX idx_projects_system_key
 			ON projects(system_key) WHERE system_key IS NOT NULL`,
+	// Public API tokens. environment_id intentionally has no foreign key:
+	// environments are tombstoned and garbage-collected independently, and
+	// scope checks fail closed when the environment no longer resolves.
+	`CREATE TABLE api_tokens (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			secret_hash TEXT NOT NULL UNIQUE,
+			prefix TEXT NOT NULL,
+			scope TEXT NOT NULL CHECK (scope IN ('account', 'workspace', 'project')),
+			access TEXT NOT NULL CHECK (access IN ('read', 'full')),
+			workspace_id TEXT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			project_id TEXT NULL REFERENCES projects(id) ON DELETE CASCADE,
+			environment_id TEXT NULL,
+			created_by_user_id TEXT NOT NULL,
+			created_by_email TEXT NOT NULL DEFAULT '',
+			created_at TIMESTAMPTZ NOT NULL,
+			expires_at TIMESTAMPTZ NULL,
+			last_used_at TIMESTAMPTZ NULL,
+			revoked_at TIMESTAMPTZ NULL,
+			CHECK (scope <> 'workspace' OR workspace_id IS NOT NULL),
+			CHECK (scope <> 'project' OR (workspace_id IS NOT NULL AND project_id IS NOT NULL AND environment_id IS NOT NULL)),
+			CHECK (scope <> 'account' OR (workspace_id IS NULL AND project_id IS NULL AND environment_id IS NULL))
+		)`,
+	`CREATE INDEX idx_api_tokens_creator ON api_tokens(created_by_user_id, created_at, id)`,
+	`CREATE INDEX idx_api_tokens_workspace ON api_tokens(workspace_id, created_at, id) WHERE workspace_id IS NOT NULL`,
 	`CREATE TABLE platform_operators (
 			user_id TEXT PRIMARY KEY,
 			created_at TIMESTAMPTZ NOT NULL

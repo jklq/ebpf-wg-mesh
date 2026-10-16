@@ -88,6 +88,9 @@ const (
 	PlatformService_StartBillingPaymentSetup_FullMethodName    = "/platform.v1.PlatformService/StartBillingPaymentSetup"
 	PlatformService_StartBillingActivation_FullMethodName      = "/platform.v1.PlatformService/StartBillingActivation"
 	PlatformService_CancelBillingAccount_FullMethodName        = "/platform.v1.PlatformService/CancelBillingAccount"
+	PlatformService_CreateAPIToken_FullMethodName              = "/platform.v1.PlatformService/CreateAPIToken"
+	PlatformService_ListAPITokens_FullMethodName               = "/platform.v1.PlatformService/ListAPITokens"
+	PlatformService_RevokeAPIToken_FullMethodName              = "/platform.v1.PlatformService/RevokeAPIToken"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -162,6 +165,9 @@ type PlatformServiceClient interface {
 	StartBillingPaymentSetup(ctx context.Context, in *StartBillingPaymentSetupRequest, opts ...grpc.CallOption) (*StartBillingPaymentSetupResponse, error)
 	StartBillingActivation(ctx context.Context, in *StartBillingActivationRequest, opts ...grpc.CallOption) (*BillingAccountSummary, error)
 	CancelBillingAccount(ctx context.Context, in *CancelBillingAccountRequest, opts ...grpc.CallOption) (*CancelBillingAccountResponse, error)
+	CreateAPIToken(ctx context.Context, in *CreateAPITokenRequest, opts ...grpc.CallOption) (*CreateAPITokenResponse, error)
+	ListAPITokens(ctx context.Context, in *ListAPITokensRequest, opts ...grpc.CallOption) (*ListAPITokensResponse, error)
+	RevokeAPIToken(ctx context.Context, in *RevokeAPITokenRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
 type platformServiceClient struct {
@@ -852,6 +858,36 @@ func (c *platformServiceClient) CancelBillingAccount(ctx context.Context, in *Ca
 	return out, nil
 }
 
+func (c *platformServiceClient) CreateAPIToken(ctx context.Context, in *CreateAPITokenRequest, opts ...grpc.CallOption) (*CreateAPITokenResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateAPITokenResponse)
+	err := c.cc.Invoke(ctx, PlatformService_CreateAPIToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) ListAPITokens(ctx context.Context, in *ListAPITokensRequest, opts ...grpc.CallOption) (*ListAPITokensResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListAPITokensResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListAPITokens_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) RevokeAPIToken(ctx context.Context, in *RevokeAPITokenRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, PlatformService_RevokeAPIToken_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // PlatformServiceServer is the server API for PlatformService service.
 // All implementations must embed UnimplementedPlatformServiceServer
 // for forward compatibility.
@@ -924,6 +960,9 @@ type PlatformServiceServer interface {
 	StartBillingPaymentSetup(context.Context, *StartBillingPaymentSetupRequest) (*StartBillingPaymentSetupResponse, error)
 	StartBillingActivation(context.Context, *StartBillingActivationRequest) (*BillingAccountSummary, error)
 	CancelBillingAccount(context.Context, *CancelBillingAccountRequest) (*CancelBillingAccountResponse, error)
+	CreateAPIToken(context.Context, *CreateAPITokenRequest) (*CreateAPITokenResponse, error)
+	ListAPITokens(context.Context, *ListAPITokensRequest) (*ListAPITokensResponse, error)
+	RevokeAPIToken(context.Context, *RevokeAPITokenRequest) (*emptypb.Empty, error)
 	mustEmbedUnimplementedPlatformServiceServer()
 }
 
@@ -1137,6 +1176,15 @@ func (UnimplementedPlatformServiceServer) StartBillingActivation(context.Context
 }
 func (UnimplementedPlatformServiceServer) CancelBillingAccount(context.Context, *CancelBillingAccountRequest) (*CancelBillingAccountResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelBillingAccount not implemented")
+}
+func (UnimplementedPlatformServiceServer) CreateAPIToken(context.Context, *CreateAPITokenRequest) (*CreateAPITokenResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateAPIToken not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListAPITokens(context.Context, *ListAPITokensRequest) (*ListAPITokensResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListAPITokens not implemented")
+}
+func (UnimplementedPlatformServiceServer) RevokeAPIToken(context.Context, *RevokeAPITokenRequest) (*emptypb.Empty, error) {
+	return nil, status.Error(codes.Unimplemented, "method RevokeAPIToken not implemented")
 }
 func (UnimplementedPlatformServiceServer) mustEmbedUnimplementedPlatformServiceServer() {}
 func (UnimplementedPlatformServiceServer) testEmbeddedByValue()                         {}
@@ -2383,6 +2431,60 @@ func _PlatformService_CancelBillingAccount_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_CreateAPIToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateAPITokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).CreateAPIToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_CreateAPIToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).CreateAPIToken(ctx, req.(*CreateAPITokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_ListAPITokens_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListAPITokensRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListAPITokens(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListAPITokens_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListAPITokens(ctx, req.(*ListAPITokensRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_RevokeAPIToken_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RevokeAPITokenRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).RevokeAPIToken(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_RevokeAPIToken_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).RevokeAPIToken(ctx, req.(*RevokeAPITokenRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // PlatformService_ServiceDesc is the grpc.ServiceDesc for PlatformService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2661,6 +2763,18 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelBillingAccount",
 			Handler:    _PlatformService_CancelBillingAccount_Handler,
+		},
+		{
+			MethodName: "CreateAPIToken",
+			Handler:    _PlatformService_CreateAPIToken_Handler,
+		},
+		{
+			MethodName: "ListAPITokens",
+			Handler:    _PlatformService_ListAPITokens_Handler,
+		},
+		{
+			MethodName: "RevokeAPIToken",
+			Handler:    _PlatformService_RevokeAPIToken_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

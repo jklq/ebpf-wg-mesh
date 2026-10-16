@@ -22,6 +22,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/localteststack"
+	"ebof-wg-mesh/internal/platformdb"
 	"ebof-wg-mesh/internal/telemetry"
 	"ebof-wg-mesh/internal/testdb"
 	"ebof-wg-mesh/internal/testutil"
@@ -39,6 +40,8 @@ type stackSummary struct {
 	GitHubCallbackURL string             `json:"github_callback_url"`
 	GitHubWebhookURL  string             `json:"github_webhook_url"`
 	ProductE2E        *productE2ESummary `json:"product_e2e,omitempty"`
+	PublicAPIURL      string             `json:"public_api_url,omitempty"`
+	DevAPIToken       string             `json:"dev_api_token,omitempty"`
 }
 
 const consoleStartupTimeout = 2 * time.Minute
@@ -146,6 +149,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("pick registry port: %v", err)
 	}
+	publicAPIPort, err := pickLoopbackPort()
+	if err != nil {
+		return fmt.Errorf("pick public api port: %v", err)
+	}
 	// Each ephemeral run recreates its owned bridge with the workload IPAM pools.
 	if err := localteststack.RemoveDockerNetwork(ctx, localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
 		return fmt.Errorf("reset local workload network: %w", err)
@@ -230,6 +237,9 @@ func run() error {
 			ServiceCallerID: localConsoleCallerID,
 		},
 		ConsoleCallerIDs: []string{localConsoleCallerID},
+		PublicAPI: config.PublicAPIConfig{
+			Listen: fmt.Sprintf("127.0.0.1:%d", publicAPIPort),
+		},
 		Mesh: config.ControlPlaneMeshConfig{
 			InterfaceName:              "wg0",
 			ListenPort:                 51820,
@@ -589,6 +599,9 @@ func run() error {
 		go monitorBackgroundComponent(ctx, stop, "local builder", localBuilderErrCh)
 	}
 
+	publicAPIURL := fmt.Sprintf("http://127.0.0.1:%d", publicAPIPort)
+	devAPIToken := mintDevAPIToken(ctx, dbURL)
+
 	summary := stackSummary{
 		ControlPlaneURL:   controlPlaneURL,
 		DashboardURL:      ingressURL,
@@ -601,6 +614,8 @@ func run() error {
 		GitHubCallbackURL: overlay.GitHubCallbackURL,
 		GitHubWebhookURL:  overlay.GitHubWebhookURL,
 		ProductE2E:        productFixture,
+		PublicAPIURL:      publicAPIURL,
+		DevAPIToken:       devAPIToken,
 	}
 	if err := writeSummary(filepath.Join(artifactsDir, "stack.json"), summary); err != nil {
 		return fmt.Errorf("write stack summary: %v", err)
@@ -625,6 +640,10 @@ func run() error {
 		log.Printf("dashboard: %s", ingressURL)
 		log.Printf("example published host: http://%s:%d", stackCfg.examplePublishedHost("echo"), stackCfg.IngressPort)
 		log.Printf("controlplane grpc: %s", controlPlaneURL)
+		log.Printf("public api: %s (OpenAPI at /v1/openapi.json)", publicAPIURL)
+		if devAPIToken != "" {
+			log.Printf("mcp: PLATFORM_API_URL=%s PLATFORM_API_TOKEN=%s go run ./cmd/mcp", publicAPIURL, devAPIToken)
+		}
 		log.Printf("database: %s", dbURL)
 		log.Printf("clickhouse: %s", clickHouseURL)
 		log.Printf("artifacts: %s", artifactsDir)
@@ -645,4 +664,26 @@ func run() error {
 	default:
 	}
 	return nil
+}
+
+// mintDevAPIToken creates the ephemeral full-access token the MCP server
+// and API examples use against this stack. Best-effort: the stack is
+// usable through the dashboard without it.
+func mintDevAPIToken(ctx context.Context, dbURL string) string {
+	db, err := platformdb.OpenURL(ctx, dbURL, platformdb.SchemaPlatform)
+	if err != nil {
+		log.Printf("mint dev api token: %v", err)
+		return ""
+	}
+	defer db.Close()
+	_, secret, err := controlplane.CreateAPITokenOffline(ctx, db, "dev-user", "dev@example.com", controlplane.APITokenMint{
+		Name:   "localteststack dev",
+		Scope:  controlplane.APITokenScopeAccount,
+		Access: controlplane.APITokenAccessFull,
+	})
+	if err != nil {
+		log.Printf("mint dev api token: %v", err)
+		return ""
+	}
+	return secret
 }
