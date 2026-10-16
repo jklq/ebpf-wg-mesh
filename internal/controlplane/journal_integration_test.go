@@ -100,7 +100,6 @@ func TestJournalRetryAndAbortDoNotDuplicateAssignments(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		journal.AssignmentRow(allocation.ID).Capture(ctx)
 		return nil
 	}
 	if err := store.withProductTx(commandCtx, func(ctx context.Context, tx *sql.Tx) error {
@@ -191,6 +190,77 @@ func TestProductNoOpDoesNotAdvanceJournalOrEvents(t *testing.T) {
 	if !reflect.DeepEqual(before, after) || beforeEvent != afterEvent || beforeJournal != afterJournal || beforeReceipts != afterReceipts {
 		t.Fatalf("no-op changed durable state: head %d->%d event %d->%d journal %d->%d receipts %d->%d",
 			before.LogIndex, after.LogIndex, beforeEvent, afterEvent, beforeJournal, afterJournal, beforeReceipts, afterReceipts)
+	}
+}
+
+// TestJournalDerivesBatchFromPlainWrites pins the journal seam: commands
+// write plain SQL and record nothing. The journal must still capture the
+// inserted row, a change visible only through an auxiliary table's rendering
+// (service_delivery_status feeds the services row), and a tombstone removal.
+func TestJournalDerivesBatchFromPlainWrites(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "plain-writes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID := productionEnvironmentID(t, store, project.ID)
+	before, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	serviceID := uuid.NewString()
+	now := time.Now().UTC()
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO services(
+			id, environment_id, name, current_spec_revision,
+			desired_replica_count, created_at, updated_at
+		) VALUES ($1, $2, 'plain', 1, 1, $3, $3)`, serviceID, environmentID, now); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO service_delivery_status(service_id, updated_at) VALUES ($1, $2)`, serviceID, now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterInsert, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if afterInsert.LogIndex != before.LogIndex+1 {
+		t.Fatalf("plain insert advanced journal %d -> %d, want +1", before.LogIndex, afterInsert.LogIndex)
+	}
+	if _, ok := afterInsert.Services[serviceID]; !ok {
+		t.Fatal("plainly inserted service missing from durable state")
+	}
+
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE service_delivery_status SET placement_message = 'no capacity' WHERE service_id = $1`, serviceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterAux, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := afterAux.Services[serviceID].PlacementMessage; got != "no capacity" {
+		t.Fatalf("auxiliary-table write not journaled: placement_message = %q", got)
+	}
+
+	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE services SET deleted_at = statement_timestamp() WHERE id = $1`, serviceID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	afterTombstone, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := afterTombstone.Services[serviceID]; ok {
+		t.Fatal("tombstoned service still in durable state")
 	}
 }
 
@@ -285,11 +355,13 @@ func TestJournalExcludesTransientHeartbeat(t *testing.T) {
 	}
 }
 
-func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
+// TestJournalReplayMatchesProductState drives a broad mix of commands whose
+// writes are plain SQL inside product transactions. The journal derives each
+// batch itself, so replaying those batches must reproduce exactly the state
+// rebuilt from the normalized product tables.
+func TestJournalReplayMatchesProductState(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-	store.journal.SetVerifyRecordings(true)
-	t.Cleanup(func() { store.journal.SetVerifyRecordings(false) })
 
 	project, err := store.catalog.createProject(ctx, testUser("owner"), "", "recording")
 	if err != nil {
@@ -383,6 +455,17 @@ func TestJournalRecordingMatchesFullStateDiff(t *testing.T) {
 	if _, err := store.catalog.deleteEnvironment(ctx, testUser("owner"), staging.ID, ""); err != nil {
 		t.Fatal(err)
 	}
+	replayed, err := store.journal.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rebuilt, err := journal.New(store.db, "default", nil).Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayed, rebuilt) {
+		t.Fatal("journal replay differs from state rebuilt from product tables")
+	}
 }
 
 func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
@@ -411,8 +494,6 @@ func TestJournalPayloadIsIndependentOfUnrelatedRows(t *testing.T) {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO service_revisions(service_id, spec_revision, spec_json, created_at) VALUES ($1, 1, '{}', $2)`, id, now); err != nil {
 				return err
 			}
-			journal.ServiceRow(id).Capture(ctx)
-			journal.RevisionRow(id, 1).Capture(ctx)
 		}
 		return nil
 	}); err != nil {
@@ -467,7 +548,6 @@ func TestJournalConcurrentAppendsStayContiguous(t *testing.T) {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, $2, 'user', NULL, statement_timestamp())`, id, prefix+"-"+id); err != nil {
 					return err
 				}
-				journal.ProjectRow(id).Capture(ctx)
 				return nil
 			}); err != nil {
 				errs <- err
@@ -580,7 +660,6 @@ func TestJournalRetryAfterCompactionReturnsReceipt(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, 'retained', 'user', NULL, statement_timestamp())`, projectID); err != nil {
 			return err
 		}
-		journal.ProjectRow(projectID).Capture(ctx)
 		return nil
 	})
 	if err != nil {
@@ -784,7 +863,6 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET detail = 'staged for test' WHERE id = $1`, deploymentID); err != nil {
 			return err
 		}
-		journal.DeploymentRow(deploymentID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -799,7 +877,6 @@ func TestAffectedAgentFanoutIsScoped(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET operator_restart_nonce = operator_restart_nonce + 1 WHERE id = $1`, allocs[0].ID); err != nil {
 			return err
 		}
-		journal.AssignmentRow(allocs[0].ID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)
@@ -868,7 +945,7 @@ func TestJournalSlowCommandDoesNotBlockReadsOrIndependentCommands(t *testing.T) 
 			case <-ctx.Done():
 				return ctx.Err()
 			}
-			_, err := journal.ProjectRow(first.ID).Exec(ctx, tx, `UPDATE projects SET name = 'first changed' WHERE id = $1`, first.ID)
+			_, err := tx.ExecContext(ctx, `UPDATE projects SET name = 'first changed' WHERE id = $1`, first.ID)
 			return err
 		})
 		done <- err
@@ -882,7 +959,7 @@ func TestJournalSlowCommandDoesNotBlockReadsOrIndependentCommands(t *testing.T) 
 		t.Fatalf("read blocked behind command: %v", err)
 	}
 	if _, err := store.journal.Execute(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := journal.ProjectRow(second.ID).Exec(ctx, tx, `UPDATE projects SET name = 'second changed' WHERE id = $1`, second.ID)
+		_, err := tx.ExecContext(ctx, `UPDATE projects SET name = 'second changed' WHERE id = $1`, second.ID)
 		return err
 	}); err != nil {
 		t.Fatalf("independent command blocked: %v", err)

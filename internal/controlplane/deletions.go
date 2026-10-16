@@ -11,7 +11,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 // lockProjectTx locks a user project row and loads it with its deletion state. Managed
@@ -30,11 +29,11 @@ func (s *catalogPersistence) lockProjectTx(ctx context.Context, tx *sql.Tx, scop
 }
 
 func (s *catalogPersistence) tombstoneProjectTx(ctx context.Context, tx *sql.Tx, projectID, userID string, now time.Time) (bool, error) {
-	return s.tombstoneRowTx(ctx, tx, "projects", journal.ProjectTree(projectID), projectID, userID, now)
+	return s.tombstoneRowTx(ctx, tx, "projects", projectID, userID, now)
 }
 
 func (s *catalogPersistence) clearProjectTombstoneTx(ctx context.Context, tx *sql.Tx, projectID string) (bool, error) {
-	return clearTombstoneRowTx(ctx, tx, "projects", journal.ProjectTree(projectID), projectID)
+	return clearTombstoneRowTx(ctx, tx, "projects", projectID)
 }
 
 // lockEnvironmentTx locks an environment row and loads it with its effective deletion state.
@@ -46,11 +45,11 @@ func (s *catalogPersistence) lockEnvironmentTx(ctx context.Context, tx *sql.Tx, 
 }
 
 func (s *catalogPersistence) tombstoneEnvironmentTx(ctx context.Context, tx *sql.Tx, environmentID, userID string, now time.Time) (bool, error) {
-	return s.tombstoneRowTx(ctx, tx, "environments", journal.EnvironmentTree(environmentID), environmentID, userID, now)
+	return s.tombstoneRowTx(ctx, tx, "environments", environmentID, userID, now)
 }
 
 func (s *catalogPersistence) clearEnvironmentTombstoneTx(ctx context.Context, tx *sql.Tx, environmentID string) (bool, error) {
-	return clearTombstoneRowTx(ctx, tx, "environments", journal.EnvironmentTree(environmentID), environmentID)
+	return clearTombstoneRowTx(ctx, tx, "environments", environmentID)
 }
 
 // lockVolumeTx locks a volume row, its deletion state, and the environment's production flag.
@@ -79,11 +78,11 @@ func (s *catalogPersistence) lockVolumeTx(ctx context.Context, tx *sql.Tx, scope
 }
 
 func (s *catalogPersistence) tombstoneVolumeTx(ctx context.Context, tx *sql.Tx, volumeID, userID string, now time.Time) (bool, error) {
-	return s.tombstoneRowTx(ctx, tx, "volumes", journal.VolumeRow(volumeID), volumeID, userID, now)
+	return s.tombstoneRowTx(ctx, tx, "volumes", volumeID, userID, now)
 }
 
-func (s *catalogPersistence) tombstoneRowTx(ctx context.Context, tx *sql.Tx, table string, effect journal.Mutation, id, userID string, now time.Time) (bool, error) {
-	result, err := effect.Exec(ctx, tx,
+func (s *catalogPersistence) tombstoneRowTx(ctx context.Context, tx *sql.Tx, table string, id, userID string, now time.Time) (bool, error) {
+	result, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`UPDATE %s
 		    SET deleted_at = $1,
 		        deleted_by_user_id = $2,
@@ -101,8 +100,8 @@ func (s *catalogPersistence) tombstoneRowTx(ctx context.Context, tx *sql.Tx, tab
 	return affected > 0, nil
 }
 
-func clearTombstoneRowTx(ctx context.Context, tx *sql.Tx, table string, effect journal.Mutation, id string) (bool, error) {
-	result, err := effect.Exec(ctx, tx,
+func clearTombstoneRowTx(ctx context.Context, tx *sql.Tx, table string, id string) (bool, error) {
+	result, err := tx.ExecContext(ctx,
 		fmt.Sprintf(`UPDATE %s
 		    SET deleted_at = NULL,
 		        deleted_by_user_id = '',

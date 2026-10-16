@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -113,7 +112,7 @@ func (d *Delivery) QueueDeploymentRebuild(ctx context.Context, req source.Rebuil
 		if reused {
 			detail = "Historical source matches a retained image"
 		}
-		if _, err := journal.DeploymentRow(next.ID).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE deployments SET reason_code = $1, detail = $2 WHERE id = $3`, dep.ReasonCode, detail, next.ID); err != nil {
 			return err
 		}
@@ -137,7 +136,7 @@ func (d *Delivery) FailDeploymentRebuild(ctx context.Context, deploymentID, reas
 		}); err != nil {
 			return err
 		}
-		_, err = journal.RolloutRow(dep.ServiceID, dep.RolloutGeneration).Exec(ctx, tx,
+		_, err = tx.ExecContext(ctx,
 			`UPDATE service_rollouts SET state = $1, failure_reason = $2, completed_at = $3
 			 WHERE service_id = $4 AND rollout_generation = $5`, rolloutStateFailed, reason, time.Now().UTC(), dep.ServiceID, dep.RolloutGeneration)
 		return err

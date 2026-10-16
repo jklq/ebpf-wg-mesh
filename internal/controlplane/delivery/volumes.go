@@ -184,7 +184,7 @@ func (d *Delivery) recordVolumeReport(ctx context.Context, agentID string, repor
 	}
 	err = d.store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		for _, volumeID := range completed {
-			if _, err := journal.DestructionRow(volumeID).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`DELETE FROM volume_destructions WHERE volume_id = $1 AND agent_id = $2`, volumeID, agentID); err != nil {
 				return err
 			}
@@ -237,7 +237,7 @@ func RequestVolumeDestructionsTx(ctx context.Context, tx *sql.Tx, now time.Time,
 		return err
 	}
 	for _, target := range targets {
-		if _, err := journal.DestructionRow(target.volumeID).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO volume_destructions(volume_id, agent_id, requested_at) VALUES ($1, $2, $3)
 			 ON CONFLICT (volume_id) DO NOTHING`, target.volumeID, target.agentID, now); err != nil {
 			return err
@@ -264,7 +264,7 @@ func (d *Delivery) growVolumeTx(ctx context.Context, tx *sql.Tx, volumeID string
 		return VolumeRecord{}, fmt.Errorf("%w: %d MiB is smaller than the current %d MiB", ErrVolumeShrink, sizeBytes>>20, current>>20)
 	}
 	if sizeBytes != current {
-		if _, err := journal.VolumeRow(volumeID).Exec(ctx, tx, `UPDATE volumes SET size_bytes = $1 WHERE id = $2`, sizeBytes, volumeID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE volumes SET size_bytes = $1 WHERE id = $2`, sizeBytes, volumeID); err != nil {
 			return VolumeRecord{}, err
 		}
 	}
@@ -325,7 +325,7 @@ func (d *Delivery) OrphanedVolumes(agentID string) []string {
 // DiscardStagedVolumeTx removes a never-released volume. It was never placed,
 // so no node holds data for it and the row can go without a tombstone.
 func DiscardStagedVolumeTx(ctx context.Context, tx *sql.Tx, volumeID string) (bool, error) {
-	result, err := journal.VolumeRow(volumeID).Exec(ctx, tx,
+	result, err := tx.ExecContext(ctx,
 		`DELETE FROM volumes WHERE id = $1 AND staged AND agent_id IS NULL`, volumeID)
 	if err != nil {
 		return false, err
@@ -362,10 +362,10 @@ func discardUnmountedStagedVolumeTx(ctx context.Context, tx *sql.Tx, environment
 // commitStagedVolumesTx makes an environment release commit the volumes
 // created since the previous one.
 func commitStagedVolumesTx(ctx context.Context, tx *sql.Tx, environmentID string) error {
-	return journal.UpdateRows(ctx, tx, journal.TableVolumes,
+	_, err := tx.ExecContext(ctx,
 		`UPDATE volumes SET staged = false
-		  WHERE environment_id = $1 AND staged AND deleted_at IS NULL
-		  RETURNING id`, environmentID)
+		  WHERE environment_id = $1 AND staged AND deleted_at IS NULL`, environmentID)
+	return err
 }
 
 func (d *Delivery) ListVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]VolumeRecord, error) {

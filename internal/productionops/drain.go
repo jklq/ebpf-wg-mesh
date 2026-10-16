@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/deploy"
 	"ebof-wg-mesh/internal/health"
 	"ebof-wg-mesh/internal/recovery"
@@ -16,7 +15,7 @@ import (
 
 func drainAgent(ctx context.Context, db *sql.DB, id string) error {
 	if err := adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := journal.AdministrationRow(id).Exec(ctx, tx, `UPDATE agent_administration SET lifecycle_state='draining',operator_intent='draining',maintenance_message='platform plan requested safe stateless drain',updated_at=statement_timestamp() WHERE agent_id=$1 AND lifecycle_state<>'retired'`, id)
+		_, err := tx.ExecContext(ctx, `UPDATE agent_administration SET lifecycle_state='draining',operator_intent='draining',maintenance_message='platform plan requested safe stateless drain',updated_at=statement_timestamp() WHERE agent_id=$1 AND lifecycle_state<>'retired'`, id)
 		return err
 	}); err != nil {
 		return err
@@ -136,7 +135,7 @@ func (r *Runner) admitReservations(ctx context.Context) error {
 		// networks, admit checkpoints, or enable workload reconciliation. Restores
 		// use approved fleet reconciliation instead of this upgrade-only path.
 		if err := adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
-			result, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_registrations SET cpu_millis_capacity=$2,memory_mebibytes_capacity=$3,local_store_id=$4 FROM agent_administration a WHERE agent_registrations.id=$1 AND a.agent_id=agent_registrations.id AND a.lifecycle_state<>'retired' AND a.credential_revoked_at IS NULL AND (local_store_id=$4 OR (local_store_id='' AND a.lifecycle_state='enrolling'))`, pl.Instance, cpu, ram, inventory.LocalStoreID)
+			result, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET cpu_millis_capacity=$2,memory_mebibytes_capacity=$3,local_store_id=$4 FROM agent_administration a WHERE agent_registrations.id=$1 AND a.agent_id=agent_registrations.id AND a.lifecycle_state<>'retired' AND a.credential_revoked_at IS NULL AND (local_store_id=$4 OR (local_store_id='' AND a.lifecycle_state='enrolling'))`, pl.Instance, cpu, ram, inventory.LocalStoreID)
 			if err != nil {
 				return err
 			}
@@ -160,7 +159,7 @@ func (r *Runner) admitReservations(ctx context.Context) error {
 			if pl.Role != deploy.Agent {
 				continue
 			}
-			if _, err = journal.AdministrationRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_administration SET lifecycle_state=q.previous_state,operator_intent=q.previous_intent,maintenance_message='',updated_at=statement_timestamp() FROM recovery.reservation_admission q WHERE agent_administration.agent_id=q.agent_id AND q.plan_id=$1 AND q.agent_id=$2 AND agent_administration.lifecycle_state='draining'`, r.Plan.ID, pl.Instance); err != nil {
+			if _, err = tx.ExecContext(ctx, `UPDATE agent_administration SET lifecycle_state=q.previous_state,operator_intent=q.previous_intent,maintenance_message='',updated_at=statement_timestamp() FROM recovery.reservation_admission q WHERE agent_administration.agent_id=q.agent_id AND q.plan_id=$1 AND q.agent_id=$2 AND agent_administration.lifecycle_state='draining'`, r.Plan.ID, pl.Instance); err != nil {
 				return err
 			}
 		}

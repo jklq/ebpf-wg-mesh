@@ -12,7 +12,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
-	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"github.com/google/uuid"
 )
@@ -287,7 +286,7 @@ func (s *catalogPersistence) deleteWorkspace(ctx context.Context, user authz.Use
 			return errWorkspaceHasProjects
 		}
 		for _, id := range deletedProjects {
-			if _, err := journal.ProjectRow(id).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`UPDATE projects
 				    SET workspace_id = NULL,
 				        delete_expires_at = LEAST(delete_expires_at, statement_timestamp())
@@ -546,7 +545,7 @@ func (s *catalogPersistence) moveProject(ctx context.Context, user authz.User, p
 		} else if found {
 			return fmt.Errorf("%w: the workspace already has a project named %q", errProjectNameTaken, project.Name)
 		}
-		if _, err := journal.ProjectRow(project.ID).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE projects SET workspace_id = $1 WHERE id = $2 AND workspace_id = $3`,
 			target.ID(), project.ID, project.WorkspaceID); err != nil {
 			return err

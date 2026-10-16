@@ -18,7 +18,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/controlplane/source"
 
@@ -438,7 +437,6 @@ func (s *persistence) markAllocationIDHealthyForTest(ctx context.Context, alloca
 		); err != nil {
 			return err
 		}
-		journal.AssignmentRow(allocationID).Capture(ctx)
 		return nil
 	}); err != nil {
 		return err
@@ -536,7 +534,6 @@ func seedActiveDeploymentTx(ctx context.Context, tx *sql.Tx, serviceID string) e
 		if err := rows.Scan(&id); err != nil {
 			return err
 		}
-		journal.DeploymentRow(id).Capture(ctx)
 	}
 	return rows.Err()
 }
@@ -552,7 +549,6 @@ func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, service
 			rows.Close()
 			return err
 		}
-		journal.AssignmentRow(id).Capture(ctx)
 	}
 	if err := rows.Close(); err != nil {
 		return err
@@ -561,7 +557,6 @@ func recordServiceAssignmentsAndRollout(ctx context.Context, tx *sql.Tx, service
 	if err := tx.QueryRowContext(ctx, `SELECT current_rollout_generation FROM service_delivery_status WHERE service_id = $1`, serviceID).Scan(&generation); err != nil {
 		return err
 	}
-	journal.RolloutRow(serviceID, generation).Capture(ctx)
 	return nil
 }
 

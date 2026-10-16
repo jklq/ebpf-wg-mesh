@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/deploy"
 )
 
@@ -38,7 +37,7 @@ func (r *Runner) reserveOverlap(ctx context.Context, db *sql.DB, pl deploy.Place
 		if cpu <= 0 || ram <= 0 || usedCPU+reserve.CPUMillis > cpu || usedRAM+reserve.MemoryMiB > ram {
 			return fmt.Errorf("existing allocations leave insufficient transition headroom; serving workloads retained")
 		}
-		_, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_registrations SET reserved_cpu_millis=$2,reserved_memory_mebibytes=$3,updated_at=statement_timestamp() WHERE id=$1`, pl.Instance, reserve.CPUMillis, reserve.MemoryMiB)
+		_, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET reserved_cpu_millis=$2,reserved_memory_mebibytes=$3,updated_at=statement_timestamp() WHERE id=$1`, pl.Instance, reserve.CPUMillis, reserve.MemoryMiB)
 		return err
 	})
 }
@@ -52,7 +51,7 @@ func (r *Runner) releaseOverlapReservations(ctx context.Context) error {
 	return adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
 		for _, pl := range r.Plan.Placements {
 			if pl.Role == deploy.Agent {
-				if _, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `UPDATE agent_registrations SET reserved_cpu_millis=0,reserved_memory_mebibytes=0,updated_at=statement_timestamp() WHERE id=$1`, pl.Instance); err != nil {
+				if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET reserved_cpu_millis=0,reserved_memory_mebibytes=0,updated_at=statement_timestamp() WHERE id=$1`, pl.Instance); err != nil {
 					return err
 				}
 			}

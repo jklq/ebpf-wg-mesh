@@ -11,7 +11,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/google/uuid"
@@ -132,7 +131,7 @@ func (d *Delivery) createDeployedServiceTx(ctx context.Context, tx *sql.Tx, envi
 		rec.ResolvedImage = artifact.ImageRef
 	}
 	rec.RolloutGeneration = 1
-	if _, err := journal.ServiceRow(rec.ID).Exec(ctx, tx, `UPDATE service_delivery_status
+	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
 		SET current_rollout_generation = 1, current_artifact_id = NULLIF($1, '') WHERE service_id = $2`, rec.ResolvedArtifactID, rec.ID); err != nil {
 		return ServiceRecord{}, err
 	}
@@ -246,7 +245,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 			return current, false, false, nil
 		}
 		now := time.Now().UTC()
-		result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
+		result, err := tx.ExecContext(ctx,
 			`UPDATE services
 			    SET name = $1,
 			        updated_at = $2
@@ -274,7 +273,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 	now := time.Now().UTC()
 	nextSpecRevision := current.SpecRevision + 1
 	sourceChanged := source.DesiredSourceSpec(spec) != nil && !sameDesiredSourceSpec(current.Spec, spec)
-	result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE services
 		    SET name = $1,
 		        current_spec_revision = $2,
@@ -409,7 +408,7 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 		if deletion.Inherited {
 			return ErrAncestorDeleted
 		}
-		result, err := journal.ServiceTree(scope.ID()).Exec(ctx, tx,
+		result, err := tx.ExecContext(ctx,
 			`UPDATE services
 			    SET deleted_at = NULL,
 			        deleted_by_user_id = '',
@@ -500,7 +499,7 @@ func (d *Delivery) discardServiceChanges(ctx context.Context, scope authz.Servic
 		}
 		now := time.Now().UTC()
 		nextRevision := current.SpecRevision + 1
-		result, err := journal.ServiceRow(current.ID).Exec(ctx, tx,
+		result, err := tx.ExecContext(ctx,
 			`UPDATE services
 			    SET current_spec_revision = $1,
 			        updated_at = $2
@@ -692,7 +691,7 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	} else {
 		rec.SourceSummary = BuildSourceSummary(spec)
 	}
-	if _, err := journal.ServiceRow(rec.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO services(
 			id, environment_id, name, current_spec_revision,
 			desired_replica_count, created_at, updated_at
@@ -822,7 +821,7 @@ func requireLiveService(deletion *DeletionInfo) error {
 // tombstoneServiceTx marks the service deleted, reporting whether the row transitioned. An
 // already-tombstoned row is a no-op success so deletes stay idempotent.
 func (s *persistence) tombstoneServiceTx(ctx context.Context, tx *sql.Tx, serviceID, userID string, now time.Time) (bool, error) {
-	result, err := journal.ServiceTree(serviceID).Exec(ctx, tx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE services
 		    SET deleted_at = $1,
 		        deleted_by_user_id = $2,

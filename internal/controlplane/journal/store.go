@@ -1,7 +1,6 @@
 package journal
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -42,13 +41,6 @@ type Store struct {
 	fence       Fence
 	onApplied   func(Applied)
 	published   *Projection
-	verify      bool
-}
-
-func (s *Store) SetVerifyRecordings(enabled bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.verify = enabled
 }
 
 func New(db *sql.DB, clusterID string, fence Fence) *Store {
@@ -76,19 +68,20 @@ func WithCommandID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, commandIDKey{}, id)
 }
 
+// Execute runs one journal command. fn writes plain SQL in the command
+// transaction; the journal derives the durable batch itself by diffing the
+// product state before and after fn, so callers never record which rows a
+// write affects. Planning happens outside the heads lock; the command
+// retries on serialization conflicts and publishes no attempted state.
 func (s *Store) Execute(ctx context.Context, fn func(context.Context, *sql.Tx) error) (Entry, error) {
 	return s.execute(ctx, fn, nil)
 }
 
-// ExecuteWithMutation runs one journal command, then lets afterChanges react to
-// the exact rows changed. afterChanges runs in the same transaction before
-// serialization; rows it changes through Mutation join the command payload.
-//
-// fn must contain only transactional work and capture every durable row it
-// changes. Planning happens outside the heads lock; the command retries on
-// serialization conflicts and publishes no attempted state.
-func (s *Store) ExecuteWithMutation(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
-	return s.execute(ctx, fn, afterChanges)
+// ExecuteWithReaction is Execute with a react step that runs in the same
+// transaction before serialization and receives the exact batch fn produced.
+// Rows react changes join the command payload.
+func (s *Store) ExecuteWithReaction(ctx context.Context, fn func(context.Context, *sql.Tx) error, react func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
+	return s.execute(ctx, fn, react)
 }
 
 func (s *Store) authorizeScheduling(ctx context.Context, tx *sql.Tx, batch Batch) (*int64, error) {
@@ -108,10 +101,7 @@ func (s *Store) authorizeScheduling(ctx context.Context, tx *sql.Tx, batch Batch
 	return &epoch, nil
 }
 
-func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, afterChanges func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
-	s.mu.Lock()
-	verify := s.verify
-	s.mu.Unlock()
+func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) error, react func(context.Context, *sql.Tx, *Projection, Batch) error) (Entry, error) {
 	id, _ := ctx.Value(commandIDKey{}).(string)
 	callerProvidedID := id != ""
 	if id == "" {
@@ -151,26 +141,19 @@ func (s *Store) execute(ctx context.Context, fn func(context.Context, *sql.Tx) e
 		if err != nil {
 			return err
 		}
-		recorder := newRecorder(tx)
-		commandCtx := withRecorder(ctx, recorder)
-		if err := fn(commandCtx, tx); err != nil {
+		if err := fn(ctx, tx); err != nil {
 			return err
 		}
-		batch, err := resolveRecorded(ctx, tx, base.DurableState, recorder.keys)
+		batch, err := diffTx(ctx, tx, base.DurableState)
 		if err != nil {
 			return err
 		}
-		if afterChanges != nil {
-			if err := afterChanges(commandCtx, tx, base, batch); err != nil {
+		if react != nil {
+			if err := react(ctx, tx, base, batch); err != nil {
 				return err
 			}
-			batch, err = resolveRecorded(ctx, tx, base.DurableState, recorder.keys)
+			batch, err = diffTx(ctx, tx, base.DurableState)
 			if err != nil {
-				return err
-			}
-		}
-		if verify {
-			if err := verifyRecordings(ctx, tx, base.DurableState, batch); err != nil {
 				return err
 			}
 		}
@@ -370,23 +353,16 @@ func lookup(ctx context.Context, q queryer, clusterID, commandID string) (Entry,
 	return scanEntry(q.QueryRowContext(ctx, `SELECT `+entryColumns+` FROM cluster_journal_receipts WHERE cluster_id = $1 AND command_id = $2`, clusterID, commandID))
 }
 
-func verifyRecordings(ctx context.Context, tx *sql.Tx, base DurableState, recorded Batch) error {
+// diffTx derives a command's batch from the transaction's own writes: it
+// reads the product state the transaction now sees and diffs it against the
+// base prefix. Tombstone filters, operational filters, and auxiliary-table
+// renderings are all reflected in that read, so no write path can be missed.
+func diffTx(ctx context.Context, tx *sql.Tx, base DurableState) (Batch, error) {
 	after, err := readProductState(ctx, tx)
 	if err != nil {
-		return err
+		return Batch{}, err
 	}
-	recordedJSON, err := json.Marshal(recorded)
-	if err != nil {
-		return err
-	}
-	actualJSON, err := json.Marshal(Diff(base, after))
-	if err != nil {
-		return err
-	}
-	if !bytes.Equal(recordedJSON, actualJSON) {
-		return fmt.Errorf("journal recording mismatch\nrecorded: %s\nactual:   %s", recordedJSON, actualJSON)
-	}
-	return nil
+	return Diff(base, after), nil
 }
 
 func replay(ctx context.Context, tx *sql.Tx, state *Projection, head int64) (*Projection, []Batch, error) {

@@ -121,11 +121,11 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if hello.GetSessionIncarnation() <= previousIncarnation || hello.GetSessionIncarnation() > math.MaxInt64 {
 			return ErrStaleAgentSession
 		}
-		if _, err := journal.AgentRow(hello.GetAgentId()).Exec(ctx, tx, `UPDATE agent_registrations SET session_incarnation = $2 WHERE id = $1`, hello.GetAgentId(), int64(hello.GetSessionIncarnation())); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET session_incarnation = $2 WHERE id = $1`, hello.GetAgentId(), int64(hello.GetSessionIncarnation())); err != nil {
 			return err
 		}
 		if storeID == "" {
-			if _, err := journal.AgentRow(hello.GetAgentId()).Exec(ctx, tx, `UPDATE agent_registrations SET local_store_id = $2 WHERE id = $1`, hello.GetAgentId(), hello.GetLocalStoreId()); err != nil {
+			if _, err := tx.ExecContext(ctx, `UPDATE agent_registrations SET local_store_id = $2 WHERE id = $1`, hello.GetAgentId(), hello.GetLocalStoreId()); err != nil {
 				return err
 			}
 		}
@@ -174,7 +174,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 		if err != nil {
 			return err
 		}
-		_, err = journal.AgentRow(hello.GetAgentId()).Exec(ctx, tx,
+		_, err = tx.ExecContext(ctx,
 			`UPDATE agent_registrations SET
 				advertise_addr = $1, workload_ipv4_subnet = $2, workload_ipv6_subnet = $3, wireguard_public_key = $4,
 				wireguard_listen_port = $5, wireguard_endpoint = $6, wireguard_ipv6 = $7, cpu_millis_capacity = $8,
@@ -198,7 +198,7 @@ func (d *Delivery) RegisterAgent(ctx context.Context, hello *agentv1.AgentHello)
 			return err
 		}
 
-		administration, err := journal.AdministrationRow(hello.GetAgentId()).Exec(ctx, tx, `UPDATE agent_administration
+		administration, err := tx.ExecContext(ctx, `UPDATE agent_administration
 			SET lifecycle_state = CASE WHEN lifecycle_state = 'enrolling' THEN 'active' ELSE lifecycle_state END,
 			    updated_at = CASE WHEN lifecycle_state = 'enrolling' THEN $2 ELSE updated_at END
 			WHERE agent_id = $1 AND lifecycle_state <> 'retired' AND credential_revoked_at IS NULL`, hello.GetAgentId(), now)

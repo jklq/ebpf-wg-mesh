@@ -3,7 +3,6 @@ package productionops
 import (
 	"context"
 	"database/sql"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/deploy"
 	"fmt"
 )
@@ -94,7 +93,7 @@ func (r *Runner) recoverWork(ctx context.Context, verify bool) error {
 }
 func (r *Runner) retireAgent(ctx context.Context, db *sql.DB, id string) error {
 	return adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := journal.AdministrationRow(id).Exec(ctx, tx, `UPDATE agent_administration SET lifecycle_state='retired',operator_intent='cordoned',credential_revoked_at=COALESCE(credential_revoked_at,statement_timestamp()),updated_at=statement_timestamp() WHERE agent_id=$1`, id)
+		_, err := tx.ExecContext(ctx, `UPDATE agent_administration SET lifecycle_state='retired',operator_intent='cordoned',credential_revoked_at=COALESCE(credential_revoked_at,statement_timestamp()),updated_at=statement_timestamp() WHERE agent_id=$1`, id)
 		return err
 	})
 }

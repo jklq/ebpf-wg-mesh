@@ -115,7 +115,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 			if existing.TargetPort == targetPort {
 				return nil
 			}
-			if _, err := journal.DomainRow(attemptHostname).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`UPDATE domain_bindings
 				    SET service_id = $1,
 				        target_port = $2,
@@ -142,7 +142,7 @@ func (s *routingPersistence) putDomainBinding(ctx context.Context, service authz
 				return err
 			}
 		}
-		if _, err := journal.DomainRow(attemptHostname).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO domain_bindings(hostname, service_id, target_port, platform_generated, created_at, updated_at)
 			 VALUES ($1, $2, $3, $4, $5, $6)`,
 			attemptHostname, service.ID(), targetPort, attemptPlatformGenerated, now, now,
@@ -209,7 +209,7 @@ func (s *routingPersistence) updateDomainBinding(ctx context.Context, binding au
 			return nil
 		}
 		now := time.Now().UTC()
-		if _, err := journal.DomainRow(existing.Hostname).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE domain_bindings
 			    SET service_id = $1,
 			        target_port = $2,
@@ -450,7 +450,7 @@ func (s *routingPersistence) lockDomainBindingTx(ctx context.Context, tx *sql.Tx
 }
 
 func (s *routingPersistence) tombstoneDomainBindingTx(ctx context.Context, tx *sql.Tx, hostname, userID string, now time.Time) (bool, error) {
-	result, err := journal.DomainRow(hostname).Exec(ctx, tx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE domain_bindings
 		    SET deleted_at = $1,
 		        deleted_by_user_id = $2,
@@ -469,7 +469,7 @@ func (s *routingPersistence) tombstoneDomainBindingTx(ctx context.Context, tx *s
 }
 
 func (s *routingPersistence) clearDomainBindingTombstoneTx(ctx context.Context, tx *sql.Tx, hostname string) (bool, error) {
-	result, err := journal.DomainRow(hostname).Exec(ctx, tx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE domain_bindings
 		    SET deleted_at = NULL,
 		        deleted_by_user_id = '',
@@ -565,7 +565,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		).Scan(&binding.Hostname, &binding.ProjectID, &binding.EnvironmentID, &binding.ServiceID, &binding.TargetPort, &binding.CreatedAt, &binding.UpdatedAt)
 		switch {
 		case err == sql.ErrNoRows:
-			if _, err := journal.DomainRow(hostname).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`INSERT INTO domain_bindings(hostname, service_id, target_port, created_at, updated_at)
 				 VALUES ($1, $2, $3, $4, $5)`,
 				hostname, serviceID, targetPort, now, now,
@@ -589,7 +589,7 @@ func (s *catalogPersistence) ensureManagedDomainBinding(ctx context.Context, pro
 		case binding.ServiceID == serviceID && binding.TargetPort == targetPort:
 			return nil
 		default:
-			if _, err := journal.DomainRow(hostname).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`UPDATE domain_bindings
 				    SET service_id = $1,
 				        target_port = $2,

@@ -91,7 +91,7 @@ func (s *persistence) insertServiceRevisionTx(ctx context.Context, q ServiceQuer
 	if err != nil {
 		return err
 	}
-	_, err = journal.RevisionRow(serviceID, specRevision).Exec(ctx, q,
+	_, err = q.ExecContext(ctx,
 		`INSERT INTO service_revisions(service_id, spec_revision, spec_json, env_dek_id, env_ciphertext, created_at)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		serviceID, specRevision, specJSON, envDEKID, envCiphertext, now)

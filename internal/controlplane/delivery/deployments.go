@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/restartpolicy"
 
 	"github.com/google/uuid"
@@ -558,7 +557,7 @@ func (s *persistence) insertDeploymentTx(
 		return DeploymentRecord{}, err
 	}
 	rec.ResolvedSpec = resolvedSpec
-	if _, err := journal.DeploymentRow(rec.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO deployments(
 			id, service_id, spec_revision, rollout_generation, build_id, artifact_id, source_revision_id,
 			state, cause_kind, cause_id, reason_code, detail, is_current, requested_by_user_id, created_at, updated_at
@@ -588,13 +587,13 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 		return err
 	}
 	if deploymentStateTerminal(current.State) {
-		if _, err := journal.DeploymentRow(current.ID).Exec(ctx, tx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 			return err
 		}
 		return nil
 	}
 	if current.State == DeploymentStateActive {
-		if _, err := journal.DeploymentRow(current.ID).Exec(ctx, tx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 			return err
 		}
 		return nil
@@ -616,7 +615,7 @@ func (s *persistence) retireCurrentDeploymentTx(ctx context.Context, tx *sql.Tx,
 	if err != nil {
 		return err
 	}
-	if _, err := journal.DeploymentRow(current.ID).Exec(ctx, tx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE deployments SET is_current = FALSE, updated_at = $1 WHERE id = $2`, now, current.ID); err != nil {
 		return err
 	}
 	return nil
@@ -634,7 +633,7 @@ func (s *persistence) applyDeploymentTransitionTx(ctx context.Context, tx *sql.T
 		return rec, err
 	}
 
-	if _, err := journal.DeploymentRow(rec.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE deployments
 		    SET spec_revision = $1,
 		        rollout_generation = $2,

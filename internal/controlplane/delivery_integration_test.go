@@ -10,7 +10,6 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
-	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
@@ -46,7 +45,6 @@ func TestDeliveryReleaseAuthorizationAndAtomicity(t *testing.T) {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM volumes WHERE id = $1`, volume.ID); err != nil {
 			return err
 		}
-		journal.VolumeRow(volume.ID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

@@ -15,7 +15,6 @@ import (
 func TestJournalKeepsOperationalClosureWithoutResidentHistory(t *testing.T) {
 	store, _, service := createHealthyRollingService(t, 1, 1)
 	ctx := context.Background()
-	store.journal.SetVerifyRecordings(true)
 	initial, err := store.journal.Snapshot(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -25,11 +24,6 @@ func TestJournalKeepsOperationalClosureWithoutResidentHistory(t *testing.T) {
 	const latest = 129
 	historyID := func(n int) string { return fmt.Sprintf("%s/history/%d", service.ID, n) }
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		for n := 2; n <= latest; n++ {
-			if err := journal.Rows(journal.RevisionRow(service.ID, int64(n)), journal.RolloutRow(service.ID, int64(n)), journal.DeploymentRow(historyID(n))).Capture(ctx); err != nil {
-				return err
-			}
-		}
 		for _, query := range []string{
 			`INSERT INTO service_revisions(service_id, spec_revision, spec_json, env_dek_id, env_ciphertext, created_at)
 			 SELECT service_id, n, spec_json, env_dek_id, env_ciphertext, created_at
@@ -72,17 +66,16 @@ func TestJournalKeepsOperationalClosureWithoutResidentHistory(t *testing.T) {
 	// references the old generation, whose full closure must stay resident.
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		updates := []struct {
-			mutation journal.Mutation
-			query    string
-			args     []any
+			query string
+			args  []any
 		}{
-			{journal.DeploymentRow(deploymentID), `UPDATE deployments SET is_current = FALSE, state = 'superseded' WHERE id = $1`, []any{deploymentID}},
-			{journal.DeploymentRow(historyID(latest)), `UPDATE deployments SET is_current = TRUE, state = 'active' WHERE id = $1`, []any{historyID(latest)}},
-			{journal.ServiceRow(service.ID), `UPDATE services SET current_spec_revision = 129 WHERE id = $1`, []any{service.ID}},
-			{journal.ServiceRow(service.ID), `UPDATE service_delivery_status SET current_rollout_generation = 129 WHERE service_id = $1`, []any{service.ID}},
+			{`UPDATE deployments SET is_current = FALSE, state = 'superseded' WHERE id = $1`, []any{deploymentID}},
+			{`UPDATE deployments SET is_current = TRUE, state = 'active' WHERE id = $1`, []any{historyID(latest)}},
+			{`UPDATE services SET current_spec_revision = 129 WHERE id = $1`, []any{service.ID}},
+			{`UPDATE service_delivery_status SET current_rollout_generation = 129 WHERE service_id = $1`, []any{service.ID}},
 		}
 		for _, update := range updates {
-			if _, err := update.mutation.Exec(ctx, tx, update.query, update.args...); err != nil {
+			if _, err := tx.ExecContext(ctx, update.query, update.args...); err != nil {
 				return err
 			}
 		}
@@ -96,7 +89,7 @@ func TestJournalKeepsOperationalClosureWithoutResidentHistory(t *testing.T) {
 	}
 	assertClosure(resident, 2)
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := journal.AssignmentRow(allocation.ID).Exec(ctx, tx, `UPDATE allocation_assignments SET
+		_, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET
 			deployment_id = $1, desired_spec_revision = 129, desired_rollout_generation = 129 WHERE id = $2`, historyID(latest), allocation.ID)
 		return err
 	}); err != nil {

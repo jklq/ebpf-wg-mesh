@@ -8,7 +8,6 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/registry"
 )
 
@@ -339,7 +338,7 @@ func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, 
 	if !usePendingRollout {
 		nextRolloutGeneration++
 	}
-	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status
 		    SET current_artifact_id = NULLIF($1, ''),
 		        last_successful_commit_sha = NULLIF($2, ''),
@@ -352,7 +351,7 @@ func (d *Delivery) scheduleSucceededArtifactTx(ctx context.Context, tx *sql.Tx, 
 		return DeploymentRecord{}, false, err
 	}
 	if usePendingRollout {
-		if _, err := journal.RolloutRow(service.ID, nextRolloutGeneration).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE service_rollouts
 			    SET state = $1, artifact_id = NULLIF($2, ''), build_id = $3
 			  WHERE service_id = $4 AND rollout_generation = $5`,

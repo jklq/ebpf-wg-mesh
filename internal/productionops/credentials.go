@@ -21,7 +21,6 @@ import (
 
 	"ebof-wg-mesh/internal/controlplane/identity"
 	"ebof-wg-mesh/internal/controlplane/ingressnodes"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/xds"
 	"ebof-wg-mesh/internal/deploy"
@@ -651,10 +650,10 @@ func (r *Runner) reservations(ctx context.Context, verify bool) error {
 				return err
 			}
 			err = adminTransaction(ctx, db, func(ctx context.Context, tx *sql.Tx) error {
-				if _, err := journal.AgentRow(pl.Instance).Exec(ctx, tx, `INSERT INTO agent_registrations(id,name,region,failure_domain,reserved_cpu_millis,reserved_memory_mebibytes,created_at,updated_at) VALUES ($1,$1,$2,$3,$4,$5,statement_timestamp(),statement_timestamp()) ON CONFLICT(id) DO UPDATE SET reserved_cpu_millis=$4,reserved_memory_mebibytes=$5,region=$2,failure_domain=$3,updated_at=statement_timestamp()`, pl.Instance, h.Region, h.FailureDomain, reserve.CPUMillis, reserve.MemoryMiB); err != nil {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO agent_registrations(id,name,region,failure_domain,reserved_cpu_millis,reserved_memory_mebibytes,created_at,updated_at) VALUES ($1,$1,$2,$3,$4,$5,statement_timestamp(),statement_timestamp()) ON CONFLICT(id) DO UPDATE SET reserved_cpu_millis=$4,reserved_memory_mebibytes=$5,region=$2,failure_domain=$3,updated_at=statement_timestamp()`, pl.Instance, h.Region, h.FailureDomain, reserve.CPUMillis, reserve.MemoryMiB); err != nil {
 					return err
 				}
-				_, err := journal.AdministrationRow(pl.Instance).Exec(ctx, tx, `INSERT INTO agent_administration(agent_id,host_type,lifecycle_state,updated_at) VALUES ($1,$2,'enrolling',statement_timestamp()) ON CONFLICT(agent_id) DO UPDATE SET host_type=$2 WHERE agent_administration.lifecycle_state<>'retired'`, pl.Instance, hostType)
+				_, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id,host_type,lifecycle_state,updated_at) VALUES ($1,$2,'enrolling',statement_timestamp()) ON CONFLICT(agent_id) DO UPDATE SET host_type=$2 WHERE agent_administration.lifecycle_state<>'retired'`, pl.Instance, hostType)
 				return err
 			})
 			if err != nil {

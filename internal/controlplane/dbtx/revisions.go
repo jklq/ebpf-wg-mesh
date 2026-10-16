@@ -8,8 +8,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-
-	"ebof-wg-mesh/internal/controlplane/journal"
 )
 
 func BumpDesiredRevisions(ctx context.Context, tx *sql.Tx, agentIDs []string) error {
@@ -46,10 +44,11 @@ func BumpDesiredRevisions(ctx context.Context, tx *sql.Tx, agentIDs []string) er
 		placeholders = append(placeholders, b.String())
 	}
 	query := fmt.Sprintf(
-		`UPDATE agent_registrations SET desired_revision = desired_revision + 1 WHERE id IN (%s) RETURNING id`,
+		`UPDATE agent_registrations SET desired_revision = desired_revision + 1 WHERE id IN (%s)`,
 		strings.Join(placeholders, ", "),
 	)
-	return journal.UpdateRows(ctx, tx, journal.TableAgents, query, args...)
+	_, err := tx.ExecContext(ctx, query, args...)
+	return err
 }
 
 const InitialEnvironmentRevision int64 = 1

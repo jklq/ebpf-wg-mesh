@@ -8,7 +8,6 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
 
@@ -156,7 +155,7 @@ func (d *Delivery) enqueueSourceBuildTx(ctx context.Context, tx *sql.Tx, service
 	); err != nil {
 		return BuildRunRecord{}, DeploymentRecord{}, false, err
 	}
-	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status
 		    SET latest_build_id = $1,
 		        updated_at = $2
@@ -213,7 +212,7 @@ func (d *Delivery) reuseBuildArtifactTx(ctx context.Context, tx *sql.Tx, service
 	case err != nil:
 		return DeploymentRecord{}, err
 	}
-	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status
 		    SET latest_build_id = $1,
 		        updated_at = $2

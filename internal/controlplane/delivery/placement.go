@@ -16,7 +16,6 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/usage"
 )
 
@@ -152,7 +151,7 @@ func (d *Delivery) chooseVolumeAgentTx(ctx context.Context, tx *sql.Tx, candidat
 	if err != nil {
 		return "", err
 	}
-	if _, err := journal.VolumeRow(volumeID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE volumes SET agent_id = $1, staged = false WHERE id = $2 AND agent_id IS NULL`, agentID, volumeID); err != nil {
 		return "", err
 	}

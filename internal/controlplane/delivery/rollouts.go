@@ -8,7 +8,6 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -62,7 +61,7 @@ func (d *Delivery) bumpServiceRolloutTx(ctx context.Context, tx *sql.Tx, service
 	if affected != 1 {
 		return 0, ErrConcurrentUpdate
 	}
-	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, bump.SpecRevision, bump.Replicas, now, service.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE services SET current_spec_revision = $1, desired_replica_count = $2, updated_at = $3 WHERE id = $4`, bump.SpecRevision, bump.Replicas, now, service.ID); err != nil {
 		return 0, err
 	}
 	if err := d.store.insertServiceRolloutTx(ctx, tx, service.ID, nextRollout, bump.SpecRevision, bump.RolloutReason, buildIDValue, bump.UserID, now); err != nil {
@@ -325,7 +324,7 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		}
 	}
 	if result.Changed {
-		if _, err := journal.RolloutRow(serviceID, rollout.Generation).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE service_rollouts SET progress_at = $1 WHERE service_id = $2 AND rollout_generation = $3`,
 			now, serviceID, rollout.Generation,
 		); err != nil {
@@ -421,7 +420,7 @@ func (d *Delivery) confirmRolloutIngressConverged(ctx context.Context, serviceID
 			}
 		}
 		if ok {
-			if _, err := journal.RolloutRow(serviceID, rollout.Generation).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`UPDATE service_rollouts SET progress_at = $1 WHERE service_id = $2 AND rollout_generation = $3`,
 				now.UTC(), serviceID, rollout.Generation,
 			); err != nil {
@@ -490,7 +489,7 @@ func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service Servic
 			return err
 		}
 	}
-	if _, err := journal.RolloutRow(service.ID, rollout.Generation).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_rollouts SET state = $1, failure_reason = $2, completed_at = $3, progress_at = $3
 		  WHERE service_id = $4 AND rollout_generation = $5`,
 		rolloutStateFailed, sanitizeDeploymentDetail(reason), now, service.ID, rollout.Generation,
@@ -513,7 +512,7 @@ func (d *Delivery) failRolloutTx(ctx context.Context, tx *sql.Tx, service Servic
 
 func (d *Delivery) completeRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, rollout rolloutRecord, now time.Time) error {
 	s := d.store
-	if _, err := journal.RolloutRow(service.ID, rollout.Generation).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_rollouts SET state = $1, failure_reason = '', completed_at = $2, progress_at = $2
 		  WHERE service_id = $3 AND rollout_generation = $4`,
 		rolloutStateSucceeded, now, service.ID, rollout.Generation,
@@ -595,12 +594,12 @@ func rolloutProgressDetail(rollout rolloutRecord, allocs []AllocationRecord, cre
 
 func (d *Delivery) updateRolloutProgressDetailTx(ctx context.Context, tx *sql.Tx, serviceID string, rollout rolloutRecord, allocs []AllocationRecord, created int, now time.Time) error {
 	detail := rolloutProgressDetail(rollout, allocs, created)
-	return journal.UpdateRows(ctx, tx, journal.TableDeployments,
+	_, err := tx.ExecContext(ctx,
 		`UPDATE deployments SET detail = $1, updated_at = $2
 		  WHERE service_id = $3 AND rollout_generation = $4 AND is_current = TRUE AND state NOT IN ('failed','active')
-		    AND detail IS DISTINCT FROM $1
-		  RETURNING id`,
+		    AND detail IS DISTINCT FROM $1`,
 		detail, now, serviceID, rollout.Generation)
+	return err
 }
 
 func (d *Delivery) prepareReplacementRolloutTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, existing []AllocationRecord, now time.Time) (bool, error) {
@@ -633,7 +632,7 @@ func (d *Delivery) supersedeCurrentRolloutTx(ctx context.Context, tx *sql.Tx, se
 			return err
 		}
 	}
-	if _, err := journal.RolloutRow(service.ID, rollout.Generation).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_rollouts SET state = $1, failure_reason = $2, completed_at = $3, progress_at = $3
 		  WHERE service_id = $4 AND rollout_generation = $5`,
 		rolloutStateSuperseded, "superseded by a newer rollout", now, service.ID, rollout.Generation,
@@ -695,7 +694,7 @@ func (s *persistence) insertServiceRolloutTx(
 	if artifactID == "" {
 		state = rolloutStatePendingBuild
 	}
-	if _, err = journal.RolloutRow(serviceID, rolloutGeneration).Exec(ctx, tx,
+	if _, err = tx.ExecContext(ctx,
 		`INSERT INTO service_rollouts(
 			service_id, rollout_generation, spec_revision, reason, build_id, requested_by_user_id,
 			state, strategy_json, desired_replica_count, artifact_id, failure_reason, recreate, created_at, progress_at

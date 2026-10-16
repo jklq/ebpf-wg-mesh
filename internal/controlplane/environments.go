@@ -12,7 +12,6 @@ import (
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -129,7 +128,7 @@ func (s *catalogPersistence) renameEnvironment(ctx context.Context, user authz.U
 			return deliverycore.ErrEnvironmentDeleted
 		}
 		now := time.Now().UTC()
-		if _, err := journal.EnvironmentRow(current.ID).Exec(ctx, tx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE environments SET name = $1, updated_at = $2 WHERE id = $3`, name, now, current.ID); err != nil {
 			return err
 		}
 		current.Name = name
@@ -155,7 +154,7 @@ func (s *catalogPersistence) updateEnvironmentAutoDeploy(ctx context.Context, us
 			return deliverycore.ErrEnvironmentDeleted
 		}
 		now := time.Now().UTC()
-		if _, err := journal.EnvironmentRow(current.ID).Exec(ctx, tx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE environments SET auto_deploy = $1, updated_at = $2 WHERE id = $3`, autoDeploy, now, current.ID); err != nil {
 			return err
 		}
 		current.AutoDeploy = autoDeploy
@@ -269,7 +268,7 @@ func (s *catalogPersistence) createEnvironmentQuerier(ctx context.Context, q del
 		CreatedAt:               now,
 		UpdatedAt:               now,
 	}
-	_, err = journal.EnvironmentRow(rec.ID).Exec(ctx, q, `
+	_, err = q.ExecContext(ctx, `
 		INSERT INTO environments(
 			id, project_id, name, kind, is_production, auto_deploy, network_identity,
 			copied_from_environment_id, created_at, updated_at
@@ -456,7 +455,7 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, pro
 		Staged:        true,
 		CreatedAt:     time.Now().UTC(),
 	}
-	if _, err := journal.VolumeRow(rec.ID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO volumes(id, environment_id, name, size_bytes, staged, created_at) VALUES ($1, $2, $3, $4, true, $5)`,
 		rec.ID, rec.EnvironmentID, rec.Name, rec.SizeBytes, rec.CreatedAt,
 	); err != nil {

@@ -20,7 +20,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/reconciliation"
 
 	"google.golang.org/grpc"
@@ -525,7 +524,6 @@ func TestOlderGenerationObservationCannotSatisfyCurrentAssignment(t *testing.T) 
 		if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET desired_rollout_generation = $1 WHERE id = $2`, allocation.DesiredRolloutGeneration+1, allocation.ID); err != nil {
 			return err
 		}
-		journal.AssignmentRow(allocation.ID).Capture(ctx)
 		return nil
 	}); err != nil {
 		t.Fatal(err)

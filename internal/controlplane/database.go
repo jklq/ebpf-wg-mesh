@@ -235,7 +235,7 @@ func (s *database) initJournal() {
 
 func (s *database) withProductTx(ctx context.Context, fn func(context.Context, *sql.Tx) error) error {
 	s.initJournal()
-	_, err := s.journal.ExecuteWithMutation(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	_, err := s.journal.ExecuteWithReaction(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		if err := assertLeaseTx(ctx, tx); err != nil {
 			return err
 		}

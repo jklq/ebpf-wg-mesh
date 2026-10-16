@@ -12,7 +12,6 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 
 	"google.golang.org/grpc/codes"
@@ -243,7 +242,7 @@ func TestAgentSyncDecryptsOnlyRenderedAllocations(t *testing.T) {
 	// closed instead of shipping the workload without its env.
 	firstRevision := baseline.Checkpoint.GetServices()[0].GetDesiredSpecRevision()
 	if err := store.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
-		_, err := journal.RevisionRow(first.ID, firstRevision).Exec(ctx, tx,
+		_, err := tx.ExecContext(ctx,
 			`UPDATE service_revisions SET env_ciphertext = $1 WHERE service_id = $2 AND spec_revision = $3`, []byte("corrupt-ciphertext"), first.ID, firstRevision)
 		return err
 	}); err != nil {

@@ -6,10 +6,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"reflect"
-	"slices"
-	"strconv"
-	"strings"
 )
 
 type productTable struct {
@@ -20,9 +16,8 @@ type productTable struct {
 	// ancestor) from durable state. Tombstoning therefore reads as removal
 	// to every journal consumer — agents, ingress, rollout reconciliation —
 	// while the rows stay recoverable until garbage collection.
-	filter  string
-	decode  func(*DurableState, string, []byte) error
-	resolve func(context.Context, *sql.Tx, DurableState, []string) (Batch, error)
+	filter string
+	decode func(*DurableState, string, []byte) error
 }
 
 func readProductState(ctx context.Context, tx *sql.Tx) (DurableState, error) {
@@ -75,139 +70,6 @@ func scanProductRows(rows *sql.Rows, state *DurableState, table productTable) er
 		}
 	}
 	return rows.Err()
-}
-
-func resolveRecorded(ctx context.Context, tx *sql.Tx, base DurableState, recorded map[Table]map[string]struct{}) (Batch, error) {
-	if err := recordOperationalDependencies(ctx, tx, base, recorded); err != nil {
-		return Batch{}, err
-	}
-	batch := Batch{BaseIndex: base.LogIndex}
-	for _, table := range productTables {
-		keys := sortedKeys(recorded[table.id()])
-		if len(keys) == 0 {
-			continue
-		}
-		partial, err := table.resolve(ctx, tx, base, keys)
-		if err != nil {
-			return Batch{}, err
-		}
-		batch = mergeBatch(batch, partial)
-	}
-	return batch, nil
-}
-
-func (t productTable) id() Table { return Table(t.name) }
-
-func mergeBatch(into, from Batch) Batch {
-	into.Projects = append(into.Projects, from.Projects...)
-	into.Services = append(into.Services, from.Services...)
-	into.Revisions = append(into.Revisions, from.Revisions...)
-	into.Assignments = append(into.Assignments, from.Assignments...)
-	into.Rollouts = append(into.Rollouts, from.Rollouts...)
-	into.Deployments = append(into.Deployments, from.Deployments...)
-	into.Agents = append(into.Agents, from.Agents...)
-	into.Administration = append(into.Administration, from.Administration...)
-	into.Environments = append(into.Environments, from.Environments...)
-	into.Volumes = append(into.Volumes, from.Volumes...)
-	into.Destructions = append(into.Destructions, from.Destructions...)
-	into.Domains = append(into.Domains, from.Domains...)
-	return into
-}
-
-func sortedKeys(keys map[string]struct{}) []string {
-	if len(keys) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(keys))
-	for key := range keys {
-		out = append(out, key)
-	}
-	slices.Sort(out)
-	return out
-}
-
-type keyedRead[T any] struct {
-	keySQL  string
-	jsonSQL string
-	name    string
-	filter  string
-	decode  func([]byte) (T, error)
-	where   func([]string) (string, []any)
-}
-
-func (t keyedRead[T]) read(ctx context.Context, tx *sql.Tx, keys []string) (map[string]T, error) {
-	predicate, args := t.where(keys)
-	query := `SELECT ` + t.keySQL + `, ` + t.jsonSQL + ` FROM ` + t.name + ` WHERE (` + predicate + `)`
-	if t.filter != "" {
-		query += ` AND (` + t.filter + `)`
-	}
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]T, len(keys))
-	for rows.Next() {
-		var key string
-		var raw []byte
-		if err := rows.Scan(&key, &raw); err != nil {
-			return nil, err
-		}
-		value, err := t.decode(raw)
-		if err != nil {
-			return nil, fmt.Errorf("decode %s: %w", t.name, err)
-		}
-		out[key] = value
-	}
-	return out, rows.Err()
-}
-
-func resolveChanges[T any](ctx context.Context, tx *sql.Tx, base map[string]T, keys []string, table keyedRead[T]) ([]Change[T], error) {
-	got, err := table.read(ctx, tx, keys)
-	if err != nil {
-		return nil, err
-	}
-	var result []Change[T]
-	for _, key := range keys {
-		value, ok := got[key]
-		if !ok {
-			if _, existed := base[key]; existed {
-				result = append(result, Change[T]{Key: key})
-			}
-			continue
-		}
-		if previous, existed := base[key]; existed && reflect.DeepEqual(previous, value) {
-			continue
-		}
-		result = append(result, Change[T]{Key: key, Value: &value})
-	}
-	slices.SortFunc(result, func(a, b Change[T]) int { return strings.Compare(a.Key, b.Key) })
-	return result, nil
-}
-
-func singleKeyWhere(column string, keys []string) (string, []any) {
-	placeholders := make([]string, len(keys))
-	args := make([]any, len(keys))
-	for i, key := range keys {
-		placeholders[i] = "$" + strconv.Itoa(i+1)
-		args[i] = key
-	}
-	return column + " IN (" + strings.Join(placeholders, ", ") + ")", args
-}
-
-func pairKeyWhere(left, right string, keys []string) (string, []any) {
-	clauses := make([]string, 0, len(keys))
-	args := make([]any, 0, 2*len(keys))
-	for _, key := range keys {
-		leftValue, rightValue, _ := strings.Cut(key, "/")
-		clauses = append(clauses, fmt.Sprintf("(%s = $%d AND %s = $%d)", left, len(args)+1, right, len(args)+2))
-		args = append(args, leftValue, rightValue)
-	}
-	return strings.Join(clauses, " OR "), args
-}
-
-func compositeKey(left string, right int64) string {
-	return left + "/" + strconv.FormatInt(right, 10)
 }
 
 const projectJSON = `jsonb_build_object('id', id, 'name', name, 'kind', kind, 'system_key', system_key, 'created_at', created_at)`
@@ -311,35 +173,14 @@ var productTables = []productTable{
 	{
 		name: "projects", keySQL: "id", jsonSQL: projectJSON, filter: projectLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Projects, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Projects, keys, keyedRead[Project]{
-				name: "projects", keySQL: "id", jsonSQL: projectJSON, filter: projectLiveFilter,
-				decode: decodeValue[Project], where: singleKeyWhereID,
-			})
-			return Batch{Projects: changes}, err
-		},
 	},
 	{
 		name: "services", keySQL: "id::TEXT", jsonSQL: serviceJSON, filter: serviceLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Services, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Services, keys, keyedRead[ServiceIntent]{
-				name: "services", keySQL: "id::TEXT", jsonSQL: serviceJSON, filter: serviceLiveFilter,
-				decode: decodeValue[ServiceIntent], where: singleKeyWhereID,
-			})
-			return Batch{Services: changes}, err
-		},
 	},
 	{
 		name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: operationalFilter("service_revisions"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Revisions, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Revisions, keys, keyedRead[ServiceRevision]{
-				name: "service_revisions", keySQL: "service_id::TEXT || '/' || spec_revision::TEXT", jsonSQL: revisionJSON, filter: operationalFilter("service_revisions"),
-				decode: decodeValue[ServiceRevision], where: pairKeyWhereRevisions,
-			})
-			return Batch{Revisions: changes}, err
-		},
 	},
 	{
 		name: "allocation_assignments", keySQL: "id::TEXT", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
@@ -350,126 +191,39 @@ var productTables = []productTable{
 			}
 			return err
 		},
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, assignmentSubset(base.Assignments, keys), keys, keyedRead[Assignment]{
-				name: "allocation_assignments", keySQL: "id::TEXT", jsonSQL: assignmentJSON, filter: serviceChildLiveFilter("allocation_assignments", "service_id"),
-				decode: decodeValue[Assignment], where: singleKeyWhereID,
-			})
-			return Batch{Assignments: changes}, err
-		},
 	},
 	{
 		name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: operationalFilter("service_rollouts"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Rollouts, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Rollouts, keys, keyedRead[Rollout]{
-				name: "service_rollouts", keySQL: "service_id::TEXT || '/' || rollout_generation::TEXT", jsonSQL: rolloutJSON, filter: operationalFilter("service_rollouts"),
-				decode: decodeValue[Rollout], where: pairKeyWhereRollouts,
-			})
-			return Batch{Rollouts: changes}, err
-		},
 	},
 	{
 		name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: operationalFilter("deployments"),
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Deployments, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Deployments, keys, keyedRead[Deployment]{
-				name: "deployments", keySQL: "id::TEXT", jsonSQL: deploymentJSON, filter: operationalFilter("deployments"),
-				decode: decodeValue[Deployment], where: singleKeyWhereID,
-			})
-			return Batch{Deployments: changes}, err
-		},
 	},
 	{
 		name: "agent_registrations", keySQL: "id::TEXT", jsonSQL: agentJSON,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Agents, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Agents, keys, keyedRead[AgentRegistration]{
-				name: "agent_registrations", keySQL: "id::TEXT", jsonSQL: agentJSON,
-				decode: decodeValue[AgentRegistration], where: singleKeyWhereID,
-			})
-			return Batch{Agents: changes}, err
-		},
 	},
 	{
 		name: "agent_administration", keySQL: "agent_id::TEXT", jsonSQL: administrationJSON,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Administration, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Administration, keys, keyedRead[AgentAdministration]{
-				name: "agent_administration", keySQL: "agent_id::TEXT", jsonSQL: administrationJSON,
-				decode: decodeValue[AgentAdministration], where: singleKeyWhereAgentID,
-			})
-			return Batch{Administration: changes}, err
-		},
 	},
 	{
 		name: "environments", keySQL: "id::TEXT", jsonSQL: environmentJSON, filter: environmentLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Environments, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Environments, keys, keyedRead[Environment]{
-				name: "environments", keySQL: "id::TEXT", jsonSQL: environmentJSON, filter: environmentLiveFilter,
-				decode: decodeValue[Environment], where: singleKeyWhereID,
-			})
-			return Batch{Environments: changes}, err
-		},
 	},
 	{
 		name: "volumes", keySQL: "id::TEXT", jsonSQL: volumeJSON, filter: volumeLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Volumes, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Volumes, keys, keyedRead[Volume]{
-				name: "volumes", keySQL: "id::TEXT", jsonSQL: volumeJSON, filter: volumeLiveFilter,
-				decode: decodeValue[Volume], where: singleKeyWhereID,
-			})
-			return Batch{Volumes: changes}, err
-		},
 	},
 	{
 		name: "volume_destructions", keySQL: "volume_id::TEXT", jsonSQL: destructionJSON,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Destructions, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Destructions, keys, keyedRead[VolumeDestruction]{
-				name: "volume_destructions", keySQL: "volume_id::TEXT", jsonSQL: destructionJSON,
-				decode: decodeValue[VolumeDestruction], where: singleKeyWhereVolumeID,
-			})
-			return Batch{Destructions: changes}, err
-		},
 	},
 	{
 		name: "domain_bindings", keySQL: "hostname::TEXT", jsonSQL: domainJSON, filter: domainLiveFilter,
 		decode: func(s *DurableState, key string, raw []byte) error { return decodeRecord(&s.Domains, key, raw) },
-		resolve: func(ctx context.Context, tx *sql.Tx, base DurableState, keys []string) (Batch, error) {
-			changes, err := resolveChanges(ctx, tx, base.Domains, keys, keyedRead[Domain]{
-				name: "domain_bindings", keySQL: "hostname::TEXT", jsonSQL: domainJSON, filter: domainLiveFilter,
-				decode: decodeValue[Domain], where: singleKeyWhereHostname,
-			})
-			return Batch{Domains: changes}, err
-		},
 	},
-}
-
-func singleKeyWhereID(keys []string) (string, []any) {
-	return singleKeyWhere("id", keys)
-}
-
-func singleKeyWhereAgentID(keys []string) (string, []any) {
-	return singleKeyWhere("agent_id", keys)
-}
-
-func singleKeyWhereVolumeID(keys []string) (string, []any) {
-	return singleKeyWhere("volume_id", keys)
-}
-
-func singleKeyWhereHostname(keys []string) (string, []any) {
-	return singleKeyWhere("hostname", keys)
-}
-
-func pairKeyWhereRevisions(keys []string) (string, []any) {
-	return pairKeyWhere("service_id", "spec_revision", keys)
-}
-
-func pairKeyWhereRollouts(keys []string) (string, []any) {
-	return pairKeyWhere("service_id", "rollout_generation", keys)
 }
 
 func decodeRecord[T any](records *map[string]T, key string, raw []byte) error {
@@ -506,15 +260,4 @@ func decodeValue[T any](raw []byte) (T, error) {
 		return value, err
 	}
 	return normalized, nil
-}
-
-// Resolution compares only recorded keys, even for large assignment tables.
-func assignmentSubset(rows RowMap[Assignment], keys []string) map[string]Assignment {
-	result := make(map[string]Assignment, len(keys))
-	for _, key := range keys {
-		if value, exists := rows.Lookup(key); exists {
-			result[key] = value
-		}
-	}
-	return result
 }

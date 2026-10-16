@@ -10,7 +10,6 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 
 	"github.com/google/uuid"
@@ -303,7 +302,7 @@ func (d *Delivery) copyDeploymentRolloutTargetTx(ctx context.Context, tx *sql.Tx
 		return "", err
 	}
 	if targetAllocationID != "" {
-		if _, err := journal.RolloutRow(service.ID, nextRollout).Exec(ctx, tx,
+		if _, err := tx.ExecContext(ctx,
 			`UPDATE service_rollouts SET target_allocation_id = $1 WHERE service_id = $2 AND rollout_generation = $3`,
 			targetAllocationID, service.ID, nextRollout,
 		); err != nil {
@@ -414,7 +413,7 @@ func (d *Delivery) cancelDeploymentTx(ctx context.Context, tx *sql.Tx, service S
 	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, nil, now); err != nil {
 		return "", err
 	}
-	if _, err := journal.ServiceRow(service.ID).Exec(ctx, tx, `UPDATE service_delivery_status SET current_artifact_id = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status SET current_artifact_id = NULL, updated_at = $1 WHERE service_id = $2`, now, service.ID); err != nil {
 		return "", err
 	}
 	return "", nil
@@ -434,7 +433,7 @@ func (d *Delivery) supersedeCancelledRolloutTx(ctx context.Context, tx *sql.Tx, 
 	if err := d.deleteStartingAllocationsTx(ctx, tx, service.ID, &service.RolloutGeneration, now); err != nil {
 		return err
 	}
-	if _, err := journal.RolloutRow(service.ID, service.RolloutGeneration).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_rollouts
 		    SET state = $1, failure_reason = $2, completed_at = $3, progress_at = $3
 		  WHERE service_id = $4 AND rollout_generation = $5 AND state IN ($6, $7)`,
@@ -487,7 +486,7 @@ func (s *persistence) finalizeDeploymentRemovalTx(ctx context.Context, tx *sql.T
 	}); err != nil {
 		return err
 	}
-	if _, err := journal.ServiceRow(serviceID).Exec(ctx, tx,
+	if _, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status SET current_artifact_id = NULL, placement_message = NULL, updated_at = $1 WHERE service_id = $2`,
 		now, serviceID,
 	); err != nil {
@@ -555,7 +554,7 @@ func (d *Delivery) stageSourceDeploymentTx(ctx context.Context, tx *sql.Tx, serv
 		return "", err
 	}
 	if revisionID != "" {
-		if _, err := journal.DeploymentRow(dep.ID).Exec(ctx, tx, `UPDATE deployments SET source_revision_id = $1 WHERE id = $2`, revisionID, dep.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE deployments SET source_revision_id = $1 WHERE id = $2`, revisionID, dep.ID); err != nil {
 			return "", err
 		}
 		_, err = s.enqueueSourceWorkItemTx(ctx, tx, source.DeploymentRebuildParams(dep.ID, service.ID, revisionID))

@@ -11,7 +11,6 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/usage"
 	"ebof-wg-mesh/internal/recovery"
 	"net/netip"
@@ -102,7 +101,7 @@ func (d *Delivery) applyAllocationMutationsTx(ctx context.Context, tx *sql.Tx, n
 			}
 		case mutationRetarget:
 			assignment := mutation.Allocation
-			if _, err := journal.AssignmentRow(assignment.ID).Exec(ctx, tx, `UPDATE allocation_assignments
+			if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 				SET deployment_id = $2, desired_spec_revision = $3, desired_rollout_generation = $4,
 				    intent = $5, intent_message = '', updated_at = $6 WHERE id = $1`,
 				assignment.ID, assignment.DeploymentID, assignment.SpecRevision, assignment.RolloutGeneration,
@@ -110,7 +109,7 @@ func (d *Delivery) applyAllocationMutationsTx(ctx context.Context, tx *sql.Tx, n
 				return err
 			}
 		case mutationReserveAddress:
-			if _, err := journal.AssignmentRow(mutation.AllocationID).Exec(ctx, tx, `UPDATE allocation_assignments
+			if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 				SET allocation_ipv4 = $2, updated_at = $3 WHERE id = $1`,
 				mutation.AllocationID, mutation.Allocation.IPv4, now); err != nil {
 				return err
@@ -240,7 +239,7 @@ func pendingPlacementMessage(placed, desired int, reason string) string {
 }
 
 func (s *persistence) setServicePlacementMessageTx(ctx context.Context, tx *sql.Tx, serviceID, message string, now time.Time) error {
-	result, err := journal.ServiceRow(serviceID).Exec(ctx, tx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE service_delivery_status
 		 SET placement_message = NULLIF($1, ''), updated_at = $2
 		 WHERE service_id = $3
@@ -565,7 +564,7 @@ type allocationAssignmentState struct {
 }
 
 func (s *persistence) setAllocationStateTx(ctx context.Context, tx *sql.Tx, state allocationAssignmentState) error {
-	if _, err := journal.AssignmentRow(state.AllocationID).Exec(ctx, tx, `UPDATE allocation_assignments
+	if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 		SET rollout_state = $2, intent = $3, intent_message = $4,
 		    drain_started_at = $5, drain_deadline = $6, updated_at = $7
 		WHERE id = $1`, state.AllocationID, state.RolloutState, state.Intent, state.IntentMessage,
@@ -576,7 +575,7 @@ func (s *persistence) setAllocationStateTx(ctx context.Context, tx *sql.Tx, stat
 }
 
 func (s *persistence) insertAllocationAssignmentTx(ctx context.Context, tx *sql.Tx, assignment AllocationAssignment) error {
-	if _, err := journal.AssignmentRow(assignment.ID).Exec(ctx, tx, `INSERT INTO allocation_assignments(
+	if _, err := tx.ExecContext(ctx, `INSERT INTO allocation_assignments(
 		id, service_id, deployment_id, agent_id, desired_spec_revision,
 		desired_rollout_generation, allocation_ipv4, allocation_ipv6,
 		operator_restart_nonce, rollout_state, intent, intent_message,
@@ -592,14 +591,14 @@ func (s *persistence) insertAllocationAssignmentTx(ctx context.Context, tx *sql.
 }
 
 func (s *persistence) deleteAllocationAssignmentTx(ctx context.Context, tx *sql.Tx, allocationID string) error {
-	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `DELETE FROM allocation_assignments WHERE id = $1`, allocationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM allocation_assignments WHERE id = $1`, allocationID); err != nil {
 		return err
 	}
 	return usage.EndAllocation(ctx, tx, allocationID)
 }
 
 func (s *persistence) markAssignmentLostTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
-	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `UPDATE allocation_assignments
+	if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments
 		SET rollout_state = $2, intent = $3, intent_message = $4,
 		    allocation_ipv4 = '', allocation_ipv6 = '', updated_at = $5
 		WHERE id = $1`, allocationID, AllocationRolloutLost, allocationIntentRun, message, now); err != nil {
@@ -609,7 +608,7 @@ func (s *persistence) markAssignmentLostTx(ctx context.Context, tx *sql.Tx, allo
 }
 
 func (s *persistence) setAssignmentMessageTx(ctx context.Context, tx *sql.Tx, allocationID, message string, now time.Time) error {
-	if _, err := journal.AssignmentRow(allocationID).Exec(ctx, tx, `UPDATE allocation_assignments SET intent_message = $2, updated_at = $3 WHERE id = $1`, allocationID, message, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE allocation_assignments SET intent_message = $2, updated_at = $3 WHERE id = $1`, allocationID, message, now); err != nil {
 		return err
 	}
 	return nil

@@ -16,7 +16,6 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/secretkeys"
 	"ebof-wg-mesh/internal/controlplane/signkeys"
 	"ebof-wg-mesh/internal/controlplane/source"
@@ -95,12 +94,10 @@ func enrollTestAgent(ctx context.Context, store *persistence, hello *agentv1.Age
 		) VALUES ($1, $2, 'default', '', $3, 0, 0, $4, $4) ON CONFLICT(id) DO NOTHING`, id, name, failureDomain, now); err != nil {
 			return err
 		}
-		journal.AgentRow(id).Capture(ctx)
 		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_administration(agent_id, lifecycle_state, updated_at)
 			VALUES ($1, 'enrolling', $2) ON CONFLICT(agent_id) DO NOTHING`, id, now); err != nil {
 			return err
 		}
-		journal.AdministrationRow(id).Capture(ctx)
 		return nil
 	})
 }
@@ -245,9 +242,6 @@ func resetTestStore(t *testing.T, store *persistence) {
 		if _, err := tx.ExecContext(context.Background(), `UPDATE agent_authority SET epoch = 1, outstanding_not_after = '1970-01-01' WHERE id = 1`); err != nil {
 			return err
 		}
-		if err := recordAllProductRows(ctx, tx); err != nil {
-			return err
-		}
 		for _, table := range tables {
 			if _, err := tx.ExecContext(context.Background(), `DELETE FROM `+table); err != nil {
 				return fmt.Errorf("clear %s: %w", table, err)
@@ -281,71 +275,6 @@ func createTestDatabase(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return dbURL
-}
-
-func recordAllProductRows(ctx context.Context, tx *sql.Tx) error {
-	single := []struct {
-		query  string
-		record func(context.Context, string)
-	}{
-		{`SELECT id::TEXT FROM projects`, func(ctx context.Context, id string) { _ = journal.ProjectRow(id).Capture(ctx) }},
-		{`SELECT id::TEXT FROM services`, func(ctx context.Context, id string) { _ = journal.ServiceRow(id).Capture(ctx) }},
-		{`SELECT id::TEXT FROM allocation_assignments`, func(ctx context.Context, id string) { _ = journal.AssignmentRow(id).Capture(ctx) }},
-		{`SELECT id::TEXT FROM deployments`, func(ctx context.Context, id string) { _ = journal.DeploymentRow(id).Capture(ctx) }},
-		{`SELECT id::TEXT FROM agent_registrations`, func(ctx context.Context, id string) { _ = journal.AgentRow(id).Capture(ctx) }},
-		{`SELECT agent_id::TEXT FROM agent_administration`, func(ctx context.Context, id string) { _ = journal.AdministrationRow(id).Capture(ctx) }},
-		{`SELECT id::TEXT FROM environments`, func(ctx context.Context, id string) { _ = journal.EnvironmentRow(id).Capture(ctx) }},
-		{`SELECT id::TEXT FROM volumes`, func(ctx context.Context, id string) { _ = journal.VolumeRow(id).Capture(ctx) }},
-		{`SELECT volume_id::TEXT FROM volume_destructions`, func(ctx context.Context, id string) { _ = journal.DestructionRow(id).Capture(ctx) }},
-		{`SELECT hostname::TEXT FROM domain_bindings`, func(ctx context.Context, hostname string) { journal.DomainRow(hostname).Capture(ctx) }},
-	}
-	for _, item := range single {
-		rows, err := tx.QueryContext(ctx, item.query)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var key string
-			if err := rows.Scan(&key); err != nil {
-				rows.Close()
-				return err
-			}
-			item.record(ctx, key)
-		}
-		if err := rows.Close(); err != nil {
-			return err
-		}
-	}
-	revisionRows, err := tx.QueryContext(ctx, `SELECT service_id::TEXT, spec_revision FROM service_revisions`)
-	if err != nil {
-		return err
-	}
-	for revisionRows.Next() {
-		var serviceID string
-		var revision int64
-		if err := revisionRows.Scan(&serviceID, &revision); err != nil {
-			revisionRows.Close()
-			return err
-		}
-		journal.RevisionRow(serviceID, revision).Capture(ctx)
-	}
-	if err := revisionRows.Close(); err != nil {
-		return err
-	}
-	rolloutRows, err := tx.QueryContext(ctx, `SELECT service_id::TEXT, rollout_generation FROM service_rollouts`)
-	if err != nil {
-		return err
-	}
-	for rolloutRows.Next() {
-		var serviceID string
-		var generation int64
-		if err := rolloutRows.Scan(&serviceID, &generation); err != nil {
-			rolloutRows.Close()
-			return err
-		}
-		journal.RolloutRow(serviceID, generation).Capture(ctx)
-	}
-	return rolloutRows.Close()
 }
 
 func productionEnvironmentID(t *testing.T, store *persistence, projectID string) string {

@@ -11,7 +11,6 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/logs"
 
 	"github.com/google/uuid"
@@ -146,7 +145,7 @@ func (s *catalogPersistence) ensureUserProjectNamedQuerier(ctx context.Context, 
 
 	id := uuid.NewString()
 	now := time.Now().UTC()
-	if _, err := journal.ProjectRow(id).Exec(ctx, q,
+	if _, err := q.ExecContext(ctx,
 		`INSERT INTO projects(id, workspace_id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5, $6)`,
 		id,
 		workspaceID,
@@ -179,7 +178,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 				SystemKey: systemKey,
 				CreatedAt: now,
 			}
-			_, err = journal.ProjectRow(project.ID).Exec(ctx, tx,
+			_, err = tx.ExecContext(ctx,
 				`INSERT INTO projects(id, name, kind, system_key, created_at) VALUES ($1, $2, $3, $4, $5)`,
 				project.ID,
 				project.Name,
@@ -195,7 +194,7 @@ func (s *catalogPersistence) ensureManagedProject(ctx context.Context, name, sys
 			return err
 		}
 		if current.Name != name || current.Kind != deliverycore.ProjectKindManaged {
-			if _, err := journal.ProjectRow(current.ID).Exec(ctx, tx,
+			if _, err := tx.ExecContext(ctx,
 				`UPDATE projects SET name = $1, kind = $2 WHERE id = $3`,
 				name,
 				string(deliverycore.ProjectKindManaged),
@@ -378,7 +377,7 @@ func (s *catalogPersistence) updateProjectLogRetention(ctx context.Context, user
 		if current.Deletion != nil {
 			return deliverycore.ErrProjectDeleted
 		}
-		if _, err := journal.ProjectRow(current.ID).Exec(ctx, tx, `UPDATE projects SET log_retention_days = $1 WHERE id = $2`, retentionDays, current.ID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE projects SET log_retention_days = $1 WHERE id = $2`, retentionDays, current.ID); err != nil {
 			return err
 		}
 		current.LogRetentionDays = retentionDays

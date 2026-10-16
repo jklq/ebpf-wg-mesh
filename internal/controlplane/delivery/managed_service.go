@@ -9,7 +9,6 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
-	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/source"
 )
 
@@ -157,7 +156,7 @@ func (d *Delivery) ensureManagedServiceTx(ctx context.Context, projectID, name s
 		); err != nil {
 			return err
 		}
-		if _, err := journal.ServiceRow(current.ID).Exec(ctx, tx, `UPDATE service_delivery_status
+		if _, err := tx.ExecContext(ctx, `UPDATE service_delivery_status
 			SET current_rollout_generation = $1, current_artifact_id = NULLIF($2, ''), updated_at = $3
 			WHERE service_id = $4`, nextRolloutGeneration, artifactID, now, current.ID); err != nil {
 			return err
