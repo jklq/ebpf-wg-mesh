@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"ebof-wg-mesh/internal/controlplane/authz"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -33,6 +34,13 @@ func (s *platformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 	environmentID := strings.TrimSpace(req.GetEnvironmentId())
 	if environmentID == "" {
 		return nil, status.Error(codes.InvalidArgument, "environment_id is required")
+	}
+	if s.authz != nil {
+		if scope, err := s.authz.AuthorizeEnvironment(ctx, user, environmentID, authz.Write); err == nil {
+			if err := s.requireBillingGrowth(ctx, scope.WorkspaceID()); err != nil {
+				return nil, err
+			}
+		}
 	}
 	volume, err := s.store.createScheduledVolume(ctx, user, environmentID, name, req.GetSizeBytes())
 	if err != nil {
@@ -65,6 +73,13 @@ func (s *platformService) UpdateVolume(ctx context.Context, req *platformv1.Upda
 	}
 	if strings.TrimSpace(req.GetVolumeId()) == "" {
 		return nil, status.Error(codes.InvalidArgument, "volume_id is required")
+	}
+	if s.authz != nil {
+		if scope, err := s.authz.AuthorizeVolume(ctx, user, req.GetVolumeId(), authz.Write); err == nil {
+			if err := s.requireBillingGrowth(ctx, scope.WorkspaceID()); err != nil {
+				return nil, err
+			}
+		}
 	}
 	volume, err := s.delivery.GrowVolume(ctx, user, req.GetVolumeId(), req.GetSizeBytes())
 	if err != nil {

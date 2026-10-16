@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -282,6 +283,7 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 		}
 	}
 	created := 0
+	billingMessage := ""
 	for i := 0; i < plan.PlacementSlots; i++ {
 		agentID, err := d.chooseReplicaAgentTx(ctx, tx, candidates, service, occupied, "", false)
 		if errors.Is(err, ErrNoPlacementAvailable) {
@@ -291,6 +293,10 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 			return result, err
 		}
 		alloc, err := d.insertAllocationTx(ctx, tx, service, agentID, now)
+		if errors.Is(err, ErrBillingRestricted) {
+			billingMessage = "billing restriction: " + strings.TrimSpace(strings.TrimPrefix(err.Error(), ErrBillingRestricted.Error()+": "))
+			break
+		}
 		if err != nil {
 			return result, err
 		}
@@ -315,6 +321,9 @@ func (d *Delivery) advanceRolloutTx(ctx context.Context, tx *sql.Tx, serviceID s
 	result.IngressChanged = result.IngressChanged || finish.Result.IngressChanged
 	result.NeedsIngressConvergence = finish.Result.NeedsIngressConvergence
 	result.AgentIDs = append(result.AgentIDs, finish.Result.AgentIDs...)
+	if billingMessage != "" {
+		finish.PlacementMessage = billingMessage
+	}
 	if err := s.setServicePlacementMessageTx(ctx, tx, serviceID, finish.PlacementMessage, now); err != nil {
 		return result, err
 	}

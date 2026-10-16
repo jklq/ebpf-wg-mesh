@@ -1,7 +1,10 @@
 # Resource usage
 
 Resource usage tracking measures what allocations and volumes actually
-consume, in resource units. There are no prices in this system.
+consume, in resource units. Prices live in billing, which rates these
+quantities per workspace — see [billing.md](billing.md). Attribution rows
+snapshot the paying workspace (`workspace_id`) when a resource is assigned;
+managed platform resources record an empty workspace and are exempt.
 
 ## Meters (`usage/v1`)
 

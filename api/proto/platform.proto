@@ -1483,6 +1483,191 @@ message ProjectUsage {
   google.protobuf.Timestamp retained_since = 14;
 }
 
+// Billing messages. Money is integer cents of the account currency; exact
+// meter quantities are decimal strings. Every account operation is scoped
+// to one workspace, the billing payer: reads need workspace read access,
+// mutations need workspace admin. In shadow mode statements and
+// restrictions are previews that never charge or stop compute.
+
+message BillingRestrictionState {
+  bool restricted = 1;
+  bool growth_blocked = 2;
+  // Dry-run restrictions are shadow observations and are never enforced.
+  bool dry_run = 3;
+  string reason = 4;
+  google.protobuf.Timestamp since = 5;
+}
+
+// BillingRate is one meter's exact price in cents per stored unit,
+// numerator/denominator at the account's pinned rate version.
+message BillingRate {
+  string meter = 1;
+  string unit = 2;
+  string numerator = 3;
+  string denominator = 4;
+}
+
+message BillingProjectCost {
+  string project_id = 1;
+  string project_name = 2;
+  // One of cpu, memory, volume, egress.
+  string meter = 3;
+  // Exact quantity in the meter's stored unit (cpu-microseconds,
+  // byte-milliseconds, or bytes).
+  string quantity = 4;
+  int64 amount_cents = 5;
+}
+
+message GetBillingAccountRequest {
+  string workspace_id = 1;
+}
+
+// BillingAccountSummary is the workspace billing account with its current
+// open period rated to date.
+message BillingAccountSummary {
+  string account_id = 1;
+  string workspace_id = 2;
+  string currency = 3;
+  string plan_id = 4;
+  string pending_plan_id = 5;
+  // trial, pending_activation, active, past_due, or cancelled.
+  string state = 6;
+  // disabled, shadow, or enabled.
+  string mode = 7;
+  bool payment_ready = 8;
+  int64 budget_stop_cents = 9;
+  google.protobuf.Timestamp trial_ends_at = 10;
+  google.protobuf.Timestamp cancel_effective_at = 11;
+  string period_id = 12;
+  google.protobuf.Timestamp period_start = 13;
+  google.protobuf.Timestamp period_end = 14;
+  int64 monthly_minimum_cents = 15;
+  int64 included_usage_cents = 16;
+  int64 gross_cents = 17;
+  int64 after_allowance_cents = 18;
+  int64 credit_balance_cents = 19;
+  int64 estimated_period_total_cents = 20;
+  // Forecast assumes the trailing 24 hours of hourly burn continue for the
+  // rest of the period. It never feeds credits, restrictions, or invoices.
+  int64 forecast_gross_cents = 21;
+  int64 unpaid_cents = 22;
+  int64 measured_ms = 23;
+  int64 gap_ms = 24;
+  int64 uncertain_ms = 25;
+  // Usage before this time is complete for the workspace's current
+  // resources. Unset when none has reported.
+  google.protobuf.Timestamp watermark = 26;
+  BillingRestrictionState restriction = 27;
+  repeated BillingProjectCost project_costs = 28;
+  repeated BillingRate rates = 29;
+  int64 rate_version = 30;
+}
+
+message BillingStatementLine {
+  string project_id = 1;
+  string project_name = 2;
+  string meter = 3;
+  string description = 4;
+  string quantity = 5;
+  string unit = 6;
+  string rate_numerator = 7;
+  string rate_denominator = 8;
+  int64 amount_cents = 9;
+  google.protobuf.Timestamp period_start = 10;
+  google.protobuf.Timestamp period_end = 11;
+}
+
+message BillingStatement {
+  string id = 1;
+  string period_id = 2;
+  string kind = 3;
+  string currency = 4;
+  bool shadow = 5;
+  string state = 6;
+  int64 gross_cents = 7;
+  int64 included_cents = 8;
+  int64 after_allowance_cents = 9;
+  int64 credit_cents = 10;
+  int64 minimum_cents = 11;
+  int64 prepaid_applied_cents = 12;
+  int64 next_minimum_cents = 13;
+  int64 period_total_cents = 14;
+  int64 amount_due_cents = 15;
+  string stripe_invoice_id = 16;
+  string stripe_hosted_invoice_url = 17;
+  google.protobuf.Timestamp created_at = 18;
+  repeated BillingStatementLine lines = 19;
+  // CSV rendering of the statement; set only when requested.
+  string csv = 20;
+}
+
+message ListBillingStatementsRequest {
+  string workspace_id = 1;
+  int32 limit = 2;
+}
+
+message ListBillingStatementsResponse {
+  repeated BillingStatement statements = 1;
+}
+
+message GetBillingStatementRequest {
+  string workspace_id = 1;
+  string statement_id = 2;
+  bool include_csv = 3;
+}
+
+message UpdateBillingBudgetRequest {
+  string workspace_id = 1;
+  // Gross-usage stop threshold in cents; zero clears it. It is not an
+  // absolute invoice ceiling: the minimum and retained storage still bill.
+  int64 budget_stop_cents = 2;
+}
+
+message ChangeBillingPlanRequest {
+  string workspace_id = 1;
+  string plan_id = 2;
+}
+
+message StartBillingPaymentSetupRequest {
+  string workspace_id = 1;
+}
+
+message StartBillingPaymentSetupResponse {
+  string checkout_url = 1;
+}
+
+message StartBillingActivationRequest {
+  string workspace_id = 1;
+  string plan_id = 2;
+}
+
+message CancelBillingAccountRequest {
+  string workspace_id = 1;
+}
+
+message CancelBillingAccountResponse {
+  google.protobuf.Timestamp effective_at = 1;
+}
+
+// IngestStripeWebhookRequest carries a Stripe delivery exactly as received:
+// the signature is verified over these raw bytes before the event is
+// durably recorded.
+message IngestStripeWebhookRequest {
+  string signature = 1;
+  bytes payload = 2;
+}
+
+message SetBillingCollectionPausedRequest {
+  bool paused = 1;
+  string reason = 2;
+}
+
+message BillingControlState {
+  bool collection_paused = 1;
+  string pause_reason = 2;
+  string mode = 3;
+}
+
 service PlatformService {
   rpc ListWorkspaces(ListWorkspacesRequest) returns (ListWorkspacesResponse);
   rpc GetWorkspace(GetWorkspaceRequest) returns (Workspace);
@@ -1549,6 +1734,14 @@ service PlatformService {
   rpc ListAgents(google.protobuf.Empty) returns (ListAgentsResponse);
   rpc ListBuildAttempts(ListBuildAttemptsRequest) returns (ListBuildAttemptsResponse);
   rpc GetProjectUsage(GetProjectUsageRequest) returns (ProjectUsage);
+  rpc GetBillingAccount(GetBillingAccountRequest) returns (BillingAccountSummary);
+  rpc ListBillingStatements(ListBillingStatementsRequest) returns (ListBillingStatementsResponse);
+  rpc GetBillingStatement(GetBillingStatementRequest) returns (BillingStatement);
+  rpc UpdateBillingBudget(UpdateBillingBudgetRequest) returns (BillingAccountSummary);
+  rpc ChangeBillingPlan(ChangeBillingPlanRequest) returns (BillingAccountSummary);
+  rpc StartBillingPaymentSetup(StartBillingPaymentSetupRequest) returns (StartBillingPaymentSetupResponse);
+  rpc StartBillingActivation(StartBillingActivationRequest) returns (BillingAccountSummary);
+  rpc CancelBillingAccount(CancelBillingAccountRequest) returns (CancelBillingAccountResponse);
 }
 
 message BuilderWorker {
@@ -1597,6 +1790,8 @@ service BuilderService {
 
 service OpsService {
   rpc IngestGitHubWebhook(IngestGitHubWebhookRequest) returns (google.protobuf.Empty);
+  rpc IngestStripeWebhook(IngestStripeWebhookRequest) returns (google.protobuf.Empty);
+  rpc SetBillingCollectionPaused(SetBillingCollectionPausedRequest) returns (BillingControlState);
   rpc ListFleet(google.protobuf.Empty) returns (Fleet);
   rpc CreateAgent(CreateAgentRequest) returns (AgentEnrollment);
   rpc UpdateAgent(UpdateAgentRequest) returns (Agent);

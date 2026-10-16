@@ -218,6 +218,30 @@ const (
 	// PlatformServiceGetProjectUsageProcedure is the fully-qualified name of the PlatformService's
 	// GetProjectUsage RPC.
 	PlatformServiceGetProjectUsageProcedure = "/platform.v1.PlatformService/GetProjectUsage"
+	// PlatformServiceGetBillingAccountProcedure is the fully-qualified name of the PlatformService's
+	// GetBillingAccount RPC.
+	PlatformServiceGetBillingAccountProcedure = "/platform.v1.PlatformService/GetBillingAccount"
+	// PlatformServiceListBillingStatementsProcedure is the fully-qualified name of the
+	// PlatformService's ListBillingStatements RPC.
+	PlatformServiceListBillingStatementsProcedure = "/platform.v1.PlatformService/ListBillingStatements"
+	// PlatformServiceGetBillingStatementProcedure is the fully-qualified name of the PlatformService's
+	// GetBillingStatement RPC.
+	PlatformServiceGetBillingStatementProcedure = "/platform.v1.PlatformService/GetBillingStatement"
+	// PlatformServiceUpdateBillingBudgetProcedure is the fully-qualified name of the PlatformService's
+	// UpdateBillingBudget RPC.
+	PlatformServiceUpdateBillingBudgetProcedure = "/platform.v1.PlatformService/UpdateBillingBudget"
+	// PlatformServiceChangeBillingPlanProcedure is the fully-qualified name of the PlatformService's
+	// ChangeBillingPlan RPC.
+	PlatformServiceChangeBillingPlanProcedure = "/platform.v1.PlatformService/ChangeBillingPlan"
+	// PlatformServiceStartBillingPaymentSetupProcedure is the fully-qualified name of the
+	// PlatformService's StartBillingPaymentSetup RPC.
+	PlatformServiceStartBillingPaymentSetupProcedure = "/platform.v1.PlatformService/StartBillingPaymentSetup"
+	// PlatformServiceStartBillingActivationProcedure is the fully-qualified name of the
+	// PlatformService's StartBillingActivation RPC.
+	PlatformServiceStartBillingActivationProcedure = "/platform.v1.PlatformService/StartBillingActivation"
+	// PlatformServiceCancelBillingAccountProcedure is the fully-qualified name of the PlatformService's
+	// CancelBillingAccount RPC.
+	PlatformServiceCancelBillingAccountProcedure = "/platform.v1.PlatformService/CancelBillingAccount"
 	// BuilderServiceClaimBuildProcedure is the fully-qualified name of the BuilderService's ClaimBuild
 	// RPC.
 	BuilderServiceClaimBuildProcedure = "/platform.v1.BuilderService/ClaimBuild"
@@ -236,6 +260,12 @@ const (
 	// OpsServiceIngestGitHubWebhookProcedure is the fully-qualified name of the OpsService's
 	// IngestGitHubWebhook RPC.
 	OpsServiceIngestGitHubWebhookProcedure = "/platform.v1.OpsService/IngestGitHubWebhook"
+	// OpsServiceIngestStripeWebhookProcedure is the fully-qualified name of the OpsService's
+	// IngestStripeWebhook RPC.
+	OpsServiceIngestStripeWebhookProcedure = "/platform.v1.OpsService/IngestStripeWebhook"
+	// OpsServiceSetBillingCollectionPausedProcedure is the fully-qualified name of the OpsService's
+	// SetBillingCollectionPaused RPC.
+	OpsServiceSetBillingCollectionPausedProcedure = "/platform.v1.OpsService/SetBillingCollectionPaused"
 	// OpsServiceListFleetProcedure is the fully-qualified name of the OpsService's ListFleet RPC.
 	OpsServiceListFleetProcedure = "/platform.v1.OpsService/ListFleet"
 	// OpsServiceCreateAgentProcedure is the fully-qualified name of the OpsService's CreateAgent RPC.
@@ -320,6 +350,14 @@ type PlatformServiceClient interface {
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
 	GetProjectUsage(context.Context, *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error)
+	GetBillingAccount(context.Context, *connect.Request[platformv1.GetBillingAccountRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	ListBillingStatements(context.Context, *connect.Request[platformv1.ListBillingStatementsRequest]) (*connect.Response[platformv1.ListBillingStatementsResponse], error)
+	GetBillingStatement(context.Context, *connect.Request[platformv1.GetBillingStatementRequest]) (*connect.Response[platformv1.BillingStatement], error)
+	UpdateBillingBudget(context.Context, *connect.Request[platformv1.UpdateBillingBudgetRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	ChangeBillingPlan(context.Context, *connect.Request[platformv1.ChangeBillingPlanRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	StartBillingPaymentSetup(context.Context, *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error)
+	StartBillingActivation(context.Context, *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	CancelBillingAccount(context.Context, *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error)
 }
 
 // NewPlatformServiceClient constructs a client for the platform.v1.PlatformService service. By
@@ -693,6 +731,54 @@ func NewPlatformServiceClient(httpClient connect.HTTPClient, baseURL string, opt
 			connect.WithSchema(platformServiceMethods.ByName("GetProjectUsage")),
 			connect.WithClientOptions(opts...),
 		),
+		getBillingAccount: connect.NewClient[platformv1.GetBillingAccountRequest, platformv1.BillingAccountSummary](
+			httpClient,
+			baseURL+PlatformServiceGetBillingAccountProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("GetBillingAccount")),
+			connect.WithClientOptions(opts...),
+		),
+		listBillingStatements: connect.NewClient[platformv1.ListBillingStatementsRequest, platformv1.ListBillingStatementsResponse](
+			httpClient,
+			baseURL+PlatformServiceListBillingStatementsProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ListBillingStatements")),
+			connect.WithClientOptions(opts...),
+		),
+		getBillingStatement: connect.NewClient[platformv1.GetBillingStatementRequest, platformv1.BillingStatement](
+			httpClient,
+			baseURL+PlatformServiceGetBillingStatementProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("GetBillingStatement")),
+			connect.WithClientOptions(opts...),
+		),
+		updateBillingBudget: connect.NewClient[platformv1.UpdateBillingBudgetRequest, platformv1.BillingAccountSummary](
+			httpClient,
+			baseURL+PlatformServiceUpdateBillingBudgetProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("UpdateBillingBudget")),
+			connect.WithClientOptions(opts...),
+		),
+		changeBillingPlan: connect.NewClient[platformv1.ChangeBillingPlanRequest, platformv1.BillingAccountSummary](
+			httpClient,
+			baseURL+PlatformServiceChangeBillingPlanProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("ChangeBillingPlan")),
+			connect.WithClientOptions(opts...),
+		),
+		startBillingPaymentSetup: connect.NewClient[platformv1.StartBillingPaymentSetupRequest, platformv1.StartBillingPaymentSetupResponse](
+			httpClient,
+			baseURL+PlatformServiceStartBillingPaymentSetupProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("StartBillingPaymentSetup")),
+			connect.WithClientOptions(opts...),
+		),
+		startBillingActivation: connect.NewClient[platformv1.StartBillingActivationRequest, platformv1.BillingAccountSummary](
+			httpClient,
+			baseURL+PlatformServiceStartBillingActivationProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("StartBillingActivation")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelBillingAccount: connect.NewClient[platformv1.CancelBillingAccountRequest, platformv1.CancelBillingAccountResponse](
+			httpClient,
+			baseURL+PlatformServiceCancelBillingAccountProcedure,
+			connect.WithSchema(platformServiceMethods.ByName("CancelBillingAccount")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -758,6 +844,14 @@ type platformServiceClient struct {
 	listAgents                  *connect.Client[emptypb.Empty, platformv1.ListAgentsResponse]
 	listBuildAttempts           *connect.Client[platformv1.ListBuildAttemptsRequest, platformv1.ListBuildAttemptsResponse]
 	getProjectUsage             *connect.Client[platformv1.GetProjectUsageRequest, platformv1.ProjectUsage]
+	getBillingAccount           *connect.Client[platformv1.GetBillingAccountRequest, platformv1.BillingAccountSummary]
+	listBillingStatements       *connect.Client[platformv1.ListBillingStatementsRequest, platformv1.ListBillingStatementsResponse]
+	getBillingStatement         *connect.Client[platformv1.GetBillingStatementRequest, platformv1.BillingStatement]
+	updateBillingBudget         *connect.Client[platformv1.UpdateBillingBudgetRequest, platformv1.BillingAccountSummary]
+	changeBillingPlan           *connect.Client[platformv1.ChangeBillingPlanRequest, platformv1.BillingAccountSummary]
+	startBillingPaymentSetup    *connect.Client[platformv1.StartBillingPaymentSetupRequest, platformv1.StartBillingPaymentSetupResponse]
+	startBillingActivation      *connect.Client[platformv1.StartBillingActivationRequest, platformv1.BillingAccountSummary]
+	cancelBillingAccount        *connect.Client[platformv1.CancelBillingAccountRequest, platformv1.CancelBillingAccountResponse]
 }
 
 // ListWorkspaces calls platform.v1.PlatformService.ListWorkspaces.
@@ -1060,6 +1154,46 @@ func (c *platformServiceClient) GetProjectUsage(ctx context.Context, req *connec
 	return c.getProjectUsage.CallUnary(ctx, req)
 }
 
+// GetBillingAccount calls platform.v1.PlatformService.GetBillingAccount.
+func (c *platformServiceClient) GetBillingAccount(ctx context.Context, req *connect.Request[platformv1.GetBillingAccountRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return c.getBillingAccount.CallUnary(ctx, req)
+}
+
+// ListBillingStatements calls platform.v1.PlatformService.ListBillingStatements.
+func (c *platformServiceClient) ListBillingStatements(ctx context.Context, req *connect.Request[platformv1.ListBillingStatementsRequest]) (*connect.Response[platformv1.ListBillingStatementsResponse], error) {
+	return c.listBillingStatements.CallUnary(ctx, req)
+}
+
+// GetBillingStatement calls platform.v1.PlatformService.GetBillingStatement.
+func (c *platformServiceClient) GetBillingStatement(ctx context.Context, req *connect.Request[platformv1.GetBillingStatementRequest]) (*connect.Response[platformv1.BillingStatement], error) {
+	return c.getBillingStatement.CallUnary(ctx, req)
+}
+
+// UpdateBillingBudget calls platform.v1.PlatformService.UpdateBillingBudget.
+func (c *platformServiceClient) UpdateBillingBudget(ctx context.Context, req *connect.Request[platformv1.UpdateBillingBudgetRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return c.updateBillingBudget.CallUnary(ctx, req)
+}
+
+// ChangeBillingPlan calls platform.v1.PlatformService.ChangeBillingPlan.
+func (c *platformServiceClient) ChangeBillingPlan(ctx context.Context, req *connect.Request[platformv1.ChangeBillingPlanRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return c.changeBillingPlan.CallUnary(ctx, req)
+}
+
+// StartBillingPaymentSetup calls platform.v1.PlatformService.StartBillingPaymentSetup.
+func (c *platformServiceClient) StartBillingPaymentSetup(ctx context.Context, req *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error) {
+	return c.startBillingPaymentSetup.CallUnary(ctx, req)
+}
+
+// StartBillingActivation calls platform.v1.PlatformService.StartBillingActivation.
+func (c *platformServiceClient) StartBillingActivation(ctx context.Context, req *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return c.startBillingActivation.CallUnary(ctx, req)
+}
+
+// CancelBillingAccount calls platform.v1.PlatformService.CancelBillingAccount.
+func (c *platformServiceClient) CancelBillingAccount(ctx context.Context, req *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error) {
+	return c.cancelBillingAccount.CallUnary(ctx, req)
+}
+
 // PlatformServiceHandler is an implementation of the platform.v1.PlatformService service.
 type PlatformServiceHandler interface {
 	ListWorkspaces(context.Context, *connect.Request[platformv1.ListWorkspacesRequest]) (*connect.Response[platformv1.ListWorkspacesResponse], error)
@@ -1122,6 +1256,14 @@ type PlatformServiceHandler interface {
 	ListAgents(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.ListAgentsResponse], error)
 	ListBuildAttempts(context.Context, *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error)
 	GetProjectUsage(context.Context, *connect.Request[platformv1.GetProjectUsageRequest]) (*connect.Response[platformv1.ProjectUsage], error)
+	GetBillingAccount(context.Context, *connect.Request[platformv1.GetBillingAccountRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	ListBillingStatements(context.Context, *connect.Request[platformv1.ListBillingStatementsRequest]) (*connect.Response[platformv1.ListBillingStatementsResponse], error)
+	GetBillingStatement(context.Context, *connect.Request[platformv1.GetBillingStatementRequest]) (*connect.Response[platformv1.BillingStatement], error)
+	UpdateBillingBudget(context.Context, *connect.Request[platformv1.UpdateBillingBudgetRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	ChangeBillingPlan(context.Context, *connect.Request[platformv1.ChangeBillingPlanRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	StartBillingPaymentSetup(context.Context, *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error)
+	StartBillingActivation(context.Context, *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error)
+	CancelBillingAccount(context.Context, *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error)
 }
 
 // NewPlatformServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -1491,6 +1633,54 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 		connect.WithSchema(platformServiceMethods.ByName("GetProjectUsage")),
 		connect.WithHandlerOptions(opts...),
 	)
+	platformServiceGetBillingAccountHandler := connect.NewUnaryHandler(
+		PlatformServiceGetBillingAccountProcedure,
+		svc.GetBillingAccount,
+		connect.WithSchema(platformServiceMethods.ByName("GetBillingAccount")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceListBillingStatementsHandler := connect.NewUnaryHandler(
+		PlatformServiceListBillingStatementsProcedure,
+		svc.ListBillingStatements,
+		connect.WithSchema(platformServiceMethods.ByName("ListBillingStatements")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceGetBillingStatementHandler := connect.NewUnaryHandler(
+		PlatformServiceGetBillingStatementProcedure,
+		svc.GetBillingStatement,
+		connect.WithSchema(platformServiceMethods.ByName("GetBillingStatement")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceUpdateBillingBudgetHandler := connect.NewUnaryHandler(
+		PlatformServiceUpdateBillingBudgetProcedure,
+		svc.UpdateBillingBudget,
+		connect.WithSchema(platformServiceMethods.ByName("UpdateBillingBudget")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceChangeBillingPlanHandler := connect.NewUnaryHandler(
+		PlatformServiceChangeBillingPlanProcedure,
+		svc.ChangeBillingPlan,
+		connect.WithSchema(platformServiceMethods.ByName("ChangeBillingPlan")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceStartBillingPaymentSetupHandler := connect.NewUnaryHandler(
+		PlatformServiceStartBillingPaymentSetupProcedure,
+		svc.StartBillingPaymentSetup,
+		connect.WithSchema(platformServiceMethods.ByName("StartBillingPaymentSetup")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceStartBillingActivationHandler := connect.NewUnaryHandler(
+		PlatformServiceStartBillingActivationProcedure,
+		svc.StartBillingActivation,
+		connect.WithSchema(platformServiceMethods.ByName("StartBillingActivation")),
+		connect.WithHandlerOptions(opts...),
+	)
+	platformServiceCancelBillingAccountHandler := connect.NewUnaryHandler(
+		PlatformServiceCancelBillingAccountProcedure,
+		svc.CancelBillingAccount,
+		connect.WithSchema(platformServiceMethods.ByName("CancelBillingAccount")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/platform.v1.PlatformService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case PlatformServiceListWorkspacesProcedure:
@@ -1613,6 +1803,22 @@ func NewPlatformServiceHandler(svc PlatformServiceHandler, opts ...connect.Handl
 			platformServiceListBuildAttemptsHandler.ServeHTTP(w, r)
 		case PlatformServiceGetProjectUsageProcedure:
 			platformServiceGetProjectUsageHandler.ServeHTTP(w, r)
+		case PlatformServiceGetBillingAccountProcedure:
+			platformServiceGetBillingAccountHandler.ServeHTTP(w, r)
+		case PlatformServiceListBillingStatementsProcedure:
+			platformServiceListBillingStatementsHandler.ServeHTTP(w, r)
+		case PlatformServiceGetBillingStatementProcedure:
+			platformServiceGetBillingStatementHandler.ServeHTTP(w, r)
+		case PlatformServiceUpdateBillingBudgetProcedure:
+			platformServiceUpdateBillingBudgetHandler.ServeHTTP(w, r)
+		case PlatformServiceChangeBillingPlanProcedure:
+			platformServiceChangeBillingPlanHandler.ServeHTTP(w, r)
+		case PlatformServiceStartBillingPaymentSetupProcedure:
+			platformServiceStartBillingPaymentSetupHandler.ServeHTTP(w, r)
+		case PlatformServiceStartBillingActivationProcedure:
+			platformServiceStartBillingActivationHandler.ServeHTTP(w, r)
+		case PlatformServiceCancelBillingAccountProcedure:
+			platformServiceCancelBillingAccountHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1862,6 +2068,38 @@ func (UnimplementedPlatformServiceHandler) GetProjectUsage(context.Context, *con
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetProjectUsage is not implemented"))
 }
 
+func (UnimplementedPlatformServiceHandler) GetBillingAccount(context.Context, *connect.Request[platformv1.GetBillingAccountRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetBillingAccount is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) ListBillingStatements(context.Context, *connect.Request[platformv1.ListBillingStatementsRequest]) (*connect.Response[platformv1.ListBillingStatementsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ListBillingStatements is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) GetBillingStatement(context.Context, *connect.Request[platformv1.GetBillingStatementRequest]) (*connect.Response[platformv1.BillingStatement], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.GetBillingStatement is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) UpdateBillingBudget(context.Context, *connect.Request[platformv1.UpdateBillingBudgetRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.UpdateBillingBudget is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) ChangeBillingPlan(context.Context, *connect.Request[platformv1.ChangeBillingPlanRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.ChangeBillingPlan is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) StartBillingPaymentSetup(context.Context, *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.StartBillingPaymentSetup is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) StartBillingActivation(context.Context, *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.StartBillingActivation is not implemented"))
+}
+
+func (UnimplementedPlatformServiceHandler) CancelBillingAccount(context.Context, *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.PlatformService.CancelBillingAccount is not implemented"))
+}
+
 // BuilderServiceClient is a client for the platform.v1.BuilderService service.
 type BuilderServiceClient interface {
 	ClaimBuild(context.Context, *connect.Request[platformv1.ClaimBuildRequest]) (*connect.Response[platformv1.BuildJob], error)
@@ -2039,6 +2277,8 @@ func (UnimplementedBuilderServiceHandler) CompleteBuild(context.Context, *connec
 // OpsServiceClient is a client for the platform.v1.OpsService service.
 type OpsServiceClient interface {
 	IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error)
+	IngestStripeWebhook(context.Context, *connect.Request[platformv1.IngestStripeWebhookRequest]) (*connect.Response[emptypb.Empty], error)
+	SetBillingCollectionPaused(context.Context, *connect.Request[platformv1.SetBillingCollectionPausedRequest]) (*connect.Response[platformv1.BillingControlState], error)
 	ListFleet(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.Fleet], error)
 	CreateAgent(context.Context, *connect.Request[platformv1.CreateAgentRequest]) (*connect.Response[platformv1.AgentEnrollment], error)
 	UpdateAgent(context.Context, *connect.Request[platformv1.UpdateAgentRequest]) (*connect.Response[platformv1.Agent], error)
@@ -2064,6 +2304,18 @@ func NewOpsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			httpClient,
 			baseURL+OpsServiceIngestGitHubWebhookProcedure,
 			connect.WithSchema(opsServiceMethods.ByName("IngestGitHubWebhook")),
+			connect.WithClientOptions(opts...),
+		),
+		ingestStripeWebhook: connect.NewClient[platformv1.IngestStripeWebhookRequest, emptypb.Empty](
+			httpClient,
+			baseURL+OpsServiceIngestStripeWebhookProcedure,
+			connect.WithSchema(opsServiceMethods.ByName("IngestStripeWebhook")),
+			connect.WithClientOptions(opts...),
+		),
+		setBillingCollectionPaused: connect.NewClient[platformv1.SetBillingCollectionPausedRequest, platformv1.BillingControlState](
+			httpClient,
+			baseURL+OpsServiceSetBillingCollectionPausedProcedure,
+			connect.WithSchema(opsServiceMethods.ByName("SetBillingCollectionPaused")),
 			connect.WithClientOptions(opts...),
 		),
 		listFleet: connect.NewClient[emptypb.Empty, platformv1.Fleet](
@@ -2119,20 +2371,32 @@ func NewOpsServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 
 // opsServiceClient implements OpsServiceClient.
 type opsServiceClient struct {
-	ingestGitHubWebhook     *connect.Client[platformv1.IngestGitHubWebhookRequest, emptypb.Empty]
-	listFleet               *connect.Client[emptypb.Empty, platformv1.Fleet]
-	createAgent             *connect.Client[platformv1.CreateAgentRequest, platformv1.AgentEnrollment]
-	updateAgent             *connect.Client[platformv1.UpdateAgentRequest, platformv1.Agent]
-	setAgentLifecycle       *connect.Client[platformv1.SetAgentLifecycleRequest, platformv1.Agent]
-	listBuilders            *connect.Client[emptypb.Empty, platformv1.ListBuildersResponse]
-	setBuilderDrain         *connect.Client[platformv1.SetBuilderDrainRequest, platformv1.BuilderWorker]
-	getBuildScheduler       *connect.Client[emptypb.Empty, platformv1.BuildSchedulerState]
-	setBuildSchedulerPaused *connect.Client[platformv1.SetBuildSchedulerPausedRequest, platformv1.BuildSchedulerState]
+	ingestGitHubWebhook        *connect.Client[platformv1.IngestGitHubWebhookRequest, emptypb.Empty]
+	ingestStripeWebhook        *connect.Client[platformv1.IngestStripeWebhookRequest, emptypb.Empty]
+	setBillingCollectionPaused *connect.Client[platformv1.SetBillingCollectionPausedRequest, platformv1.BillingControlState]
+	listFleet                  *connect.Client[emptypb.Empty, platformv1.Fleet]
+	createAgent                *connect.Client[platformv1.CreateAgentRequest, platformv1.AgentEnrollment]
+	updateAgent                *connect.Client[platformv1.UpdateAgentRequest, platformv1.Agent]
+	setAgentLifecycle          *connect.Client[platformv1.SetAgentLifecycleRequest, platformv1.Agent]
+	listBuilders               *connect.Client[emptypb.Empty, platformv1.ListBuildersResponse]
+	setBuilderDrain            *connect.Client[platformv1.SetBuilderDrainRequest, platformv1.BuilderWorker]
+	getBuildScheduler          *connect.Client[emptypb.Empty, platformv1.BuildSchedulerState]
+	setBuildSchedulerPaused    *connect.Client[platformv1.SetBuildSchedulerPausedRequest, platformv1.BuildSchedulerState]
 }
 
 // IngestGitHubWebhook calls platform.v1.OpsService.IngestGitHubWebhook.
 func (c *opsServiceClient) IngestGitHubWebhook(ctx context.Context, req *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
 	return c.ingestGitHubWebhook.CallUnary(ctx, req)
+}
+
+// IngestStripeWebhook calls platform.v1.OpsService.IngestStripeWebhook.
+func (c *opsServiceClient) IngestStripeWebhook(ctx context.Context, req *connect.Request[platformv1.IngestStripeWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
+	return c.ingestStripeWebhook.CallUnary(ctx, req)
+}
+
+// SetBillingCollectionPaused calls platform.v1.OpsService.SetBillingCollectionPaused.
+func (c *opsServiceClient) SetBillingCollectionPaused(ctx context.Context, req *connect.Request[platformv1.SetBillingCollectionPausedRequest]) (*connect.Response[platformv1.BillingControlState], error) {
+	return c.setBillingCollectionPaused.CallUnary(ctx, req)
 }
 
 // ListFleet calls platform.v1.OpsService.ListFleet.
@@ -2178,6 +2442,8 @@ func (c *opsServiceClient) SetBuildSchedulerPaused(ctx context.Context, req *con
 // OpsServiceHandler is an implementation of the platform.v1.OpsService service.
 type OpsServiceHandler interface {
 	IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error)
+	IngestStripeWebhook(context.Context, *connect.Request[platformv1.IngestStripeWebhookRequest]) (*connect.Response[emptypb.Empty], error)
+	SetBillingCollectionPaused(context.Context, *connect.Request[platformv1.SetBillingCollectionPausedRequest]) (*connect.Response[platformv1.BillingControlState], error)
 	ListFleet(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.Fleet], error)
 	CreateAgent(context.Context, *connect.Request[platformv1.CreateAgentRequest]) (*connect.Response[platformv1.AgentEnrollment], error)
 	UpdateAgent(context.Context, *connect.Request[platformv1.UpdateAgentRequest]) (*connect.Response[platformv1.Agent], error)
@@ -2199,6 +2465,18 @@ func NewOpsServiceHandler(svc OpsServiceHandler, opts ...connect.HandlerOption) 
 		OpsServiceIngestGitHubWebhookProcedure,
 		svc.IngestGitHubWebhook,
 		connect.WithSchema(opsServiceMethods.ByName("IngestGitHubWebhook")),
+		connect.WithHandlerOptions(opts...),
+	)
+	opsServiceIngestStripeWebhookHandler := connect.NewUnaryHandler(
+		OpsServiceIngestStripeWebhookProcedure,
+		svc.IngestStripeWebhook,
+		connect.WithSchema(opsServiceMethods.ByName("IngestStripeWebhook")),
+		connect.WithHandlerOptions(opts...),
+	)
+	opsServiceSetBillingCollectionPausedHandler := connect.NewUnaryHandler(
+		OpsServiceSetBillingCollectionPausedProcedure,
+		svc.SetBillingCollectionPaused,
+		connect.WithSchema(opsServiceMethods.ByName("SetBillingCollectionPaused")),
 		connect.WithHandlerOptions(opts...),
 	)
 	opsServiceListFleetHandler := connect.NewUnaryHandler(
@@ -2253,6 +2531,10 @@ func NewOpsServiceHandler(svc OpsServiceHandler, opts ...connect.HandlerOption) 
 		switch r.URL.Path {
 		case OpsServiceIngestGitHubWebhookProcedure:
 			opsServiceIngestGitHubWebhookHandler.ServeHTTP(w, r)
+		case OpsServiceIngestStripeWebhookProcedure:
+			opsServiceIngestStripeWebhookHandler.ServeHTTP(w, r)
+		case OpsServiceSetBillingCollectionPausedProcedure:
+			opsServiceSetBillingCollectionPausedHandler.ServeHTTP(w, r)
 		case OpsServiceListFleetProcedure:
 			opsServiceListFleetHandler.ServeHTTP(w, r)
 		case OpsServiceCreateAgentProcedure:
@@ -2280,6 +2562,14 @@ type UnimplementedOpsServiceHandler struct{}
 
 func (UnimplementedOpsServiceHandler) IngestGitHubWebhook(context.Context, *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.IngestGitHubWebhook is not implemented"))
+}
+
+func (UnimplementedOpsServiceHandler) IngestStripeWebhook(context.Context, *connect.Request[platformv1.IngestStripeWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.IngestStripeWebhook is not implemented"))
+}
+
+func (UnimplementedOpsServiceHandler) SetBillingCollectionPaused(context.Context, *connect.Request[platformv1.SetBillingCollectionPausedRequest]) (*connect.Response[platformv1.BillingControlState], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.SetBillingCollectionPaused is not implemented"))
 }
 
 func (UnimplementedOpsServiceHandler) ListFleet(context.Context, *connect.Request[emptypb.Empty]) (*connect.Response[platformv1.Fleet], error) {

@@ -11,6 +11,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/usage"
 	"ebof-wg-mesh/internal/recovery"
 	"net/netip"
@@ -316,6 +317,13 @@ func (d *Delivery) planAllocationCreationTx(ctx context.Context, tx *sql.Tx, ser
 }
 
 func (d *Delivery) insertAllocationTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, agentID string, now time.Time) (AllocationRecord, error) {
+	// The single allocation-creation seam enforces billing restrictions for
+	// user requests and autonomous reconciliation alike.
+	if restricted, reason, err := billing.ServiceEnforcedTx(ctx, tx, service.ID); err != nil {
+		return AllocationRecord{}, err
+	} else if restricted {
+		return AllocationRecord{}, fmt.Errorf("%w: %s", ErrBillingRestricted, reason)
+	}
 	alloc, mutation, err := d.planAllocationCreationTx(ctx, tx, service, agentID, now)
 	if err != nil {
 		return AllocationRecord{}, err

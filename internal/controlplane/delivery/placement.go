@@ -16,6 +16,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/usage"
 )
 
@@ -24,6 +25,31 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 	desired := service.DesiredReplicaCount
 	if err := validateVolumeReplicaCompatibility(service.Spec, desired); err != nil {
 		return nil, err
+	}
+	// An enforced billing restriction stops compute without touching the
+	// stored desired replica count: every allocation drains through the
+	// normal scale-down path, and clearing the restriction lets this same
+	// reconciliation restore the desired state. Dry-run (shadow)
+	// restrictions never reach here as enforced.
+	if restricted, reason, err := billing.ServiceEnforcedTx(ctx, tx, service.ID); err != nil {
+		return nil, err
+	} else if restricted {
+		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
+		if err != nil {
+			return nil, err
+		}
+		live, _ := splitLostAllocations(existing)
+		for _, alloc := range live {
+			if err := d.applyAllocationMutationsTx(ctx, tx, now, allocationMutation{Kind: mutationCompleteDrain, AllocationID: alloc.ID}); err != nil {
+				return nil, err
+			}
+		}
+		message := "billing restriction: " + reason
+		if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, message, now); err != nil {
+			return nil, err
+		}
+		service.PlacementMessage = message
+		return nil, nil
 	}
 	if desired <= 0 && service.RolloutGeneration == 0 {
 		if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, "", now); err != nil {
@@ -77,6 +103,14 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 				return nil, err
 			}
 			alloc, err := d.insertAllocationTx(ctx, tx, service, agentID, now)
+			if errors.Is(err, ErrBillingRestricted) {
+				message := "billing restriction: " + strings.TrimSpace(strings.TrimPrefix(err.Error(), ErrBillingRestricted.Error()+": "))
+				if err := s.setServicePlacementMessageTx(ctx, tx, service.ID, message, now); err != nil {
+					return nil, err
+				}
+				service.PlacementMessage = message
+				return append(existing, lost...), nil
+			}
 			if err != nil {
 				return nil, err
 			}

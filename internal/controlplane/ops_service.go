@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/source"
 
@@ -19,11 +20,13 @@ import (
 
 type opsService struct {
 	platformv1.UnimplementedOpsServiceServer
-	webhooks  *source.GitHubWebhookHandler
-	store     *fleetPersistence
-	delivery  *deliverycore.Delivery
-	notifier  *notifier
-	authority interface{ RevokeSerials([]string) error }
+	webhooks     *source.GitHubWebhookHandler
+	billing      *billing.Service
+	billingAuthz *authz.Authorizer
+	store        *fleetPersistence
+	delivery     *deliverycore.Delivery
+	notifier     *notifier
+	authority    interface{ RevokeSerials([]string) error }
 }
 
 func newOpsService(webhooks *source.GitHubWebhookHandler, store *fleetPersistence, delivery *deliverycore.Delivery, notifier *notifier, authority interface{ RevokeSerials([]string) error }) *opsService {

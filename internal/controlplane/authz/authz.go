@@ -119,12 +119,17 @@ func (w Workspace) Role() Role { return w.role }
 
 // Project proves workspace membership for a user project with at least the minted access.
 type Project struct {
-	user User
-	id   string
-	role Role
+	user        User
+	id          string
+	workspaceID string
+	role        Role
 }
 
 func (p Project) ID() string { return p.id }
+
+// WorkspaceID is the workspace that owns the project. Billing derives its
+// payer from this scope instead of trusting a caller-supplied account.
+func (p Project) WorkspaceID() string { return p.workspaceID }
 
 func (p Project) UserID() string { return p.user.id }
 
@@ -141,6 +146,8 @@ type Environment struct {
 func (e Environment) ID() string { return e.id }
 
 func (e Environment) ProjectID() string { return e.project.id }
+
+func (e Environment) WorkspaceID() string { return e.project.workspaceID }
 
 func (e Environment) Project() Project { return e.project }
 
@@ -164,6 +171,8 @@ func (s Service) Environment() Environment { return s.environment }
 
 func (s Service) ProjectID() string { return s.environment.project.id }
 
+func (s Service) WorkspaceID() string { return s.environment.project.workspaceID }
+
 func (s Service) Project() Project { return s.environment.project }
 
 func (s Service) UserID() string { return s.environment.project.user.id }
@@ -186,6 +195,8 @@ func (v Volume) Environment() Environment { return v.environment }
 
 func (v Volume) ProjectID() string { return v.environment.project.id }
 
+func (v Volume) WorkspaceID() string { return v.environment.project.workspaceID }
+
 func (v Volume) UserID() string { return v.environment.project.user.id }
 
 func (v Volume) User() User { return v.environment.project.user }
@@ -207,6 +218,8 @@ func (b DomainBinding) Service() Service { return b.service }
 func (b DomainBinding) EnvironmentID() string { return b.service.environment.id }
 
 func (b DomainBinding) ProjectID() string { return b.service.environment.project.id }
+
+func (b DomainBinding) WorkspaceID() string { return b.service.environment.project.workspaceID }
 
 func (b DomainBinding) UserID() string { return b.service.environment.project.user.id }
 
@@ -285,11 +298,12 @@ func (a *Authorizer) AuthorizeProject(ctx context.Context, user User, projectID 
 		return Project{}, err
 	}
 	var role Role
-	if err := a.q.QueryRowContext(ctx, `SELECT m.role
+	var workspaceID string
+	if err := a.q.QueryRowContext(ctx, `SELECT m.role, p.workspace_id
 		  FROM projects p
 		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE p.id = $1 AND m.user_id = $2 AND p.kind = $3`,
-		projectID, user.id, UserProjectKind).Scan(&role); err != nil {
+		projectID, user.id, UserProjectKind).Scan(&role, &workspaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Project{}, deny("project")
 		}
@@ -298,7 +312,7 @@ func (a *Authorizer) AuthorizeProject(ctx context.Context, user User, projectID 
 	if !role.Allows(need) {
 		return Project{}, deny("project")
 	}
-	return Project{user: user, id: projectID, role: role}, nil
+	return Project{user: user, id: projectID, workspaceID: workspaceID, role: role}, nil
 }
 
 // AuthorizeEnvironment proves user holds at least need access on the environment's project.
@@ -306,14 +320,14 @@ func (a *Authorizer) AuthorizeEnvironment(ctx context.Context, user User, enviro
 	if err := check(user, need); err != nil {
 		return Environment{}, err
 	}
-	var projectID string
+	var projectID, workspaceID string
 	var role Role
-	if err := a.q.QueryRowContext(ctx, `SELECT e.project_id, m.role
+	if err := a.q.QueryRowContext(ctx, `SELECT e.project_id, m.role, p.workspace_id
 		  FROM environments e
 		  JOIN projects p ON p.id = e.project_id
 		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE e.id = $1 AND m.user_id = $2 AND p.kind = $3`,
-		environmentID, user.id, UserProjectKind).Scan(&projectID, &role); err != nil {
+		environmentID, user.id, UserProjectKind).Scan(&projectID, &role, &workspaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Environment{}, deny("environment")
 		}
@@ -322,7 +336,7 @@ func (a *Authorizer) AuthorizeEnvironment(ctx context.Context, user User, enviro
 	if !role.Allows(need) {
 		return Environment{}, deny("environment")
 	}
-	return Environment{project: Project{user: user, id: projectID, role: role}, id: environmentID}, nil
+	return Environment{project: Project{user: user, id: projectID, workspaceID: workspaceID, role: role}, id: environmentID}, nil
 }
 
 // AuthorizeService proves user holds at least need access on the service's project.
@@ -330,15 +344,15 @@ func (a *Authorizer) AuthorizeService(ctx context.Context, user User, serviceID 
 	if err := check(user, need); err != nil {
 		return Service{}, err
 	}
-	var environmentID, projectID string
+	var environmentID, projectID, workspaceID string
 	var role Role
-	if err := a.q.QueryRowContext(ctx, `SELECT s.environment_id, e.project_id, m.role
+	if err := a.q.QueryRowContext(ctx, `SELECT s.environment_id, e.project_id, m.role, p.workspace_id
 		  FROM services s
 		  JOIN environments e ON e.id = s.environment_id
 		  JOIN projects p ON p.id = e.project_id
 		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE s.id = $1 AND m.user_id = $2 AND p.kind = $3`,
-		serviceID, user.id, UserProjectKind).Scan(&environmentID, &projectID, &role); err != nil {
+		serviceID, user.id, UserProjectKind).Scan(&environmentID, &projectID, &role, &workspaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Service{}, deny("service")
 		}
@@ -347,7 +361,7 @@ func (a *Authorizer) AuthorizeService(ctx context.Context, user User, serviceID 
 	if !role.Allows(need) {
 		return Service{}, deny("service")
 	}
-	project := Project{user: user, id: projectID, role: role}
+	project := Project{user: user, id: projectID, workspaceID: workspaceID, role: role}
 	return Service{environment: Environment{project: project, id: environmentID}, id: serviceID}, nil
 }
 
@@ -356,15 +370,15 @@ func (a *Authorizer) AuthorizeVolume(ctx context.Context, user User, volumeID st
 	if err := check(user, need); err != nil {
 		return Volume{}, err
 	}
-	var environmentID, projectID string
+	var environmentID, projectID, workspaceID string
 	var role Role
-	if err := a.q.QueryRowContext(ctx, `SELECT v.environment_id, e.project_id, m.role
+	if err := a.q.QueryRowContext(ctx, `SELECT v.environment_id, e.project_id, m.role, p.workspace_id
 		  FROM volumes v
 		  JOIN environments e ON e.id = v.environment_id
 		  JOIN projects p ON p.id = e.project_id
 		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE v.id = $1 AND m.user_id = $2 AND p.kind = $3`,
-		volumeID, user.id, UserProjectKind).Scan(&environmentID, &projectID, &role); err != nil {
+		volumeID, user.id, UserProjectKind).Scan(&environmentID, &projectID, &role, &workspaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return Volume{}, deny("volume")
 		}
@@ -373,7 +387,7 @@ func (a *Authorizer) AuthorizeVolume(ctx context.Context, user User, volumeID st
 	if !role.Allows(need) {
 		return Volume{}, deny("volume")
 	}
-	project := Project{user: user, id: projectID, role: role}
+	project := Project{user: user, id: projectID, workspaceID: workspaceID, role: role}
 	return Volume{environment: Environment{project: project, id: environmentID}, id: volumeID}, nil
 }
 
@@ -384,16 +398,16 @@ func (a *Authorizer) AuthorizeDomainBinding(ctx context.Context, user User, host
 	}
 	// Normalize like the routing layer so "Example.COM." authorizes the same binding it routes to.
 	hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
-	var serviceID, environmentID, projectID string
+	var serviceID, environmentID, projectID, workspaceID string
 	var role Role
-	if err := a.q.QueryRowContext(ctx, `SELECT d.service_id, s.environment_id, e.project_id, m.role
+	if err := a.q.QueryRowContext(ctx, `SELECT d.service_id, s.environment_id, e.project_id, m.role, p.workspace_id
 		  FROM domain_bindings d
 		  JOIN services s ON s.id = d.service_id
 		  JOIN environments e ON e.id = s.environment_id
 		  JOIN projects p ON p.id = e.project_id
 		  JOIN workspace_memberships m ON m.workspace_id = p.workspace_id
 		 WHERE d.hostname = $1 AND m.user_id = $2 AND p.kind = $3`,
-		hostname, user.id, UserProjectKind).Scan(&serviceID, &environmentID, &projectID, &role); err != nil {
+		hostname, user.id, UserProjectKind).Scan(&serviceID, &environmentID, &projectID, &role, &workspaceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return DomainBinding{}, deny("domain binding")
 		}
@@ -402,7 +416,7 @@ func (a *Authorizer) AuthorizeDomainBinding(ctx context.Context, user User, host
 	if !role.Allows(need) {
 		return DomainBinding{}, deny("domain binding")
 	}
-	project := Project{user: user, id: projectID, role: role}
+	project := Project{user: user, id: projectID, workspaceID: workspaceID, role: role}
 	service := Service{environment: Environment{project: project, id: environmentID}, id: serviceID}
 	return DomainBinding{service: service, hostname: hostname}, nil
 }

@@ -10,6 +10,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/source"
 
@@ -290,6 +291,13 @@ func (d *Delivery) tryClaimBuildTx(ctx context.Context, tx *sql.Tx, buildID, bui
 		); err != nil {
 			return BuildRunRecord{}, false, err
 		}
+		return BuildRunRecord{}, false, nil
+	}
+	// An enforced billing restriction blocks new builds; the queued build
+	// stays claimable once the restriction clears.
+	if blocked, _, err := billing.ServiceGrowthBlockedTx(ctx, tx, build.ServiceID); err != nil {
+		return BuildRunRecord{}, false, err
+	} else if blocked {
 		return BuildRunRecord{}, false, nil
 	}
 	dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, build.ServiceID, build.ID)

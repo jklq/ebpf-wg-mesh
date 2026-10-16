@@ -185,6 +185,14 @@ func resetTestStore(t *testing.T, store *persistence) {
 	t.Helper()
 
 	tables := []string{
+		"billing_provider_events",
+		"billing_notices",
+		"billing_statement_lines",
+		"billing_statements",
+		"billing_credit_entries",
+		"billing_periods",
+		"billing_restrictions",
+		"billing_accounts",
 		"usage_intervals",
 		"usage_hourly",
 		"usage_resource_progress",
@@ -261,6 +269,9 @@ func resetTestStore(t *testing.T, store *persistence) {
 		}
 		if _, err := tx.ExecContext(context.Background(), `UPDATE build_scheduler_control SET paused = FALSE`); err != nil {
 			return fmt.Errorf("reset build scheduler pause: %w", err)
+		}
+		if _, err := tx.ExecContext(context.Background(), `UPDATE billing_control SET collection_paused = FALSE, pause_reason = ''`); err != nil {
+			return fmt.Errorf("reset billing collection pause: %w", err)
 		}
 		return nil
 	}); err != nil {

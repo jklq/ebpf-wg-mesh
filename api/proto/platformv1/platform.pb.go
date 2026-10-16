@@ -12278,6 +12278,1538 @@ func (x *ProjectUsage) GetRetainedSince() *timestamppb.Timestamp {
 	return nil
 }
 
+type BillingRestrictionState struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Restricted    bool                   `protobuf:"varint,1,opt,name=restricted,proto3" json:"restricted,omitempty"`
+	GrowthBlocked bool                   `protobuf:"varint,2,opt,name=growth_blocked,json=growthBlocked,proto3" json:"growth_blocked,omitempty"`
+	// Dry-run restrictions are shadow observations and are never enforced.
+	DryRun        bool                   `protobuf:"varint,3,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	Since         *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=since,proto3" json:"since,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BillingRestrictionState) Reset() {
+	*x = BillingRestrictionState{}
+	mi := &file_platform_proto_msgTypes[150]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingRestrictionState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingRestrictionState) ProtoMessage() {}
+
+func (x *BillingRestrictionState) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[150]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingRestrictionState.ProtoReflect.Descriptor instead.
+func (*BillingRestrictionState) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{150}
+}
+
+func (x *BillingRestrictionState) GetRestricted() bool {
+	if x != nil {
+		return x.Restricted
+	}
+	return false
+}
+
+func (x *BillingRestrictionState) GetGrowthBlocked() bool {
+	if x != nil {
+		return x.GrowthBlocked
+	}
+	return false
+}
+
+func (x *BillingRestrictionState) GetDryRun() bool {
+	if x != nil {
+		return x.DryRun
+	}
+	return false
+}
+
+func (x *BillingRestrictionState) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *BillingRestrictionState) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
+// BillingRate is one meter's exact price in cents per stored unit,
+// numerator/denominator at the account's pinned rate version.
+type BillingRate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Meter         string                 `protobuf:"bytes,1,opt,name=meter,proto3" json:"meter,omitempty"`
+	Unit          string                 `protobuf:"bytes,2,opt,name=unit,proto3" json:"unit,omitempty"`
+	Numerator     string                 `protobuf:"bytes,3,opt,name=numerator,proto3" json:"numerator,omitempty"`
+	Denominator   string                 `protobuf:"bytes,4,opt,name=denominator,proto3" json:"denominator,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BillingRate) Reset() {
+	*x = BillingRate{}
+	mi := &file_platform_proto_msgTypes[151]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingRate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingRate) ProtoMessage() {}
+
+func (x *BillingRate) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[151]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingRate.ProtoReflect.Descriptor instead.
+func (*BillingRate) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{151}
+}
+
+func (x *BillingRate) GetMeter() string {
+	if x != nil {
+		return x.Meter
+	}
+	return ""
+}
+
+func (x *BillingRate) GetUnit() string {
+	if x != nil {
+		return x.Unit
+	}
+	return ""
+}
+
+func (x *BillingRate) GetNumerator() string {
+	if x != nil {
+		return x.Numerator
+	}
+	return ""
+}
+
+func (x *BillingRate) GetDenominator() string {
+	if x != nil {
+		return x.Denominator
+	}
+	return ""
+}
+
+type BillingProjectCost struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId   string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ProjectName string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	// One of cpu, memory, volume, egress.
+	Meter string `protobuf:"bytes,3,opt,name=meter,proto3" json:"meter,omitempty"`
+	// Exact quantity in the meter's stored unit (cpu-microseconds,
+	// byte-milliseconds, or bytes).
+	Quantity      string `protobuf:"bytes,4,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	AmountCents   int64  `protobuf:"varint,5,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BillingProjectCost) Reset() {
+	*x = BillingProjectCost{}
+	mi := &file_platform_proto_msgTypes[152]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingProjectCost) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingProjectCost) ProtoMessage() {}
+
+func (x *BillingProjectCost) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[152]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingProjectCost.ProtoReflect.Descriptor instead.
+func (*BillingProjectCost) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{152}
+}
+
+func (x *BillingProjectCost) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *BillingProjectCost) GetProjectName() string {
+	if x != nil {
+		return x.ProjectName
+	}
+	return ""
+}
+
+func (x *BillingProjectCost) GetMeter() string {
+	if x != nil {
+		return x.Meter
+	}
+	return ""
+}
+
+func (x *BillingProjectCost) GetQuantity() string {
+	if x != nil {
+		return x.Quantity
+	}
+	return ""
+}
+
+func (x *BillingProjectCost) GetAmountCents() int64 {
+	if x != nil {
+		return x.AmountCents
+	}
+	return 0
+}
+
+type GetBillingAccountRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBillingAccountRequest) Reset() {
+	*x = GetBillingAccountRequest{}
+	mi := &file_platform_proto_msgTypes[153]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBillingAccountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBillingAccountRequest) ProtoMessage() {}
+
+func (x *GetBillingAccountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[153]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBillingAccountRequest.ProtoReflect.Descriptor instead.
+func (*GetBillingAccountRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{153}
+}
+
+func (x *GetBillingAccountRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+// BillingAccountSummary is the workspace billing account with its current
+// open period rated to date.
+type BillingAccountSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	WorkspaceId   string                 `protobuf:"bytes,2,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Currency      string                 `protobuf:"bytes,3,opt,name=currency,proto3" json:"currency,omitempty"`
+	PlanId        string                 `protobuf:"bytes,4,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	PendingPlanId string                 `protobuf:"bytes,5,opt,name=pending_plan_id,json=pendingPlanId,proto3" json:"pending_plan_id,omitempty"`
+	// trial, pending_activation, active, past_due, or cancelled.
+	State string `protobuf:"bytes,6,opt,name=state,proto3" json:"state,omitempty"`
+	// disabled, shadow, or enabled.
+	Mode                      string                 `protobuf:"bytes,7,opt,name=mode,proto3" json:"mode,omitempty"`
+	PaymentReady              bool                   `protobuf:"varint,8,opt,name=payment_ready,json=paymentReady,proto3" json:"payment_ready,omitempty"`
+	BudgetStopCents           int64                  `protobuf:"varint,9,opt,name=budget_stop_cents,json=budgetStopCents,proto3" json:"budget_stop_cents,omitempty"`
+	TrialEndsAt               *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=trial_ends_at,json=trialEndsAt,proto3" json:"trial_ends_at,omitempty"`
+	CancelEffectiveAt         *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=cancel_effective_at,json=cancelEffectiveAt,proto3" json:"cancel_effective_at,omitempty"`
+	PeriodId                  string                 `protobuf:"bytes,12,opt,name=period_id,json=periodId,proto3" json:"period_id,omitempty"`
+	PeriodStart               *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
+	PeriodEnd                 *timestamppb.Timestamp `protobuf:"bytes,14,opt,name=period_end,json=periodEnd,proto3" json:"period_end,omitempty"`
+	MonthlyMinimumCents       int64                  `protobuf:"varint,15,opt,name=monthly_minimum_cents,json=monthlyMinimumCents,proto3" json:"monthly_minimum_cents,omitempty"`
+	IncludedUsageCents        int64                  `protobuf:"varint,16,opt,name=included_usage_cents,json=includedUsageCents,proto3" json:"included_usage_cents,omitempty"`
+	GrossCents                int64                  `protobuf:"varint,17,opt,name=gross_cents,json=grossCents,proto3" json:"gross_cents,omitempty"`
+	AfterAllowanceCents       int64                  `protobuf:"varint,18,opt,name=after_allowance_cents,json=afterAllowanceCents,proto3" json:"after_allowance_cents,omitempty"`
+	CreditBalanceCents        int64                  `protobuf:"varint,19,opt,name=credit_balance_cents,json=creditBalanceCents,proto3" json:"credit_balance_cents,omitempty"`
+	EstimatedPeriodTotalCents int64                  `protobuf:"varint,20,opt,name=estimated_period_total_cents,json=estimatedPeriodTotalCents,proto3" json:"estimated_period_total_cents,omitempty"`
+	// Forecast assumes the trailing 24 hours of hourly burn continue for the
+	// rest of the period. It never feeds credits, restrictions, or invoices.
+	ForecastGrossCents int64 `protobuf:"varint,21,opt,name=forecast_gross_cents,json=forecastGrossCents,proto3" json:"forecast_gross_cents,omitempty"`
+	UnpaidCents        int64 `protobuf:"varint,22,opt,name=unpaid_cents,json=unpaidCents,proto3" json:"unpaid_cents,omitempty"`
+	MeasuredMs         int64 `protobuf:"varint,23,opt,name=measured_ms,json=measuredMs,proto3" json:"measured_ms,omitempty"`
+	GapMs              int64 `protobuf:"varint,24,opt,name=gap_ms,json=gapMs,proto3" json:"gap_ms,omitempty"`
+	UncertainMs        int64 `protobuf:"varint,25,opt,name=uncertain_ms,json=uncertainMs,proto3" json:"uncertain_ms,omitempty"`
+	// Usage before this time is complete for the workspace's current
+	// resources. Unset when none has reported.
+	Watermark     *timestamppb.Timestamp   `protobuf:"bytes,26,opt,name=watermark,proto3" json:"watermark,omitempty"`
+	Restriction   *BillingRestrictionState `protobuf:"bytes,27,opt,name=restriction,proto3" json:"restriction,omitempty"`
+	ProjectCosts  []*BillingProjectCost    `protobuf:"bytes,28,rep,name=project_costs,json=projectCosts,proto3" json:"project_costs,omitempty"`
+	Rates         []*BillingRate           `protobuf:"bytes,29,rep,name=rates,proto3" json:"rates,omitempty"`
+	RateVersion   int64                    `protobuf:"varint,30,opt,name=rate_version,json=rateVersion,proto3" json:"rate_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BillingAccountSummary) Reset() {
+	*x = BillingAccountSummary{}
+	mi := &file_platform_proto_msgTypes[154]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingAccountSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingAccountSummary) ProtoMessage() {}
+
+func (x *BillingAccountSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[154]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingAccountSummary.ProtoReflect.Descriptor instead.
+func (*BillingAccountSummary) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{154}
+}
+
+func (x *BillingAccountSummary) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetPendingPlanId() string {
+	if x != nil {
+		return x.PendingPlanId
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetPaymentReady() bool {
+	if x != nil {
+		return x.PaymentReady
+	}
+	return false
+}
+
+func (x *BillingAccountSummary) GetBudgetStopCents() int64 {
+	if x != nil {
+		return x.BudgetStopCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetTrialEndsAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.TrialEndsAt
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetCancelEffectiveAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CancelEffectiveAt
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetPeriodId() string {
+	if x != nil {
+		return x.PeriodId
+	}
+	return ""
+}
+
+func (x *BillingAccountSummary) GetPeriodStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PeriodStart
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetPeriodEnd() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PeriodEnd
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetMonthlyMinimumCents() int64 {
+	if x != nil {
+		return x.MonthlyMinimumCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetIncludedUsageCents() int64 {
+	if x != nil {
+		return x.IncludedUsageCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetGrossCents() int64 {
+	if x != nil {
+		return x.GrossCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetAfterAllowanceCents() int64 {
+	if x != nil {
+		return x.AfterAllowanceCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetCreditBalanceCents() int64 {
+	if x != nil {
+		return x.CreditBalanceCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetEstimatedPeriodTotalCents() int64 {
+	if x != nil {
+		return x.EstimatedPeriodTotalCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetForecastGrossCents() int64 {
+	if x != nil {
+		return x.ForecastGrossCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetUnpaidCents() int64 {
+	if x != nil {
+		return x.UnpaidCents
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetMeasuredMs() int64 {
+	if x != nil {
+		return x.MeasuredMs
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetGapMs() int64 {
+	if x != nil {
+		return x.GapMs
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetUncertainMs() int64 {
+	if x != nil {
+		return x.UncertainMs
+	}
+	return 0
+}
+
+func (x *BillingAccountSummary) GetWatermark() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Watermark
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetRestriction() *BillingRestrictionState {
+	if x != nil {
+		return x.Restriction
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetProjectCosts() []*BillingProjectCost {
+	if x != nil {
+		return x.ProjectCosts
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetRates() []*BillingRate {
+	if x != nil {
+		return x.Rates
+	}
+	return nil
+}
+
+func (x *BillingAccountSummary) GetRateVersion() int64 {
+	if x != nil {
+		return x.RateVersion
+	}
+	return 0
+}
+
+type BillingStatementLine struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ProjectId       string                 `protobuf:"bytes,1,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	ProjectName     string                 `protobuf:"bytes,2,opt,name=project_name,json=projectName,proto3" json:"project_name,omitempty"`
+	Meter           string                 `protobuf:"bytes,3,opt,name=meter,proto3" json:"meter,omitempty"`
+	Description     string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Quantity        string                 `protobuf:"bytes,5,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	Unit            string                 `protobuf:"bytes,6,opt,name=unit,proto3" json:"unit,omitempty"`
+	RateNumerator   string                 `protobuf:"bytes,7,opt,name=rate_numerator,json=rateNumerator,proto3" json:"rate_numerator,omitempty"`
+	RateDenominator string                 `protobuf:"bytes,8,opt,name=rate_denominator,json=rateDenominator,proto3" json:"rate_denominator,omitempty"`
+	AmountCents     int64                  `protobuf:"varint,9,opt,name=amount_cents,json=amountCents,proto3" json:"amount_cents,omitempty"`
+	PeriodStart     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=period_start,json=periodStart,proto3" json:"period_start,omitempty"`
+	PeriodEnd       *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=period_end,json=periodEnd,proto3" json:"period_end,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *BillingStatementLine) Reset() {
+	*x = BillingStatementLine{}
+	mi := &file_platform_proto_msgTypes[155]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingStatementLine) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingStatementLine) ProtoMessage() {}
+
+func (x *BillingStatementLine) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[155]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingStatementLine.ProtoReflect.Descriptor instead.
+func (*BillingStatementLine) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{155}
+}
+
+func (x *BillingStatementLine) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetProjectName() string {
+	if x != nil {
+		return x.ProjectName
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetMeter() string {
+	if x != nil {
+		return x.Meter
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetQuantity() string {
+	if x != nil {
+		return x.Quantity
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetUnit() string {
+	if x != nil {
+		return x.Unit
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetRateNumerator() string {
+	if x != nil {
+		return x.RateNumerator
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetRateDenominator() string {
+	if x != nil {
+		return x.RateDenominator
+	}
+	return ""
+}
+
+func (x *BillingStatementLine) GetAmountCents() int64 {
+	if x != nil {
+		return x.AmountCents
+	}
+	return 0
+}
+
+func (x *BillingStatementLine) GetPeriodStart() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PeriodStart
+	}
+	return nil
+}
+
+func (x *BillingStatementLine) GetPeriodEnd() *timestamppb.Timestamp {
+	if x != nil {
+		return x.PeriodEnd
+	}
+	return nil
+}
+
+type BillingStatement struct {
+	state                  protoimpl.MessageState  `protogen:"open.v1"`
+	Id                     string                  `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	PeriodId               string                  `protobuf:"bytes,2,opt,name=period_id,json=periodId,proto3" json:"period_id,omitempty"`
+	Kind                   string                  `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
+	Currency               string                  `protobuf:"bytes,4,opt,name=currency,proto3" json:"currency,omitempty"`
+	Shadow                 bool                    `protobuf:"varint,5,opt,name=shadow,proto3" json:"shadow,omitempty"`
+	State                  string                  `protobuf:"bytes,6,opt,name=state,proto3" json:"state,omitempty"`
+	GrossCents             int64                   `protobuf:"varint,7,opt,name=gross_cents,json=grossCents,proto3" json:"gross_cents,omitempty"`
+	IncludedCents          int64                   `protobuf:"varint,8,opt,name=included_cents,json=includedCents,proto3" json:"included_cents,omitempty"`
+	AfterAllowanceCents    int64                   `protobuf:"varint,9,opt,name=after_allowance_cents,json=afterAllowanceCents,proto3" json:"after_allowance_cents,omitempty"`
+	CreditCents            int64                   `protobuf:"varint,10,opt,name=credit_cents,json=creditCents,proto3" json:"credit_cents,omitempty"`
+	MinimumCents           int64                   `protobuf:"varint,11,opt,name=minimum_cents,json=minimumCents,proto3" json:"minimum_cents,omitempty"`
+	PrepaidAppliedCents    int64                   `protobuf:"varint,12,opt,name=prepaid_applied_cents,json=prepaidAppliedCents,proto3" json:"prepaid_applied_cents,omitempty"`
+	NextMinimumCents       int64                   `protobuf:"varint,13,opt,name=next_minimum_cents,json=nextMinimumCents,proto3" json:"next_minimum_cents,omitempty"`
+	PeriodTotalCents       int64                   `protobuf:"varint,14,opt,name=period_total_cents,json=periodTotalCents,proto3" json:"period_total_cents,omitempty"`
+	AmountDueCents         int64                   `protobuf:"varint,15,opt,name=amount_due_cents,json=amountDueCents,proto3" json:"amount_due_cents,omitempty"`
+	StripeInvoiceId        string                  `protobuf:"bytes,16,opt,name=stripe_invoice_id,json=stripeInvoiceId,proto3" json:"stripe_invoice_id,omitempty"`
+	StripeHostedInvoiceUrl string                  `protobuf:"bytes,17,opt,name=stripe_hosted_invoice_url,json=stripeHostedInvoiceUrl,proto3" json:"stripe_hosted_invoice_url,omitempty"`
+	CreatedAt              *timestamppb.Timestamp  `protobuf:"bytes,18,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	Lines                  []*BillingStatementLine `protobuf:"bytes,19,rep,name=lines,proto3" json:"lines,omitempty"`
+	// CSV rendering of the statement; set only when requested.
+	Csv           string `protobuf:"bytes,20,opt,name=csv,proto3" json:"csv,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BillingStatement) Reset() {
+	*x = BillingStatement{}
+	mi := &file_platform_proto_msgTypes[156]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingStatement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingStatement) ProtoMessage() {}
+
+func (x *BillingStatement) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[156]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingStatement.ProtoReflect.Descriptor instead.
+func (*BillingStatement) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{156}
+}
+
+func (x *BillingStatement) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetPeriodId() string {
+	if x != nil {
+		return x.PeriodId
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetShadow() bool {
+	if x != nil {
+		return x.Shadow
+	}
+	return false
+}
+
+func (x *BillingStatement) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetGrossCents() int64 {
+	if x != nil {
+		return x.GrossCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetIncludedCents() int64 {
+	if x != nil {
+		return x.IncludedCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetAfterAllowanceCents() int64 {
+	if x != nil {
+		return x.AfterAllowanceCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetCreditCents() int64 {
+	if x != nil {
+		return x.CreditCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetMinimumCents() int64 {
+	if x != nil {
+		return x.MinimumCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetPrepaidAppliedCents() int64 {
+	if x != nil {
+		return x.PrepaidAppliedCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetNextMinimumCents() int64 {
+	if x != nil {
+		return x.NextMinimumCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetPeriodTotalCents() int64 {
+	if x != nil {
+		return x.PeriodTotalCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetAmountDueCents() int64 {
+	if x != nil {
+		return x.AmountDueCents
+	}
+	return 0
+}
+
+func (x *BillingStatement) GetStripeInvoiceId() string {
+	if x != nil {
+		return x.StripeInvoiceId
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetStripeHostedInvoiceUrl() string {
+	if x != nil {
+		return x.StripeHostedInvoiceUrl
+	}
+	return ""
+}
+
+func (x *BillingStatement) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *BillingStatement) GetLines() []*BillingStatementLine {
+	if x != nil {
+		return x.Lines
+	}
+	return nil
+}
+
+func (x *BillingStatement) GetCsv() string {
+	if x != nil {
+		return x.Csv
+	}
+	return ""
+}
+
+type ListBillingStatementsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBillingStatementsRequest) Reset() {
+	*x = ListBillingStatementsRequest{}
+	mi := &file_platform_proto_msgTypes[157]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBillingStatementsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBillingStatementsRequest) ProtoMessage() {}
+
+func (x *ListBillingStatementsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[157]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBillingStatementsRequest.ProtoReflect.Descriptor instead.
+func (*ListBillingStatementsRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{157}
+}
+
+func (x *ListBillingStatementsRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *ListBillingStatementsRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type ListBillingStatementsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Statements    []*BillingStatement    `protobuf:"bytes,1,rep,name=statements,proto3" json:"statements,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListBillingStatementsResponse) Reset() {
+	*x = ListBillingStatementsResponse{}
+	mi := &file_platform_proto_msgTypes[158]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListBillingStatementsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListBillingStatementsResponse) ProtoMessage() {}
+
+func (x *ListBillingStatementsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[158]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListBillingStatementsResponse.ProtoReflect.Descriptor instead.
+func (*ListBillingStatementsResponse) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{158}
+}
+
+func (x *ListBillingStatementsResponse) GetStatements() []*BillingStatement {
+	if x != nil {
+		return x.Statements
+	}
+	return nil
+}
+
+type GetBillingStatementRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	StatementId   string                 `protobuf:"bytes,2,opt,name=statement_id,json=statementId,proto3" json:"statement_id,omitempty"`
+	IncludeCsv    bool                   `protobuf:"varint,3,opt,name=include_csv,json=includeCsv,proto3" json:"include_csv,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetBillingStatementRequest) Reset() {
+	*x = GetBillingStatementRequest{}
+	mi := &file_platform_proto_msgTypes[159]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetBillingStatementRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetBillingStatementRequest) ProtoMessage() {}
+
+func (x *GetBillingStatementRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[159]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetBillingStatementRequest.ProtoReflect.Descriptor instead.
+func (*GetBillingStatementRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{159}
+}
+
+func (x *GetBillingStatementRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *GetBillingStatementRequest) GetStatementId() string {
+	if x != nil {
+		return x.StatementId
+	}
+	return ""
+}
+
+func (x *GetBillingStatementRequest) GetIncludeCsv() bool {
+	if x != nil {
+		return x.IncludeCsv
+	}
+	return false
+}
+
+type UpdateBillingBudgetRequest struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	// Gross-usage stop threshold in cents; zero clears it. It is not an
+	// absolute invoice ceiling: the minimum and retained storage still bill.
+	BudgetStopCents int64 `protobuf:"varint,2,opt,name=budget_stop_cents,json=budgetStopCents,proto3" json:"budget_stop_cents,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *UpdateBillingBudgetRequest) Reset() {
+	*x = UpdateBillingBudgetRequest{}
+	mi := &file_platform_proto_msgTypes[160]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UpdateBillingBudgetRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UpdateBillingBudgetRequest) ProtoMessage() {}
+
+func (x *UpdateBillingBudgetRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[160]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UpdateBillingBudgetRequest.ProtoReflect.Descriptor instead.
+func (*UpdateBillingBudgetRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{160}
+}
+
+func (x *UpdateBillingBudgetRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *UpdateBillingBudgetRequest) GetBudgetStopCents() int64 {
+	if x != nil {
+		return x.BudgetStopCents
+	}
+	return 0
+}
+
+type ChangeBillingPlanRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChangeBillingPlanRequest) Reset() {
+	*x = ChangeBillingPlanRequest{}
+	mi := &file_platform_proto_msgTypes[161]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChangeBillingPlanRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChangeBillingPlanRequest) ProtoMessage() {}
+
+func (x *ChangeBillingPlanRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[161]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChangeBillingPlanRequest.ProtoReflect.Descriptor instead.
+func (*ChangeBillingPlanRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{161}
+}
+
+func (x *ChangeBillingPlanRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *ChangeBillingPlanRequest) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+type StartBillingPaymentSetupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBillingPaymentSetupRequest) Reset() {
+	*x = StartBillingPaymentSetupRequest{}
+	mi := &file_platform_proto_msgTypes[162]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBillingPaymentSetupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBillingPaymentSetupRequest) ProtoMessage() {}
+
+func (x *StartBillingPaymentSetupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[162]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBillingPaymentSetupRequest.ProtoReflect.Descriptor instead.
+func (*StartBillingPaymentSetupRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{162}
+}
+
+func (x *StartBillingPaymentSetupRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+type StartBillingPaymentSetupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CheckoutUrl   string                 `protobuf:"bytes,1,opt,name=checkout_url,json=checkoutUrl,proto3" json:"checkout_url,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBillingPaymentSetupResponse) Reset() {
+	*x = StartBillingPaymentSetupResponse{}
+	mi := &file_platform_proto_msgTypes[163]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBillingPaymentSetupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBillingPaymentSetupResponse) ProtoMessage() {}
+
+func (x *StartBillingPaymentSetupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[163]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBillingPaymentSetupResponse.ProtoReflect.Descriptor instead.
+func (*StartBillingPaymentSetupResponse) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{163}
+}
+
+func (x *StartBillingPaymentSetupResponse) GetCheckoutUrl() string {
+	if x != nil {
+		return x.CheckoutUrl
+	}
+	return ""
+}
+
+type StartBillingActivationRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	PlanId        string                 `protobuf:"bytes,2,opt,name=plan_id,json=planId,proto3" json:"plan_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StartBillingActivationRequest) Reset() {
+	*x = StartBillingActivationRequest{}
+	mi := &file_platform_proto_msgTypes[164]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StartBillingActivationRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StartBillingActivationRequest) ProtoMessage() {}
+
+func (x *StartBillingActivationRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[164]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StartBillingActivationRequest.ProtoReflect.Descriptor instead.
+func (*StartBillingActivationRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{164}
+}
+
+func (x *StartBillingActivationRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+func (x *StartBillingActivationRequest) GetPlanId() string {
+	if x != nil {
+		return x.PlanId
+	}
+	return ""
+}
+
+type CancelBillingAccountRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	WorkspaceId   string                 `protobuf:"bytes,1,opt,name=workspace_id,json=workspaceId,proto3" json:"workspace_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelBillingAccountRequest) Reset() {
+	*x = CancelBillingAccountRequest{}
+	mi := &file_platform_proto_msgTypes[165]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelBillingAccountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelBillingAccountRequest) ProtoMessage() {}
+
+func (x *CancelBillingAccountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[165]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelBillingAccountRequest.ProtoReflect.Descriptor instead.
+func (*CancelBillingAccountRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{165}
+}
+
+func (x *CancelBillingAccountRequest) GetWorkspaceId() string {
+	if x != nil {
+		return x.WorkspaceId
+	}
+	return ""
+}
+
+type CancelBillingAccountResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EffectiveAt   *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=effective_at,json=effectiveAt,proto3" json:"effective_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelBillingAccountResponse) Reset() {
+	*x = CancelBillingAccountResponse{}
+	mi := &file_platform_proto_msgTypes[166]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelBillingAccountResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelBillingAccountResponse) ProtoMessage() {}
+
+func (x *CancelBillingAccountResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[166]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelBillingAccountResponse.ProtoReflect.Descriptor instead.
+func (*CancelBillingAccountResponse) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{166}
+}
+
+func (x *CancelBillingAccountResponse) GetEffectiveAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.EffectiveAt
+	}
+	return nil
+}
+
+// IngestStripeWebhookRequest carries a Stripe delivery exactly as received:
+// the signature is verified over these raw bytes before the event is
+// durably recorded.
+type IngestStripeWebhookRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Signature     string                 `protobuf:"bytes,1,opt,name=signature,proto3" json:"signature,omitempty"`
+	Payload       []byte                 `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IngestStripeWebhookRequest) Reset() {
+	*x = IngestStripeWebhookRequest{}
+	mi := &file_platform_proto_msgTypes[167]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IngestStripeWebhookRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IngestStripeWebhookRequest) ProtoMessage() {}
+
+func (x *IngestStripeWebhookRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[167]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IngestStripeWebhookRequest.ProtoReflect.Descriptor instead.
+func (*IngestStripeWebhookRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{167}
+}
+
+func (x *IngestStripeWebhookRequest) GetSignature() string {
+	if x != nil {
+		return x.Signature
+	}
+	return ""
+}
+
+func (x *IngestStripeWebhookRequest) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+type SetBillingCollectionPausedRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Paused        bool                   `protobuf:"varint,1,opt,name=paused,proto3" json:"paused,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetBillingCollectionPausedRequest) Reset() {
+	*x = SetBillingCollectionPausedRequest{}
+	mi := &file_platform_proto_msgTypes[168]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetBillingCollectionPausedRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetBillingCollectionPausedRequest) ProtoMessage() {}
+
+func (x *SetBillingCollectionPausedRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[168]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetBillingCollectionPausedRequest.ProtoReflect.Descriptor instead.
+func (*SetBillingCollectionPausedRequest) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{168}
+}
+
+func (x *SetBillingCollectionPausedRequest) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+func (x *SetBillingCollectionPausedRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type BillingControlState struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	CollectionPaused bool                   `protobuf:"varint,1,opt,name=collection_paused,json=collectionPaused,proto3" json:"collection_paused,omitempty"`
+	PauseReason      string                 `protobuf:"bytes,2,opt,name=pause_reason,json=pauseReason,proto3" json:"pause_reason,omitempty"`
+	Mode             string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *BillingControlState) Reset() {
+	*x = BillingControlState{}
+	mi := &file_platform_proto_msgTypes[169]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BillingControlState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BillingControlState) ProtoMessage() {}
+
+func (x *BillingControlState) ProtoReflect() protoreflect.Message {
+	mi := &file_platform_proto_msgTypes[169]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BillingControlState.ProtoReflect.Descriptor instead.
+func (*BillingControlState) Descriptor() ([]byte, []int) {
+	return file_platform_proto_rawDescGZIP(), []int{169}
+}
+
+func (x *BillingControlState) GetCollectionPaused() bool {
+	if x != nil {
+		return x.CollectionPaused
+	}
+	return false
+}
+
+func (x *BillingControlState) GetPauseReason() string {
+	if x != nil {
+		return x.PauseReason
+	}
+	return ""
+}
+
+func (x *BillingControlState) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
 type BuilderWorker struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	HostType             string                 `protobuf:"bytes,7,opt,name=host_type,json=hostType,proto3" json:"host_type,omitempty"`
@@ -12297,7 +13829,7 @@ type BuilderWorker struct {
 
 func (x *BuilderWorker) Reset() {
 	*x = BuilderWorker{}
-	mi := &file_platform_proto_msgTypes[150]
+	mi := &file_platform_proto_msgTypes[170]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12309,7 +13841,7 @@ func (x *BuilderWorker) String() string {
 func (*BuilderWorker) ProtoMessage() {}
 
 func (x *BuilderWorker) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[150]
+	mi := &file_platform_proto_msgTypes[170]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12322,7 +13854,7 @@ func (x *BuilderWorker) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuilderWorker.ProtoReflect.Descriptor instead.
 func (*BuilderWorker) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{150}
+	return file_platform_proto_rawDescGZIP(), []int{170}
 }
 
 func (x *BuilderWorker) GetHostType() string {
@@ -12411,7 +13943,7 @@ type ListBuildersResponse struct {
 
 func (x *ListBuildersResponse) Reset() {
 	*x = ListBuildersResponse{}
-	mi := &file_platform_proto_msgTypes[151]
+	mi := &file_platform_proto_msgTypes[171]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12423,7 +13955,7 @@ func (x *ListBuildersResponse) String() string {
 func (*ListBuildersResponse) ProtoMessage() {}
 
 func (x *ListBuildersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[151]
+	mi := &file_platform_proto_msgTypes[171]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12436,7 +13968,7 @@ func (x *ListBuildersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBuildersResponse.ProtoReflect.Descriptor instead.
 func (*ListBuildersResponse) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{151}
+	return file_platform_proto_rawDescGZIP(), []int{171}
 }
 
 func (x *ListBuildersResponse) GetBuilders() []*BuilderWorker {
@@ -12456,7 +13988,7 @@ type SetBuilderDrainRequest struct {
 
 func (x *SetBuilderDrainRequest) Reset() {
 	*x = SetBuilderDrainRequest{}
-	mi := &file_platform_proto_msgTypes[152]
+	mi := &file_platform_proto_msgTypes[172]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12468,7 +14000,7 @@ func (x *SetBuilderDrainRequest) String() string {
 func (*SetBuilderDrainRequest) ProtoMessage() {}
 
 func (x *SetBuilderDrainRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[152]
+	mi := &file_platform_proto_msgTypes[172]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12481,7 +14013,7 @@ func (x *SetBuilderDrainRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetBuilderDrainRequest.ProtoReflect.Descriptor instead.
 func (*SetBuilderDrainRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{152}
+	return file_platform_proto_rawDescGZIP(), []int{172}
 }
 
 func (x *SetBuilderDrainRequest) GetBuilderId() string {
@@ -12512,7 +14044,7 @@ type BuildSchedulerState struct {
 
 func (x *BuildSchedulerState) Reset() {
 	*x = BuildSchedulerState{}
-	mi := &file_platform_proto_msgTypes[153]
+	mi := &file_platform_proto_msgTypes[173]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12524,7 +14056,7 @@ func (x *BuildSchedulerState) String() string {
 func (*BuildSchedulerState) ProtoMessage() {}
 
 func (x *BuildSchedulerState) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[153]
+	mi := &file_platform_proto_msgTypes[173]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12537,7 +14069,7 @@ func (x *BuildSchedulerState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BuildSchedulerState.ProtoReflect.Descriptor instead.
 func (*BuildSchedulerState) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{153}
+	return file_platform_proto_rawDescGZIP(), []int{173}
 }
 
 func (x *BuildSchedulerState) GetPaused() bool {
@@ -12591,7 +14123,7 @@ type SetBuildSchedulerPausedRequest struct {
 
 func (x *SetBuildSchedulerPausedRequest) Reset() {
 	*x = SetBuildSchedulerPausedRequest{}
-	mi := &file_platform_proto_msgTypes[154]
+	mi := &file_platform_proto_msgTypes[174]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -12603,7 +14135,7 @@ func (x *SetBuildSchedulerPausedRequest) String() string {
 func (*SetBuildSchedulerPausedRequest) ProtoMessage() {}
 
 func (x *SetBuildSchedulerPausedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_platform_proto_msgTypes[154]
+	mi := &file_platform_proto_msgTypes[174]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12616,7 +14148,7 @@ func (x *SetBuildSchedulerPausedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetBuildSchedulerPausedRequest.ProtoReflect.Descriptor instead.
 func (*SetBuildSchedulerPausedRequest) Descriptor() ([]byte, []int) {
-	return file_platform_proto_rawDescGZIP(), []int{154}
+	return file_platform_proto_rawDescGZIP(), []int{174}
 }
 
 func (x *SetBuildSchedulerPausedRequest) GetPaused() bool {
@@ -13654,7 +15186,144 @@ const file_platform_proto_rawDesc = "" +
 	"\twatermark\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\twatermark\x12\x14\n" +
 	"\x05stale\x18\f \x01(\bR\x05stale\x12!\n" +
 	"\fstale_reason\x18\r \x01(\tR\vstaleReason\x12A\n" +
-	"\x0eretained_since\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\rretainedSince\"\xe3\x03\n" +
+	"\x0eretained_since\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\rretainedSince\"\xc3\x01\n" +
+	"\x17BillingRestrictionState\x12\x1e\n" +
+	"\n" +
+	"restricted\x18\x01 \x01(\bR\n" +
+	"restricted\x12%\n" +
+	"\x0egrowth_blocked\x18\x02 \x01(\bR\rgrowthBlocked\x12\x17\n" +
+	"\adry_run\x18\x03 \x01(\bR\x06dryRun\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x120\n" +
+	"\x05since\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\"w\n" +
+	"\vBillingRate\x12\x14\n" +
+	"\x05meter\x18\x01 \x01(\tR\x05meter\x12\x12\n" +
+	"\x04unit\x18\x02 \x01(\tR\x04unit\x12\x1c\n" +
+	"\tnumerator\x18\x03 \x01(\tR\tnumerator\x12 \n" +
+	"\vdenominator\x18\x04 \x01(\tR\vdenominator\"\xab\x01\n" +
+	"\x12BillingProjectCost\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12!\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x14\n" +
+	"\x05meter\x18\x03 \x01(\tR\x05meter\x12\x1a\n" +
+	"\bquantity\x18\x04 \x01(\tR\bquantity\x12!\n" +
+	"\famount_cents\x18\x05 \x01(\x03R\vamountCents\"=\n" +
+	"\x18GetBillingAccountRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"\xcd\n" +
+	"\n" +
+	"\x15BillingAccountSummary\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12!\n" +
+	"\fworkspace_id\x18\x02 \x01(\tR\vworkspaceId\x12\x1a\n" +
+	"\bcurrency\x18\x03 \x01(\tR\bcurrency\x12\x17\n" +
+	"\aplan_id\x18\x04 \x01(\tR\x06planId\x12&\n" +
+	"\x0fpending_plan_id\x18\x05 \x01(\tR\rpendingPlanId\x12\x14\n" +
+	"\x05state\x18\x06 \x01(\tR\x05state\x12\x12\n" +
+	"\x04mode\x18\a \x01(\tR\x04mode\x12#\n" +
+	"\rpayment_ready\x18\b \x01(\bR\fpaymentReady\x12*\n" +
+	"\x11budget_stop_cents\x18\t \x01(\x03R\x0fbudgetStopCents\x12>\n" +
+	"\rtrial_ends_at\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\vtrialEndsAt\x12J\n" +
+	"\x13cancel_effective_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x11cancelEffectiveAt\x12\x1b\n" +
+	"\tperiod_id\x18\f \x01(\tR\bperiodId\x12=\n" +
+	"\fperiod_start\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\vperiodStart\x129\n" +
+	"\n" +
+	"period_end\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\tperiodEnd\x122\n" +
+	"\x15monthly_minimum_cents\x18\x0f \x01(\x03R\x13monthlyMinimumCents\x120\n" +
+	"\x14included_usage_cents\x18\x10 \x01(\x03R\x12includedUsageCents\x12\x1f\n" +
+	"\vgross_cents\x18\x11 \x01(\x03R\n" +
+	"grossCents\x122\n" +
+	"\x15after_allowance_cents\x18\x12 \x01(\x03R\x13afterAllowanceCents\x120\n" +
+	"\x14credit_balance_cents\x18\x13 \x01(\x03R\x12creditBalanceCents\x12?\n" +
+	"\x1cestimated_period_total_cents\x18\x14 \x01(\x03R\x19estimatedPeriodTotalCents\x120\n" +
+	"\x14forecast_gross_cents\x18\x15 \x01(\x03R\x12forecastGrossCents\x12!\n" +
+	"\funpaid_cents\x18\x16 \x01(\x03R\vunpaidCents\x12\x1f\n" +
+	"\vmeasured_ms\x18\x17 \x01(\x03R\n" +
+	"measuredMs\x12\x15\n" +
+	"\x06gap_ms\x18\x18 \x01(\x03R\x05gapMs\x12!\n" +
+	"\funcertain_ms\x18\x19 \x01(\x03R\vuncertainMs\x128\n" +
+	"\twatermark\x18\x1a \x01(\v2\x1a.google.protobuf.TimestampR\twatermark\x12F\n" +
+	"\vrestriction\x18\x1b \x01(\v2$.platform.v1.BillingRestrictionStateR\vrestriction\x12D\n" +
+	"\rproject_costs\x18\x1c \x03(\v2\x1f.platform.v1.BillingProjectCostR\fprojectCosts\x12.\n" +
+	"\x05rates\x18\x1d \x03(\v2\x18.platform.v1.BillingRateR\x05rates\x12!\n" +
+	"\frate_version\x18\x1e \x01(\x03R\vrateVersion\"\xaf\x03\n" +
+	"\x14BillingStatementLine\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x01 \x01(\tR\tprojectId\x12!\n" +
+	"\fproject_name\x18\x02 \x01(\tR\vprojectName\x12\x14\n" +
+	"\x05meter\x18\x03 \x01(\tR\x05meter\x12 \n" +
+	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1a\n" +
+	"\bquantity\x18\x05 \x01(\tR\bquantity\x12\x12\n" +
+	"\x04unit\x18\x06 \x01(\tR\x04unit\x12%\n" +
+	"\x0erate_numerator\x18\a \x01(\tR\rrateNumerator\x12)\n" +
+	"\x10rate_denominator\x18\b \x01(\tR\x0frateDenominator\x12!\n" +
+	"\famount_cents\x18\t \x01(\x03R\vamountCents\x12=\n" +
+	"\fperiod_start\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\vperiodStart\x129\n" +
+	"\n" +
+	"period_end\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\tperiodEnd\"\x88\x06\n" +
+	"\x10BillingStatement\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
+	"\tperiod_id\x18\x02 \x01(\tR\bperiodId\x12\x12\n" +
+	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x1a\n" +
+	"\bcurrency\x18\x04 \x01(\tR\bcurrency\x12\x16\n" +
+	"\x06shadow\x18\x05 \x01(\bR\x06shadow\x12\x14\n" +
+	"\x05state\x18\x06 \x01(\tR\x05state\x12\x1f\n" +
+	"\vgross_cents\x18\a \x01(\x03R\n" +
+	"grossCents\x12%\n" +
+	"\x0eincluded_cents\x18\b \x01(\x03R\rincludedCents\x122\n" +
+	"\x15after_allowance_cents\x18\t \x01(\x03R\x13afterAllowanceCents\x12!\n" +
+	"\fcredit_cents\x18\n" +
+	" \x01(\x03R\vcreditCents\x12#\n" +
+	"\rminimum_cents\x18\v \x01(\x03R\fminimumCents\x122\n" +
+	"\x15prepaid_applied_cents\x18\f \x01(\x03R\x13prepaidAppliedCents\x12,\n" +
+	"\x12next_minimum_cents\x18\r \x01(\x03R\x10nextMinimumCents\x12,\n" +
+	"\x12period_total_cents\x18\x0e \x01(\x03R\x10periodTotalCents\x12(\n" +
+	"\x10amount_due_cents\x18\x0f \x01(\x03R\x0eamountDueCents\x12*\n" +
+	"\x11stripe_invoice_id\x18\x10 \x01(\tR\x0fstripeInvoiceId\x129\n" +
+	"\x19stripe_hosted_invoice_url\x18\x11 \x01(\tR\x16stripeHostedInvoiceUrl\x129\n" +
+	"\n" +
+	"created_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x127\n" +
+	"\x05lines\x18\x13 \x03(\v2!.platform.v1.BillingStatementLineR\x05lines\x12\x10\n" +
+	"\x03csv\x18\x14 \x01(\tR\x03csv\"W\n" +
+	"\x1cListBillingStatementsRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\"^\n" +
+	"\x1dListBillingStatementsResponse\x12=\n" +
+	"\n" +
+	"statements\x18\x01 \x03(\v2\x1d.platform.v1.BillingStatementR\n" +
+	"statements\"\x83\x01\n" +
+	"\x1aGetBillingStatementRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12!\n" +
+	"\fstatement_id\x18\x02 \x01(\tR\vstatementId\x12\x1f\n" +
+	"\vinclude_csv\x18\x03 \x01(\bR\n" +
+	"includeCsv\"k\n" +
+	"\x1aUpdateBillingBudgetRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12*\n" +
+	"\x11budget_stop_cents\x18\x02 \x01(\x03R\x0fbudgetStopCents\"V\n" +
+	"\x18ChangeBillingPlanRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\"D\n" +
+	"\x1fStartBillingPaymentSetupRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"E\n" +
+	" StartBillingPaymentSetupResponse\x12!\n" +
+	"\fcheckout_url\x18\x01 \x01(\tR\vcheckoutUrl\"[\n" +
+	"\x1dStartBillingActivationRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\x12\x17\n" +
+	"\aplan_id\x18\x02 \x01(\tR\x06planId\"@\n" +
+	"\x1bCancelBillingAccountRequest\x12!\n" +
+	"\fworkspace_id\x18\x01 \x01(\tR\vworkspaceId\"]\n" +
+	"\x1cCancelBillingAccountResponse\x12=\n" +
+	"\feffective_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\veffectiveAt\"T\n" +
+	"\x1aIngestStripeWebhookRequest\x12\x1c\n" +
+	"\tsignature\x18\x01 \x01(\tR\tsignature\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\fR\apayload\"S\n" +
+	"!SetBillingCollectionPausedRequest\x12\x16\n" +
+	"\x06paused\x18\x01 \x01(\bR\x06paused\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"y\n" +
+	"\x13BillingControlState\x12+\n" +
+	"\x11collection_paused\x18\x01 \x01(\bR\x10collectionPaused\x12!\n" +
+	"\fpause_reason\x18\x02 \x01(\tR\vpauseReason\x12\x12\n" +
+	"\x04mode\x18\x03 \x01(\tR\x04mode\"\xe3\x03\n" +
 	"\rBuilderWorker\x12\x1b\n" +
 	"\thost_type\x18\a \x01(\tR\bhostType\x124\n" +
 	"\x16available_memory_bytes\x18\b \x01(\x03R\x14availableMemoryBytes\x122\n" +
@@ -13811,7 +15480,7 @@ const file_platform_proto_rawDesc = "" +
 	"\x1cUSAGE_RESOLUTION_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17USAGE_RESOLUTION_MINUTE\x10\x01\x12\x19\n" +
 	"\x15USAGE_RESOLUTION_HOUR\x10\x02\x12\x18\n" +
-	"\x14USAGE_RESOLUTION_DAY\x10\x032\xca)\n" +
+	"\x14USAGE_RESOLUTION_DAY\x10\x032\x8d0\n" +
 	"\x0fPlatformService\x12Y\n" +
 	"\x0eListWorkspaces\x12\".platform.v1.ListWorkspacesRequest\x1a#.platform.v1.ListWorkspacesResponse\x12H\n" +
 	"\fGetWorkspace\x12 .platform.v1.GetWorkspaceRequest\x1a\x16.platform.v1.Workspace\x12N\n" +
@@ -13875,17 +15544,27 @@ const file_platform_proto_rawDesc = "" +
 	"\n" +
 	"ListAgents\x12\x16.google.protobuf.Empty\x1a\x1f.platform.v1.ListAgentsResponse\x12b\n" +
 	"\x11ListBuildAttempts\x12%.platform.v1.ListBuildAttemptsRequest\x1a&.platform.v1.ListBuildAttemptsResponse\x12Q\n" +
-	"\x0fGetProjectUsage\x12#.platform.v1.GetProjectUsageRequest\x1a\x19.platform.v1.ProjectUsage2\xb1\x03\n" +
+	"\x0fGetProjectUsage\x12#.platform.v1.GetProjectUsageRequest\x1a\x19.platform.v1.ProjectUsage\x12^\n" +
+	"\x11GetBillingAccount\x12%.platform.v1.GetBillingAccountRequest\x1a\".platform.v1.BillingAccountSummary\x12n\n" +
+	"\x15ListBillingStatements\x12).platform.v1.ListBillingStatementsRequest\x1a*.platform.v1.ListBillingStatementsResponse\x12]\n" +
+	"\x13GetBillingStatement\x12'.platform.v1.GetBillingStatementRequest\x1a\x1d.platform.v1.BillingStatement\x12b\n" +
+	"\x13UpdateBillingBudget\x12'.platform.v1.UpdateBillingBudgetRequest\x1a\".platform.v1.BillingAccountSummary\x12^\n" +
+	"\x11ChangeBillingPlan\x12%.platform.v1.ChangeBillingPlanRequest\x1a\".platform.v1.BillingAccountSummary\x12w\n" +
+	"\x18StartBillingPaymentSetup\x12,.platform.v1.StartBillingPaymentSetupRequest\x1a-.platform.v1.StartBillingPaymentSetupResponse\x12h\n" +
+	"\x16StartBillingActivation\x12*.platform.v1.StartBillingActivationRequest\x1a\".platform.v1.BillingAccountSummary\x12k\n" +
+	"\x14CancelBillingAccount\x12(.platform.v1.CancelBillingAccountRequest\x1a).platform.v1.CancelBillingAccountResponse2\xb1\x03\n" +
 	"\x0eBuilderService\x12C\n" +
 	"\n" +
 	"ClaimBuild\x12\x1e.platform.v1.ClaimBuildRequest\x1a\x15.platform.v1.BuildJob\x12h\n" +
 	"\x16DownloadSourceSnapshot\x12*.platform.v1.DownloadSourceSnapshotRequest\x1a .platform.v1.SourceSnapshotChunk0\x01\x12T\n" +
 	"\x14ReportBuildHeartbeat\x12$.platform.v1.BuilderHeartbeatRequest\x1a\x16.google.protobuf.Empty\x12N\n" +
 	"\x0fReportBuildLogs\x12#.platform.v1.ReportBuildLogsRequest\x1a\x16.google.protobuf.Empty\x12J\n" +
-	"\rCompleteBuild\x12!.platform.v1.CompleteBuildRequest\x1a\x16.google.protobuf.Empty2\xd7\x05\n" +
+	"\rCompleteBuild\x12!.platform.v1.CompleteBuildRequest\x1a\x16.google.protobuf.Empty2\x9f\a\n" +
 	"\n" +
 	"OpsService\x12V\n" +
-	"\x13IngestGitHubWebhook\x12'.platform.v1.IngestGitHubWebhookRequest\x1a\x16.google.protobuf.Empty\x127\n" +
+	"\x13IngestGitHubWebhook\x12'.platform.v1.IngestGitHubWebhookRequest\x1a\x16.google.protobuf.Empty\x12V\n" +
+	"\x13IngestStripeWebhook\x12'.platform.v1.IngestStripeWebhookRequest\x1a\x16.google.protobuf.Empty\x12n\n" +
+	"\x1aSetBillingCollectionPaused\x12..platform.v1.SetBillingCollectionPausedRequest\x1a .platform.v1.BillingControlState\x127\n" +
 	"\tListFleet\x12\x16.google.protobuf.Empty\x1a\x12.platform.v1.Fleet\x12L\n" +
 	"\vCreateAgent\x12\x1f.platform.v1.CreateAgentRequest\x1a\x1c.platform.v1.AgentEnrollment\x12B\n" +
 	"\vUpdateAgent\x12\x1f.platform.v1.UpdateAgentRequest\x1a\x12.platform.v1.Agent\x12N\n" +
@@ -13908,7 +15587,7 @@ func file_platform_proto_rawDescGZIP() []byte {
 }
 
 var file_platform_proto_enumTypes = make([]protoimpl.EnumInfo, 20)
-var file_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 157)
+var file_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 177)
 var file_platform_proto_goTypes = []any{
 	(ProjectKind)(0),                           // 0: platform.v1.ProjectKind
 	(BuildState)(0),                            // 1: platform.v1.BuildState
@@ -14080,40 +15759,60 @@ var file_platform_proto_goTypes = []any{
 	(*UsageResource)(nil),                      // 167: platform.v1.UsageResource
 	(*UsageGap)(nil),                           // 168: platform.v1.UsageGap
 	(*ProjectUsage)(nil),                       // 169: platform.v1.ProjectUsage
-	(*BuilderWorker)(nil),                      // 170: platform.v1.BuilderWorker
-	(*ListBuildersResponse)(nil),               // 171: platform.v1.ListBuildersResponse
-	(*SetBuilderDrainRequest)(nil),             // 172: platform.v1.SetBuilderDrainRequest
-	(*BuildSchedulerState)(nil),                // 173: platform.v1.BuildSchedulerState
-	(*SetBuildSchedulerPausedRequest)(nil),     // 174: platform.v1.SetBuildSchedulerPausedRequest
-	nil,                                        // 175: platform.v1.ServiceRuntime.EnvEntry
-	nil,                                        // 176: platform.v1.ServiceLogLine.AttributesEntry
-	(*timestamppb.Timestamp)(nil),              // 177: google.protobuf.Timestamp
-	(*emptypb.Empty)(nil),                      // 178: google.protobuf.Empty
+	(*BillingRestrictionState)(nil),            // 170: platform.v1.BillingRestrictionState
+	(*BillingRate)(nil),                        // 171: platform.v1.BillingRate
+	(*BillingProjectCost)(nil),                 // 172: platform.v1.BillingProjectCost
+	(*GetBillingAccountRequest)(nil),           // 173: platform.v1.GetBillingAccountRequest
+	(*BillingAccountSummary)(nil),              // 174: platform.v1.BillingAccountSummary
+	(*BillingStatementLine)(nil),               // 175: platform.v1.BillingStatementLine
+	(*BillingStatement)(nil),                   // 176: platform.v1.BillingStatement
+	(*ListBillingStatementsRequest)(nil),       // 177: platform.v1.ListBillingStatementsRequest
+	(*ListBillingStatementsResponse)(nil),      // 178: platform.v1.ListBillingStatementsResponse
+	(*GetBillingStatementRequest)(nil),         // 179: platform.v1.GetBillingStatementRequest
+	(*UpdateBillingBudgetRequest)(nil),         // 180: platform.v1.UpdateBillingBudgetRequest
+	(*ChangeBillingPlanRequest)(nil),           // 181: platform.v1.ChangeBillingPlanRequest
+	(*StartBillingPaymentSetupRequest)(nil),    // 182: platform.v1.StartBillingPaymentSetupRequest
+	(*StartBillingPaymentSetupResponse)(nil),   // 183: platform.v1.StartBillingPaymentSetupResponse
+	(*StartBillingActivationRequest)(nil),      // 184: platform.v1.StartBillingActivationRequest
+	(*CancelBillingAccountRequest)(nil),        // 185: platform.v1.CancelBillingAccountRequest
+	(*CancelBillingAccountResponse)(nil),       // 186: platform.v1.CancelBillingAccountResponse
+	(*IngestStripeWebhookRequest)(nil),         // 187: platform.v1.IngestStripeWebhookRequest
+	(*SetBillingCollectionPausedRequest)(nil),  // 188: platform.v1.SetBillingCollectionPausedRequest
+	(*BillingControlState)(nil),                // 189: platform.v1.BillingControlState
+	(*BuilderWorker)(nil),                      // 190: platform.v1.BuilderWorker
+	(*ListBuildersResponse)(nil),               // 191: platform.v1.ListBuildersResponse
+	(*SetBuilderDrainRequest)(nil),             // 192: platform.v1.SetBuilderDrainRequest
+	(*BuildSchedulerState)(nil),                // 193: platform.v1.BuildSchedulerState
+	(*SetBuildSchedulerPausedRequest)(nil),     // 194: platform.v1.SetBuildSchedulerPausedRequest
+	nil,                                        // 195: platform.v1.ServiceRuntime.EnvEntry
+	nil,                                        // 196: platform.v1.ServiceLogLine.AttributesEntry
+	(*timestamppb.Timestamp)(nil),              // 197: google.protobuf.Timestamp
+	(*emptypb.Empty)(nil),                      // 198: google.protobuf.Empty
 }
 var file_platform_proto_depIdxs = []int32{
-	177, // 0: platform.v1.Project.created_at:type_name -> google.protobuf.Timestamp
+	197, // 0: platform.v1.Project.created_at:type_name -> google.protobuf.Timestamp
 	0,   // 1: platform.v1.Project.kind:type_name -> platform.v1.ProjectKind
 	24,  // 2: platform.v1.Project.deletion:type_name -> platform.v1.DeletionState
-	177, // 3: platform.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
+	197, // 3: platform.v1.Workspace.created_at:type_name -> google.protobuf.Timestamp
 	3,   // 4: platform.v1.Workspace.role:type_name -> platform.v1.WorkspaceRole
 	3,   // 5: platform.v1.WorkspaceMember.role:type_name -> platform.v1.WorkspaceRole
-	177, // 6: platform.v1.WorkspaceMember.joined_at:type_name -> google.protobuf.Timestamp
+	197, // 6: platform.v1.WorkspaceMember.joined_at:type_name -> google.protobuf.Timestamp
 	3,   // 7: platform.v1.WorkspaceInvitation.role:type_name -> platform.v1.WorkspaceRole
-	177, // 8: platform.v1.WorkspaceInvitation.created_at:type_name -> google.protobuf.Timestamp
-	177, // 9: platform.v1.DeletionState.deleted_at:type_name -> google.protobuf.Timestamp
-	177, // 10: platform.v1.DeletionState.delete_expires_at:type_name -> google.protobuf.Timestamp
+	197, // 8: platform.v1.WorkspaceInvitation.created_at:type_name -> google.protobuf.Timestamp
+	197, // 9: platform.v1.DeletionState.deleted_at:type_name -> google.protobuf.Timestamp
+	197, // 10: platform.v1.DeletionState.delete_expires_at:type_name -> google.protobuf.Timestamp
 	4,   // 11: platform.v1.Environment.kind:type_name -> platform.v1.EnvironmentKind
-	177, // 12: platform.v1.Environment.created_at:type_name -> google.protobuf.Timestamp
-	177, // 13: platform.v1.Environment.updated_at:type_name -> google.protobuf.Timestamp
+	197, // 12: platform.v1.Environment.created_at:type_name -> google.protobuf.Timestamp
+	197, // 13: platform.v1.Environment.updated_at:type_name -> google.protobuf.Timestamp
 	24,  // 14: platform.v1.Environment.deletion:type_name -> platform.v1.DeletionState
 	19,  // 15: platform.v1.HealthCheck.type:type_name -> platform.v1.HealthCheck.Type
 	5,   // 16: platform.v1.ServiceRestart.policy:type_name -> platform.v1.RestartPolicy
-	177, // 17: platform.v1.RestartObservation.window_started_at:type_name -> google.protobuf.Timestamp
-	177, // 18: platform.v1.RestartObservation.last_restart_at:type_name -> google.protobuf.Timestamp
-	177, // 19: platform.v1.RestartObservation.next_restart_at:type_name -> google.protobuf.Timestamp
-	177, // 20: platform.v1.RestartObservation.started_at:type_name -> google.protobuf.Timestamp
+	197, // 17: platform.v1.RestartObservation.window_started_at:type_name -> google.protobuf.Timestamp
+	197, // 18: platform.v1.RestartObservation.last_restart_at:type_name -> google.protobuf.Timestamp
+	197, // 19: platform.v1.RestartObservation.next_restart_at:type_name -> google.protobuf.Timestamp
+	197, // 20: platform.v1.RestartObservation.started_at:type_name -> google.protobuf.Timestamp
 	6,   // 21: platform.v1.RestartObservation.last_cause:type_name -> platform.v1.RestartCause
-	175, // 22: platform.v1.ServiceRuntime.env:type_name -> platform.v1.ServiceRuntime.EnvEntry
+	195, // 22: platform.v1.ServiceRuntime.env:type_name -> platform.v1.ServiceRuntime.EnvEntry
 	29,  // 23: platform.v1.ServiceRuntime.ports:type_name -> platform.v1.ServiceRuntimePort
 	26,  // 24: platform.v1.ServiceRuntime.health_check:type_name -> platform.v1.HealthCheck
 	27,  // 25: platform.v1.ServiceRuntime.restart:type_name -> platform.v1.ServiceRestart
@@ -14122,11 +15821,11 @@ var file_platform_proto_depIdxs = []int32{
 	7,   // 28: platform.v1.BuildRecipe.builder:type_name -> platform.v1.BuilderKind
 	33,  // 29: platform.v1.ServiceSourceSpec.build_recipe:type_name -> platform.v1.BuildRecipe
 	2,   // 30: platform.v1.ResolvedSourceBinding.access_state:type_name -> platform.v1.SourceAccessState
-	177, // 31: platform.v1.ResolvedSourceBinding.resolved_at:type_name -> google.protobuf.Timestamp
-	177, // 32: platform.v1.ResolvedSourceBinding.fresh_until:type_name -> google.protobuf.Timestamp
+	197, // 31: platform.v1.ResolvedSourceBinding.resolved_at:type_name -> google.protobuf.Timestamp
+	197, // 32: platform.v1.ResolvedSourceBinding.fresh_until:type_name -> google.protobuf.Timestamp
 	33,  // 33: platform.v1.ResolvedSourceBinding.build_recipe:type_name -> platform.v1.BuildRecipe
-	177, // 34: platform.v1.SourceRevision.observed_at:type_name -> google.protobuf.Timestamp
-	177, // 35: platform.v1.SourceSnapshot.fetched_at:type_name -> google.protobuf.Timestamp
+	197, // 34: platform.v1.SourceRevision.observed_at:type_name -> google.protobuf.Timestamp
+	197, // 35: platform.v1.SourceSnapshot.fetched_at:type_name -> google.protobuf.Timestamp
 	33,  // 36: platform.v1.BuildJobSource.build_recipe:type_name -> platform.v1.BuildRecipe
 	32,  // 37: platform.v1.ServiceSource.image:type_name -> platform.v1.DirectImageSource
 	34,  // 38: platform.v1.ServiceSource.source_spec:type_name -> platform.v1.ServiceSourceSpec
@@ -14141,58 +15840,58 @@ var file_platform_proto_depIdxs = []int32{
 	32,  // 47: platform.v1.ServiceSourceSummary.image:type_name -> platform.v1.DirectImageSource
 	43,  // 48: platform.v1.ServiceSourceSummary.source_state:type_name -> platform.v1.SourceStateSummary
 	11,  // 49: platform.v1.DeploymentActionRecord.action:type_name -> platform.v1.DeploymentAction
-	177, // 50: platform.v1.DeploymentActionRecord.created_at:type_name -> google.protobuf.Timestamp
+	197, // 50: platform.v1.DeploymentActionRecord.created_at:type_name -> google.protobuf.Timestamp
 	9,   // 51: platform.v1.DeploymentStatus.state:type_name -> platform.v1.DeploymentState
-	177, // 52: platform.v1.DeploymentStatus.transitioned_at:type_name -> google.protobuf.Timestamp
+	197, // 52: platform.v1.DeploymentStatus.transitioned_at:type_name -> google.protobuf.Timestamp
 	10,  // 53: platform.v1.DeploymentStatus.cause_kind:type_name -> platform.v1.DeploymentCauseKind
 	8,   // 54: platform.v1.DeploymentStage.state:type_name -> platform.v1.DeploymentStageState
-	177, // 55: platform.v1.DeploymentStage.started_at:type_name -> google.protobuf.Timestamp
-	177, // 56: platform.v1.DeploymentStage.finished_at:type_name -> google.protobuf.Timestamp
+	197, // 55: platform.v1.DeploymentStage.started_at:type_name -> google.protobuf.Timestamp
+	197, // 56: platform.v1.DeploymentStage.finished_at:type_name -> google.protobuf.Timestamp
 	1,   // 57: platform.v1.BuildStatus.state:type_name -> platform.v1.BuildState
-	177, // 58: platform.v1.BuildStatus.queued_at:type_name -> google.protobuf.Timestamp
-	177, // 59: platform.v1.BuildStatus.started_at:type_name -> google.protobuf.Timestamp
-	177, // 60: platform.v1.BuildStatus.finished_at:type_name -> google.protobuf.Timestamp
+	197, // 58: platform.v1.BuildStatus.queued_at:type_name -> google.protobuf.Timestamp
+	197, // 59: platform.v1.BuildStatus.started_at:type_name -> google.protobuf.Timestamp
+	197, // 60: platform.v1.BuildStatus.finished_at:type_name -> google.protobuf.Timestamp
 	48,  // 61: platform.v1.BuildStatus.commit_contributors:type_name -> platform.v1.CommitContributor
 	47,  // 62: platform.v1.BuildStatus.stages:type_name -> platform.v1.DeploymentStage
 	7,   // 63: platform.v1.BuildStatus.builder:type_name -> platform.v1.BuilderKind
-	177, // 64: platform.v1.BuildStatus.lease_expires_at:type_name -> google.protobuf.Timestamp
-	177, // 65: platform.v1.BuildStatus.cancel_requested_at:type_name -> google.protobuf.Timestamp
+	197, // 64: platform.v1.BuildStatus.lease_expires_at:type_name -> google.protobuf.Timestamp
+	197, // 65: platform.v1.BuildStatus.cancel_requested_at:type_name -> google.protobuf.Timestamp
 	50,  // 66: platform.v1.BuildStatus.artifact:type_name -> platform.v1.BuildArtifact
 	33,  // 67: platform.v1.BuildArtifact.build_recipe:type_name -> platform.v1.BuildRecipe
-	177, // 68: platform.v1.BuildArtifact.created_at:type_name -> google.protobuf.Timestamp
+	197, // 68: platform.v1.BuildArtifact.created_at:type_name -> google.protobuf.Timestamp
 	50,  // 69: platform.v1.ListServiceArtifactsResponse.artifacts:type_name -> platform.v1.BuildArtifact
-	177, // 70: platform.v1.BuildAttempt.started_at:type_name -> google.protobuf.Timestamp
-	177, // 71: platform.v1.BuildAttempt.finished_at:type_name -> google.protobuf.Timestamp
+	197, // 70: platform.v1.BuildAttempt.started_at:type_name -> google.protobuf.Timestamp
+	197, // 71: platform.v1.BuildAttempt.finished_at:type_name -> google.protobuf.Timestamp
 	53,  // 72: platform.v1.ListBuildAttemptsResponse.attempts:type_name -> platform.v1.BuildAttempt
 	12,  // 73: platform.v1.ServiceUnappliedChange.action:type_name -> platform.v1.ServiceUnappliedChangeAction
 	40,  // 74: platform.v1.Service.spec:type_name -> platform.v1.ServiceSpec
-	177, // 75: platform.v1.Service.created_at:type_name -> google.protobuf.Timestamp
-	177, // 76: platform.v1.Service.updated_at:type_name -> google.protobuf.Timestamp
+	197, // 75: platform.v1.Service.created_at:type_name -> google.protobuf.Timestamp
+	197, // 76: platform.v1.Service.updated_at:type_name -> google.protobuf.Timestamp
 	44,  // 77: platform.v1.Service.source_summary:type_name -> platform.v1.ServiceSourceSummary
 	49,  // 78: platform.v1.Service.latest_build:type_name -> platform.v1.BuildStatus
 	56,  // 79: platform.v1.Service.unapplied_changes:type_name -> platform.v1.ServiceUnappliedChange
 	46,  // 80: platform.v1.Service.latest_deployment:type_name -> platform.v1.DeploymentStatus
 	24,  // 81: platform.v1.Service.deletion:type_name -> platform.v1.DeletionState
 	14,  // 82: platform.v1.DomainCertificate.state:type_name -> platform.v1.DomainCertificateState
-	177, // 83: platform.v1.DomainCertificate.expires_at:type_name -> google.protobuf.Timestamp
-	177, // 84: platform.v1.DomainCertificate.retry_at:type_name -> google.protobuf.Timestamp
-	177, // 85: platform.v1.DomainBinding.created_at:type_name -> google.protobuf.Timestamp
-	177, // 86: platform.v1.DomainBinding.updated_at:type_name -> google.protobuf.Timestamp
+	197, // 83: platform.v1.DomainCertificate.expires_at:type_name -> google.protobuf.Timestamp
+	197, // 84: platform.v1.DomainCertificate.retry_at:type_name -> google.protobuf.Timestamp
+	197, // 85: platform.v1.DomainBinding.created_at:type_name -> google.protobuf.Timestamp
+	197, // 86: platform.v1.DomainBinding.updated_at:type_name -> google.protobuf.Timestamp
 	13,  // 87: platform.v1.DomainBinding.ownership_state:type_name -> platform.v1.DomainOwnershipState
 	24,  // 88: platform.v1.DomainBinding.deletion:type_name -> platform.v1.DeletionState
 	58,  // 89: platform.v1.DomainBinding.certificate:type_name -> platform.v1.DomainCertificate
-	177, // 90: platform.v1.Volume.created_at:type_name -> google.protobuf.Timestamp
+	197, // 90: platform.v1.Volume.created_at:type_name -> google.protobuf.Timestamp
 	24,  // 91: platform.v1.Volume.deletion:type_name -> platform.v1.DeletionState
 	15,  // 92: platform.v1.Volume.state:type_name -> platform.v1.VolumeState
-	177, // 93: platform.v1.Volume.observed_at:type_name -> google.protobuf.Timestamp
-	177, // 94: platform.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
+	197, // 93: platform.v1.Volume.observed_at:type_name -> google.protobuf.Timestamp
+	197, // 94: platform.v1.Agent.last_seen_at:type_name -> google.protobuf.Timestamp
 	16,  // 95: platform.v1.Agent.lifecycle_state:type_name -> platform.v1.AgentLifecycleState
-	177, // 96: platform.v1.Agent.credential_revoked_at:type_name -> google.protobuf.Timestamp
-	177, // 97: platform.v1.AllocationStatus.updated_at:type_name -> google.protobuf.Timestamp
+	197, // 96: platform.v1.Agent.credential_revoked_at:type_name -> google.protobuf.Timestamp
+	197, // 97: platform.v1.AllocationStatus.updated_at:type_name -> google.protobuf.Timestamp
 	28,  // 98: platform.v1.AllocationStatus.restart:type_name -> platform.v1.RestartObservation
-	177, // 99: platform.v1.AllocationStatus.drain_started_at:type_name -> google.protobuf.Timestamp
-	177, // 100: platform.v1.AllocationStatus.drain_deadline:type_name -> google.protobuf.Timestamp
-	177, // 101: platform.v1.LiveReadMeta.observation_freshness:type_name -> google.protobuf.Timestamp
+	197, // 99: platform.v1.AllocationStatus.drain_started_at:type_name -> google.protobuf.Timestamp
+	197, // 100: platform.v1.AllocationStatus.drain_deadline:type_name -> google.protobuf.Timestamp
+	197, // 101: platform.v1.LiveReadMeta.observation_freshness:type_name -> google.protobuf.Timestamp
 	57,  // 102: platform.v1.ServiceStatus.service:type_name -> platform.v1.Service
 	62,  // 103: platform.v1.ServiceStatus.allocation:type_name -> platform.v1.AllocationStatus
 	62,  // 104: platform.v1.ServiceStatus.allocations:type_name -> platform.v1.AllocationStatus
@@ -14228,21 +15927,21 @@ var file_platform_proto_depIdxs = []int32{
 	128, // 134: platform.v1.CreateDomainBindingRequest.binding:type_name -> platform.v1.DomainBindingInput
 	59,  // 135: platform.v1.ListDomainBindingsResponse.bindings:type_name -> platform.v1.DomainBinding
 	129, // 136: platform.v1.UpdateDomainBindingRequest.binding:type_name -> platform.v1.DomainBindingTarget
-	177, // 137: platform.v1.ListServiceLogsRequest.start_time:type_name -> google.protobuf.Timestamp
-	177, // 138: platform.v1.ListServiceLogsRequest.end_time:type_name -> google.protobuf.Timestamp
+	197, // 137: platform.v1.ListServiceLogsRequest.start_time:type_name -> google.protobuf.Timestamp
+	197, // 138: platform.v1.ListServiceLogsRequest.end_time:type_name -> google.protobuf.Timestamp
 	17,  // 139: platform.v1.ListServiceLogsRequest.log_type:type_name -> platform.v1.ServiceLogType
-	177, // 140: platform.v1.ServiceLogLine.observed_at:type_name -> google.protobuf.Timestamp
+	197, // 140: platform.v1.ServiceLogLine.observed_at:type_name -> google.protobuf.Timestamp
 	17,  // 141: platform.v1.ServiceLogLine.log_type:type_name -> platform.v1.ServiceLogType
-	176, // 142: platform.v1.ServiceLogLine.attributes:type_name -> platform.v1.ServiceLogLine.AttributesEntry
+	196, // 142: platform.v1.ServiceLogLine.attributes:type_name -> platform.v1.ServiceLogLine.AttributesEntry
 	17,  // 143: platform.v1.ServiceLogGap.log_type:type_name -> platform.v1.ServiceLogType
-	177, // 144: platform.v1.ServiceLogGap.window_start:type_name -> google.protobuf.Timestamp
-	177, // 145: platform.v1.ServiceLogGap.window_end:type_name -> google.protobuf.Timestamp
+	197, // 144: platform.v1.ServiceLogGap.window_start:type_name -> google.protobuf.Timestamp
+	197, // 145: platform.v1.ServiceLogGap.window_end:type_name -> google.protobuf.Timestamp
 	140, // 146: platform.v1.ListServiceLogsResponse.lines:type_name -> platform.v1.ServiceLogLine
 	141, // 147: platform.v1.ListServiceLogsResponse.gaps:type_name -> platform.v1.ServiceLogGap
 	17,  // 148: platform.v1.LogDropSummary.log_type:type_name -> platform.v1.ServiceLogType
-	177, // 149: platform.v1.LogDropSummary.window_start:type_name -> google.protobuf.Timestamp
-	177, // 150: platform.v1.LogDropSummary.window_end:type_name -> google.protobuf.Timestamp
-	177, // 151: platform.v1.DeploymentRecord.created_at:type_name -> google.protobuf.Timestamp
+	197, // 149: platform.v1.LogDropSummary.window_start:type_name -> google.protobuf.Timestamp
+	197, // 150: platform.v1.LogDropSummary.window_end:type_name -> google.protobuf.Timestamp
+	197, // 151: platform.v1.DeploymentRecord.created_at:type_name -> google.protobuf.Timestamp
 	49,  // 152: platform.v1.DeploymentRecord.build:type_name -> platform.v1.BuildStatus
 	46,  // 153: platform.v1.DeploymentRecord.status:type_name -> platform.v1.DeploymentStatus
 	47,  // 154: platform.v1.DeploymentRecord.stages:type_name -> platform.v1.DeploymentStage
@@ -14257,191 +15956,226 @@ var file_platform_proto_depIdxs = []int32{
 	152, // 163: platform.v1.Fleet.capacity:type_name -> platform.v1.FleetCapacity
 	63,  // 164: platform.v1.Fleet.live:type_name -> platform.v1.LiveReadMeta
 	38,  // 165: platform.v1.BuildJob.source:type_name -> platform.v1.BuildJobSource
-	177, // 166: platform.v1.BuildJob.lease_expires_at:type_name -> google.protobuf.Timestamp
-	177, // 167: platform.v1.BuildJob.deadline_at:type_name -> google.protobuf.Timestamp
+	197, // 166: platform.v1.BuildJob.lease_expires_at:type_name -> google.protobuf.Timestamp
+	197, // 167: platform.v1.BuildJob.deadline_at:type_name -> google.protobuf.Timestamp
 	160, // 168: platform.v1.ReportBuildLogsRequest.lines:type_name -> platform.v1.BuildLogLine
 	143, // 169: platform.v1.ReportBuildLogsRequest.drops:type_name -> platform.v1.LogDropSummary
-	177, // 170: platform.v1.BuildLogLine.observed_at:type_name -> google.protobuf.Timestamp
+	197, // 170: platform.v1.BuildLogLine.observed_at:type_name -> google.protobuf.Timestamp
 	1,   // 171: platform.v1.CompleteBuildRequest.state:type_name -> platform.v1.BuildState
-	177, // 172: platform.v1.GetProjectUsageRequest.start_time:type_name -> google.protobuf.Timestamp
-	177, // 173: platform.v1.GetProjectUsageRequest.end_time:type_name -> google.protobuf.Timestamp
+	197, // 172: platform.v1.GetProjectUsageRequest.start_time:type_name -> google.protobuf.Timestamp
+	197, // 173: platform.v1.GetProjectUsageRequest.end_time:type_name -> google.protobuf.Timestamp
 	18,  // 174: platform.v1.GetProjectUsageRequest.resolution:type_name -> platform.v1.UsageResolution
-	177, // 175: platform.v1.UsageBucket.start:type_name -> google.protobuf.Timestamp
-	177, // 176: platform.v1.UsageBucket.end:type_name -> google.protobuf.Timestamp
+	197, // 175: platform.v1.UsageBucket.start:type_name -> google.protobuf.Timestamp
+	197, // 176: platform.v1.UsageBucket.end:type_name -> google.protobuf.Timestamp
 	165, // 177: platform.v1.UsageBucket.usage:type_name -> platform.v1.UsageQuantities
-	177, // 178: platform.v1.UsageResource.deleted_at:type_name -> google.protobuf.Timestamp
-	177, // 179: platform.v1.UsageResource.first_start:type_name -> google.protobuf.Timestamp
-	177, // 180: platform.v1.UsageResource.last_end:type_name -> google.protobuf.Timestamp
+	197, // 178: platform.v1.UsageResource.deleted_at:type_name -> google.protobuf.Timestamp
+	197, // 179: platform.v1.UsageResource.first_start:type_name -> google.protobuf.Timestamp
+	197, // 180: platform.v1.UsageResource.last_end:type_name -> google.protobuf.Timestamp
 	165, // 181: platform.v1.UsageResource.usage:type_name -> platform.v1.UsageQuantities
 	166, // 182: platform.v1.UsageResource.buckets:type_name -> platform.v1.UsageBucket
-	177, // 183: platform.v1.UsageGap.start:type_name -> google.protobuf.Timestamp
-	177, // 184: platform.v1.UsageGap.end:type_name -> google.protobuf.Timestamp
-	177, // 185: platform.v1.ProjectUsage.start_time:type_name -> google.protobuf.Timestamp
-	177, // 186: platform.v1.ProjectUsage.end_time:type_name -> google.protobuf.Timestamp
+	197, // 183: platform.v1.UsageGap.start:type_name -> google.protobuf.Timestamp
+	197, // 184: platform.v1.UsageGap.end:type_name -> google.protobuf.Timestamp
+	197, // 185: platform.v1.ProjectUsage.start_time:type_name -> google.protobuf.Timestamp
+	197, // 186: platform.v1.ProjectUsage.end_time:type_name -> google.protobuf.Timestamp
 	18,  // 187: platform.v1.ProjectUsage.resolution:type_name -> platform.v1.UsageResolution
 	165, // 188: platform.v1.ProjectUsage.total:type_name -> platform.v1.UsageQuantities
 	166, // 189: platform.v1.ProjectUsage.buckets:type_name -> platform.v1.UsageBucket
 	167, // 190: platform.v1.ProjectUsage.resources:type_name -> platform.v1.UsageResource
 	168, // 191: platform.v1.ProjectUsage.gaps:type_name -> platform.v1.UsageGap
-	177, // 192: platform.v1.ProjectUsage.watermark:type_name -> google.protobuf.Timestamp
-	177, // 193: platform.v1.ProjectUsage.retained_since:type_name -> google.protobuf.Timestamp
-	177, // 194: platform.v1.BuilderWorker.last_heartbeat_at:type_name -> google.protobuf.Timestamp
-	177, // 195: platform.v1.BuilderWorker.updated_at:type_name -> google.protobuf.Timestamp
-	170, // 196: platform.v1.ListBuildersResponse.builders:type_name -> platform.v1.BuilderWorker
-	177, // 197: platform.v1.BuildSchedulerState.updated_at:type_name -> google.protobuf.Timestamp
-	67,  // 198: platform.v1.PlatformService.ListWorkspaces:input_type -> platform.v1.ListWorkspacesRequest
-	70,  // 199: platform.v1.PlatformService.GetWorkspace:input_type -> platform.v1.GetWorkspaceRequest
-	69,  // 200: platform.v1.PlatformService.CreateWorkspace:input_type -> platform.v1.CreateWorkspaceRequest
-	71,  // 201: platform.v1.PlatformService.RenameWorkspace:input_type -> platform.v1.RenameWorkspaceRequest
-	72,  // 202: platform.v1.PlatformService.DeleteWorkspace:input_type -> platform.v1.DeleteWorkspaceRequest
-	73,  // 203: platform.v1.PlatformService.ListWorkspaceMembers:input_type -> platform.v1.ListWorkspaceMembersRequest
-	75,  // 204: platform.v1.PlatformService.InviteWorkspaceMember:input_type -> platform.v1.InviteWorkspaceMemberRequest
-	76,  // 205: platform.v1.PlatformService.RevokeWorkspaceInvitation:input_type -> platform.v1.RevokeWorkspaceInvitationRequest
-	77,  // 206: platform.v1.PlatformService.AcceptWorkspaceInvitation:input_type -> platform.v1.AcceptWorkspaceInvitationRequest
-	78,  // 207: platform.v1.PlatformService.DeclineWorkspaceInvitation:input_type -> platform.v1.DeclineWorkspaceInvitationRequest
-	79,  // 208: platform.v1.PlatformService.UpdateWorkspaceMemberRole:input_type -> platform.v1.UpdateWorkspaceMemberRoleRequest
-	81,  // 209: platform.v1.PlatformService.RemoveWorkspaceMember:input_type -> platform.v1.RemoveWorkspaceMemberRequest
-	80,  // 210: platform.v1.PlatformService.MoveProject:input_type -> platform.v1.MoveProjectRequest
-	65,  // 211: platform.v1.PlatformService.CreateProject:input_type -> platform.v1.CreateProjectRequest
-	66,  // 212: platform.v1.PlatformService.ListProjects:input_type -> platform.v1.ListProjectsRequest
-	86,  // 213: platform.v1.PlatformService.GetProject:input_type -> platform.v1.GetProjectRequest
-	88,  // 214: platform.v1.PlatformService.DeleteProject:input_type -> platform.v1.DeleteProjectRequest
-	89,  // 215: platform.v1.PlatformService.RestoreProject:input_type -> platform.v1.RestoreProjectRequest
-	87,  // 216: platform.v1.PlatformService.UpdateProjectLogRetention:input_type -> platform.v1.UpdateProjectLogRetentionRequest
-	90,  // 217: platform.v1.PlatformService.PreviewProjectDeletion:input_type -> platform.v1.PreviewProjectDeletionRequest
-	96,  // 218: platform.v1.PlatformService.ListEnvironments:input_type -> platform.v1.ListEnvironmentsRequest
-	98,  // 219: platform.v1.PlatformService.GetEnvironment:input_type -> platform.v1.GetEnvironmentRequest
-	99,  // 220: platform.v1.PlatformService.CreateEnvironment:input_type -> platform.v1.CreateEnvironmentRequest
-	100, // 221: platform.v1.PlatformService.DuplicateEnvironment:input_type -> platform.v1.DuplicateEnvironmentRequest
-	101, // 222: platform.v1.PlatformService.RenameEnvironment:input_type -> platform.v1.RenameEnvironmentRequest
-	102, // 223: platform.v1.PlatformService.UpdateEnvironmentAutoDeploy:input_type -> platform.v1.UpdateEnvironmentAutoDeployRequest
-	103, // 224: platform.v1.PlatformService.DeleteEnvironment:input_type -> platform.v1.DeleteEnvironmentRequest
-	104, // 225: platform.v1.PlatformService.RestoreEnvironment:input_type -> platform.v1.RestoreEnvironmentRequest
-	105, // 226: platform.v1.PlatformService.PreviewEnvironmentDeletion:input_type -> platform.v1.PreviewEnvironmentDeletionRequest
-	106, // 227: platform.v1.PlatformService.ReleaseEnvironment:input_type -> platform.v1.ReleaseEnvironmentRequest
-	163, // 228: platform.v1.PlatformService.LinkGitHubRepository:input_type -> platform.v1.LinkGitHubRepositoryRequest
-	108, // 229: platform.v1.PlatformService.InspectSource:input_type -> platform.v1.InspectSourceRequest
-	110, // 230: platform.v1.PlatformService.CreateService:input_type -> platform.v1.CreateServiceRequest
-	111, // 231: platform.v1.PlatformService.UpdateService:input_type -> platform.v1.UpdateServiceRequest
-	112, // 232: platform.v1.PlatformService.ScaleService:input_type -> platform.v1.ScaleServiceRequest
-	113, // 233: platform.v1.PlatformService.ApplyDeploymentAction:input_type -> platform.v1.ApplyDeploymentActionRequest
-	114, // 234: platform.v1.PlatformService.DiscardServiceChanges:input_type -> platform.v1.DiscardServiceChangesRequest
-	115, // 235: platform.v1.PlatformService.DeleteService:input_type -> platform.v1.DeleteServiceRequest
-	116, // 236: platform.v1.PlatformService.RestoreService:input_type -> platform.v1.RestoreServiceRequest
-	117, // 237: platform.v1.PlatformService.GetService:input_type -> platform.v1.GetServiceRequest
-	118, // 238: platform.v1.PlatformService.ListServices:input_type -> platform.v1.ListServicesRequest
-	120, // 239: platform.v1.PlatformService.CreateVolume:input_type -> platform.v1.CreateVolumeRequest
-	121, // 240: platform.v1.PlatformService.UpdateVolume:input_type -> platform.v1.UpdateVolumeRequest
-	122, // 241: platform.v1.PlatformService.DeleteVolume:input_type -> platform.v1.DeleteVolumeRequest
-	123, // 242: platform.v1.PlatformService.PreviewVolumeDeletion:input_type -> platform.v1.PreviewVolumeDeletionRequest
-	124, // 243: platform.v1.PlatformService.ListVolumes:input_type -> platform.v1.ListVolumesRequest
-	131, // 244: platform.v1.PlatformService.CreateDomainBinding:input_type -> platform.v1.CreateDomainBindingRequest
-	130, // 245: platform.v1.PlatformService.GenerateDomainBinding:input_type -> platform.v1.GenerateDomainBindingRequest
-	132, // 246: platform.v1.PlatformService.GetDomainBinding:input_type -> platform.v1.GetDomainBindingRequest
-	133, // 247: platform.v1.PlatformService.ListDomainBindings:input_type -> platform.v1.ListDomainBindingsRequest
-	135, // 248: platform.v1.PlatformService.UpdateDomainBinding:input_type -> platform.v1.UpdateDomainBindingRequest
-	136, // 249: platform.v1.PlatformService.DeleteDomainBinding:input_type -> platform.v1.DeleteDomainBindingRequest
-	137, // 250: platform.v1.PlatformService.RestoreDomainBinding:input_type -> platform.v1.RestoreDomainBindingRequest
-	138, // 251: platform.v1.PlatformService.GetServiceStatus:input_type -> platform.v1.GetServiceStatusRequest
-	139, // 252: platform.v1.PlatformService.ListServiceLogs:input_type -> platform.v1.ListServiceLogsRequest
-	144, // 253: platform.v1.PlatformService.ListServiceDeployments:input_type -> platform.v1.ListServiceDeploymentsRequest
-	51,  // 254: platform.v1.PlatformService.ListServiceArtifacts:input_type -> platform.v1.ListServiceArtifactsRequest
-	178, // 255: platform.v1.PlatformService.ListAgents:input_type -> google.protobuf.Empty
-	54,  // 256: platform.v1.PlatformService.ListBuildAttempts:input_type -> platform.v1.ListBuildAttemptsRequest
-	164, // 257: platform.v1.PlatformService.GetProjectUsage:input_type -> platform.v1.GetProjectUsageRequest
-	154, // 258: platform.v1.BuilderService.ClaimBuild:input_type -> platform.v1.ClaimBuildRequest
-	156, // 259: platform.v1.BuilderService.DownloadSourceSnapshot:input_type -> platform.v1.DownloadSourceSnapshotRequest
-	158, // 260: platform.v1.BuilderService.ReportBuildHeartbeat:input_type -> platform.v1.BuilderHeartbeatRequest
-	159, // 261: platform.v1.BuilderService.ReportBuildLogs:input_type -> platform.v1.ReportBuildLogsRequest
-	161, // 262: platform.v1.BuilderService.CompleteBuild:input_type -> platform.v1.CompleteBuildRequest
-	162, // 263: platform.v1.OpsService.IngestGitHubWebhook:input_type -> platform.v1.IngestGitHubWebhookRequest
-	178, // 264: platform.v1.OpsService.ListFleet:input_type -> google.protobuf.Empty
-	148, // 265: platform.v1.OpsService.CreateAgent:input_type -> platform.v1.CreateAgentRequest
-	150, // 266: platform.v1.OpsService.UpdateAgent:input_type -> platform.v1.UpdateAgentRequest
-	151, // 267: platform.v1.OpsService.SetAgentLifecycle:input_type -> platform.v1.SetAgentLifecycleRequest
-	178, // 268: platform.v1.OpsService.ListBuilders:input_type -> google.protobuf.Empty
-	172, // 269: platform.v1.OpsService.SetBuilderDrain:input_type -> platform.v1.SetBuilderDrainRequest
-	178, // 270: platform.v1.OpsService.GetBuildScheduler:input_type -> google.protobuf.Empty
-	174, // 271: platform.v1.OpsService.SetBuildSchedulerPaused:input_type -> platform.v1.SetBuildSchedulerPausedRequest
-	68,  // 272: platform.v1.PlatformService.ListWorkspaces:output_type -> platform.v1.ListWorkspacesResponse
-	21,  // 273: platform.v1.PlatformService.GetWorkspace:output_type -> platform.v1.Workspace
-	21,  // 274: platform.v1.PlatformService.CreateWorkspace:output_type -> platform.v1.Workspace
-	21,  // 275: platform.v1.PlatformService.RenameWorkspace:output_type -> platform.v1.Workspace
-	178, // 276: platform.v1.PlatformService.DeleteWorkspace:output_type -> google.protobuf.Empty
-	74,  // 277: platform.v1.PlatformService.ListWorkspaceMembers:output_type -> platform.v1.ListWorkspaceMembersResponse
-	23,  // 278: platform.v1.PlatformService.InviteWorkspaceMember:output_type -> platform.v1.WorkspaceInvitation
-	178, // 279: platform.v1.PlatformService.RevokeWorkspaceInvitation:output_type -> google.protobuf.Empty
-	21,  // 280: platform.v1.PlatformService.AcceptWorkspaceInvitation:output_type -> platform.v1.Workspace
-	178, // 281: platform.v1.PlatformService.DeclineWorkspaceInvitation:output_type -> google.protobuf.Empty
-	22,  // 282: platform.v1.PlatformService.UpdateWorkspaceMemberRole:output_type -> platform.v1.WorkspaceMember
-	178, // 283: platform.v1.PlatformService.RemoveWorkspaceMember:output_type -> google.protobuf.Empty
-	20,  // 284: platform.v1.PlatformService.MoveProject:output_type -> platform.v1.Project
-	20,  // 285: platform.v1.PlatformService.CreateProject:output_type -> platform.v1.Project
-	82,  // 286: platform.v1.PlatformService.ListProjects:output_type -> platform.v1.ListProjectsResponse
-	20,  // 287: platform.v1.PlatformService.GetProject:output_type -> platform.v1.Project
-	178, // 288: platform.v1.PlatformService.DeleteProject:output_type -> google.protobuf.Empty
-	20,  // 289: platform.v1.PlatformService.RestoreProject:output_type -> platform.v1.Project
-	20,  // 290: platform.v1.PlatformService.UpdateProjectLogRetention:output_type -> platform.v1.Project
-	91,  // 291: platform.v1.PlatformService.PreviewProjectDeletion:output_type -> platform.v1.DeletionPreview
-	97,  // 292: platform.v1.PlatformService.ListEnvironments:output_type -> platform.v1.ListEnvironmentsResponse
-	25,  // 293: platform.v1.PlatformService.GetEnvironment:output_type -> platform.v1.Environment
-	25,  // 294: platform.v1.PlatformService.CreateEnvironment:output_type -> platform.v1.Environment
-	25,  // 295: platform.v1.PlatformService.DuplicateEnvironment:output_type -> platform.v1.Environment
-	25,  // 296: platform.v1.PlatformService.RenameEnvironment:output_type -> platform.v1.Environment
-	25,  // 297: platform.v1.PlatformService.UpdateEnvironmentAutoDeploy:output_type -> platform.v1.Environment
-	178, // 298: platform.v1.PlatformService.DeleteEnvironment:output_type -> google.protobuf.Empty
-	25,  // 299: platform.v1.PlatformService.RestoreEnvironment:output_type -> platform.v1.Environment
-	91,  // 300: platform.v1.PlatformService.PreviewEnvironmentDeletion:output_type -> platform.v1.DeletionPreview
-	107, // 301: platform.v1.PlatformService.ReleaseEnvironment:output_type -> platform.v1.ReleaseEnvironmentResponse
-	109, // 302: platform.v1.PlatformService.LinkGitHubRepository:output_type -> platform.v1.InspectSourceResponse
-	109, // 303: platform.v1.PlatformService.InspectSource:output_type -> platform.v1.InspectSourceResponse
-	57,  // 304: platform.v1.PlatformService.CreateService:output_type -> platform.v1.Service
-	57,  // 305: platform.v1.PlatformService.UpdateService:output_type -> platform.v1.Service
-	64,  // 306: platform.v1.PlatformService.ScaleService:output_type -> platform.v1.ServiceStatus
-	64,  // 307: platform.v1.PlatformService.ApplyDeploymentAction:output_type -> platform.v1.ServiceStatus
-	57,  // 308: platform.v1.PlatformService.DiscardServiceChanges:output_type -> platform.v1.Service
-	178, // 309: platform.v1.PlatformService.DeleteService:output_type -> google.protobuf.Empty
-	57,  // 310: platform.v1.PlatformService.RestoreService:output_type -> platform.v1.Service
-	57,  // 311: platform.v1.PlatformService.GetService:output_type -> platform.v1.Service
-	119, // 312: platform.v1.PlatformService.ListServices:output_type -> platform.v1.ListServicesResponse
-	60,  // 313: platform.v1.PlatformService.CreateVolume:output_type -> platform.v1.Volume
-	60,  // 314: platform.v1.PlatformService.UpdateVolume:output_type -> platform.v1.Volume
-	178, // 315: platform.v1.PlatformService.DeleteVolume:output_type -> google.protobuf.Empty
-	91,  // 316: platform.v1.PlatformService.PreviewVolumeDeletion:output_type -> platform.v1.DeletionPreview
-	125, // 317: platform.v1.PlatformService.ListVolumes:output_type -> platform.v1.ListVolumesResponse
-	59,  // 318: platform.v1.PlatformService.CreateDomainBinding:output_type -> platform.v1.DomainBinding
-	59,  // 319: platform.v1.PlatformService.GenerateDomainBinding:output_type -> platform.v1.DomainBinding
-	59,  // 320: platform.v1.PlatformService.GetDomainBinding:output_type -> platform.v1.DomainBinding
-	134, // 321: platform.v1.PlatformService.ListDomainBindings:output_type -> platform.v1.ListDomainBindingsResponse
-	59,  // 322: platform.v1.PlatformService.UpdateDomainBinding:output_type -> platform.v1.DomainBinding
-	178, // 323: platform.v1.PlatformService.DeleteDomainBinding:output_type -> google.protobuf.Empty
-	59,  // 324: platform.v1.PlatformService.RestoreDomainBinding:output_type -> platform.v1.DomainBinding
-	64,  // 325: platform.v1.PlatformService.GetServiceStatus:output_type -> platform.v1.ServiceStatus
-	142, // 326: platform.v1.PlatformService.ListServiceLogs:output_type -> platform.v1.ListServiceLogsResponse
-	146, // 327: platform.v1.PlatformService.ListServiceDeployments:output_type -> platform.v1.ListServiceDeploymentsResponse
-	52,  // 328: platform.v1.PlatformService.ListServiceArtifacts:output_type -> platform.v1.ListServiceArtifactsResponse
-	147, // 329: platform.v1.PlatformService.ListAgents:output_type -> platform.v1.ListAgentsResponse
-	55,  // 330: platform.v1.PlatformService.ListBuildAttempts:output_type -> platform.v1.ListBuildAttemptsResponse
-	169, // 331: platform.v1.PlatformService.GetProjectUsage:output_type -> platform.v1.ProjectUsage
-	155, // 332: platform.v1.BuilderService.ClaimBuild:output_type -> platform.v1.BuildJob
-	157, // 333: platform.v1.BuilderService.DownloadSourceSnapshot:output_type -> platform.v1.SourceSnapshotChunk
-	178, // 334: platform.v1.BuilderService.ReportBuildHeartbeat:output_type -> google.protobuf.Empty
-	178, // 335: platform.v1.BuilderService.ReportBuildLogs:output_type -> google.protobuf.Empty
-	178, // 336: platform.v1.BuilderService.CompleteBuild:output_type -> google.protobuf.Empty
-	178, // 337: platform.v1.OpsService.IngestGitHubWebhook:output_type -> google.protobuf.Empty
-	153, // 338: platform.v1.OpsService.ListFleet:output_type -> platform.v1.Fleet
-	149, // 339: platform.v1.OpsService.CreateAgent:output_type -> platform.v1.AgentEnrollment
-	61,  // 340: platform.v1.OpsService.UpdateAgent:output_type -> platform.v1.Agent
-	61,  // 341: platform.v1.OpsService.SetAgentLifecycle:output_type -> platform.v1.Agent
-	171, // 342: platform.v1.OpsService.ListBuilders:output_type -> platform.v1.ListBuildersResponse
-	170, // 343: platform.v1.OpsService.SetBuilderDrain:output_type -> platform.v1.BuilderWorker
-	173, // 344: platform.v1.OpsService.GetBuildScheduler:output_type -> platform.v1.BuildSchedulerState
-	173, // 345: platform.v1.OpsService.SetBuildSchedulerPaused:output_type -> platform.v1.BuildSchedulerState
-	272, // [272:346] is the sub-list for method output_type
-	198, // [198:272] is the sub-list for method input_type
-	198, // [198:198] is the sub-list for extension type_name
-	198, // [198:198] is the sub-list for extension extendee
-	0,   // [0:198] is the sub-list for field type_name
+	197, // 192: platform.v1.ProjectUsage.watermark:type_name -> google.protobuf.Timestamp
+	197, // 193: platform.v1.ProjectUsage.retained_since:type_name -> google.protobuf.Timestamp
+	197, // 194: platform.v1.BillingRestrictionState.since:type_name -> google.protobuf.Timestamp
+	197, // 195: platform.v1.BillingAccountSummary.trial_ends_at:type_name -> google.protobuf.Timestamp
+	197, // 196: platform.v1.BillingAccountSummary.cancel_effective_at:type_name -> google.protobuf.Timestamp
+	197, // 197: platform.v1.BillingAccountSummary.period_start:type_name -> google.protobuf.Timestamp
+	197, // 198: platform.v1.BillingAccountSummary.period_end:type_name -> google.protobuf.Timestamp
+	197, // 199: platform.v1.BillingAccountSummary.watermark:type_name -> google.protobuf.Timestamp
+	170, // 200: platform.v1.BillingAccountSummary.restriction:type_name -> platform.v1.BillingRestrictionState
+	172, // 201: platform.v1.BillingAccountSummary.project_costs:type_name -> platform.v1.BillingProjectCost
+	171, // 202: platform.v1.BillingAccountSummary.rates:type_name -> platform.v1.BillingRate
+	197, // 203: platform.v1.BillingStatementLine.period_start:type_name -> google.protobuf.Timestamp
+	197, // 204: platform.v1.BillingStatementLine.period_end:type_name -> google.protobuf.Timestamp
+	197, // 205: platform.v1.BillingStatement.created_at:type_name -> google.protobuf.Timestamp
+	175, // 206: platform.v1.BillingStatement.lines:type_name -> platform.v1.BillingStatementLine
+	176, // 207: platform.v1.ListBillingStatementsResponse.statements:type_name -> platform.v1.BillingStatement
+	197, // 208: platform.v1.CancelBillingAccountResponse.effective_at:type_name -> google.protobuf.Timestamp
+	197, // 209: platform.v1.BuilderWorker.last_heartbeat_at:type_name -> google.protobuf.Timestamp
+	197, // 210: platform.v1.BuilderWorker.updated_at:type_name -> google.protobuf.Timestamp
+	190, // 211: platform.v1.ListBuildersResponse.builders:type_name -> platform.v1.BuilderWorker
+	197, // 212: platform.v1.BuildSchedulerState.updated_at:type_name -> google.protobuf.Timestamp
+	67,  // 213: platform.v1.PlatformService.ListWorkspaces:input_type -> platform.v1.ListWorkspacesRequest
+	70,  // 214: platform.v1.PlatformService.GetWorkspace:input_type -> platform.v1.GetWorkspaceRequest
+	69,  // 215: platform.v1.PlatformService.CreateWorkspace:input_type -> platform.v1.CreateWorkspaceRequest
+	71,  // 216: platform.v1.PlatformService.RenameWorkspace:input_type -> platform.v1.RenameWorkspaceRequest
+	72,  // 217: platform.v1.PlatformService.DeleteWorkspace:input_type -> platform.v1.DeleteWorkspaceRequest
+	73,  // 218: platform.v1.PlatformService.ListWorkspaceMembers:input_type -> platform.v1.ListWorkspaceMembersRequest
+	75,  // 219: platform.v1.PlatformService.InviteWorkspaceMember:input_type -> platform.v1.InviteWorkspaceMemberRequest
+	76,  // 220: platform.v1.PlatformService.RevokeWorkspaceInvitation:input_type -> platform.v1.RevokeWorkspaceInvitationRequest
+	77,  // 221: platform.v1.PlatformService.AcceptWorkspaceInvitation:input_type -> platform.v1.AcceptWorkspaceInvitationRequest
+	78,  // 222: platform.v1.PlatformService.DeclineWorkspaceInvitation:input_type -> platform.v1.DeclineWorkspaceInvitationRequest
+	79,  // 223: platform.v1.PlatformService.UpdateWorkspaceMemberRole:input_type -> platform.v1.UpdateWorkspaceMemberRoleRequest
+	81,  // 224: platform.v1.PlatformService.RemoveWorkspaceMember:input_type -> platform.v1.RemoveWorkspaceMemberRequest
+	80,  // 225: platform.v1.PlatformService.MoveProject:input_type -> platform.v1.MoveProjectRequest
+	65,  // 226: platform.v1.PlatformService.CreateProject:input_type -> platform.v1.CreateProjectRequest
+	66,  // 227: platform.v1.PlatformService.ListProjects:input_type -> platform.v1.ListProjectsRequest
+	86,  // 228: platform.v1.PlatformService.GetProject:input_type -> platform.v1.GetProjectRequest
+	88,  // 229: platform.v1.PlatformService.DeleteProject:input_type -> platform.v1.DeleteProjectRequest
+	89,  // 230: platform.v1.PlatformService.RestoreProject:input_type -> platform.v1.RestoreProjectRequest
+	87,  // 231: platform.v1.PlatformService.UpdateProjectLogRetention:input_type -> platform.v1.UpdateProjectLogRetentionRequest
+	90,  // 232: platform.v1.PlatformService.PreviewProjectDeletion:input_type -> platform.v1.PreviewProjectDeletionRequest
+	96,  // 233: platform.v1.PlatformService.ListEnvironments:input_type -> platform.v1.ListEnvironmentsRequest
+	98,  // 234: platform.v1.PlatformService.GetEnvironment:input_type -> platform.v1.GetEnvironmentRequest
+	99,  // 235: platform.v1.PlatformService.CreateEnvironment:input_type -> platform.v1.CreateEnvironmentRequest
+	100, // 236: platform.v1.PlatformService.DuplicateEnvironment:input_type -> platform.v1.DuplicateEnvironmentRequest
+	101, // 237: platform.v1.PlatformService.RenameEnvironment:input_type -> platform.v1.RenameEnvironmentRequest
+	102, // 238: platform.v1.PlatformService.UpdateEnvironmentAutoDeploy:input_type -> platform.v1.UpdateEnvironmentAutoDeployRequest
+	103, // 239: platform.v1.PlatformService.DeleteEnvironment:input_type -> platform.v1.DeleteEnvironmentRequest
+	104, // 240: platform.v1.PlatformService.RestoreEnvironment:input_type -> platform.v1.RestoreEnvironmentRequest
+	105, // 241: platform.v1.PlatformService.PreviewEnvironmentDeletion:input_type -> platform.v1.PreviewEnvironmentDeletionRequest
+	106, // 242: platform.v1.PlatformService.ReleaseEnvironment:input_type -> platform.v1.ReleaseEnvironmentRequest
+	163, // 243: platform.v1.PlatformService.LinkGitHubRepository:input_type -> platform.v1.LinkGitHubRepositoryRequest
+	108, // 244: platform.v1.PlatformService.InspectSource:input_type -> platform.v1.InspectSourceRequest
+	110, // 245: platform.v1.PlatformService.CreateService:input_type -> platform.v1.CreateServiceRequest
+	111, // 246: platform.v1.PlatformService.UpdateService:input_type -> platform.v1.UpdateServiceRequest
+	112, // 247: platform.v1.PlatformService.ScaleService:input_type -> platform.v1.ScaleServiceRequest
+	113, // 248: platform.v1.PlatformService.ApplyDeploymentAction:input_type -> platform.v1.ApplyDeploymentActionRequest
+	114, // 249: platform.v1.PlatformService.DiscardServiceChanges:input_type -> platform.v1.DiscardServiceChangesRequest
+	115, // 250: platform.v1.PlatformService.DeleteService:input_type -> platform.v1.DeleteServiceRequest
+	116, // 251: platform.v1.PlatformService.RestoreService:input_type -> platform.v1.RestoreServiceRequest
+	117, // 252: platform.v1.PlatformService.GetService:input_type -> platform.v1.GetServiceRequest
+	118, // 253: platform.v1.PlatformService.ListServices:input_type -> platform.v1.ListServicesRequest
+	120, // 254: platform.v1.PlatformService.CreateVolume:input_type -> platform.v1.CreateVolumeRequest
+	121, // 255: platform.v1.PlatformService.UpdateVolume:input_type -> platform.v1.UpdateVolumeRequest
+	122, // 256: platform.v1.PlatformService.DeleteVolume:input_type -> platform.v1.DeleteVolumeRequest
+	123, // 257: platform.v1.PlatformService.PreviewVolumeDeletion:input_type -> platform.v1.PreviewVolumeDeletionRequest
+	124, // 258: platform.v1.PlatformService.ListVolumes:input_type -> platform.v1.ListVolumesRequest
+	131, // 259: platform.v1.PlatformService.CreateDomainBinding:input_type -> platform.v1.CreateDomainBindingRequest
+	130, // 260: platform.v1.PlatformService.GenerateDomainBinding:input_type -> platform.v1.GenerateDomainBindingRequest
+	132, // 261: platform.v1.PlatformService.GetDomainBinding:input_type -> platform.v1.GetDomainBindingRequest
+	133, // 262: platform.v1.PlatformService.ListDomainBindings:input_type -> platform.v1.ListDomainBindingsRequest
+	135, // 263: platform.v1.PlatformService.UpdateDomainBinding:input_type -> platform.v1.UpdateDomainBindingRequest
+	136, // 264: platform.v1.PlatformService.DeleteDomainBinding:input_type -> platform.v1.DeleteDomainBindingRequest
+	137, // 265: platform.v1.PlatformService.RestoreDomainBinding:input_type -> platform.v1.RestoreDomainBindingRequest
+	138, // 266: platform.v1.PlatformService.GetServiceStatus:input_type -> platform.v1.GetServiceStatusRequest
+	139, // 267: platform.v1.PlatformService.ListServiceLogs:input_type -> platform.v1.ListServiceLogsRequest
+	144, // 268: platform.v1.PlatformService.ListServiceDeployments:input_type -> platform.v1.ListServiceDeploymentsRequest
+	51,  // 269: platform.v1.PlatformService.ListServiceArtifacts:input_type -> platform.v1.ListServiceArtifactsRequest
+	198, // 270: platform.v1.PlatformService.ListAgents:input_type -> google.protobuf.Empty
+	54,  // 271: platform.v1.PlatformService.ListBuildAttempts:input_type -> platform.v1.ListBuildAttemptsRequest
+	164, // 272: platform.v1.PlatformService.GetProjectUsage:input_type -> platform.v1.GetProjectUsageRequest
+	173, // 273: platform.v1.PlatformService.GetBillingAccount:input_type -> platform.v1.GetBillingAccountRequest
+	177, // 274: platform.v1.PlatformService.ListBillingStatements:input_type -> platform.v1.ListBillingStatementsRequest
+	179, // 275: platform.v1.PlatformService.GetBillingStatement:input_type -> platform.v1.GetBillingStatementRequest
+	180, // 276: platform.v1.PlatformService.UpdateBillingBudget:input_type -> platform.v1.UpdateBillingBudgetRequest
+	181, // 277: platform.v1.PlatformService.ChangeBillingPlan:input_type -> platform.v1.ChangeBillingPlanRequest
+	182, // 278: platform.v1.PlatformService.StartBillingPaymentSetup:input_type -> platform.v1.StartBillingPaymentSetupRequest
+	184, // 279: platform.v1.PlatformService.StartBillingActivation:input_type -> platform.v1.StartBillingActivationRequest
+	185, // 280: platform.v1.PlatformService.CancelBillingAccount:input_type -> platform.v1.CancelBillingAccountRequest
+	154, // 281: platform.v1.BuilderService.ClaimBuild:input_type -> platform.v1.ClaimBuildRequest
+	156, // 282: platform.v1.BuilderService.DownloadSourceSnapshot:input_type -> platform.v1.DownloadSourceSnapshotRequest
+	158, // 283: platform.v1.BuilderService.ReportBuildHeartbeat:input_type -> platform.v1.BuilderHeartbeatRequest
+	159, // 284: platform.v1.BuilderService.ReportBuildLogs:input_type -> platform.v1.ReportBuildLogsRequest
+	161, // 285: platform.v1.BuilderService.CompleteBuild:input_type -> platform.v1.CompleteBuildRequest
+	162, // 286: platform.v1.OpsService.IngestGitHubWebhook:input_type -> platform.v1.IngestGitHubWebhookRequest
+	187, // 287: platform.v1.OpsService.IngestStripeWebhook:input_type -> platform.v1.IngestStripeWebhookRequest
+	188, // 288: platform.v1.OpsService.SetBillingCollectionPaused:input_type -> platform.v1.SetBillingCollectionPausedRequest
+	198, // 289: platform.v1.OpsService.ListFleet:input_type -> google.protobuf.Empty
+	148, // 290: platform.v1.OpsService.CreateAgent:input_type -> platform.v1.CreateAgentRequest
+	150, // 291: platform.v1.OpsService.UpdateAgent:input_type -> platform.v1.UpdateAgentRequest
+	151, // 292: platform.v1.OpsService.SetAgentLifecycle:input_type -> platform.v1.SetAgentLifecycleRequest
+	198, // 293: platform.v1.OpsService.ListBuilders:input_type -> google.protobuf.Empty
+	192, // 294: platform.v1.OpsService.SetBuilderDrain:input_type -> platform.v1.SetBuilderDrainRequest
+	198, // 295: platform.v1.OpsService.GetBuildScheduler:input_type -> google.protobuf.Empty
+	194, // 296: platform.v1.OpsService.SetBuildSchedulerPaused:input_type -> platform.v1.SetBuildSchedulerPausedRequest
+	68,  // 297: platform.v1.PlatformService.ListWorkspaces:output_type -> platform.v1.ListWorkspacesResponse
+	21,  // 298: platform.v1.PlatformService.GetWorkspace:output_type -> platform.v1.Workspace
+	21,  // 299: platform.v1.PlatformService.CreateWorkspace:output_type -> platform.v1.Workspace
+	21,  // 300: platform.v1.PlatformService.RenameWorkspace:output_type -> platform.v1.Workspace
+	198, // 301: platform.v1.PlatformService.DeleteWorkspace:output_type -> google.protobuf.Empty
+	74,  // 302: platform.v1.PlatformService.ListWorkspaceMembers:output_type -> platform.v1.ListWorkspaceMembersResponse
+	23,  // 303: platform.v1.PlatformService.InviteWorkspaceMember:output_type -> platform.v1.WorkspaceInvitation
+	198, // 304: platform.v1.PlatformService.RevokeWorkspaceInvitation:output_type -> google.protobuf.Empty
+	21,  // 305: platform.v1.PlatformService.AcceptWorkspaceInvitation:output_type -> platform.v1.Workspace
+	198, // 306: platform.v1.PlatformService.DeclineWorkspaceInvitation:output_type -> google.protobuf.Empty
+	22,  // 307: platform.v1.PlatformService.UpdateWorkspaceMemberRole:output_type -> platform.v1.WorkspaceMember
+	198, // 308: platform.v1.PlatformService.RemoveWorkspaceMember:output_type -> google.protobuf.Empty
+	20,  // 309: platform.v1.PlatformService.MoveProject:output_type -> platform.v1.Project
+	20,  // 310: platform.v1.PlatformService.CreateProject:output_type -> platform.v1.Project
+	82,  // 311: platform.v1.PlatformService.ListProjects:output_type -> platform.v1.ListProjectsResponse
+	20,  // 312: platform.v1.PlatformService.GetProject:output_type -> platform.v1.Project
+	198, // 313: platform.v1.PlatformService.DeleteProject:output_type -> google.protobuf.Empty
+	20,  // 314: platform.v1.PlatformService.RestoreProject:output_type -> platform.v1.Project
+	20,  // 315: platform.v1.PlatformService.UpdateProjectLogRetention:output_type -> platform.v1.Project
+	91,  // 316: platform.v1.PlatformService.PreviewProjectDeletion:output_type -> platform.v1.DeletionPreview
+	97,  // 317: platform.v1.PlatformService.ListEnvironments:output_type -> platform.v1.ListEnvironmentsResponse
+	25,  // 318: platform.v1.PlatformService.GetEnvironment:output_type -> platform.v1.Environment
+	25,  // 319: platform.v1.PlatformService.CreateEnvironment:output_type -> platform.v1.Environment
+	25,  // 320: platform.v1.PlatformService.DuplicateEnvironment:output_type -> platform.v1.Environment
+	25,  // 321: platform.v1.PlatformService.RenameEnvironment:output_type -> platform.v1.Environment
+	25,  // 322: platform.v1.PlatformService.UpdateEnvironmentAutoDeploy:output_type -> platform.v1.Environment
+	198, // 323: platform.v1.PlatformService.DeleteEnvironment:output_type -> google.protobuf.Empty
+	25,  // 324: platform.v1.PlatformService.RestoreEnvironment:output_type -> platform.v1.Environment
+	91,  // 325: platform.v1.PlatformService.PreviewEnvironmentDeletion:output_type -> platform.v1.DeletionPreview
+	107, // 326: platform.v1.PlatformService.ReleaseEnvironment:output_type -> platform.v1.ReleaseEnvironmentResponse
+	109, // 327: platform.v1.PlatformService.LinkGitHubRepository:output_type -> platform.v1.InspectSourceResponse
+	109, // 328: platform.v1.PlatformService.InspectSource:output_type -> platform.v1.InspectSourceResponse
+	57,  // 329: platform.v1.PlatformService.CreateService:output_type -> platform.v1.Service
+	57,  // 330: platform.v1.PlatformService.UpdateService:output_type -> platform.v1.Service
+	64,  // 331: platform.v1.PlatformService.ScaleService:output_type -> platform.v1.ServiceStatus
+	64,  // 332: platform.v1.PlatformService.ApplyDeploymentAction:output_type -> platform.v1.ServiceStatus
+	57,  // 333: platform.v1.PlatformService.DiscardServiceChanges:output_type -> platform.v1.Service
+	198, // 334: platform.v1.PlatformService.DeleteService:output_type -> google.protobuf.Empty
+	57,  // 335: platform.v1.PlatformService.RestoreService:output_type -> platform.v1.Service
+	57,  // 336: platform.v1.PlatformService.GetService:output_type -> platform.v1.Service
+	119, // 337: platform.v1.PlatformService.ListServices:output_type -> platform.v1.ListServicesResponse
+	60,  // 338: platform.v1.PlatformService.CreateVolume:output_type -> platform.v1.Volume
+	60,  // 339: platform.v1.PlatformService.UpdateVolume:output_type -> platform.v1.Volume
+	198, // 340: platform.v1.PlatformService.DeleteVolume:output_type -> google.protobuf.Empty
+	91,  // 341: platform.v1.PlatformService.PreviewVolumeDeletion:output_type -> platform.v1.DeletionPreview
+	125, // 342: platform.v1.PlatformService.ListVolumes:output_type -> platform.v1.ListVolumesResponse
+	59,  // 343: platform.v1.PlatformService.CreateDomainBinding:output_type -> platform.v1.DomainBinding
+	59,  // 344: platform.v1.PlatformService.GenerateDomainBinding:output_type -> platform.v1.DomainBinding
+	59,  // 345: platform.v1.PlatformService.GetDomainBinding:output_type -> platform.v1.DomainBinding
+	134, // 346: platform.v1.PlatformService.ListDomainBindings:output_type -> platform.v1.ListDomainBindingsResponse
+	59,  // 347: platform.v1.PlatformService.UpdateDomainBinding:output_type -> platform.v1.DomainBinding
+	198, // 348: platform.v1.PlatformService.DeleteDomainBinding:output_type -> google.protobuf.Empty
+	59,  // 349: platform.v1.PlatformService.RestoreDomainBinding:output_type -> platform.v1.DomainBinding
+	64,  // 350: platform.v1.PlatformService.GetServiceStatus:output_type -> platform.v1.ServiceStatus
+	142, // 351: platform.v1.PlatformService.ListServiceLogs:output_type -> platform.v1.ListServiceLogsResponse
+	146, // 352: platform.v1.PlatformService.ListServiceDeployments:output_type -> platform.v1.ListServiceDeploymentsResponse
+	52,  // 353: platform.v1.PlatformService.ListServiceArtifacts:output_type -> platform.v1.ListServiceArtifactsResponse
+	147, // 354: platform.v1.PlatformService.ListAgents:output_type -> platform.v1.ListAgentsResponse
+	55,  // 355: platform.v1.PlatformService.ListBuildAttempts:output_type -> platform.v1.ListBuildAttemptsResponse
+	169, // 356: platform.v1.PlatformService.GetProjectUsage:output_type -> platform.v1.ProjectUsage
+	174, // 357: platform.v1.PlatformService.GetBillingAccount:output_type -> platform.v1.BillingAccountSummary
+	178, // 358: platform.v1.PlatformService.ListBillingStatements:output_type -> platform.v1.ListBillingStatementsResponse
+	176, // 359: platform.v1.PlatformService.GetBillingStatement:output_type -> platform.v1.BillingStatement
+	174, // 360: platform.v1.PlatformService.UpdateBillingBudget:output_type -> platform.v1.BillingAccountSummary
+	174, // 361: platform.v1.PlatformService.ChangeBillingPlan:output_type -> platform.v1.BillingAccountSummary
+	183, // 362: platform.v1.PlatformService.StartBillingPaymentSetup:output_type -> platform.v1.StartBillingPaymentSetupResponse
+	174, // 363: platform.v1.PlatformService.StartBillingActivation:output_type -> platform.v1.BillingAccountSummary
+	186, // 364: platform.v1.PlatformService.CancelBillingAccount:output_type -> platform.v1.CancelBillingAccountResponse
+	155, // 365: platform.v1.BuilderService.ClaimBuild:output_type -> platform.v1.BuildJob
+	157, // 366: platform.v1.BuilderService.DownloadSourceSnapshot:output_type -> platform.v1.SourceSnapshotChunk
+	198, // 367: platform.v1.BuilderService.ReportBuildHeartbeat:output_type -> google.protobuf.Empty
+	198, // 368: platform.v1.BuilderService.ReportBuildLogs:output_type -> google.protobuf.Empty
+	198, // 369: platform.v1.BuilderService.CompleteBuild:output_type -> google.protobuf.Empty
+	198, // 370: platform.v1.OpsService.IngestGitHubWebhook:output_type -> google.protobuf.Empty
+	198, // 371: platform.v1.OpsService.IngestStripeWebhook:output_type -> google.protobuf.Empty
+	189, // 372: platform.v1.OpsService.SetBillingCollectionPaused:output_type -> platform.v1.BillingControlState
+	153, // 373: platform.v1.OpsService.ListFleet:output_type -> platform.v1.Fleet
+	149, // 374: platform.v1.OpsService.CreateAgent:output_type -> platform.v1.AgentEnrollment
+	61,  // 375: platform.v1.OpsService.UpdateAgent:output_type -> platform.v1.Agent
+	61,  // 376: platform.v1.OpsService.SetAgentLifecycle:output_type -> platform.v1.Agent
+	191, // 377: platform.v1.OpsService.ListBuilders:output_type -> platform.v1.ListBuildersResponse
+	190, // 378: platform.v1.OpsService.SetBuilderDrain:output_type -> platform.v1.BuilderWorker
+	193, // 379: platform.v1.OpsService.GetBuildScheduler:output_type -> platform.v1.BuildSchedulerState
+	193, // 380: platform.v1.OpsService.SetBuildSchedulerPaused:output_type -> platform.v1.BuildSchedulerState
+	297, // [297:381] is the sub-list for method output_type
+	213, // [213:297] is the sub-list for method input_type
+	213, // [213:213] is the sub-list for extension type_name
+	213, // [213:213] is the sub-list for extension extendee
+	0,   // [0:213] is the sub-list for field type_name
 }
 
 func init() { file_platform_proto_init() }
@@ -14465,7 +16199,7 @@ func file_platform_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_platform_proto_rawDesc), len(file_platform_proto_rawDesc)),
 			NumEnums:      20,
-			NumMessages:   157,
+			NumMessages:   177,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

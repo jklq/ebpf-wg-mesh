@@ -248,6 +248,21 @@ type UsageConfig struct {
 	HourlyRetentionDays int
 }
 
+// BillingConfig governs usage billing. Mode is "disabled", "shadow", or
+// "enabled". Shadow computes statements and records restrictions as dry runs
+// but never charges or enforces; it is the default until a full shadow period
+// has reconciled against independent measurements. Stripe secrets are
+// operator-managed and required in enabled mode.
+type BillingConfig struct {
+	Mode                string
+	StripeSecretKey     string
+	StripeWebhookSecret string
+	CheckoutSuccessURL  string
+	CheckoutCancelURL   string
+	MaintenanceSeconds  int
+	StripeAPIBaseURL    string
+}
+
 // DirectImageConfig governs how user-supplied direct-image references are resolved against external registries.
 type DirectImageConfig struct {
 	// AllowedPrivateRegistryHosts lists registry hosts (host[:port]) the control plane may resolve
@@ -277,6 +292,7 @@ type ControlPlaneConfig struct {
 	SecretKeys       SecretKeysConfig
 	Deletion         DeletionConfig
 	Usage            UsageConfig
+	Billing          BillingConfig
 	DirectImages     DirectImageConfig
 	Ingress          IngressConfig
 	Dashboard        ManagedDashboardConfig

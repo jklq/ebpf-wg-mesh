@@ -328,6 +328,46 @@ func (a connectPlatformService) GetProjectUsage(ctx context.Context, req *connec
 	return connect.NewResponse(result), nil
 }
 
+func (a connectPlatformService) GetBillingAccount(ctx context.Context, req *connect.Request[platformv1.GetBillingAccountRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	result, err := a.service.GetBillingAccount(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) ListBillingStatements(ctx context.Context, req *connect.Request[platformv1.ListBillingStatementsRequest]) (*connect.Response[platformv1.ListBillingStatementsResponse], error) {
+	result, err := a.service.ListBillingStatements(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) GetBillingStatement(ctx context.Context, req *connect.Request[platformv1.GetBillingStatementRequest]) (*connect.Response[platformv1.BillingStatement], error) {
+	result, err := a.service.GetBillingStatement(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) UpdateBillingBudget(ctx context.Context, req *connect.Request[platformv1.UpdateBillingBudgetRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	result, err := a.service.UpdateBillingBudget(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) ChangeBillingPlan(ctx context.Context, req *connect.Request[platformv1.ChangeBillingPlanRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	result, err := a.service.ChangeBillingPlan(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) StartBillingPaymentSetup(ctx context.Context, req *connect.Request[platformv1.StartBillingPaymentSetupRequest]) (*connect.Response[platformv1.StartBillingPaymentSetupResponse], error) {
+	result, err := a.service.StartBillingPaymentSetup(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) StartBillingActivation(ctx context.Context, req *connect.Request[platformv1.StartBillingActivationRequest]) (*connect.Response[platformv1.BillingAccountSummary], error) {
+	result, err := a.service.StartBillingActivation(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectPlatformService) CancelBillingAccount(ctx context.Context, req *connect.Request[platformv1.CancelBillingAccountRequest]) (*connect.Response[platformv1.CancelBillingAccountResponse], error) {
+	result, err := a.service.CancelBillingAccount(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
 func (a connectPlatformService) ListBuildAttempts(ctx context.Context, req *connect.Request[platformv1.ListBuildAttemptsRequest]) (*connect.Response[platformv1.ListBuildAttemptsResponse], error) {
 	result, err := a.service.ListBuildAttempts(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
@@ -335,6 +375,16 @@ func (a connectPlatformService) ListBuildAttempts(ctx context.Context, req *conn
 
 func (a connectOpsService) IngestGitHubWebhook(ctx context.Context, req *connect.Request[platformv1.IngestGitHubWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
 	result, err := a.service.IngestGitHubWebhook(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectOpsService) IngestStripeWebhook(ctx context.Context, req *connect.Request[platformv1.IngestStripeWebhookRequest]) (*connect.Response[emptypb.Empty], error) {
+	result, err := a.service.IngestStripeWebhook(ctx, req.Msg)
+	return connect.NewResponse(result), toConnectError(err)
+}
+
+func (a connectOpsService) SetBillingCollectionPaused(ctx context.Context, req *connect.Request[platformv1.SetBillingCollectionPausedRequest]) (*connect.Response[platformv1.BillingControlState], error) {
+	result, err := a.service.SetBillingCollectionPaused(ctx, req.Msg)
 	return connect.NewResponse(result), toConnectError(err)
 }
 

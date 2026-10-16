@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/certificates"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
@@ -63,6 +64,7 @@ type Server struct {
 	delivery        *deliverycore.Delivery
 	logStore        *logs.LogStore
 	usage           *usage.Store
+	billing         *billing.Service
 	alarms          *alarm.Sender
 	logEmitter      *logs.LogEmitter
 	logIngester     *logs.AsyncIngester
@@ -322,6 +324,10 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		RawRetention:    time.Duration(cfg.Usage.RawRetentionDays) * 24 * time.Hour,
 		HourlyRetention: time.Duration(cfg.Usage.HourlyRetentionDays) * 24 * time.Hour,
 	})
+	billingService, err := newBillingService(ctx, cfg, store, usageAlarms)
+	if err != nil {
+		return nil, err
+	}
 	platformService := newPlatformService(
 		store.platform(),
 		notifier,
@@ -335,6 +341,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withPlatformEvents(platformEvents),
 		withPlatformLiveOwner(leaseLiveOwner{leases: leases, name: singletonLeaseName}),
 		withUsage(usageStore, store.authorizer()),
+		withBilling(billingService, store.authorizer()),
 	)
 	consoleCallers := strings.Join(cfg.ConsoleCallerIDs, ",")
 	if cfg.Dashboard.Enabled {
@@ -365,6 +372,8 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	buildOperations := newBuildOperations(store.db, store.source, delivery, policy, policy, withBuilderLogEmitter(logEmitter))
 	platformv1.RegisterBuilderServiceServer(internal, newBuilderService(buildOperations))
 	opsService := newOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
+	opsService.billing = billingService
+	opsService.billingAuthz = store.authorizer()
 	platformv1.RegisterOpsServiceServer(internal, opsService)
 	internalLn, err := net.Listen("tcp", cfg.InternalGRPC.Listen)
 	if err != nil {
@@ -413,6 +422,7 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		delivery:        delivery,
 		logStore:        logStore,
 		usage:           usageStore,
+		billing:         billingService,
 		alarms:          usageAlarms,
 		logEmitter:      logEmitter,
 		logIngester:     logIngester,
@@ -683,6 +693,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { errCh <- s.deletionGC(ctx) }()
 	go func() { s.usageMaintenanceLoop(ctx); errCh <- nil }()
 	go func() { s.usageMonitorLoop(ctx); errCh <- nil }()
+	go func() { s.billingMaintenanceLoop(ctx); errCh <- nil }()
 	select {
 	case <-ctx.Done():
 		return nil
