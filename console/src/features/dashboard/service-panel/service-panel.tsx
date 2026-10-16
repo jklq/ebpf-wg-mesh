@@ -1,19 +1,15 @@
 import * as stylex from "@stylexjs/stylex";
-import {
-	ChartColumn,
-	Globe,
-	KeyRound,
-	Layers,
-	RefreshCw,
-	Settings,
-	X,
-} from "lucide-react";
+import { RefreshCw, X } from "lucide-react";
 import { lazy, Suspense, useCallback, useEffect, useId, useState } from "react";
 import { Button } from "#/components/ui/button";
 import { TabList } from "#/components/ui/tabs";
 import { PanelDeployments } from "#/features/dashboard/service-panel/deployments/panel-deployments";
 import { EditableServiceHeaderName } from "#/features/dashboard/service-panel/editable-service-name";
-import { PanelTabSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
+import {
+	TabSkeleton,
+	tabContentStyles,
+} from "#/features/dashboard/service-panel/panel-skeleton";
+import { servicePanelTabs } from "#/features/dashboard/service-panel/panel-tabs";
 import { ServiceStatusBadge } from "#/features/dashboard/service-panel/service-status-badge";
 import type { DashboardTab } from "#/features/dashboard/shared/types";
 import type {
@@ -44,14 +40,6 @@ const SettingsPanel = lazy(() =>
 const UsagePanel = lazy(() =>
 	loadUsage().then((module) => ({ default: module.PanelUsage })),
 );
-
-const tabs = [
-	{ id: "deployments", label: "Deployments", icon: <Layers size={11} /> },
-	{ id: "variables", label: "Variables", icon: <KeyRound size={11} /> },
-	{ id: "domains", label: "Domains", icon: <Globe size={11} /> },
-	{ id: "usage", label: "Usage", icon: <ChartColumn size={11} /> },
-	{ id: "settings", label: "Settings", icon: <Settings size={11} /> },
-] as const;
 
 export function ServicePanel({
 	service,
@@ -133,7 +121,7 @@ export function ServicePanel({
 			</div>
 
 			<TabList
-				items={tabs}
+				items={servicePanelTabs}
 				selected={activeTab}
 				onSelect={onTabChange}
 				label="Service"
@@ -147,7 +135,9 @@ export function ServicePanel({
 				aria-labelledby={`${tabsId}-${activeTab}`}
 				{...stylex.props(styles.body)}
 			>
-				<Suspense fallback={<PanelTabFallback />}>
+				<Suspense
+					fallback={<TabSkeleton tab={activeTab} service={currentService} />}
+				>
 					{activeTab === "deployments" && (
 						<PanelDeployments
 							key={service.id}
@@ -169,7 +159,7 @@ export function ServicePanel({
 						/>
 					)}
 					{activeTab === "variables" && project && (
-						<div {...stylex.props(styles.tabContent)}>
+						<div {...stylex.props(tabContentStyles.content)}>
 							<VariablesPanel
 								service={service}
 								seedKey={seedVariableKey}
@@ -179,7 +169,7 @@ export function ServicePanel({
 						</div>
 					)}
 					{activeTab === "settings" && project && (
-						<div {...stylex.props(styles.tabContent)}>
+						<div {...stylex.props(tabContentStyles.content)}>
 							<SettingsPanel
 								service={currentService}
 								state={state}
@@ -190,12 +180,12 @@ export function ServicePanel({
 						</div>
 					)}
 					{activeTab === "domains" && project && (
-						<div {...stylex.props(styles.tabContent)}>
+						<div {...stylex.props(tabContentStyles.content)}>
 							<DomainsPanel service={service} state={state} status={status} />
 						</div>
 					)}
 					{activeTab === "usage" && project && (
-						<div {...stylex.props(styles.tabContent)}>
+						<div {...stylex.props(tabContentStyles.content)}>
 							<UsagePanel
 								key={service.id}
 								service={service}
@@ -206,14 +196,6 @@ export function ServicePanel({
 				</Suspense>
 			</div>
 		</>
-	);
-}
-
-function PanelTabFallback() {
-	return (
-		<div {...stylex.props(styles.tabContent)}>
-			<PanelTabSkeleton />
-		</div>
 	);
 }
 
@@ -239,15 +221,5 @@ const styles = stylex.create({
 		minHeight: "0rem",
 		flex: "1",
 		overflow: "hidden",
-	},
-	tabContent: {
-		display: "flex",
-		height: "100%",
-		flexDirection: "column",
-		gap: space.lg,
-		overflowY: "auto",
-		paddingInline: "18px",
-		paddingTop: "18px",
-		paddingBottom: "1.75rem",
 	},
 });

@@ -457,6 +457,8 @@ describe("ServicePanelFallback", () => {
 		render(
 			<ServicePanelFallback
 				service={service()}
+				tab="deployments"
+				onTabChange={() => {}}
 				onClose={onClose}
 				onRefresh={() => {}}
 			/>,

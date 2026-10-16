@@ -19,14 +19,7 @@ export function UsageFreshness({
 	const expired = retainedSince > dateMillis(usage.startTime);
 	return (
 		<div {...stylex.props(styles.freshness)}>
-			{usage.stale && (
-				<output {...stylex.props(styles.line, styles.stale)}>
-					<TriangleAlert size={13} {...stylex.props(styles.icon)} />
-					<span>
-						{`Usage is behind: ${usage.staleReason || "a fleet agent has not reported"}. Recent buckets show as missing until it catches up.`}
-					</span>
-				</output>
-			)}
+			<UsageStaleNotice usage={usage} />
 			<p {...stylex.props(styles.line)}>
 				{usage.watermark
 					? `Complete through ${formatDateTime(usage.watermark)}.`
@@ -39,6 +32,19 @@ export function UsageFreshness({
 					` Refreshed ${formatLogTime(new Date(loadedAtMs))}.`}
 			</p>
 		</div>
+	);
+}
+
+/** Warns while measurements lag behind; renders nothing when current. */
+export function UsageStaleNotice({ usage }: { usage: DashboardProjectUsage }) {
+	if (!usage.stale) return null;
+	return (
+		<output {...stylex.props(styles.line, styles.stale)}>
+			<TriangleAlert size={13} {...stylex.props(styles.icon)} />
+			<span>
+				{`Usage is behind: ${usage.staleReason || "a fleet agent has not reported"}. Recent buckets show as missing until it catches up.`}
+			</span>
+		</output>
 	);
 }
 

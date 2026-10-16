@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { ArrowUpRight, LayoutGrid, Pause, Play, Rows2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Notice } from "#/components/ui/notice";
-import { PanelTabSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
+import { UsageChartsSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
 import {
 	type ChartSeries,
 	UsageLineChart,
@@ -16,11 +16,12 @@ import {
 	serviceUsageRanges,
 	type UsageRange,
 } from "#/features/usage/usage-model";
+import { usagePanelLayout } from "#/features/usage/usage-panel-layout";
 import {
 	UsageRangePicker,
 	usageControlStyles,
 } from "#/features/usage/usage-range-picker";
-import { UsageFreshness } from "#/features/usage/usage-status";
+import { UsageStaleNotice } from "#/features/usage/usage-status";
 import { MEMORY_DEFINITION } from "#/features/usage/usage-summary";
 import { useProjectUsage } from "#/features/usage/use-project-usage";
 import { formatBytes } from "#/lib/bytes";
@@ -28,7 +29,7 @@ import type {
 	DashboardProject,
 	DashboardServiceRecord,
 } from "#/lib/dashboard/core/types.server";
-import { colors, fonts, shape, space } from "#/styles/tokens.stylex";
+import { colors, fonts, shape } from "#/styles/tokens.stylex";
 
 const cpuSeries: ChartSeries[] = [
 	{
@@ -69,7 +70,7 @@ export function PanelUsage({
 	const [layout, setLayout] = useState<"grid" | "list">("grid");
 	const [paused, setPaused] = useState(false);
 	const [hovered, setHovered] = useState<number>();
-	const { usage, loadedAtMs, error } = useProjectUsage({
+	const { usage, error } = useProjectUsage({
 		projectId: project.id,
 		serviceId: service.id,
 		range,
@@ -85,7 +86,7 @@ export function PanelUsage({
 
 	return (
 		<>
-			<div {...stylex.props(styles.toolbar)}>
+			<div {...stylex.props(usagePanelLayout.toolbar)}>
 				<Link
 					to="/projects/$projectId/usage"
 					params={{ projectId: project.id }}
@@ -131,67 +132,72 @@ export function PanelUsage({
 			{error && <Notice>Could not load usage: {error}</Notice>}
 			{usage ? (
 				<>
-					<UsageFreshness usage={usage} loadedAtMs={loadedAtMs} />
-					<div
-						{...stylex.props(styles.cards, layout === "grid" && styles.grid)}
-					>
-						<ChartCard
-							title="CPU"
-							meta={cpuLimit !== undefined && `Max ${formatVcpu(cpuLimit)}`}
+					<UsageStaleNotice usage={usage} />
+					<div {...stylex.props(usagePanelLayout.cardsContainer)}>
+						<div
+							{...stylex.props(
+								usagePanelLayout.cards,
+								layout === "grid" && usagePanelLayout.grid,
+							)}
 						>
-							<UsageLineChart
-								usage={usage}
-								series={cpuSeries}
-								format={formatVcpu}
-								kind="vcpu"
-								limit={cpuLimit}
-								label="Average CPU per bucket"
-								hovered={hovered}
-								onHover={setHovered}
-							/>
-						</ChartCard>
-						<ChartCard
-							title="Memory"
-							meta={
-								memoryLimit !== undefined &&
-								`Max ${formatAverageBytes(memoryLimit)}`
-							}
-							caption={MEMORY_DEFINITION}
-						>
-							<UsageLineChart
-								usage={usage}
-								series={memorySeries}
-								format={formatAverageBytes}
-								kind="bytes"
-								limit={memoryLimit}
-								label="Average memory per bucket"
-								hovered={hovered}
-								onHover={setHovered}
-							/>
-						</ChartCard>
-						<ChartCard
-							title="Public network traffic"
-							meta={
-								usage.total &&
-								`${formatByteCount(usage.total.publicEgressBytes)} total`
-							}
-							caption="Application bytes sent to the internet per bucket, before TLS."
-							legend={networkSeries}
-						>
-							<UsageLineChart
-								usage={usage}
-								series={networkSeries}
-								format={(bytes) => formatBytes(Math.round(bytes))}
-								kind="bytes"
-								label="Public output per bucket"
-								hovered={hovered}
-								onHover={setHovered}
-							/>
-						</ChartCard>
+							<ChartCard
+								title="CPU"
+								meta={cpuLimit !== undefined && `Max ${formatVcpu(cpuLimit)}`}
+							>
+								<UsageLineChart
+									usage={usage}
+									series={cpuSeries}
+									format={formatVcpu}
+									kind="vcpu"
+									limit={cpuLimit}
+									label="Average CPU per bucket"
+									hovered={hovered}
+									onHover={setHovered}
+								/>
+							</ChartCard>
+							<ChartCard
+								title="Memory"
+								meta={
+									memoryLimit !== undefined &&
+									`Max ${formatAverageBytes(memoryLimit)}`
+								}
+								hint={MEMORY_DEFINITION}
+							>
+								<UsageLineChart
+									usage={usage}
+									series={memorySeries}
+									format={formatAverageBytes}
+									kind="bytes"
+									limit={memoryLimit}
+									label="Average memory per bucket"
+									hovered={hovered}
+									onHover={setHovered}
+								/>
+							</ChartCard>
+							<ChartCard
+								title="Public network traffic"
+								meta={
+									usage.total &&
+									`${formatByteCount(usage.total.publicEgressBytes)} total`
+								}
+								hint="Application bytes sent to the internet per bucket, before TLS."
+								legend={networkSeries}
+							>
+								<UsageLineChart
+									usage={usage}
+									series={networkSeries}
+									format={(bytes) => formatBytes(Math.round(bytes))}
+									kind="bytes"
+									label="Public output per bucket"
+									hovered={hovered}
+									onHover={setHovered}
+								/>
+							</ChartCard>
+						</div>
 					</div>
 				</>
 			) : (
-				!error && <PanelTabSkeleton />
+				!error && <UsageChartsSkeleton />
 			)}
 		</>
 	);
@@ -225,45 +231,41 @@ function LayoutButton({
 function ChartCard({
 	title,
 	meta,
-	caption,
+	hint,
 	legend,
 	children,
 }: {
 	title: string;
 	meta?: ReactNode;
-	caption?: string;
+	hint?: string;
 	legend?: ChartSeries[];
 	children: ReactNode;
 }) {
 	return (
-		<section {...stylex.props(styles.card)}>
-			<header {...stylex.props(styles.cardHeader)}>
-				<h3 {...stylex.props(styles.cardTitle)}>{title}</h3>
+		<section {...stylex.props(usagePanelLayout.card)}>
+			<header {...stylex.props(usagePanelLayout.cardHeader)}>
+				<h3 title={hint} {...stylex.props(styles.cardTitle)}>
+					{title}
+				</h3>
+				{legend?.map((entry) => (
+					<span key={entry.label} {...stylex.props(styles.legendItem)}>
+						<span
+							{...stylex.props(
+								styles.swatch,
+								entry.tone === "accent" ? styles.accent : styles.blue,
+							)}
+						/>
+						{entry.label}
+					</span>
+				))}
 				{meta && <span {...stylex.props(styles.meta)}>{meta}</span>}
 			</header>
-			{legend && (
-				<div {...stylex.props(styles.legend)}>
-					{legend.map((entry) => (
-						<span key={entry.label} {...stylex.props(styles.legendItem)}>
-							<span
-								{...stylex.props(
-									styles.swatch,
-									entry.tone === "accent" ? styles.accent : styles.blue,
-								)}
-							/>
-							{entry.label}
-						</span>
-					))}
-				</div>
-			)}
 			{children}
-			{caption && <p {...stylex.props(styles.caption)}>{caption}</p>}
 		</section>
 	);
 }
 
 const styles = stylex.create({
-	toolbar: { display: "flex", alignItems: "center", gap: space.sm },
 	spacer: { flex: "1" },
 	projectLink: {
 		display: "inline-flex",
@@ -307,55 +309,27 @@ const styles = stylex.create({
 	},
 	selectedLayout: { backgroundColor: colors.accentDim, color: colors.accent },
 	live: { color: colors.healthy },
-	cards: { display: "grid", gridTemplateColumns: "1fr", gap: space.md },
-	grid: { gridTemplateColumns: "repeat(auto-fit, minmax(17rem, 1fr))" },
-	card: {
-		display: "flex",
-		minWidth: "0rem",
-		flexDirection: "column",
-		gap: space.md,
-		borderStyle: "solid",
-		borderWidth: "1px",
-		borderColor: colors.line,
-		borderRadius: shape.card,
-		backgroundColor: colors.surface,
-		paddingInline: space.lg,
-		paddingTop: space.md,
-		paddingBottom: space.lg,
-	},
-	cardHeader: {
-		display: "flex",
-		alignItems: "baseline",
-		justifyContent: "space-between",
-		gap: space.md,
-	},
 	cardTitle: {
 		margin: "0rem",
-		fontSize: "14px",
+		fontSize: "13px",
 		fontWeight: "600",
 		color: colors.ink,
 	},
 	meta: {
+		marginLeft: "auto",
 		whiteSpace: "nowrap",
 		fontFamily: fonts.mono,
 		fontSize: "11px",
 		color: colors.muted,
 	},
-	legend: {
-		display: "flex",
-		gap: space.md,
-		marginTop: "-0.5rem",
+	legendItem: {
+		display: "inline-flex",
+		alignItems: "center",
+		gap: "5px",
 		fontSize: "11px",
 		color: colors.muted,
 	},
-	legendItem: { display: "inline-flex", alignItems: "center", gap: "5px" },
 	swatch: { width: "7px", height: "7px", borderRadius: "50%" },
 	accent: { backgroundColor: colors.accent },
 	blue: { backgroundColor: colors.unapplied },
-	caption: {
-		margin: "0rem",
-		fontSize: "11px",
-		lineHeight: "1.4",
-		color: colors.dim,
-	},
 });

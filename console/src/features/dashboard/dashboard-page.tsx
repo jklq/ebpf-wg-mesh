@@ -104,6 +104,8 @@ export function DashboardPage({
 						fallback={
 							<ServicePanelFallback
 								service={selection.service}
+								tab={selection.tab}
+								onTabChange={selection.changeTab}
 								onClose={selection.clear}
 								onRefresh={navigation.refresh}
 							/>

@@ -10,7 +10,7 @@ import {
 	servesHTTPS,
 } from "#/features/dashboard/service-panel/domains/domain-model";
 import { useServiceDomains } from "#/features/dashboard/service-panel/domains/use-service-domains";
-import { PanelRowSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
+import { DomainBindingSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
 import { colors, fonts, space } from "#/styles/tokens.stylex";
 
 const spin = stylex.keyframes({ to: { transform: "rotate(360deg)" } });
@@ -92,7 +92,7 @@ export function PanelDomains({
 				lede="Hostnames that route into this service."
 			>
 				<div {...stylex.props(styles.publicBindings)}>
-					{loadingBindings && <PanelRowSkeleton />}
+					{loadingBindings && <DomainBindingSkeleton />}
 					{!loadingBindings &&
 						visibleBindings.length === 0 &&
 						!pendingDomain && (

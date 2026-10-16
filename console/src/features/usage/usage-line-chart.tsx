@@ -9,6 +9,7 @@ import {
 	formatBucketTime,
 	isMissing,
 } from "#/features/usage/usage-model";
+import { usagePanelLayout } from "#/features/usage/usage-panel-layout";
 import type {
 	DashboardProjectUsage,
 	DashboardUsageQuantities,
@@ -111,8 +112,8 @@ export function UsageLineChart({
 	};
 
 	return (
-		<figure {...stylex.props(styles.figure)}>
-			<div {...stylex.props(styles.valueAxis)} aria-hidden="true">
+		<figure {...stylex.props(usagePanelLayout.figure)}>
+			<div {...stylex.props(usagePanelLayout.valueAxis)} aria-hidden="true">
 				{axisTicks(max, kind)
 					.reverse()
 					.map((tick) => (
@@ -121,7 +122,7 @@ export function UsageLineChart({
 						</span>
 					))}
 			</div>
-			<div {...stylex.props(styles.plot)}>
+			<div {...stylex.props(usagePanelLayout.plot)}>
 				<svg
 					viewBox={`0 0 ${count} ${HEIGHT}`}
 					preserveAspectRatio="none"
@@ -264,7 +265,7 @@ export function UsageLineChart({
 				)}
 			</div>
 			<div aria-hidden="true" />
-			<div {...stylex.props(styles.timeAxis)} aria-hidden="true">
+			<div {...stylex.props(usagePanelLayout.timeAxis)} aria-hidden="true">
 				{timeLabels.map((index) => (
 					<span
 						key={index}
@@ -292,22 +293,6 @@ const toneFill = stylex.create({
 });
 
 const styles = stylex.create({
-	figure: {
-		margin: "0rem",
-		display: "grid",
-		gridTemplateColumns: "auto 1fr",
-		columnGap: space.sm,
-		rowGap: space.xs,
-	},
-	// A fixed width lines stacked charts up so their crosshairs align.
-	valueAxis: {
-		display: "flex",
-		width: "4.5rem",
-		height: "140px",
-		flexDirection: "column",
-		justifyContent: "space-between",
-		alignItems: "flex-end",
-	},
 	valueLabel: {
 		display: "flex",
 		height: "0px",
@@ -317,7 +302,6 @@ const styles = stylex.create({
 		fontSize: "10px",
 		color: colors.dim,
 	},
-	plot: { position: "relative", height: "140px", minWidth: "0rem" },
 	svg: {
 		display: "block",
 		width: "100%",
@@ -326,7 +310,7 @@ const styles = stylex.create({
 		cursor: "crosshair",
 	},
 	grid: { stroke: colors.line, strokeOpacity: 0.45, strokeWidth: 1 },
-	missing: { fill: colors.line, fillOpacity: 0.25 },
+	missing: { fill: colors.line, fillOpacity: 0.1 },
 	line: {
 		fill: "none",
 		strokeWidth: 2,
@@ -352,6 +336,7 @@ const styles = stylex.create({
 		position: "absolute",
 		top: "0px",
 		zIndex: 2,
+		width: "max-content",
 		minWidth: "11rem",
 		display: "flex",
 		flexDirection: "column",
@@ -388,14 +373,13 @@ const styles = stylex.create({
 		borderRadius: "50%",
 	},
 	limitSwatch: { backgroundColor: colors.dim },
-	tooltipLabel: { flex: "1", color: colors.label },
+	tooltipLabel: { flex: "1", whiteSpace: "nowrap", color: colors.label },
 	tooltipValue: {
 		whiteSpace: "nowrap",
 		fontFamily: fonts.mono,
 		fontSize: "12px",
 		color: colors.ink,
 	},
-	timeAxis: { position: "relative", height: "14px" },
 	timeLabel: {
 		position: "absolute",
 		transform: "translateX(-50%)",

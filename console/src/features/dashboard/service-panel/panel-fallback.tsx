@@ -1,7 +1,11 @@
 import * as stylex from "@stylexjs/stylex";
 import { Loader2, RefreshCw, X } from "lucide-react";
+import { useId } from "react";
 import { Button } from "#/components/ui/button";
-import { PanelTabSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
+import { TabList } from "#/components/ui/tabs";
+import { TabSkeleton } from "#/features/dashboard/service-panel/panel-skeleton";
+import { servicePanelTabs } from "#/features/dashboard/service-panel/panel-tabs";
+import type { DashboardTab } from "#/features/dashboard/shared/types";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 import { colors, fonts, sizes, space } from "#/styles/tokens.stylex";
 
@@ -38,26 +42,21 @@ const styles = stylex.create({
 		flex: "1",
 		overflow: "hidden",
 	},
-	content: {
-		display: "flex",
-		height: "100%",
-		flexDirection: "column",
-		gap: space.lg,
-		overflowY: "auto",
-		paddingInline: "18px",
-		paddingTop: "18px",
-		paddingBottom: "1.75rem",
-	},
 });
 export function ServicePanelFallback({
 	service,
+	tab,
+	onTabChange,
 	onClose,
 	onRefresh,
 }: {
 	service: DashboardServiceRecord;
+	tab: DashboardTab;
+	onTabChange: (tab: DashboardTab) => void;
 	onClose?: () => void;
 	onRefresh?: () => void;
 }) {
+	const tabsId = useId();
 	return (
 		<>
 			<div {...stylex.props(styles.header)}>
@@ -83,10 +82,21 @@ export function ServicePanelFallback({
 					<X size={14} />
 				</Button>
 			</div>
-			<div {...stylex.props(styles.body)}>
-				<div {...stylex.props(styles.content)}>
-					<PanelTabSkeleton />
-				</div>
+			<TabList
+				items={servicePanelTabs}
+				selected={tab}
+				onSelect={onTabChange}
+				label="Service"
+				id={tabsId}
+				panelId={`${tabsId}-panel`}
+			/>
+			<div
+				role="tabpanel"
+				id={`${tabsId}-panel`}
+				aria-labelledby={`${tabsId}-${tab}`}
+				{...stylex.props(styles.body)}
+			>
+				<TabSkeleton tab={tab} service={service} />
 			</div>
 		</>
 	);
