@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"syscall"
@@ -52,9 +53,23 @@ func main() {
 	}
 }
 
+// exitOnSecondSignal keeps shutdown interruptible: once the first signal
+// starts cleanup, another one exits at once and shows where cleanup was stuck.
+func exitOnSecondSignal(ctx context.Context) {
+	<-ctx.Done()
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
+	log.Printf("shutting down; press Ctrl-C again to exit immediately")
+	<-signals
+	log.Printf("forced exit; shutdown was still running:")
+	_ = pprof.Lookup("goroutine").WriteTo(os.Stderr, 1)
+	os.Exit(130)
+}
+
 func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go exitOnSecondSignal(ctx)
 
 	repoRoot, err := os.Getwd()
 	if err != nil {

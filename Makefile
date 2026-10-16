@@ -32,8 +32,11 @@ test-e2e-local:
 	LOCALTESTSTACK_CONSOLE_BIND_ADDRESS=0.0.0.0 \
 	bun --cwd=console run test:e2e:local
 
+# Build and exec the stack rather than `go run` it: `go run` does not forward
+# SIGTERM, so stopping make would orphan a running stack.
 dev-ephemeral:
-	LOCALTESTSTACK_RUN_PLAYWRIGHT=0 LOCALTESTSTACK_CONSOLE_BIND_ADDRESS=0.0.0.0 go run ./cmd/localteststack
+	go build -o bin/localteststack ./cmd/localteststack
+	exec env LOCALTESTSTACK_RUN_PLAYWRIGHT=0 LOCALTESTSTACK_CONSOLE_BIND_ADDRESS=0.0.0.0 bin/localteststack
 
 test-e2e-vm:
 	go run ./cmd/testvm
