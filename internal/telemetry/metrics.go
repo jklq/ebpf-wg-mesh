@@ -22,6 +22,13 @@ type domain struct {
 	logDropsTotal   metric.Int64Counter
 	reconcileTotal  metric.Int64Counter
 	reconcileDur    metric.Float64Histogram
+
+	billingPeriodsClosed metric.Int64Counter
+	billingAmountDue     metric.Int64Counter
+	billingInvoices      metric.Int64Counter
+	billingWebhooks      metric.Int64Counter
+	billingRestrictions  metric.Int64Counter
+	billingAccounts      metric.Int64Counter
 }
 
 var (
@@ -61,6 +68,24 @@ func InitDomain(mp metric.MeterProvider) {
 		metric.WithUnit("{run}"))
 	d.reconcileDur, _ = m.Float64Histogram("platform.reconcile.duration",
 		metric.WithDescription("Reconciliation run duration"), metric.WithUnit("s"))
+	d.billingPeriodsClosed, _ = m.Int64Counter("platform.billing.periods_closed",
+		metric.WithDescription("Billing periods frozen into statements, by mode/state"),
+		metric.WithUnit("{period}"))
+	d.billingAmountDue, _ = m.Int64Counter("platform.billing.amount_due",
+		metric.WithDescription("Statement amount due at period close, in minor currency units"),
+		metric.WithUnit("{cent}"))
+	d.billingInvoices, _ = m.Int64Counter("platform.billing.invoices",
+		metric.WithDescription("Invoice work items processed, by outcome"),
+		metric.WithUnit("{invoice}"))
+	d.billingWebhooks, _ = m.Int64Counter("platform.billing.webhooks",
+		metric.WithDescription("Stripe webhook events, by outcome"),
+		metric.WithUnit("{event}"))
+	d.billingRestrictions, _ = m.Int64Counter("platform.billing.restrictions_blocked",
+		metric.WithDescription("Growth attempts stopped by an enforced billing restriction, by scope"),
+		metric.WithUnit("{attempt}"))
+	d.billingAccounts, _ = m.Int64Counter("platform.billing.accounts_created",
+		metric.WithDescription("Billing accounts provisioned"),
+		metric.WithUnit("{account}"))
 	domainMu.Lock()
 	domainInst = d
 	domainMu.Unlock()
@@ -144,6 +169,67 @@ func recordOperation(ctx context.Context, kind, outcome string, dur time.Duratio
 	if d.operationDur != nil && dur > 0 {
 		d.operationDur.Record(ctx, dur.Seconds(), attrs)
 	}
+}
+
+// RecordBillingPeriodClosed records one period frozen into a statement.
+// Amounts aggregate across workspaces; per-workspace figures belong in the
+// billing statements themselves, never in metric labels.
+func RecordBillingPeriodClosed(ctx context.Context, mode, state, currency string, amountDueCents int64) {
+	d := inst()
+	if d == nil {
+		return
+	}
+	attrs := metric.WithAttributes(
+		attribute.String("mode", bounded(mode, "unknown")),
+		attribute.String("state", bounded(state, "unknown")),
+		attribute.String("currency", bounded(currency, "unknown")),
+	)
+	if d.billingPeriodsClosed != nil {
+		d.billingPeriodsClosed.Add(ctx, 1, attrs)
+	}
+	if d.billingAmountDue != nil && amountDueCents > 0 {
+		d.billingAmountDue.Add(ctx, amountDueCents, attrs)
+	}
+}
+
+// RecordBillingInvoiceWork records one settled/failed invoice work item
+// ("settled", "paused", "mismatch", "failed").
+func RecordBillingInvoiceWork(ctx context.Context, outcome string) {
+	d := inst()
+	if d == nil || d.billingInvoices == nil {
+		return
+	}
+	d.billingInvoices.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", bounded(outcome, "unknown"))))
+}
+
+// RecordBillingWebhook records one Stripe webhook outcome
+// ("applied", "failed", "ingest_rejected").
+func RecordBillingWebhook(ctx context.Context, outcome string) {
+	d := inst()
+	if d == nil || d.billingWebhooks == nil {
+		return
+	}
+	d.billingWebhooks.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", bounded(outcome, "unknown"))))
+}
+
+// RecordBillingRestrictionBlocked counts an enforcement encounter
+// ("placement", "build", "growth"). Repeated reconciliation passes while a
+// restriction holds each count once; rate signals an active restriction.
+func RecordBillingRestrictionBlocked(ctx context.Context, scope string) {
+	d := inst()
+	if d == nil || d.billingRestrictions == nil {
+		return
+	}
+	d.billingRestrictions.Add(ctx, 1, metric.WithAttributes(attribute.String("scope", bounded(scope, "unknown"))))
+}
+
+// RecordBillingAccountsCreated records provisioned billing accounts.
+func RecordBillingAccountsCreated(ctx context.Context, n int) {
+	d := inst()
+	if d == nil || d.billingAccounts == nil || n <= 0 {
+		return
+	}
+	d.billingAccounts.Add(ctx, int64(n))
 }
 
 // bounded keeps metric label values safe: short and non-empty. It is not a

@@ -66,7 +66,17 @@ Domain (`platform_*`): `platform_operations_total{kind,outcome}` +
 `platform_operation_duration_seconds`, `platform_builds_total{outcome,executor}` +
 `platform_build_duration_seconds`, `platform_agent_sessions_total{outcome}`,
 `platform_reconcile_runs_total{loop,outcome}`, `platform_log_lines_total`,
-`platform_log_drops_total`.
+`platform_log_drops_total`. Billing adds
+`platform_billing_periods_closed_total{mode,state,currency}`,
+`platform_billing_amount_due_total` (minor units, aggregated across
+workspaces — per-workspace figures stay in statements),
+`platform_billing_invoices_total{outcome}`,
+`platform_billing_webhooks_total{outcome}`,
+`platform_billing_restrictions_blocked_total{scope}`, and
+`platform_billing_accounts_created_total`; the maintenance loop runs as
+the `billing_maintenance` reconcile loop with a `billing.maintain` span
+per pass, and Stripe API calls appear as instrumented HTTP client spans.
+See the Billing dashboard and the `platform.billing` alert group.
 
 ## Bundled deployment (optional roles)
 

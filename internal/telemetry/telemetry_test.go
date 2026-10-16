@@ -103,6 +103,10 @@ func TestWideOperationSpanAndMetrics(t *testing.T) {
 	op.End(sctx, status.Error(codes.PermissionDenied, "nope"))
 	op.End(sctx, nil) // idempotent: must not double-emit
 	RecordBuild(ctx, "succeeded", "hardened", 2*time.Second)
+	RecordBillingPeriodClosed(ctx, "shadow", "shadow", "usd", 2500)
+	RecordBillingInvoiceWork(ctx, "settled")
+	RecordBillingWebhook(ctx, "applied")
+	RecordBillingRestrictionBlocked(ctx, "placement")
 	if err := p.ForceFlush(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +139,9 @@ func TestWideOperationSpanAndMetrics(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("scrape = %d", code)
 	}
-	for _, want := range []string{"platform_operations_total", "platform_builds_total", "platform_build_duration_seconds_bucket", "target_info"} {
+	for _, want := range []string{"platform_operations_total", "platform_builds_total", "platform_build_duration_seconds_bucket", "target_info",
+		"platform_billing_periods_closed_total", "platform_billing_amount_due_total", "platform_billing_invoices_total",
+		"platform_billing_webhooks_total", "platform_billing_restrictions_blocked_total"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("scrape missing %s", want)
 		}

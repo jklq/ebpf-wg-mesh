@@ -89,8 +89,8 @@ func TestObservabilityRendering(t *testing.T) {
 			}
 		}
 	}
-	if dashboards != 3 {
-		t.Fatalf("want 3 dashboards, got %d", dashboards)
+	if dashboards != 4 {
+		t.Fatalf("want 4 dashboards, got %d", dashboards)
 	}
 
 	tempo, err := obs.render(byRole[deploy.Tempo])

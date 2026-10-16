@@ -18,6 +18,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/usage"
+	"ebof-wg-mesh/internal/telemetry"
 )
 
 func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, service ServiceRecord, preferredAgentID string, now time.Time) ([]AllocationRecord, error) {
@@ -34,6 +35,9 @@ func (d *Delivery) reconcileServiceReplicasTx(ctx context.Context, tx *sql.Tx, s
 	if restricted, reason, err := billing.ServiceEnforcedTx(ctx, tx, service.ID); err != nil {
 		return nil, err
 	} else if restricted {
+		telemetry.RecordBillingRestrictionBlocked(ctx, "placement")
+		telemetry.Set(ctx, telemetry.String("billing.restriction.reason", reason),
+			telemetry.String("service.id", service.ID))
 		existing, err := s.listAllocationsByServiceIDQuerier(ctx, tx, service.ID, true)
 		if err != nil {
 			return nil, err

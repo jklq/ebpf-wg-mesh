@@ -13,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/source"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"github.com/google/uuid"
 )
@@ -298,6 +299,7 @@ func (d *Delivery) tryClaimBuildTx(ctx context.Context, tx *sql.Tx, buildID, bui
 	if blocked, _, err := billing.ServiceGrowthBlockedTx(ctx, tx, build.ServiceID); err != nil {
 		return BuildRunRecord{}, false, err
 	} else if blocked {
+		telemetry.RecordBillingRestrictionBlocked(ctx, "build")
 		return BuildRunRecord{}, false, nil
 	}
 	dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, build.ServiceID, build.ID)

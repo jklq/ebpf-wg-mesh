@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"ebof-wg-mesh/internal/telemetry"
 	stripe "github.com/stripe/stripe-go/v82"
 	"github.com/stripe/stripe-go/v82/client"
 	"github.com/stripe/stripe-go/v82/webhook"
@@ -65,15 +66,18 @@ type sdkStripe struct {
 // endpoint for tests against a local fake; empty uses production Stripe.
 func NewStripeAdapter(secretKey, baseURL string) StripeAdapter {
 	api := &client.API{}
-	if baseURL != "" {
-		backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{
-			URL:        stripe.String(baseURL),
-			HTTPClient: &http.Client{Timeout: 30 * time.Second},
-		})
-		api.Init(secretKey, &stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend})
-	} else {
-		api.Init(secretKey, nil)
+	// Every Stripe call gets an OTel client span and http.client metrics;
+	// the SDK receives request contexts from callers, so invoice work in a
+	// maintenance trace shows its Stripe calls as children. Headers and
+	// bodies (the API key) are never recorded by the transport.
+	cfg := &stripe.BackendConfig{
+		HTTPClient: telemetry.HTTPClient(&http.Client{Timeout: 30 * time.Second}),
 	}
+	if baseURL != "" {
+		cfg.URL = stripe.String(baseURL)
+	}
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, cfg)
+	api.Init(secretKey, &stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend})
 	return &sdkStripe{api: api}
 }
 

@@ -9,6 +9,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
 	"ebof-wg-mesh/internal/controlplane/billing"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -39,6 +40,8 @@ func (s *platformService) billingWorkspace(ctx context.Context, workspaceID stri
 	if workspaceID == "" {
 		return authz.Workspace{}, status.Error(codes.InvalidArgument, "workspace_id is required")
 	}
+	telemetry.Set(ctx, telemetry.String("workspace.id", workspaceID),
+		telemetry.String("billing.mode", string(s.billingSvc.Mode())))
 	scope, err := s.authz.AuthorizeWorkspace(ctx, user, workspaceID, need)
 	if err != nil {
 		if errors.Is(err, authz.ErrDenied) {
@@ -105,6 +108,7 @@ func (s *platformService) GetBillingStatement(ctx context.Context, req *platform
 	if statementID == "" {
 		return nil, status.Error(codes.InvalidArgument, "statement_id is required")
 	}
+	telemetry.Set(ctx, telemetry.String("billing.statement.id", statementID))
 	st, err := s.billingSvc.GetStatement(ctx, scope.ID(), statementID)
 	if err != nil {
 		return nil, billingStatusError("billing statement", err)
@@ -178,6 +182,7 @@ func (s *platformService) requireBillingGrowth(ctx context.Context, workspaceID 
 		return nil
 	}
 	if err := s.billingSvc.CheckGrowth(ctx, workspaceID); err != nil {
+		telemetry.RecordBillingRestrictionBlocked(ctx, "growth")
 		return status.Errorf(codes.FailedPrecondition, "%v", err)
 	}
 	return nil
@@ -280,6 +285,9 @@ func (s *opsService) IngestStripeWebhook(ctx context.Context, req *platformv1.In
 		return nil, status.Error(codes.FailedPrecondition, "billing is not configured")
 	}
 	err := s.billing.IngestWebhook(ctx, req.GetPayload(), req.GetSignature())
+	if err != nil {
+		telemetry.RecordBillingWebhook(ctx, "ingest_rejected")
+	}
 	switch {
 	case err == nil:
 		return &emptypb.Empty{}, nil

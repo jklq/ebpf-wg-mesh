@@ -111,3 +111,32 @@ groups:
         annotations:
           summary: "Prometheus head series above 500k"
           action: "Find the new label: query topk(20, count by (__name__) ({__name__=~\".+\"})) and fix the instrument that added an unbounded label."
+
+  - name: platform.billing
+    rules:
+      - alert: BillingMaintenanceFailing
+        expr: sum(rate(platform_reconcile_runs_total{loop="billing_maintenance",outcome="error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Billing maintenance passes are failing"
+          action: "Open the failing billing.maintain trace in Tempo from the wide event's trace_id; periods stop closing while this persists, but nothing is charged from a failed pass."
+
+      - alert: BillingInvoiceWorkFailing
+        expr: sum(rate(platform_billing_invoices_total{outcome=~"failed|mismatch"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stripe invoice work is failing or mismatched"
+          action: "Mismatch means Stripe and statement state diverge: reconcile the named statement in Stripe before retrying. Plain failures retry with backoff; check Stripe API latency on the Billing dashboard."
+
+      - alert: BillingWebhooksFailing
+        expr: sum(rate(platform_billing_webhooks_total{outcome=~"failed|ingest_rejected"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Stripe webhooks are being rejected or failing to apply"
+          action: "ingest_rejected usually means a wrong webhook secret after rotation; failed means the event applies against unexpected statement state — inspect billing_provider_events."

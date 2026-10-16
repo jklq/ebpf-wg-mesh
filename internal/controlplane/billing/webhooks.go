@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"ebof-wg-mesh/internal/sqlretry"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"github.com/google/uuid"
 	stripe "github.com/stripe/stripe-go/v82"
@@ -67,7 +68,10 @@ func (s *Service) ProcessWebhooks(ctx context.Context) (int, error) {
 	}
 	processed := 0
 	for _, e := range events {
+		telemetry.Set(ctx, telemetry.String("billing.stripe.event_id", e.id),
+			telemetry.String("billing.stripe.event_type", e.eventType))
 		if err := s.processWebhook(ctx, e.eventType, e.payload); err != nil {
+			telemetry.RecordBillingWebhook(ctx, "failed")
 			_, _ = s.db.ExecContext(ctx, `UPDATE billing_provider_events SET process_error = $2 WHERE stripe_event_id = $1`,
 				e.id, err.Error())
 			return processed, fmt.Errorf("process stripe event %s: %w", e.id, err)
@@ -76,6 +80,7 @@ func (s *Service) ProcessWebhooks(ctx context.Context) (int, error) {
 			e.id, s.now().UTC()); err != nil {
 			return processed, err
 		}
+		telemetry.RecordBillingWebhook(ctx, "applied")
 		processed++
 	}
 	return processed, nil

@@ -10,6 +10,7 @@ import (
 	"ebof-wg-mesh/internal/alarm"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/billing"
+	"ebof-wg-mesh/internal/telemetry"
 )
 
 // newBillingService constructs the billing module from operator config.
@@ -49,6 +50,8 @@ func newBillingService(ctx context.Context, cfg config.ControlPlaneConfig, store
 	return service, nil
 }
 
+var billingTracer = telemetry.Tracer("ebof-wg-mesh/billing")
+
 // billingMaintenanceLoop provisions accounts, closes periods, refreshes
 // restrictions, and settles provider work on the live owner.
 func (s *Server) billingMaintenanceLoop(ctx context.Context) {
@@ -60,7 +63,21 @@ func (s *Server) billingMaintenanceLoop(ctx context.Context) {
 		interval = time.Minute
 	}
 	maintain := func() {
-		result, err := s.billing.Maintain(ctx)
+		started := time.Now()
+		mctx, op := telemetry.StartSpanOperation(ctx, billingTracer, "billing_maintain", "billing.maintain",
+			telemetry.String("billing.mode", string(s.billing.Mode())))
+		result, err := s.billing.Maintain(mctx)
+		outcome := "success"
+		if err != nil {
+			outcome = "error"
+		}
+		op.Set(telemetry.Int64("billing.accounts_created", int64(result.AccountsCreated)),
+			telemetry.Int64("billing.periods_closed", int64(result.PeriodsClosed)),
+			telemetry.Int64("billing.invoices_settled", int64(result.InvoicesSettled)),
+			telemetry.Int64("billing.webhooks_applied", int64(result.WebhooksApplied)))
+		op.End(mctx, err, outcome)
+		telemetry.RecordReconcile(mctx, "billing_maintenance", outcome, time.Since(started))
+		telemetry.RecordBillingAccountsCreated(mctx, result.AccountsCreated)
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Warn("billing maintenance failed", "error", err)

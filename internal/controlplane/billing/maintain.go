@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/durablework"
+	"ebof-wg-mesh/internal/telemetry"
 
 	"github.com/google/uuid"
 )
@@ -107,9 +108,13 @@ func (s *Service) closeDuePeriods(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	for _, id := range ids {
-		if _, err := s.ClosePeriod(ctx, id); err != nil {
+		statement, err := s.ClosePeriod(ctx, id)
+		if err != nil {
 			return 0, fmt.Errorf("close billing period %s: %w", id, err)
 		}
+		telemetry.Set(ctx, telemetry.String("billing.statement.id", statement.ID),
+			telemetry.String("billing.period.id", id))
+		telemetry.RecordBillingPeriodClosed(ctx, string(s.cfg.Mode), statement.State, statement.Currency, statement.AmountDueCents)
 	}
 	return len(ids), nil
 }
@@ -136,17 +141,21 @@ func (s *Service) processInvoiceWork(ctx context.Context) (int, error) {
 			if err := s.work.Complete(ctx, record); err != nil {
 				return settled, err
 			}
+			telemetry.RecordBillingInvoiceWork(ctx, "settled")
 			settled++
 		case errors.Is(processErr, ErrCollectionPaused):
+			telemetry.RecordBillingInvoiceWork(ctx, "paused")
 			if err := s.work.Fail(ctx, record, processErr, durablework.FailOptions{Retryable: true, RetryAfter: 5 * time.Minute}); err != nil {
 				return settled, err
 			}
 			return settled, nil
 		case errors.Is(processErr, errProviderMismatch):
+			telemetry.RecordBillingInvoiceWork(ctx, "mismatch")
 			if err := s.work.Fail(ctx, record, processErr, durablework.FailOptions{Retryable: false}); err != nil {
 				return settled, err
 			}
 		default:
+			telemetry.RecordBillingInvoiceWork(ctx, "failed")
 			if err := s.work.Fail(ctx, record, processErr, durablework.FailOptions{Retryable: true}); err != nil {
 				return settled, err
 			}
