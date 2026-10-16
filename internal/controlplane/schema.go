@@ -1,9 +1,9 @@
 package controlplane
 
-const currentSchemaVersion = 45
+const currentSchemaVersion = 46
 
 // Increase only when the binary requires structures absent from older schemas.
-const minimumSchemaVersion = 45
+const minimumSchemaVersion = 46
 
 const recoveryAuthoritySchema = `CREATE TABLE recovery_runtime_authority (singleton BOOL PRIMARY KEY CHECK (singleton = TRUE), installation TEXT NOT NULL, generation TEXT NOT NULL, paused BOOL NOT NULL)`
 const recoveryReservationsSchema = `CREATE TABLE recovery_network_reservations (
@@ -75,6 +75,15 @@ var currentSchema = []string{
 			created_at TIMESTAMPTZ NOT NULL
 		)`,
 	`CREATE UNIQUE INDEX idx_workspaces_personal ON workspaces(personal_user_id) WHERE personal_user_id IS NOT NULL`,
+	// One row per GitHub-authenticated user, written from the dashboard's
+	// user assertion at personal-workspace ensure. github_created_at is
+	// NULL when GitHub did not report it; the trial age gate fails closed
+	// for such rows and ignores users with no row (bootstrap/dev users).
+	`CREATE TABLE user_profiles (
+			user_id TEXT PRIMARY KEY,
+			github_created_at TIMESTAMPTZ NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
 	`CREATE TABLE workspace_memberships (
 			workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
 			user_id TEXT NOT NULL,

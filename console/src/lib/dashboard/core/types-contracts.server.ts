@@ -19,6 +19,8 @@ export interface GitHubAccountLoginInput {
 	providerSubject: string;
 	login: string;
 	primaryEmail: string;
+	/** GitHub account creation time; absent when GitHub did not report it. */
+	githubCreatedAt?: Date;
 	accessToken: string;
 	tokenType: string;
 	scope: string;
@@ -111,6 +113,8 @@ export interface GitHubAppUserIdentity {
 	providerSubject: string;
 	login: string;
 	primaryEmail: string;
+	/** GitHub account creation time; absent when GitHub did not report it. */
+	githubCreatedAt?: Date;
 }
 
 export interface GitHubAppUserClient {

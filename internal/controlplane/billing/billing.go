@@ -61,6 +61,23 @@ type Plan struct {
 	ID                  string
 	MonthlyMinimumCents int64
 	IncludedUsageCents  int64
+	Quota               Quota
+}
+
+// Quota bounds one workspace's desired state and build usage. Trial values
+// are the abuse ceiling for public signup; paid values are generous fleet
+// protection, not a pricing feature. A zero MaxBuildMinutes30Days means no
+// build-minute cap. Quotas are validated on desired-state mutations in
+// enabled billing mode; see ValidateServiceQuotaTx.
+type Quota struct {
+	MaxCPUMillis              int64
+	MaxMemoryMebibytes        int64
+	MaxServicesPerEnvironment int64
+	MaxReplicasPerService     int64
+	MaxProjects               int64
+	MaxVolumeBytes            int64
+	MaxConcurrentBuilds       int64
+	MaxBuildMinutes30Days     int64
 }
 
 // Launch plans, mirroring the Railway reference points in
@@ -74,19 +91,52 @@ const (
 )
 
 var Plans = map[string]Plan{
-	PlanTrial: {ID: PlanTrial, MonthlyMinimumCents: 0, IncludedUsageCents: 0},
-	PlanHobby: {ID: PlanHobby, MonthlyMinimumCents: 500, IncludedUsageCents: 500},
-	PlanPro:   {ID: PlanPro, MonthlyMinimumCents: 2000, IncludedUsageCents: 2000},
+	PlanTrial: {ID: PlanTrial, MonthlyMinimumCents: 0, IncludedUsageCents: 0, Quota: Quota{
+		MaxCPUMillis: 2_000, MaxMemoryMebibytes: 4_096,
+		MaxServicesPerEnvironment: 3, MaxReplicasPerService: 2, MaxProjects: 2,
+		MaxVolumeBytes: 10 << 30, MaxConcurrentBuilds: 1, MaxBuildMinutes30Days: 300,
+	}},
+	PlanHobby: {ID: PlanHobby, MonthlyMinimumCents: 500, IncludedUsageCents: 500, Quota: Quota{
+		MaxCPUMillis: 8_000, MaxMemoryMebibytes: 16_384,
+		MaxServicesPerEnvironment: 25, MaxReplicasPerService: 10, MaxProjects: 10,
+		MaxVolumeBytes: 100 << 30, MaxConcurrentBuilds: 2,
+	}},
+	PlanPro: {ID: PlanPro, MonthlyMinimumCents: 2000, IncludedUsageCents: 2000, Quota: Quota{
+		MaxCPUMillis: 32_000, MaxMemoryMebibytes: 65_536,
+		MaxServicesPerEnvironment: 100, MaxReplicasPerService: 64, MaxProjects: 100,
+		MaxVolumeBytes: 1 << 40, MaxConcurrentBuilds: 5,
+	}},
 	// PlanStorage covers retained volumes after cancellation: storage-only
-	// periods with no minimum and no compute allowance.
-	PlanStorage: {ID: PlanStorage, MonthlyMinimumCents: 0, IncludedUsageCents: 0},
+	// periods with no minimum and no compute allowance. Its quota never
+	// binds: cancelled accounts are restricted before quotas matter.
+	PlanStorage: {ID: PlanStorage, MonthlyMinimumCents: 0, IncludedUsageCents: 0, Quota: Quota{
+		MaxCPUMillis: 32_000, MaxMemoryMebibytes: 65_536,
+		MaxServicesPerEnvironment: 100, MaxReplicasPerService: 64, MaxProjects: 100,
+		MaxVolumeBytes: 1 << 40, MaxConcurrentBuilds: 5,
+	}},
 }
 
-// TrialCreditCents and TrialDuration bound the initial trial grant.
+// TrialCreditCents and TrialDuration bound the initial trial grant. One
+// grant exists per user ever (billing_trial_grants): only a user's first
+// workspace receives it, and deleting that workspace does not restore
+// eligibility.
 const (
 	TrialCreditCents = 500
 	TrialDuration    = 30 * 24 * time.Hour
 )
+
+// TrialEgressCapBytes is the trial-only public-egress ceiling per billing
+// period. The maintenance pass restricts a trial account whose rated
+// egress passes it; the datapath is unchanged.
+const TrialEgressCapBytes = 25 << 30
+
+// GitHubMinAccountAge is how old the trial owner's GitHub account must be
+// before trial compute runs. Younger (or unverifiable) GitHub accounts keep
+// a restricted trial workspace until paid activation.
+const GitHubMinAccountAge = 30 * 24 * time.Hour
+
+// BuildMinutesWindow is the rolling window for the trial build-minute cap.
+const BuildMinutesWindow = 30 * 24 * time.Hour
 
 // PaymentGrace is how long a failed payment blocks growth before it also
 // suspends compute.

@@ -19,6 +19,7 @@ export interface FakeGitHubAppUserClient extends GitHubAppUserClient {
 				providerSubject: string;
 				login: string;
 				primaryEmail: string;
+				githubCreatedAt?: Date;
 		  }
 		| undefined;
 	nextRepositories: Array<GitHubUserRepository>;

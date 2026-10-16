@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
@@ -47,7 +48,7 @@ func (s *platformService) CreateVolume(ctx context.Context, req *platformv1.Crea
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create volume: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrVolumeAlreadyExists) {
@@ -89,7 +90,7 @@ func (s *platformService) UpdateVolume(ctx context.Context, req *platformv1.Upda
 		if errors.Is(err, deliverycore.ErrInvalidVolumeSize) {
 			return nil, status.Errorf(codes.InvalidArgument, "update volume: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrVolumeShrink) || errors.Is(err, deliverycore.ErrVolumeNotFound) {
+		if errors.Is(err, deliverycore.ErrVolumeShrink) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "update volume: %v", err)
 		}
 		return nil, writeAccessError("update volume", err)

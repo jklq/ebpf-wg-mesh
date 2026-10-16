@@ -54,12 +54,21 @@ type DelegatedUser struct {
 	// Email is the dashboard-verified address of the user, normalized to
 	// lower case. Workspace invitations are addressed to it.
 	Email string
+	// GitHubCreatedAt is the dashboard-verified creation time of the
+	// user's GitHub account in Unix seconds. Nil means the assertion
+	// carried no GitHub claim (not a GitHub sign-in); a non-nil zero
+	// means a GitHub sign-in whose account age GitHub did not report.
+	// Billing's trial age gate consumes it via user_profiles.
+	GitHubCreatedAt *int64
 }
 
 // userAssertionClaims are the dashboard-signed claims identifying a user.
 type userAssertionClaims struct {
 	jwt.RegisteredClaims
 	Email string `json:"email,omitempty"`
+	// GitHubCreatedAt is present only for GitHub sign-ins; zero means
+	// GitHub did not report the account's creation time.
+	GitHubCreatedAt *int64 `json:"github_created_at,omitempty"`
 }
 
 type InternalAuth struct {
@@ -298,6 +307,14 @@ func WithDelegatedUserEmail(ctx context.Context, userID, email string) context.C
 	return context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{UserID: userID, Email: NormalizeEmail(email)})
 }
 
+// WithDelegatedGitHubUser is WithDelegatedUserEmail for GitHub sign-ins.
+// githubCreatedAt is Unix seconds; zero reports an unknown account age.
+func WithDelegatedGitHubUser(ctx context.Context, userID, email string, githubCreatedAt int64) context.Context {
+	return context.WithValue(ctx, delegatedUserContextKey{}, DelegatedUser{
+		UserID: userID, Email: NormalizeEmail(email), GitHubCreatedAt: &githubCreatedAt,
+	})
+}
+
 // NormalizeEmail is the single comparison form for email addresses.
 func NormalizeEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
@@ -411,7 +428,15 @@ func (a *InternalAuth) delegatedUserFromAssertions(ctx context.Context, assertio
 		if userID == "" || userID != claims.Subject || len(userID) > 256 || strings.TrimSpace(claims.ID) == "" {
 			return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion claims")
 		}
-		return DelegatedUser{UserID: userID, Email: NormalizeEmail(claims.Email)}, true, nil
+		delegated := DelegatedUser{UserID: userID, Email: NormalizeEmail(claims.Email)}
+		if claims.GitHubCreatedAt != nil {
+			created := *claims.GitHubCreatedAt
+			if created < 0 {
+				created = 0 // unusable age evidence: unknown, gates fail closed
+			}
+			delegated.GitHubCreatedAt = &created
+		}
+		return delegated, true, nil
 	}
 	return DelegatedUser{}, false, status.Error(codes.Unauthenticated, "invalid user assertion")
 }

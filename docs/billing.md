@@ -43,13 +43,19 @@ the payer only for resources assigned afterwards. Financial rows have no
 foreign keys into the catalog, so deleting projects or workspaces never
 erases a bill.
 
-New accounts start on the trial plan with a €5 credit grant expiring 30 days
-after account creation. Plans (monthly minimum = included usage): trial
-€0, hobby €5, pro €20. Plan changes take effect next period. Leaving trial
-in enabled mode goes through paid activation: save a payment method
-(Stripe Checkout, setup mode), the first minimum is invoiced, and the
-account activates only when that invoice is paid. Unused trial credit keeps
-its original expiry after the upgrade.
+New accounts start on the trial plan. The €5 trial credit (expiring 30
+days after account creation) is granted once per user, ever: only the
+first workspace a user owns receives it, and deleting that workspace does
+not restore eligibility (`billing_trial_grants`, one row per user; a
+shared workspace charges its earliest admin). Later workspaces start with
+no credit, restricted until paid activation. Trial accounts that receive
+the credit get a default budget stop at the credit amount. Plans (monthly
+minimum = included usage): trial €0, hobby €5, pro €20. Plan changes take
+effect next period. Leaving trial in enabled mode goes through paid
+activation: save a payment method (Stripe Checkout, setup mode), the
+first minimum is invoiced, and the account activates only when that
+invoice is paid. Unused trial credit keeps its original expiry after the
+upgrade.
 
 ## Periods, rating, and statements
 
@@ -130,10 +136,50 @@ it receives new desired state — there is no finite enforcement bound during
 a partition, and shadow mode should be used to measure real lag before
 launch.
 
-Trial resource limits (compute, replica, volume, and build caps from the
-plan) are not implemented yet; trials are bounded by credit, expiry, and
-budget only. Do not open trial signup to the public before those caps and
-an abuse policy exist.
+## Trial quotas and trust gates
+
+Each plan carries a quota (`Plans` in `billing.go`) bounding a workspace's
+desired state. Trial: sum of service CPU limits × replicas ≤ 2 vCPU,
+memory ≤ 4 GiB, ≤ 3 services per environment, ≤ 2 replicas per service,
+≤ 2 projects per workspace, ≤ 10 GiB total provisioned volume size,
+1 concurrent build and 300 build-minutes per rolling 30 days, and a
+25 GiB public-egress cap per period. Hobby/pro get generous fixed values
+(8/32 vCPU, 16/64 GiB memory, 100 GiB/1 TiB volumes, 2/5 concurrent
+builds, no build-minute cap) — fleet protection, not pricing. Managed
+platform projects have no account and stay exempt.
+
+Quotas are validated inside the product transaction on desired-state
+mutations — service create/update (scale included), volume
+create/grow, and project create — in enabled mode only, like
+restrictions. A mutation is refused with the restriction error shape when
+the workspace's resulting totals (draft spec limits × desired replicas,
+from journal state) would grow past a limit; reductions always pass, even
+when the workspace is already over quota. Build caps refuse new claims at
+the build scheduler's claim seam, next to the restriction check; the
+build stays queued. The egress cap is evaluated by the maintenance pass
+from `usage_hourly` and engages a normal restriction ("trial egress limit
+reached") — the datapath is unchanged.
+
+Two trust gates guard the trial itself. Trial compute requires the
+grant owner's GitHub account to be at least 30 days old: the console
+records `created_at` from the OAuth profile at sign-in, forwards it on
+the user assertion, and the control plane stores it in `user_profiles`;
+younger accounts — and GitHub signups whose age GitHub did not report,
+which fail closed — keep a restricted trial workspace until paid
+activation (or until the account ages past 30 days). Bootstrap and dev
+users have no profile and are not gated. Custom domain bindings on the
+trial plan additionally require a saved payment method
+(`payment_ready`); platform-generated hostnames do not, and paid plans
+are unaffected.
+
+Known limits, shared with spend restrictions: egress and budget
+detection run on hourly rollups in the maintenance pass, so a trial can
+overshoot between passes, and a disconnected agent keeps running until it
+receives new desired state — there is no finite enforcement bound during
+a partition. The GitHub age profile is recorded when the user's personal
+workspace is ensured, so a brand-new signup may briefly evaluate before
+its profile lands. One trial per user keys on the GitHub-authenticated
+user identity; it does not attempt to link separate GitHub accounts.
 
 ## Stripe
 

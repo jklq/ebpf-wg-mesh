@@ -239,7 +239,7 @@ func (s *platformService) CreateProject(ctx context.Context, req *platformv1.Cre
 		if errors.Is(err, errProjectNameRequired) {
 			return nil, status.Errorf(codes.InvalidArgument, "create project: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrProjectDeleted) {
+		if errors.Is(err, deliverycore.ErrProjectDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create project: %v", err)
 		}
 		return nil, writeAccessError("create project", err)
@@ -466,7 +466,7 @@ func (s *platformService) DuplicateEnvironment(ctx context.Context, req *platfor
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+		if errors.Is(err, deliverycore.ErrEnvironmentDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "duplicate environment: %v", err)
 		}
 		return nil, writeAccessError("duplicate environment", err)

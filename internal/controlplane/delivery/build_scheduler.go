@@ -302,6 +302,16 @@ func (d *Delivery) tryClaimBuildTx(ctx context.Context, tx *sql.Tx, buildID, bui
 		telemetry.RecordBillingRestrictionBlocked(ctx, "build")
 		return BuildRunRecord{}, false, nil
 	}
+	// Plan build caps (workspace concurrency, trial build-minutes) refuse
+	// the claim the same way; the build stays queued.
+	if s.enforceBilling {
+		if blocked, _, err := billing.BuildClaimBlockedTx(ctx, tx, build.ServiceID, now); err != nil {
+			return BuildRunRecord{}, false, err
+		} else if blocked {
+			telemetry.RecordBillingRestrictionBlocked(ctx, "build_quota")
+			return BuildRunRecord{}, false, nil
+		}
+	}
 	dep, ok, err := s.deploymentByBuildIDTx(ctx, tx, build.ServiceID, build.ID)
 	if err != nil {
 		return BuildRunRecord{}, false, err

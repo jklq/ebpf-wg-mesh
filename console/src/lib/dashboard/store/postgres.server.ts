@@ -165,7 +165,7 @@ export function createPostgresDashboardStore(
 					await updateGitHubAccount(runtime, client, user.id, input);
 					await ensureOnboarding(runtime, client, user.id);
 					return {
-						user: { ...user, email: input.primaryEmail },
+						user: await userByID(runtime, client, user.id),
 						disposition: "link" as const,
 					};
 				}
@@ -182,7 +182,10 @@ export function createPostgresDashboardStore(
 				const user = rowAt(created.rows, 0, "completeGitHubLogin.createUser");
 				await updateGitHubAccount(runtime, client, user.id, input);
 				await ensureOnboarding(runtime, client, user.id);
-				return { user, disposition: "signup" as const };
+				return {
+					user: await userByID(runtime, client, user.id),
+					disposition: "signup" as const,
+				};
 			});
 		},
 
@@ -217,6 +220,7 @@ export function createPostgresDashboardStore(
 				        provider_subject,
 				        verified_email_snapshot,
 				        provider_login,
+				        github_created_at,
 				        access_token,
 				        access_token_expires_at,
 				        refresh_token,
@@ -303,6 +307,7 @@ export function createPostgresDashboardStore(
 				          provider_subject,
 				          verified_email_snapshot,
 				          provider_login,
+				          github_created_at,
 				          access_token,
 				          access_token_expires_at,
 				          refresh_token,
@@ -486,12 +491,16 @@ export function createPostgresDashboardStore(
 
 		async rotateRefreshSession(input) {
 			return withTransaction(db, "rotateRefreshSession", async (client) => {
-				const result = await query<UserRow>(
+				const result = await query<
+					UserRow & { github_created_at: Date | null; has_github: boolean }
+				>(
 					client,
 					"rotateRefreshSession.select",
-					`SELECT u.id, u.email
+					`SELECT u.id, u.email, a.github_created_at, a.id IS NOT NULL AS has_github
 					   FROM ${tableName(runtime, "refresh_sessions")} rs
 					   JOIN ${tableName(runtime, "users")} u ON u.id = rs.user_id
+					   LEFT JOIN ${tableName(runtime, "accounts")} a
+					     ON a.user_id = u.id AND a.provider = 'github'
 					  WHERE rs.id = $1
 					    AND rs.user_id = $2
 					    AND rs.expires_at > $3`,
@@ -500,7 +509,12 @@ export function createPostgresDashboardStore(
 				if (result.rowCount !== 1) {
 					return null;
 				}
-				const user = rowAt(result.rows, 0, "rotateRefreshSession.select");
+				const row = rowAt(result.rows, 0, "rotateRefreshSession.select");
+				const user = {
+					id: row.id,
+					email: row.email,
+					...(row.has_github ? { githubCreatedAt: row.github_created_at } : {}),
+				};
 				await queryVoid(
 					client,
 					"rotateRefreshSession.deleteCurrent",
@@ -536,6 +550,7 @@ function githubAccountFromRow(
 		providerSubject: row.provider_subject,
 		login: row.provider_login,
 		primaryEmail: row.verified_email_snapshot,
+		githubCreatedAt: row.github_created_at,
 		accessToken: runtime.githubTokenCipher.decrypt(row.access_token, {
 			...binding,
 			kind: "access",

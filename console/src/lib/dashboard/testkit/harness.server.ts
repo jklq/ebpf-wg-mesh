@@ -114,7 +114,12 @@ export function createDashboardTestHarness(
 		async completeGitHubLogin(input) {
 			const existing = githubAccounts.get(input.providerSubject);
 			if (existing) {
-				const updatedUser = { ...existing.user, email: input.primaryEmail };
+				const updatedUser = {
+					...existing.user,
+					email: input.primaryEmail,
+					githubCreatedAt:
+						input.githubCreatedAt ?? existing.user.githubCreatedAt ?? null,
+				};
 				users.set(updatedUser.id, updatedUser);
 				githubAccounts.set(input.providerSubject, {
 					...existing,
@@ -159,7 +164,11 @@ export function createDashboardTestHarness(
 				});
 			}
 			if (emailMatches.length === 1) {
-				const user = { ...emailMatches[0], email: input.primaryEmail };
+				const user = {
+					...emailMatches[0],
+					email: input.primaryEmail,
+					githubCreatedAt: input.githubCreatedAt ?? null,
+				};
 				users.set(user.id, user);
 				githubAccounts.set(input.providerSubject, {
 					user,
@@ -184,6 +193,7 @@ export function createDashboardTestHarness(
 			const user: DashboardUser = {
 				id: input.userID ?? `user-${nextUserID++}`,
 				email: input.primaryEmail,
+				githubCreatedAt: input.githubCreatedAt ?? null,
 			};
 			users.set(user.id, user);
 			githubAccounts.set(input.providerSubject, {

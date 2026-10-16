@@ -20,6 +20,7 @@ interface GitHubTokenResponse {
 interface GitHubUserResponse {
 	id: string | number;
 	login: string;
+	created_at?: string;
 }
 
 interface GitHubEmailResponseEntry {
@@ -166,7 +167,16 @@ async function fetchIdentity(
 		providerSubject: String(user.id),
 		login: user.login,
 		primaryEmail: primaryVerified.email,
+		githubCreatedAt: parseGitHubCreatedAt(user.created_at),
 	};
+}
+
+// parseGitHubCreatedAt keeps only a usable account creation time; anything
+// missing or malformed stays unknown so the trial age gate fails closed.
+function parseGitHubCreatedAt(value: string | undefined): Date | undefined {
+	if (!value) return undefined;
+	const parsed = new Date(value);
+	return Number.isNaN(parsed.getTime()) ? undefined : parsed;
 }
 
 async function listRepositories(
@@ -385,6 +395,7 @@ function decodeGitHubUserResponse(
 			"fetchIdentity.user",
 			status,
 		),
+		created_at: readOptionalString(value.created_at),
 	};
 }
 

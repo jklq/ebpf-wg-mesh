@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/journal"
@@ -25,6 +26,13 @@ func (s *routingPersistence) CreateDomainBindingRecord(ctx context.Context, user
 	scope, err := s.authz.AuthorizeService(ctx, user, serviceID, authz.Write)
 	if err != nil {
 		return deliverycore.DomainBindingRecord{}, false, err
+	}
+	// Custom domains on the trial plan require a saved payment method;
+	// platform-generated hostnames take the other path and stay free.
+	if s.enforceBilling {
+		if err := billing.CheckCustomDomainAllowed(ctx, s.db, serviceID); err != nil {
+			return deliverycore.DomainBindingRecord{}, false, err
+		}
 	}
 	return s.putDomainBinding(ctx, scope, hostname, targetPort, false, true)
 }

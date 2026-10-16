@@ -15,6 +15,12 @@ interface PlatformUserAssertionPayload {
 	sub: string;
 	/** Verified email; the control plane matches workspace invitations to it. */
 	email: string;
+	/**
+	 * GitHub account creation in Unix seconds, present only for GitHub
+	 * sign-ins; 0 means GitHub did not report it. Billing's trial age
+	 * gate consumes it.
+	 */
+	github_created_at?: number;
 	iat: number;
 	exp: number;
 	jti: string;
@@ -24,6 +30,8 @@ export function createPlatformUserAssertion(input: {
 	secret: string;
 	userId: string;
 	email: string;
+	/** GitHub account creation; null reports an unknown age. */
+	githubCreatedAt?: Date | null;
 	now?: Date;
 	id?: string;
 }): string {
@@ -43,6 +51,14 @@ export function createPlatformUserAssertion(input: {
 		aud: PlatformUserAssertionAudience,
 		sub: input.userId,
 		email: input.email,
+		...(input.githubCreatedAt !== undefined
+			? {
+					github_created_at:
+						input.githubCreatedAt === null
+							? 0
+							: Math.floor(input.githubCreatedAt.getTime() / 1000),
+				}
+			: {}),
 		iat: now,
 		exp: now + PlatformUserAssertionMaxAgeSeconds,
 		jti: input.id ?? randomUUID(),

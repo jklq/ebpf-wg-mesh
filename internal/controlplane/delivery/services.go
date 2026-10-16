@@ -10,6 +10,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	"ebof-wg-mesh/internal/controlplane/source"
 
@@ -268,6 +269,10 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 		current.Name = nextName
 		current.UpdatedAt = now
 		return current, false, false, nil
+	}
+
+	if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceBilling, current.EnvironmentID, current.ID, spec); err != nil {
+		return ServiceRecord{}, false, false, err
 	}
 
 	now := time.Now().UTC()
@@ -671,6 +676,9 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 		spec.DesiredReplicaCount = replicaCountPtr(DefaultDesiredReplicaCount)
 	}
 	if err := ValidateRollingStrategy(spec); err != nil {
+		return ServiceRecord{}, err
+	}
+	if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceBilling, environment.ID, "", spec); err != nil {
 		return ServiceRecord{}, err
 	}
 	rec := ServiceRecord{

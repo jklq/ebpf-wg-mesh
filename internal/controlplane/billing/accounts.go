@@ -108,8 +108,12 @@ func accountByID(ctx context.Context, q querier, accountID string) (Account, err
 	return account, err
 }
 
-// EnsureAccounts creates a trial billing account (with its initial credit
-// grant and first period) for every workspace that lacks one. Managed
+// EnsureAccounts creates a trial billing account (with its first period)
+// for every workspace that lacks one. Trial credit goes to a user once
+// ever: the first workspace (by creation) whose owner has no recorded
+// trial grant receives the credit and a budget stop at the credit amount;
+// later workspaces of the same user start with no credit and stay
+// restricted until paid activation (see EvaluateRestrictions). Managed
 // platform projects have no workspace and stay exempt by construction.
 func (s *Service) EnsureAccounts(ctx context.Context) (int, error) {
 	if s.cfg.Mode == ModeDisabled {
@@ -118,19 +122,20 @@ func (s *Service) EnsureAccounts(ctx context.Context) (int, error) {
 	created := 0
 	err := sqlretry.ExecuteTx(ctx, s.db, nil, func(tx *sql.Tx) error {
 		created = 0
-		rows, err := tx.QueryContext(ctx, `SELECT w.id, w.created_at FROM workspaces w
-			LEFT JOIN billing_accounts a ON a.workspace_id = w.id WHERE a.id IS NULL ORDER BY w.id`)
+		rows, err := tx.QueryContext(ctx, `SELECT w.id, w.created_at, w.personal_user_id FROM workspaces w
+			LEFT JOIN billing_accounts a ON a.workspace_id = w.id WHERE a.id IS NULL ORDER BY w.created_at, w.id`)
 		if err != nil {
 			return err
 		}
 		type pending struct {
-			id        string
-			createdAt time.Time
+			id             string
+			createdAt      time.Time
+			personalUserID sql.NullString
 		}
 		var missing []pending
 		for rows.Next() {
 			var p pending
-			if err := rows.Scan(&p.id, &p.createdAt); err != nil {
+			if err := rows.Scan(&p.id, &p.createdAt, &p.personalUserID); err != nil {
 				rows.Close()
 				return err
 			}
@@ -148,16 +153,41 @@ func (s *Service) EnsureAccounts(ctx context.Context) (int, error) {
 				TrialEndsAt: sql.NullTime{Time: anchor.Add(TrialDuration), Valid: true},
 				CreatedAt:   now, UpdatedAt: now,
 			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO billing_accounts(`+accountColumns+`)
+			result, err := tx.ExecContext(ctx, `INSERT INTO billing_accounts(`+accountColumns+`)
 				VALUES ($1,$2,'',$3,$4,'',$5,$6,$7,NULL,NULL,FALSE,$8,$8)
 				ON CONFLICT (workspace_id) DO NOTHING`,
 				account.ID, account.WorkspaceID, account.Currency, account.PlanID, account.State,
-				account.AnchorAt, account.TrialEndsAt, now); err != nil {
+				account.AnchorAt, account.TrialEndsAt, now)
+			if err != nil {
 				return fmt.Errorf("create billing account for workspace %s: %w", ws.id, err)
 			}
-			if err := grantCreditTx(ctx, tx, account.ID, "grant", TrialCreditCents, account.TrialEndsAt.Time,
-				"trial-grant:"+account.ID, "initial trial credit", now); err != nil {
+			if affected, err := result.RowsAffected(); err != nil {
 				return err
+			} else if affected == 0 {
+				continue // a concurrent pass created this account
+			}
+			owner, err := workspaceOwnerTx(ctx, tx, ws.id, ws.personalUserID)
+			if err != nil {
+				return err
+			}
+			if owner != "" {
+				granted, err := claimTrialGrantTx(ctx, tx, owner, account, now)
+				if err != nil {
+					return err
+				}
+				if granted {
+					// The budget stop at the credit amount is the
+					// backstop that bounds trial spend through the
+					// normal restriction path.
+					if _, err := tx.ExecContext(ctx, `UPDATE billing_accounts SET budget_stop_cents = $2 WHERE id = $1`,
+						account.ID, TrialCreditCents); err != nil {
+						return err
+					}
+					if err := grantCreditTx(ctx, tx, account.ID, "grant", TrialCreditCents, account.TrialEndsAt.Time,
+						"trial-grant:"+account.ID, "initial trial credit", now); err != nil {
+						return err
+					}
+				}
 			}
 			if _, err := ensurePeriodTx(ctx, tx, account, 0, now); err != nil {
 				return err
@@ -167,6 +197,36 @@ func (s *Service) EnsureAccounts(ctx context.Context) (int, error) {
 		return nil
 	})
 	return created, err
+}
+
+// workspaceOwnerTx resolves the user a workspace's trial eligibility is
+// charged to: the personal workspace's user, or a shared workspace's
+// earliest admin (its creator). Empty when neither exists.
+func workspaceOwnerTx(ctx context.Context, tx *sql.Tx, workspaceID string, personalUserID sql.NullString) (string, error) {
+	if personalUserID.Valid && personalUserID.String != "" {
+		return personalUserID.String, nil
+	}
+	var owner sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT user_id FROM workspace_memberships
+		WHERE workspace_id = $1 AND role = 'admin' ORDER BY created_at, user_id LIMIT 1`, workspaceID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return owner.String, err
+}
+
+// claimTrialGrantTx records the user's one trial grant for this account,
+// reporting whether this workspace won it. The primary key makes the claim
+// atomic across concurrent account provisioning.
+func claimTrialGrantTx(ctx context.Context, tx *sql.Tx, userID string, account Account, now time.Time) (bool, error) {
+	result, err := tx.ExecContext(ctx, `INSERT INTO billing_trial_grants(user_id, workspace_id, account_id, granted_at)
+		VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO NOTHING`,
+		userID, account.WorkspaceID, account.ID, now)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected == 1, err
 }
 
 // ensurePeriodTx returns the account's period with the given index, creating

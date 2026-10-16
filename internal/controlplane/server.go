@@ -109,7 +109,11 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 	if err != nil {
 		return nil, err
 	}
-	opts := []persistenceOption{withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays) * 24 * time.Hour)}
+	billingMode, _ := billing.ParseMode(cfg.Billing.Mode) // invalid modes fail in newBillingService below
+	opts := []persistenceOption{
+		withDeletionGracePeriod(time.Duration(cfg.Deletion.GracePeriodDays) * 24 * time.Hour),
+		withBillingEnforcement(billingMode == billing.ModeEnabled),
+	}
 	if !cfg.Profile.IsProduction() && admission.Generation == "" {
 		opts = append(opts, withSchemaInitialization())
 	}

@@ -118,6 +118,7 @@ export async function completeAuthCallback(
 					providerSubject: identity.providerSubject,
 					login: identity.login,
 					primaryEmail: identity.primaryEmail,
+					githubCreatedAt: identity.githubCreatedAt,
 					accessToken: token.accessToken,
 					tokenType: token.tokenType,
 					scope: token.scope,

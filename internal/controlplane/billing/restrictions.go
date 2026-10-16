@@ -205,13 +205,44 @@ func (s *Service) evaluateAccount(ctx context.Context, account Account, now time
 			WHERE account_id = $1 AND state = 'payment_failed'`, account.ID).Scan(&failedSince); err != nil {
 			return err
 		}
+
+		// Trial gates: the one-trial-per-user grant and the owner's GitHub
+		// account age. Accounts that never received the user's grant (a
+		// later workspace) stay restricted until paid activation moves
+		// them out of the trial states.
+		trialAccount := account.State == AccountTrial || account.State == AccountPendingActivation
+		trialUsedUp, githubTooNew := false, false
+		if trialAccount {
+			var grantUser string
+			err := tx.QueryRowContext(ctx, `SELECT user_id FROM billing_trial_grants WHERE workspace_id = $1`, account.WorkspaceID).Scan(&grantUser)
+			switch {
+			case errors.Is(err, sql.ErrNoRows):
+				trialUsedUp = true
+			case err != nil:
+				return err
+			default:
+				tooNew, err := githubAccountTooNewTx(ctx, tx, grantUser, now)
+				if err != nil {
+					return err
+				}
+				githubTooNew = tooNew
+			}
+		}
+		egressOver := account.PlanID == PlanTrial && ratedEgressBytes(rated) > TrialEgressCapBytes
+
 		switch {
 		case account.State == AccountCancelled && account.CancelEffectiveAt.Valid && !now.Before(account.CancelEffectiveAt.Time):
 			ev.restricted, ev.reason = true, "account cancelled"
+		case trialUsedUp:
+			ev.restricted, ev.reason = true, "trial credit already used"
+		case githubTooNew:
+			ev.restricted, ev.reason = true, "github account is less than 30 days old"
 		case account.State == AccountTrial && account.TrialEndsAt.Valid && !now.Before(account.TrialEndsAt.Time):
 			ev.restricted, ev.reason = true, "trial expired"
 		case failedSince.Valid && now.Sub(failedSince.Time) >= PaymentGrace:
 			ev.restricted, ev.reason = true, "payment failed and grace period elapsed"
+		case egressOver:
+			ev.restricted, ev.reason = true, "trial egress limit reached"
 		case account.BudgetStopCents.Valid && ev.grossCents >= account.BudgetStopCents.Int64:
 			ev.restricted, ev.reason = true, "budget stop threshold reached"
 		}
@@ -221,6 +252,40 @@ func (s *Service) evaluateAccount(ctx context.Context, account Account, now time
 		return nil
 	})
 	return ev, period, err
+}
+
+// ratedEgressBytes sums the rated public-egress quantities of a period.
+func ratedEgressBytes(rated RatedPeriod) int64 {
+	var total int64
+	for _, line := range rated.Lines {
+		if line.Meter != MeterEgress || line.Quantity == nil {
+			continue
+		}
+		if !line.Quantity.IsInt64() {
+			return TrialEgressCapBytes + 1
+		}
+		total += line.Quantity.Int64()
+	}
+	return total
+}
+
+// githubAccountTooNewTx reports whether a GitHub user's recorded account
+// age blocks trial compute. Only users with a profile row are GitHub
+// signups; a row whose github_created_at is unknown fails closed.
+// Bootstrap and dev users have no row and are never gated.
+func githubAccountTooNewTx(ctx context.Context, tx *sql.Tx, userID string, now time.Time) (bool, error) {
+	var createdAt sql.NullTime
+	err := tx.QueryRowContext(ctx, `SELECT github_created_at FROM user_profiles WHERE user_id = $1`, userID).Scan(&createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !createdAt.Valid {
+		return true, nil
+	}
+	return now.Before(createdAt.Time.Add(GitHubMinAccountAge)), nil
 }
 
 func (s *Service) applyRestriction(ctx context.Context, account Account, period Period, ev evaluation, now time.Time) error {

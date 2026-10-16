@@ -125,9 +125,34 @@ func (s *catalogPersistence) ensurePersonalWorkspace(ctx context.Context, user a
 	err := s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
 		var err error
 		rec, err = ensurePersonalWorkspaceQuerier(ctx, tx, user.ID())
-		return err
+		if err != nil {
+			return err
+		}
+		return syncGitHubProfileTx(ctx, tx, user.ID())
 	})
 	return rec, err
+}
+
+// syncGitHubProfileTx records the delegated user's GitHub account age
+// evidence for billing's trial gate. It runs on the personal-workspace
+// ensure every sign-in passes through. Users whose assertions carry no
+// GitHub claim (bootstrap and dev users) get no profile row.
+func syncGitHubProfileTx(ctx context.Context, tx *sql.Tx, userID string) error {
+	delegated, err := identity.DelegatedUserFromContext(ctx)
+	if err != nil || delegated.UserID != userID || delegated.GitHubCreatedAt == nil {
+		return nil
+	}
+	var created sql.NullTime
+	if *delegated.GitHubCreatedAt > 0 {
+		created = sql.NullTime{Time: time.Unix(*delegated.GitHubCreatedAt, 0).UTC(), Valid: true}
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO user_profiles(user_id, github_created_at, updated_at) VALUES ($1, $2, statement_timestamp())
+		 ON CONFLICT (user_id) DO UPDATE
+		   SET github_created_at = excluded.github_created_at, updated_at = excluded.updated_at
+		 WHERE user_profiles.github_created_at IS DISTINCT FROM excluded.github_created_at`,
+		userID, created)
+	return err
 }
 
 func (s *catalogPersistence) listWorkspaces(ctx context.Context, user authz.User, email string) ([]workspaceRecord, []workspaceInvitationRecord, error) {

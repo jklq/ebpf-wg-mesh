@@ -44,6 +44,7 @@ export async function updateGitHubAccount(
 			provider_subject,
 			verified_email_snapshot,
 			provider_login,
+			github_created_at,
 			access_token,
 			access_token_expires_at,
 			refresh_token,
@@ -54,12 +55,13 @@ export async function updateGitHubAccount(
 			updated_at,
 			last_login_at
 		) VALUES (
-			$1, $2, 'github', $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW(), NOW(), NOW()
+			$1, $2, 'github', $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW(), NOW(), NOW()
 		)
 		ON CONFLICT (provider, provider_subject) DO UPDATE
 		   SET user_id = excluded.user_id,
 		       verified_email_snapshot = excluded.verified_email_snapshot,
 		       provider_login = excluded.provider_login,
+		       github_created_at = COALESCE(excluded.github_created_at, accounts.github_created_at),
 		       access_token = excluded.access_token,
 		       access_token_expires_at = excluded.access_token_expires_at,
 		       refresh_token = excluded.refresh_token,
@@ -77,6 +79,7 @@ export async function updateGitHubAccount(
 			input.providerSubject,
 			input.primaryEmail,
 			input.login,
+			input.githubCreatedAt ?? null,
 			accessToken,
 			input.accessTokenExpiresAt ?? null,
 			refreshToken,
@@ -92,12 +95,16 @@ export async function userByID(
 	client: PoolClient,
 	userID: string,
 ): Promise<DashboardUser> {
-	const result = await query<UserRow>(
+	const result = await query<
+		UserRow & { github_created_at: Date | null; has_github: boolean }
+	>(
 		client,
 		"userByID",
-		`SELECT id, email
-		   FROM ${tableName(runtime, "users")}
-		  WHERE id = $1`,
+		`SELECT u.id, u.email, a.github_created_at, a.id IS NOT NULL AS has_github
+		   FROM ${tableName(runtime, "users")} u
+		   LEFT JOIN ${tableName(runtime, "accounts")} a
+		     ON a.user_id = u.id AND a.provider = 'github'
+		  WHERE u.id = $1`,
 		[userID],
 	);
 	if (result.rowCount !== 1) {
@@ -107,7 +114,12 @@ export async function userByID(
 			cause: userID,
 		});
 	}
-	return rowAt(result.rows, 0, "userByID");
+	const row = rowAt(result.rows, 0, "userByID");
+	return {
+		id: row.id,
+		email: row.email,
+		...(row.has_github ? { githubCreatedAt: row.github_created_at } : {}),
+	};
 }
 
 export async function ensureOnboarding(

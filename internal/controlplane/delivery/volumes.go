@@ -12,6 +12,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/journal"
 	"ebof-wg-mesh/internal/controlplane/usage"
 )
@@ -264,6 +265,9 @@ func (d *Delivery) growVolumeTx(ctx context.Context, tx *sql.Tx, volumeID string
 		return VolumeRecord{}, fmt.Errorf("%w: %d MiB is smaller than the current %d MiB", ErrVolumeShrink, sizeBytes>>20, current>>20)
 	}
 	if sizeBytes != current {
+		if err := billing.ValidateVolumeGrowTx(ctx, tx, d.store.enforceBilling, volumeID, sizeBytes); err != nil {
+			return VolumeRecord{}, err
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE volumes SET size_bytes = $1 WHERE id = $2`, sizeBytes, volumeID); err != nil {
 			return VolumeRecord{}, err
 		}

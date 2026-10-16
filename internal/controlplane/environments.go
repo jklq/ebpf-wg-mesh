@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
@@ -446,6 +447,9 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, pro
 	}
 	if environmentTombstone.Active() || projectTombstone.Active() {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrEnvironmentDeleted
+	}
+	if err := billing.ValidateVolumeCreateTx(ctx, tx, s.enforceBilling, project.WorkspaceID(), sizeBytes); err != nil {
+		return deliverycore.VolumeRecord{}, err
 	}
 	rec := deliverycore.VolumeRecord{
 		ID:            uuid.NewString(),

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/certificates"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 
@@ -112,7 +113,7 @@ func (s *Domains) CreateDomainBinding(ctx context.Context, user authz.User, req 
 		if errors.Is(err, deliverycore.ErrDomainAlreadyExists) {
 			return nil, status.Errorf(codes.AlreadyExists, "create domain binding: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrServiceDeleted) {
+		if errors.Is(err, deliverycore.ErrServiceDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create domain binding: %v", err)
 		}
 		if errors.Is(err, deliverycore.ErrInvalidPort) {

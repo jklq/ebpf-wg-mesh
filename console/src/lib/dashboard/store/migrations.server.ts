@@ -38,6 +38,7 @@ export function dashboardStoreMigrations(
 					refresh_token_expires_at TIMESTAMPTZ NULL,
 					token_type TEXT NOT NULL DEFAULT '',
 					scope TEXT NOT NULL DEFAULT '',
+					github_created_at TIMESTAMPTZ NULL,
 					oauth_token_version INT8 NOT NULL DEFAULT 0,
 					oauth_refresh_lease_id TEXT NULL,
 					oauth_refresh_lease_expires_at TIMESTAMPTZ NULL,

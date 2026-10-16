@@ -10,6 +10,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/logs"
 
@@ -237,6 +238,15 @@ func (s *catalogPersistence) createProject(ctx context.Context, user authz.User,
 	}
 	var project deliverycore.ProjectRecord
 	err = s.withProductTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		// Quota applies only when this call actually creates the project;
+		// ensure is idempotent for an existing name.
+		if _, found, err := s.projectByWorkspaceNameQuerier(ctx, tx, scope.ID(), name); err != nil {
+			return err
+		} else if !found {
+			if err := billing.ValidateProjectQuotaTx(ctx, tx, s.enforceBilling, scope.ID()); err != nil {
+				return err
+			}
+		}
 		id, err := s.ensureUserProjectNamedQuerier(ctx, tx, scope.ID(), name)
 		if err != nil {
 			return err

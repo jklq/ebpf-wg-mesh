@@ -30,6 +30,11 @@ import (
 
 type database struct {
 	initializeSchema bool
+	// enforceBilling mirrors "billing mode is enabled" for the
+	// persistence-layer quota, build-cap, and domain gates, which run
+	// inside product transactions without the billing service at hand.
+	// Shadow and disabled modes never enforce, like billing restrictions.
+	enforceBilling   bool
 	db               *sql.DB
 	provider         platformdb.Provider
 	schema           string
@@ -45,6 +50,12 @@ type persistenceOption func(*database)
 
 func withSchemaInitialization() persistenceOption {
 	return func(db *database) { db.initializeSchema = true }
+}
+
+// withBillingEnforcement turns on persistence-layer billing gates. The
+// server sets it only in enabled billing mode.
+func withBillingEnforcement(enabled bool) persistenceOption {
+	return func(db *database) { db.enforceBilling = enabled }
 }
 
 // withDeletionGracePeriod overrides how long tombstones stay restorable.
@@ -463,6 +474,7 @@ func deliveryDependencies(store *persistence, notifier deliverycore.PlatformNoti
 		ReservedAgentIDs:       store.reservedAgentIDs,
 		Notifier:               notifier, Ingress: ingress, Events: events, LogEmitter: logEmitter,
 		Authorizer: store.authorizer(), Secrets: store.secrets, DeletionGracePeriod: store.deletionGracePeriod(),
+		EnforceBilling: store.enforceBilling,
 	}
 }
 

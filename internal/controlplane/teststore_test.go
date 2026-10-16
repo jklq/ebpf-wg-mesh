@@ -185,6 +185,8 @@ func resetTestStore(t *testing.T, store *persistence) {
 	t.Helper()
 
 	tables := []string{
+		"billing_trial_grants",
+		"user_profiles",
 		"billing_provider_events",
 		"billing_notices",
 		"billing_statement_lines",

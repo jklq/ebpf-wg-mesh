@@ -144,6 +144,16 @@ var Schema = []string{
 		payload JSONB NOT NULL DEFAULT '{}',
 		created_at TIMESTAMPTZ NOT NULL
 	)`,
+	// One row per user that has ever received trial credit. Like other
+	// financial rows it carries no foreign key into the catalog, so
+	// deleting the trial workspace never restores eligibility.
+	`CREATE TABLE billing_trial_grants (
+		user_id TEXT PRIMARY KEY,
+		workspace_id TEXT NOT NULL,
+		account_id TEXT NOT NULL,
+		granted_at TIMESTAMPTZ NOT NULL
+	)`,
+	`CREATE INDEX idx_billing_trial_grants_workspace ON billing_trial_grants(workspace_id)`,
 	`CREATE TABLE billing_provider_events (
 		stripe_event_id TEXT PRIMARY KEY,
 		event_type TEXT NOT NULL,

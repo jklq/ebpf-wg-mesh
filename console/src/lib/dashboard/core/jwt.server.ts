@@ -30,6 +30,8 @@ interface DashboardTokenPayload {
 	typ: "access" | "refresh";
 	sub: string;
 	email: string;
+	/** GitHub account creation in Unix seconds; 0 = GitHub age unknown. */
+	ghc?: number;
 	iat: number;
 	exp: number;
 	sid?: string;
@@ -149,6 +151,14 @@ function signToken(
 		typ: input.typ,
 		sub: input.user.id,
 		email: input.user.email,
+		...(input.user.githubCreatedAt !== undefined
+			? {
+					ghc:
+						input.user.githubCreatedAt === null
+							? 0
+							: toUnixTime(input.user.githubCreatedAt),
+				}
+			: {}),
 		iat: toUnixTime(input.now),
 		exp: toUnixTime(input.expiresAt),
 		...(input.sessionId ? { sid: input.sessionId } : {}),
@@ -234,6 +244,11 @@ function payloadUser(payload: DashboardTokenPayload): DashboardUser {
 	return {
 		id: payload.sub,
 		email: payload.email,
+		...(payload.ghc !== undefined
+			? {
+					githubCreatedAt: payload.ghc === 0 ? null : fromUnixTime(payload.ghc),
+				}
+			: {}),
 	};
 }
 
@@ -277,6 +292,9 @@ function isDashboardTokenPayload(
 		return false;
 	}
 	if (expectedType === "refresh" && typeof payload.sid !== "string") {
+		return false;
+	}
+	if (payload.ghc !== undefined && typeof payload.ghc !== "number") {
 		return false;
 	}
 	return true;

@@ -237,6 +237,7 @@ export function userAssertionMetadata(
 			secret: runtime.userAssertionSecret,
 			userId: user.id,
 			email: user.email,
+			githubCreatedAt: user.githubCreatedAt,
 		}),
 	};
 }

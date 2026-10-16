@@ -166,6 +166,13 @@ export type FleetAgentInput = Omit<
 export interface DashboardUser {
 	id: string;
 	email: string;
+	/**
+	 * GitHub account creation time for GitHub sign-ins: a Date when known,
+	 * null when GitHub did not report it. Absent for non-GitHub (dev)
+	 * users. Carried in the session token and the platform user assertion
+	 * so the control plane can gate trial compute on account age.
+	 */
+	githubCreatedAt?: Date | null;
 }
 
 export interface DashboardUserProfile extends DashboardUser {
@@ -250,6 +257,8 @@ export interface DashboardGitHubAccount {
 	primaryEmail: string;
 	tokenType: string;
 	scope: string;
+	/** GitHub account creation time; null when GitHub did not report it. */
+	githubCreatedAt?: Date | null;
 }
 
 export interface StoredDashboardGitHubAccount extends DashboardGitHubAccount {

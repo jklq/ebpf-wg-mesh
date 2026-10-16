@@ -10,6 +10,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/restartpolicy"
@@ -70,7 +71,7 @@ func (s *platformService) CreateService(ctx context.Context, req *platformv1.Cre
 		if errors.Is(err, deliverycore.ErrInvalidVolumeMount) {
 			return nil, status.Errorf(codes.InvalidArgument, "create service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAttached) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) {
+		if errors.Is(err, deliverycore.ErrNoPlacementAvailable) || errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAttached) || errors.Is(err, deliverycore.ErrEnvironmentDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "create service: %v", err)
 		}
 		return nil, writeAccessError("create service", err)
@@ -165,7 +166,7 @@ func (s *platformService) UpdateService(ctx context.Context, req *platformv1.Upd
 		if errors.Is(err, deliverycore.ErrInvalidVolumeMount) {
 			return nil, status.Errorf(codes.InvalidArgument, "update service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAttached) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) {
+		if errors.Is(err, deliverycore.ErrVolumeNotFound) || errors.Is(err, deliverycore.ErrVolumeAttached) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "update service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "update service: %v", err)
@@ -271,7 +272,7 @@ func (s *platformService) ScaleService(ctx context.Context, req *platformv1.Scal
 		if errors.Is(err, deliverycore.ErrConcurrentUpdate) {
 			return nil, status.Errorf(codes.Aborted, "scale service: %v", err)
 		}
-		if errors.Is(err, deliverycore.ErrInvalidReplicaCount) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) {
+		if errors.Is(err, deliverycore.ErrInvalidReplicaCount) || errors.Is(err, deliverycore.ErrVolumeReplicaUnsupported) || errors.Is(err, deliverycore.ErrServiceDeleted) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "scale service: %v", err)
 		}
 		return nil, status.Errorf(codes.Internal, "scale service: %v", err)

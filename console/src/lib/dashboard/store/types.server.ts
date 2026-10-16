@@ -13,6 +13,7 @@ export interface GitHubAccountRow {
 	provider_subject: string;
 	verified_email_snapshot: string;
 	provider_login: string;
+	github_created_at: Date | null;
 	access_token: string;
 	access_token_expires_at: Date | null;
 	refresh_token: string;
