@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 
@@ -222,6 +223,9 @@ func (s *catalogPersistence) createWorkspace(ctx context.Context, user authz.Use
 	}
 	rec := workspaceRecord{ID: uuid.NewString(), Name: name, CreatedAt: time.Now().UTC(), Role: authz.RoleAdmin}
 	err = s.withCoordinationTx(ctx, func(ctx context.Context, tx *sql.Tx) error {
+		if err := billing.ValidateWorkspaceCreateTx(ctx, tx, s.enforceQuotas, user.ID()); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO workspaces(id, name, created_at) VALUES ($1, $2, $3)`,
 			rec.ID, rec.Name, rec.CreatedAt); err != nil {
@@ -569,6 +573,9 @@ func (s *catalogPersistence) moveProject(ctx context.Context, user authz.User, p
 			return err
 		} else if found {
 			return fmt.Errorf("%w: the workspace already has a project named %q", errProjectNameTaken, project.Name)
+		}
+		if err := billing.ValidateProjectQuotaTx(ctx, tx, s.enforceQuotas, target.ID()); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx,
 			`UPDATE projects SET workspace_id = $1 WHERE id = $2 AND workspace_id = $3`,

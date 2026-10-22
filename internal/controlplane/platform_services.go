@@ -360,7 +360,7 @@ func (s *platformService) RestoreService(ctx context.Context, req *platformv1.Re
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
 		}
-		if errors.Is(err, deliverycore.ErrAncestorDeleted) || errors.Is(err, deliverycore.ErrDeletionExpired) {
+		if errors.Is(err, deliverycore.ErrAncestorDeleted) || errors.Is(err, deliverycore.ErrDeletionExpired) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Errorf(codes.FailedPrecondition, "restore service: %v", err)
 		}
 		return nil, writeAccessError("restore service", err)

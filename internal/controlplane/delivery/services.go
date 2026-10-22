@@ -271,7 +271,7 @@ func (d *Delivery) updateServiceTx(ctx context.Context, tx *sql.Tx, scope authz.
 		return current, false, false, nil
 	}
 
-	if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceBilling, current.EnvironmentID, current.ID, spec); err != nil {
+	if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceQuotas, current.EnvironmentID, current.ID, spec); err != nil {
 		return ServiceRecord{}, false, false, err
 	}
 
@@ -412,6 +412,13 @@ func (d *Delivery) restoreService(ctx context.Context, scope authz.Service) (Ser
 		}
 		if deletion.Inherited {
 			return ErrAncestorDeleted
+		}
+		current, err := s.serviceByIDQuerier(ctx, tx, scope)
+		if err != nil {
+			return err
+		}
+		if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceQuotas, current.EnvironmentID, "", current.Spec); err != nil {
+			return err
 		}
 		result, err := tx.ExecContext(ctx,
 			`UPDATE services
@@ -678,7 +685,7 @@ func (s *persistence) insertServiceTx(ctx context.Context, tx *sql.Tx, environme
 	if err := ValidateRollingStrategy(spec); err != nil {
 		return ServiceRecord{}, err
 	}
-	if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceBilling, environment.ID, "", spec); err != nil {
+	if err := billing.ValidateServiceQuotaTx(ctx, tx, s.enforceQuotas, environment.ID, "", spec); err != nil {
 		return ServiceRecord{}, err
 	}
 	rec := ServiceRecord{

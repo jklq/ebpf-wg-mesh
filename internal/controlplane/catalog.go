@@ -113,7 +113,7 @@ func (s *catalogOperations) RestoreProject(ctx context.Context, projectID string
 		if errors.Is(err, deliverycore.ErrNotLiveOwner) || errors.Is(err, deliverycore.ErrLeaseLost) {
 			return nil, err
 		}
-		if errors.Is(err, deliverycore.ErrDeletionExpired) {
+		if errors.Is(err, deliverycore.ErrDeletionExpired) || errors.Is(err, billing.ErrGrowthBlocked) {
 			return nil, status.Error(codes.FailedPrecondition, err.Error())
 		}
 		return nil, writeAccessError("restore project", err)
@@ -243,7 +243,7 @@ func (s *catalogPersistence) createProject(ctx context.Context, user authz.User,
 		if _, found, err := s.projectByWorkspaceNameQuerier(ctx, tx, scope.ID(), name); err != nil {
 			return err
 		} else if !found {
-			if err := billing.ValidateProjectQuotaTx(ctx, tx, s.enforceBilling, scope.ID()); err != nil {
+			if err := billing.ValidateProjectQuotaTx(ctx, tx, s.enforceQuotas, scope.ID()); err != nil {
 				return err
 			}
 		}

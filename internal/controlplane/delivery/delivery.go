@@ -86,10 +86,11 @@ type Dependencies struct {
 	Secrets *secretkeys.Service
 	// DeletionGracePeriod is how long tombstones stay restorable. Zero selects the default.
 	DeletionGracePeriod time.Duration
-	// EnforceBilling turns on plan quota validation and build caps. The
-	// server sets it only in enabled billing mode, mirroring how billing
-	// restrictions only enforce there.
-	EnforceBilling bool
+	// EnforceQuotas turns on plan quota validation and build caps. The
+	// server sets it whenever billing mode is not disabled (shadow
+	// included); billing restrictions enforce more narrowly, in enabled
+	// mode only.
+	EnforceQuotas bool
 	// BuildScheduler tunes the lease-based build queue. Zero selects the default config.
 	BuildScheduler BuildSchedulerConfig
 	// ImageResolver pins direct-image tags. Nil resolves pinned refs only; tags fail closed.
@@ -125,7 +126,7 @@ type persistence struct {
 	live              *Live
 	reservedAgentIDs  []string
 	deletionGrace     time.Duration
-	enforceBilling    bool
+	enforceQuotas     bool
 	withProductTx     Transaction
 	withObservationTx ObservationTransaction
 	readState         func(context.Context, func(*sql.Tx, *journal.Projection) error) error
@@ -151,7 +152,7 @@ func New(deps Dependencies) *Delivery {
 			live:                     live,
 			reservedAgentIDs:         append([]string(nil), deps.ReservedAgentIDs...),
 			deletionGrace:            grace,
-			enforceBilling:           deps.EnforceBilling,
+			enforceQuotas:            deps.EnforceQuotas,
 			withProductTx:            deps.ProductTransaction,
 			withObservationTx:        deps.ObservationTransaction,
 			readState:                deps.ReadState,

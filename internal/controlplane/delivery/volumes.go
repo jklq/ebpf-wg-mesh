@@ -265,7 +265,7 @@ func (d *Delivery) growVolumeTx(ctx context.Context, tx *sql.Tx, volumeID string
 		return VolumeRecord{}, fmt.Errorf("%w: %d MiB is smaller than the current %d MiB", ErrVolumeShrink, sizeBytes>>20, current>>20)
 	}
 	if sizeBytes != current {
-		if err := billing.ValidateVolumeGrowTx(ctx, tx, d.store.enforceBilling, volumeID, sizeBytes); err != nil {
+		if err := billing.ValidateVolumeGrowTx(ctx, tx, d.store.enforceQuotas, volumeID, sizeBytes); err != nil {
 			return VolumeRecord{}, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE volumes SET size_bytes = $1 WHERE id = $2`, sizeBytes, volumeID); err != nil {

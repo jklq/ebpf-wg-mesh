@@ -15,10 +15,12 @@ import (
 // Quota validation runs inside the caller's product transaction on
 // desired-state mutations, mirroring the ServiceEnforcedTx restriction
 // helpers: pure functions of journal state, gated by the caller's
-// enforce flag (enabled billing mode only). Workspaces without a billing
-// account — managed platform projects, or billing not yet provisioned —
-// are never quota-checked. Violations wrap ErrGrowthBlocked so the
-// console's existing blocked-action display recognizes them.
+// enforce flag (set whenever billing mode is not disabled, shadow
+// included — the free tier must be bounded before billing is enabled).
+// Workspaces without a billing account — managed platform projects, or
+// billing not yet provisioned — are never quota-checked. Violations wrap
+// ErrGrowthBlocked so the console's existing blocked-action display
+// recognizes them.
 //
 // A mutation is refused only when it pushes a dimension over its limit:
 // when the workspace is already over quota, any mutation that does not
@@ -53,12 +55,16 @@ func accountPlanTx(ctx context.Context, tx *sql.Tx, workspaceID string) (Account
 }
 
 // serviceUsage is one live service's desired resource footprint: its
-// draft spec's limits times its desired replicas.
+// draft spec's limits times its desired replicas, plus the per-replica
+// limits the per-service caps bind.
 type serviceUsage struct {
 	serviceID     string
 	environmentID string
+	projectID     string
 	cpuMillis     int64
 	memoryMebis   int64
+	cpuPerReplica int64
+	memPerReplica int64
 	replicas      int64
 }
 
@@ -74,8 +80,10 @@ func specUsage(spec *platformv1.ServiceSpec, fallbackReplicas int64) serviceUsag
 	var usage serviceUsage
 	usage.replicas = replicas
 	if runtime := spec.GetRuntime(); runtime != nil {
-		usage.cpuMillis = runtime.GetCpuMillis() * replicas
-		usage.memoryMebis = runtime.GetMemoryMebibytes() * replicas
+		usage.cpuPerReplica = runtime.GetCpuMillis()
+		usage.memPerReplica = runtime.GetMemoryMebibytes()
+		usage.cpuMillis = usage.cpuPerReplica * replicas
+		usage.memoryMebis = usage.memPerReplica * replicas
 	}
 	return usage
 }
@@ -83,7 +91,7 @@ func specUsage(spec *platformv1.ServiceSpec, fallbackReplicas int64) serviceUsag
 // workspaceServiceUsagesTx loads the desired footprint of every live
 // service in a workspace from its current (draft) spec revision.
 func workspaceServiceUsagesTx(ctx context.Context, tx *sql.Tx, workspaceID string) ([]serviceUsage, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT s.id, s.environment_id, s.desired_replica_count, r.spec_json
+	rows, err := tx.QueryContext(ctx, `SELECT s.id, s.environment_id, e.project_id, s.desired_replica_count, r.spec_json
 		  FROM services s
 		  JOIN environments e ON e.id = s.environment_id
 		  JOIN projects p ON p.id = e.project_id
@@ -96,10 +104,10 @@ func workspaceServiceUsagesTx(ctx context.Context, tx *sql.Tx, workspaceID strin
 	defer rows.Close()
 	var out []serviceUsage
 	for rows.Next() {
-		var serviceID, environmentID string
+		var serviceID, environmentID, projectID string
 		var columnReplicas int64
 		var rawSpec []byte
-		if err := rows.Scan(&serviceID, &environmentID, &columnReplicas, &rawSpec); err != nil {
+		if err := rows.Scan(&serviceID, &environmentID, &projectID, &columnReplicas, &rawSpec); err != nil {
 			return nil, err
 		}
 		spec := &platformv1.ServiceSpec{}
@@ -107,7 +115,7 @@ func workspaceServiceUsagesTx(ctx context.Context, tx *sql.Tx, workspaceID strin
 			return nil, fmt.Errorf("billing: parse service spec for quota: %w", err)
 		}
 		usage := specUsage(spec, columnReplicas)
-		usage.serviceID, usage.environmentID = serviceID, environmentID
+		usage.serviceID, usage.environmentID, usage.projectID = serviceID, environmentID, projectID
 		out = append(out, usage)
 	}
 	return out, rows.Err()
@@ -120,8 +128,9 @@ func ValidateServiceQuotaTx(ctx context.Context, tx *sql.Tx, enforce bool, envir
 		return nil
 	}
 	var workspaceID sql.NullString
-	err := tx.QueryRowContext(ctx, `SELECT p.workspace_id FROM environments e
-		JOIN projects p ON p.id = e.project_id WHERE e.id = $1`, environmentID).Scan(&workspaceID)
+	var projectID string
+	err := tx.QueryRowContext(ctx, `SELECT p.workspace_id, p.id FROM environments e
+		JOIN projects p ON p.id = e.project_id WHERE e.id = $1`, environmentID).Scan(&workspaceID, &projectID)
 	if errors.Is(err, sql.ErrNoRows) || !workspaceID.Valid || workspaceID.String == "" {
 		return err
 	}
@@ -136,13 +145,16 @@ func ValidateServiceQuotaTx(ctx context.Context, tx *sql.Tx, enforce bool, envir
 	if err != nil {
 		return err
 	}
-	var currentCPU, currentMem, envCount int64
+	var currentCPU, currentMem, envCount, projectCount int64
 	var replaced serviceUsage
 	for _, usage := range usages {
 		currentCPU += usage.cpuMillis
 		currentMem += usage.memoryMebis
 		if usage.environmentID == environmentID {
 			envCount++
+		}
+		if usage.projectID == projectID {
+			projectCount++
 		}
 		if usage.serviceID == replaceServiceID {
 			replaced = usage
@@ -152,11 +164,24 @@ func ValidateServiceQuotaTx(ctx context.Context, tx *sql.Tx, enforce bool, envir
 	create := replaceServiceID == ""
 	resultingCPU := currentCPU - replaced.cpuMillis + candidate.cpuMillis
 	resultingMem := currentMem - replaced.memoryMebis + candidate.memoryMebis
-	resultingEnvCount := envCount
+	resultingEnvCount, resultingProjectCount := envCount, projectCount
 	if create {
 		resultingEnvCount++
+		resultingProjectCount++
 	}
 	quota := plan.Quota
+	if quota.MaxCPUMillisPerService > 0 {
+		if err := checkQuotaDimension("CPU for this service", replaced.cpuPerReplica, candidate.cpuPerReplica, quota.MaxCPUMillisPerService,
+			fmt.Sprintf("%dm", candidate.cpuPerReplica), fmt.Sprintf("%dm", quota.MaxCPUMillisPerService)); err != nil {
+			return err
+		}
+	}
+	if quota.MaxMemoryMebibytesPerService > 0 {
+		if err := checkQuotaDimension("memory for this service", replaced.memPerReplica, candidate.memPerReplica, quota.MaxMemoryMebibytesPerService,
+			fmt.Sprintf("%d MiB", candidate.memPerReplica), fmt.Sprintf("%d MiB", quota.MaxMemoryMebibytesPerService)); err != nil {
+			return err
+		}
+	}
 	if err := checkQuotaDimension("workspace CPU", currentCPU, resultingCPU, quota.MaxCPUMillis,
 		fmt.Sprintf("%dm", resultingCPU), fmt.Sprintf("%dm", quota.MaxCPUMillis)); err != nil {
 		return err
@@ -168,6 +193,12 @@ func ValidateServiceQuotaTx(ctx context.Context, tx *sql.Tx, enforce bool, envir
 	if err := checkQuotaDimension("services in this environment", envCount, resultingEnvCount, quota.MaxServicesPerEnvironment,
 		fmt.Sprintf("%d", resultingEnvCount), fmt.Sprintf("%d", quota.MaxServicesPerEnvironment)); err != nil {
 		return err
+	}
+	if quota.MaxServicesPerProject > 0 {
+		if err := checkQuotaDimension("services in this project", projectCount, resultingProjectCount, quota.MaxServicesPerProject,
+			fmt.Sprintf("%d", resultingProjectCount), fmt.Sprintf("%d", quota.MaxServicesPerProject)); err != nil {
+			return err
+		}
 	}
 	return checkQuotaDimension("replicas for this service", replaced.replicas, candidate.replicas, quota.MaxReplicasPerService,
 		fmt.Sprintf("%d", candidate.replicas), fmt.Sprintf("%d", quota.MaxReplicasPerService))
@@ -190,6 +221,38 @@ func ValidateProjectQuotaTx(ctx context.Context, tx *sql.Tx, enforce bool, works
 	}
 	return checkQuotaDimension("projects in this workspace", current, current+1, plan.Quota.MaxProjects,
 		fmt.Sprintf("%d", current+1), fmt.Sprintf("%d", plan.Quota.MaxProjects))
+}
+
+// TrialWorkspacesPerUser caps how many free (trial-plan) workspaces one
+// user may administer at a time. Without it, the per-workspace free quota
+// multiplies by simply creating more workspaces.
+const TrialWorkspacesPerUser = 1
+
+// ValidateWorkspaceCreateTx refuses workspace creation by a user who
+// already administers a free workspace: a workspace on the trial plan, or
+// one whose billing account is not provisioned yet (it will start on
+// trial). Paid workspaces do not count, so upgrading the free workspace
+// to a paid plan frees the slot for a new one. The personal workspace is
+// ensured outside this path and never blocked; in the normal sign-in flow
+// it exists first and is the free workspace this counts.
+// Membership roles are authz's literals; 'admin' is authz.RoleAdmin.
+func ValidateWorkspaceCreateTx(ctx context.Context, tx *sql.Tx, enforce bool, userID string) error {
+	if !enforce || userID == "" {
+		return nil
+	}
+	var current int64
+	if err := tx.QueryRowContext(ctx, `SELECT count(*)
+		  FROM workspace_memberships m
+		  JOIN workspaces w ON w.id = m.workspace_id
+		  LEFT JOIN billing_accounts a ON a.workspace_id = w.id
+		 WHERE m.user_id = $1 AND m.role = 'admin'
+		   AND (a.id IS NULL OR a.plan_id = $2)`, userID, PlanTrial).Scan(&current); err != nil {
+		return err
+	}
+	if current >= TrialWorkspacesPerUser {
+		return quotaExceeded("free workspaces for this user %d exceeds the %d limit; upgrade your existing workspace to a paid plan to create another", current+1, TrialWorkspacesPerUser)
+	}
+	return nil
 }
 
 // workspaceVolumeBytesTx sums provisioned volume sizes over a workspace's

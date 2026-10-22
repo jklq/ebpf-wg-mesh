@@ -7,6 +7,7 @@ import (
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 	"ebof-wg-mesh/internal/controlplane/identity"
 
@@ -27,6 +28,7 @@ func workspaceError(op string, err error) error {
 	case errors.Is(err, errPersonalWorkspace),
 		errors.Is(err, errLastWorkspaceAdmin),
 		errors.Is(err, errWorkspaceHasProjects),
+		errors.Is(err, billing.ErrGrowthBlocked),
 		errors.Is(err, deliverycore.ErrProjectDeleted):
 		return status.Errorf(codes.FailedPrecondition, "%s: %v", op, err)
 	case errors.Is(err, errInvitationNotFound), errors.Is(err, errWorkspaceMemberMissing):

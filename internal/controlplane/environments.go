@@ -448,7 +448,7 @@ func (s *catalogPersistence) createVolumeTx(ctx context.Context, tx *sql.Tx, pro
 	if environmentTombstone.Active() || projectTombstone.Active() {
 		return deliverycore.VolumeRecord{}, deliverycore.ErrEnvironmentDeleted
 	}
-	if err := billing.ValidateVolumeCreateTx(ctx, tx, s.enforceBilling, project.WorkspaceID(), sizeBytes); err != nil {
+	if err := billing.ValidateVolumeCreateTx(ctx, tx, s.enforceQuotas, project.WorkspaceID(), sizeBytes); err != nil {
 		return deliverycore.VolumeRecord{}, err
 	}
 	rec := deliverycore.VolumeRecord{

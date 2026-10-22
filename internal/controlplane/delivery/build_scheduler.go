@@ -304,7 +304,7 @@ func (d *Delivery) tryClaimBuildTx(ctx context.Context, tx *sql.Tx, buildID, bui
 	}
 	// Plan build caps (workspace concurrency, trial build-minutes) refuse
 	// the claim the same way; the build stays queued.
-	if s.enforceBilling {
+	if s.enforceQuotas {
 		if blocked, _, err := billing.BuildClaimBlockedTx(ctx, tx, build.ServiceID, now); err != nil {
 			return BuildRunRecord{}, false, err
 		} else if blocked {

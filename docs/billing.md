@@ -14,6 +14,9 @@ its RPCs.
 - **Shadow** provisions accounts, rates usage, closes periods into frozen
   statements, and records restrictions as dry runs. It never creates Stripe
   objects, never charges, and delivery never enforces a dry-run restriction.
+  Plan quotas (below) are the exception: they enforce in shadow mode too,
+  so the free tier is bounded before charging is enabled. Only `disabled`
+  mode turns quota checks off.
 - **Enabled** adds Stripe collection and restriction enforcement. Startup
   fails in enabled mode without Stripe keys, and fails unless at least one
   full shadow period (28 days or longer) has already closed into a
@@ -139,19 +142,27 @@ launch.
 ## Trial quotas and trust gates
 
 Each plan carries a quota (`Plans` in `billing.go`) bounding a workspace's
-desired state. Trial: sum of service CPU limits × replicas ≤ 2 vCPU,
-memory ≤ 4 GiB, ≤ 3 services per environment, ≤ 2 replicas per service,
-≤ 2 projects per workspace, ≤ 10 GiB total provisioned volume size,
-1 concurrent build and 300 build-minutes per rolling 30 days, and a
-25 GiB public-egress cap per period. Hobby/pro get generous fixed values
-(8/32 vCPU, 16/64 GiB memory, 100 GiB/1 TiB volumes, 2/5 concurrent
-builds, no build-minute cap) — fleet protection, not pricing. Managed
-platform projects have no account and stay exempt.
+desired state. The trial plan is the free tier offered at open signup, so
+its caps are the abuse ceiling: 1 project per workspace, ≤ 3 services in
+that project (counted across its environments), per service at most
+1 vCPU and 512 MiB of memory with 1 replica, ≤ 512 MiB total provisioned
+volume size, 1 concurrent build and 300 build-minutes per rolling 30
+days, and a 25 GiB public-egress cap per period. The workspace CPU/memory
+totals (3 vCPU, 1536 MiB) are the three per-service caps summed; the fleet
+agent separately caps every allocation's ephemeral (writable-layer)
+storage at 1 GiB on every plan. One user may administer at most one free
+workspace at a time (`ValidateWorkspaceCreateTx`): creating a workspace
+while administering a trial workspace — or one whose account is not
+provisioned yet — is refused until that workspace moves to a paid plan.
+Hobby/pro get generous fixed values (8/32 vCPU, 16/64 GiB memory, 100 GiB/1 TiB
+volumes, 2/5 concurrent builds, no build-minute cap) — fleet protection,
+not pricing. Managed platform projects have no account and stay exempt.
 
 Quotas are validated inside the product transaction on desired-state
-mutations — service create/update (scale included), volume
-create/grow, and project create — in enabled mode only, like
-restrictions. A mutation is refused with the restriction error shape when
+mutations — workspace create, project create/move/restore, service
+create/update (scale included) and restore, and volume create/grow —
+whenever billing mode is not `disabled` (shadow included, unlike
+restrictions). A mutation is refused with the restriction error shape when
 the workspace's resulting totals (draft spec limits × desired replicas,
 from journal state) would grow past a limit; reductions always pass, even
 when the workspace is already over quota. Build caps refuse new claims at
@@ -180,6 +191,14 @@ a partition. The GitHub age profile is recorded when the user's personal
 workspace is ensured, so a brand-new signup may briefly evaluate before
 its profile lands. One trial per user keys on the GitHub-authenticated
 user identity; it does not attempt to link separate GitHub accounts.
+Restoring a deleted environment or volume re-admits its prior footprint
+without a quota check (project and service restores are checked); an
+over-quota restore can still be shrunk or deleted, and growth from it
+stays refused. The personal workspace is ensured on sign-in outside the
+workspace-create path, so a user who creates a shared workspace through
+the API before ever signing in to the console can briefly administer two
+free workspaces; the second receives no trial credit and stays restricted
+until paid activation in enabled mode.
 
 ## Stripe
 

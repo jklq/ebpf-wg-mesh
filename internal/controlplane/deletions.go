@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"ebof-wg-mesh/internal/controlplane/authz"
+	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/dbtx"
 	deliverycore "ebof-wg-mesh/internal/controlplane/delivery"
 )
@@ -172,6 +173,9 @@ func (s *catalogPersistence) restoreProject(ctx context.Context, user authz.User
 		if current.Deletion == nil {
 			rec = current
 			return nil
+		}
+		if err := billing.ValidateProjectQuotaTx(ctx, tx, s.enforceQuotas, current.WorkspaceID); err != nil {
+			return err
 		}
 		restored, err := s.clearProjectTombstoneTx(ctx, tx, current.ID)
 		if err != nil {

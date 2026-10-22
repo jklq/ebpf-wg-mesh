@@ -15,16 +15,24 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
-// enabledBilling builds an enabled-mode billing service over the test store
-// and turns on the persistence-layer gates the server wires from the mode.
-func enabledBilling(t *testing.T, store *persistence) *billing.Service {
+// quotaBilling builds a billing service over the test store and turns on
+// the persistence-layer gates exactly as the server wires them from the
+// mode: quota gates whenever billing is not disabled, the remaining
+// billing gates only in enabled mode.
+func quotaBilling(t *testing.T, store *persistence, mode billing.Mode) *billing.Service {
 	t.Helper()
-	store.enforceBilling = true
-	svc := billing.New(store.db, store.source.Work(), store.withProductTx, nil, nil, billing.Config{Mode: billing.ModeEnabled})
+	store.enforceBilling = mode == billing.ModeEnabled
+	store.enforceQuotas = mode != billing.ModeDisabled
+	svc := billing.New(store.db, store.source.Work(), store.withProductTx, nil, nil, billing.Config{Mode: mode})
 	if _, err := svc.EnsureAccounts(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	return svc
+}
+
+func enabledBilling(t *testing.T, store *persistence) *billing.Service {
+	t.Helper()
+	return quotaBilling(t, store, billing.ModeEnabled)
 }
 
 func creditBalance(t *testing.T, svc *billing.Service, workspaceID string) int64 {
@@ -58,8 +66,16 @@ func TestBillingTrialGrantedOncePerUser(t *testing.T) {
 	user := testUser("user-2")
 
 	// The user's first workspace is a shared one; no personal workspace
-	// exists yet, so the shared workspace's creator owns the grant.
+	// exists yet, so the shared workspace's creator owns the grant. Both
+	// workspaces are created before quota enforcement is wired, as a
+	// pre-cap (or invited) second workspace would exist: with enforcement
+	// on, creating the second free workspace is refused outright (see
+	// TestBillingTrialWorkspaceCap), but the grant must still not repeat.
 	first, err := store.catalog.createWorkspace(ctx, user, "First Shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.catalog.createWorkspace(ctx, user, "Second Shared")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,13 +91,6 @@ func TestBillingTrialGrantedOncePerUser(t *testing.T) {
 		t.Fatalf("first workspace budget stop = %+v, want %d", account.BudgetStopCents, billing.TrialCreditCents)
 	}
 
-	second, err := store.catalog.createWorkspace(ctx, user, "Second Shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.EnsureAccounts(ctx); err != nil {
-		t.Fatal(err)
-	}
 	if balance := creditBalance(t, svc, second.ID); balance != 0 {
 		t.Fatalf("second workspace credit = %d, want 0", balance)
 	}
@@ -253,17 +262,28 @@ func quotaSpec(cpuMillis, memoryMebibytes int64, replicas int32) *platformv1.Ser
 	return spec
 }
 
-// (b) Every trial quota rejects the mutation that crosses it, and
+// (b) Every trial (free) quota rejects the mutation that crosses it, and
 // reductions stay allowed while the workspace is already over quota.
-// Trial: 2000m CPU, 4096 MiB memory, 3 services per environment,
-// 2 replicas per service, 2 projects, 10 GiB volumes.
+// Trial: 1 project, 3 services per project, per service at most 1000m
+// CPU, 512 MiB memory, and 1 replica, 512 MiB volumes; workspace totals
+// are the three per-service CPU/memory caps summed (3000m, 1536 MiB).
 func TestBillingTrialQuotasEnforcedOnMutations(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
 	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
+	// A second workspace with a project, created before enforcement, is
+	// the move source for the project-cap check below.
+	otherWorkspace, err := store.catalog.createWorkspace(ctx, testUser("user-1"), "Other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	movable, err := store.catalog.createProject(ctx, testUser("user-1"), otherWorkspace.ID, "movable")
+	if err != nil {
+		t.Fatal(err)
+	}
 	_ = enabledBilling(t, store)
-	var workspace string
-	if err := store.db.QueryRow(`SELECT p.workspace_id FROM environments e JOIN projects p ON p.id = e.project_id WHERE e.id = $1`, envID).Scan(&workspace); err != nil {
+	var workspace, project string
+	if err := store.db.QueryRow(`SELECT p.workspace_id, p.id FROM environments e JOIN projects p ON p.id = e.project_id WHERE e.id = $1`, envID).Scan(&workspace, &project); err != nil {
 		t.Fatal(err)
 	}
 	wantQuota := func(op string, err error) {
@@ -281,51 +301,60 @@ func TestBillingTrialQuotasEnforcedOnMutations(t *testing.T) {
 		return rec.ID
 	}
 
-	s1 := mustCreate("s1", quotaSpec(1000, 1024, 1)) // totals 1000m / 1024 MiB
-	_, err := createScheduledService(ctx, store, "user-1", envID, "s2", quotaSpec(1001, 128, 1))
-	wantQuota("create over CPU quota", err)
-	mustCreate("s2", quotaSpec(500, 3000, 1)) // totals 1500m / 4024 MiB
-	_, err = createScheduledService(ctx, store, "user-1", envID, "s3", quotaSpec(100, 100, 1))
-	wantQuota("create over memory quota", err)
-	s3 := mustCreate("s3", quotaSpec(100, 10, 1)) // totals 1600m / 4034 MiB, 3 services
+	// Per-service caps bind even the first service in an empty workspace.
+	_, err = createScheduledService(ctx, store, "user-1", envID, "s1", quotaSpec(1001, 128, 1))
+	wantQuota("create over per-service CPU quota", err)
+	_, err = createScheduledService(ctx, store, "user-1", envID, "s1", quotaSpec(100, 513, 1))
+	wantQuota("create over per-service memory quota", err)
+	s1 := mustCreate("s1", quotaSpec(1000, 512, 1)) // totals 1000m / 512 MiB
+	s2 := mustCreate("s2", quotaSpec(1000, 512, 1)) // totals 2000m / 1024 MiB
+	s3 := mustCreate("s3", quotaSpec(1000, 512, 1)) // totals 3000m / 1536 MiB, 3 services
 	_, err = createScheduledService(ctx, store, "user-1", envID, "s4", quotaSpec(10, 10, 1))
 	wantQuota("create over environment service quota", err)
 
-	if _, _, err := scaleService(ctx, store, "user-1", s3, 2); err != nil {
-		t.Fatalf("scale s3 to 2: %v", err)
+	// The project cap counts across environments: a fresh environment in
+	// the same project has room per-environment but none per-project.
+	staging, err := store.catalog.createEnvironment(ctx, testUser("user-1"), project, "staging")
+	if err != nil {
+		t.Fatalf("create staging environment: %v", err)
 	}
-	_, _, err = scaleService(ctx, store, "user-1", s3, 3)
+	_, err = createScheduledService(ctx, store, "user-1", staging.ID, "s4", quotaSpec(10, 10, 1))
+	wantQuota("create over project service quota", err)
+
+	_, _, err = scaleService(ctx, store, "user-1", s3, 2)
 	wantQuota("scale over replica quota", err)
-	_, _, err = updateService(ctx, store, "user-1", s1, "s1", quotaSpec(1301, 1024, 1))
-	wantQuota("update over CPU quota", err)
+	_, _, err = updateService(ctx, store, "user-1", s1, "s1", quotaSpec(1001, 512, 1))
+	wantQuota("update over per-service CPU quota", err)
 
-	// Projects: the seeded workspace holds one already.
-	if _, err := store.catalog.createProject(ctx, testUser("user-1"), workspace, "p2"); err != nil {
-		t.Fatalf("create project p2: %v", err)
+	// Projects: the seeded workspace already holds its one free project.
+	// Re-ensuring it by name is idempotent, but a second project — created
+	// or moved in — crosses the cap.
+	if _, err := store.catalog.createProject(ctx, testUser("user-1"), workspace, "demo"); err != nil {
+		t.Fatalf("re-ensure project demo: %v", err)
 	}
-	if _, err := store.catalog.createProject(ctx, testUser("user-1"), workspace, "p2"); err != nil {
-		t.Fatalf("re-ensure project p2: %v", err)
-	}
-	_, err = store.catalog.createProject(ctx, testUser("user-1"), workspace, "p3")
+	_, err = store.catalog.createProject(ctx, testUser("user-1"), workspace, "p2")
 	wantQuota("create over project quota", err)
+	_, err = store.catalog.moveProject(ctx, testUser("user-1"), movable.ID, workspace)
+	wantQuota("move over project quota", err)
 
-	// Volumes: 6 GiB fits, 5 more crosses 10 GiB, growing to exactly 10 fits.
-	volume, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data-a", 6<<30)
+	// Volumes: 256 MiB fits, 512 MiB more crosses the 512 MiB total, and
+	// growing to exactly 512 MiB fits.
+	volume, err := store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data-a", 256<<20)
 	if err != nil {
 		t.Fatalf("create volume data-a: %v", err)
 	}
-	_, err = store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data-b", 5<<30)
+	_, err = store.catalog.createScheduledVolume(ctx, testUser("user-1"), envID, "data-b", 512<<20)
 	wantQuota("create over volume quota", err)
-	_, err = testDelivery(store).GrowVolume(ctx, testUser("user-1"), volume.ID, 11<<30)
+	_, err = testDelivery(store).GrowVolume(ctx, testUser("user-1"), volume.ID, 576<<20)
 	wantQuota("grow over volume quota", err)
-	if _, err := testDelivery(store).GrowVolume(ctx, testUser("user-1"), volume.ID, 10<<30); err != nil {
+	if _, err := testDelivery(store).GrowVolume(ctx, testUser("user-1"), volume.ID, 512<<20); err != nil {
 		t.Fatalf("grow volume to quota limit: %v", err)
 	}
 
-	// Push the workspace over the CPU quota directly in desired state
+	// Push the workspace over the CPU quotas directly in desired state
 	// (as a quota shrink or pre-quota state would), then prove reductions
 	// still pass while any increase is refused.
-	raw, err := protojson.Marshal(quotaSpec(5000, 1024, 1))
+	raw, err := protojson.Marshal(quotaSpec(5000, 512, 1))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,13 +362,13 @@ func TestBillingTrialQuotasEnforcedOnMutations(t *testing.T) {
 		WHERE service_id = $2 AND spec_revision = (SELECT current_spec_revision FROM services WHERE id = $2)`, raw, s1); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := updateService(ctx, store, "user-1", s1, "s1", quotaSpec(4000, 1024, 1)); err != nil {
+	if _, _, err := updateService(ctx, store, "user-1", s1, "s1", quotaSpec(4000, 512, 1)); err != nil {
 		t.Fatalf("reduce CPU while over quota: %v", err)
 	}
-	if _, _, err := scaleService(ctx, store, "user-1", s3, 1); err != nil {
-		t.Fatalf("scale down while over quota: %v", err)
+	if _, _, err := updateService(ctx, store, "user-1", s2, "s2", quotaSpec(1000, 256, 1)); err != nil {
+		t.Fatalf("reduce memory while over quota: %v", err)
 	}
-	_, err = createScheduledService(ctx, store, "user-1", envID, "s5", quotaSpec(10, 10, 1))
+	_, err = createScheduledService(ctx, store, "user-1", staging.ID, "s5", quotaSpec(10, 10, 1))
 	wantQuota("create while over quota", err)
 }
 
@@ -408,4 +437,70 @@ func TestBillingTrialBuildCapsRefuseClaims(t *testing.T) {
 		t.Fatal(err)
 	}
 	claimBuildWith(t, d, ctx, "builder-2", buildB.ID)
+}
+
+// (f) One free workspace per user: a user who already administers a
+// trial workspace cannot create another workspace until that workspace
+// leaves the trial plan. Other users are unaffected, and a workspace
+// whose billing account is not provisioned yet already counts.
+func TestBillingTrialWorkspaceCap(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	seedReplicaFixture(t, store, ctx, []string{"node-a"})
+	svc := enabledBilling(t, store)
+	user := testUser("user-1")
+	workspaces, _, err := store.catalog.listWorkspaces(ctx, user, "")
+	if err != nil || len(workspaces) != 1 {
+		t.Fatalf("listWorkspaces: %v (%d workspaces)", err, len(workspaces))
+	}
+	seeded := workspaces[0].ID
+
+	if _, err := store.catalog.createWorkspace(ctx, user, "Second"); !errors.Is(err, billing.ErrGrowthBlocked) {
+		t.Fatalf("second free workspace = %v, want a quota (growth-blocked) error", err)
+	}
+
+	// A different user can still create their first workspace, but not a
+	// second one — even before its billing account exists.
+	other := testUser("user-9")
+	if _, err := store.catalog.createWorkspace(ctx, other, "Other First"); err != nil {
+		t.Fatalf("other user's first workspace: %v", err)
+	}
+	if _, err := store.catalog.createWorkspace(ctx, other, "Other Second"); !errors.Is(err, billing.ErrGrowthBlocked) {
+		t.Fatalf("other user's second workspace = %v, want a quota (growth-blocked) error", err)
+	}
+
+	// Upgrading the free workspace to a paid plan frees the slot; the new
+	// workspace starts on trial and fills it again.
+	if _, err := store.db.Exec(`UPDATE billing_accounts SET plan_id = 'hobby' WHERE workspace_id = $1`, seeded); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.catalog.createWorkspace(ctx, user, "Second"); err != nil {
+		t.Fatalf("workspace after upgrade: %v", err)
+	}
+	if _, err := svc.EnsureAccounts(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.catalog.createWorkspace(ctx, user, "Third"); !errors.Is(err, billing.ErrGrowthBlocked) {
+		t.Fatalf("third workspace = %v, want a quota (growth-blocked) error", err)
+	}
+}
+
+// (g) Quotas enforce in shadow mode too — the free tier stays bounded
+// before charging is enabled — even though restrictions recorded in
+// shadow mode remain dry runs.
+func TestBillingQuotasEnforcedInShadowMode(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	envID := seedReplicaFixture(t, store, ctx, []string{"node-a"})
+	_ = quotaBilling(t, store, billing.ModeShadow)
+
+	if _, err := createScheduledService(ctx, store, "user-1", envID, "big", quotaSpec(1001, 128, 1)); !errors.Is(err, billing.ErrGrowthBlocked) {
+		t.Fatalf("over-quota service in shadow mode = %v, want a quota (growth-blocked) error", err)
+	}
+	if _, err := createScheduledService(ctx, store, "user-1", envID, "web", quotaSpec(100, 128, 1)); err != nil {
+		t.Fatalf("in-quota service in shadow mode: %v", err)
+	}
+	if _, err := store.catalog.createWorkspace(ctx, testUser("user-1"), "Second"); !errors.Is(err, billing.ErrGrowthBlocked) {
+		t.Fatalf("second free workspace in shadow mode = %v, want a quota (growth-blocked) error", err)
+	}
 }

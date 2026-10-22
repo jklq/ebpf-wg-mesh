@@ -64,20 +64,31 @@ type Plan struct {
 	Quota               Quota
 }
 
-// Quota bounds one workspace's desired state and build usage. Trial values
-// are the abuse ceiling for public signup; paid values are generous fleet
-// protection, not a pricing feature. A zero MaxBuildMinutes30Days means no
-// build-minute cap. Quotas are validated on desired-state mutations in
-// enabled billing mode; see ValidateServiceQuotaTx.
+// Quota bounds one workspace's desired state and build usage. The trial
+// plan is the free tier: its values are the abuse ceiling for public
+// signup. Paid values are generous fleet protection, not a pricing
+// feature. A zero MaxServicesPerProject, MaxCPUMillisPerService,
+// MaxMemoryMebibytesPerService, or MaxBuildMinutes30Days means no cap on
+// that dimension. Quotas are validated on desired-state mutations
+// whenever billing is not disabled (shadow included), unlike spend
+// restrictions, which only enforce in enabled mode; see
+// ValidateServiceQuotaTx.
+//
+// Ephemeral storage is not a Quota dimension: it has no per-service spec
+// field. The fleet agent caps every allocation's writable layer at
+// 1 GiB regardless of plan, which is the free tier's ephemeral limit.
 type Quota struct {
-	MaxCPUMillis              int64
-	MaxMemoryMebibytes        int64
-	MaxServicesPerEnvironment int64
-	MaxReplicasPerService     int64
-	MaxProjects               int64
-	MaxVolumeBytes            int64
-	MaxConcurrentBuilds       int64
-	MaxBuildMinutes30Days     int64
+	MaxCPUMillis                 int64
+	MaxMemoryMebibytes           int64
+	MaxCPUMillisPerService       int64
+	MaxMemoryMebibytesPerService int64
+	MaxServicesPerEnvironment    int64
+	MaxServicesPerProject        int64
+	MaxReplicasPerService        int64
+	MaxProjects                  int64
+	MaxVolumeBytes               int64
+	MaxConcurrentBuilds          int64
+	MaxBuildMinutes30Days        int64
 }
 
 // Launch plans, mirroring the Railway reference points in
@@ -91,10 +102,16 @@ const (
 )
 
 var Plans = map[string]Plan{
+	// The free tier: one project with up to 3 services, each at most
+	// 1 vCPU and 512 MiB with a single replica, and 512 MiB of volume
+	// storage in total. The workspace CPU/memory totals are the three
+	// per-service caps summed. One free workspace per user is enforced
+	// separately; see ValidateWorkspaceCreateTx.
 	PlanTrial: {ID: PlanTrial, MonthlyMinimumCents: 0, IncludedUsageCents: 0, Quota: Quota{
-		MaxCPUMillis: 2_000, MaxMemoryMebibytes: 4_096,
-		MaxServicesPerEnvironment: 3, MaxReplicasPerService: 2, MaxProjects: 2,
-		MaxVolumeBytes: 10 << 30, MaxConcurrentBuilds: 1, MaxBuildMinutes30Days: 300,
+		MaxCPUMillis: 3_000, MaxMemoryMebibytes: 1_536,
+		MaxCPUMillisPerService: 1_000, MaxMemoryMebibytesPerService: 512,
+		MaxServicesPerEnvironment: 3, MaxServicesPerProject: 3, MaxReplicasPerService: 1, MaxProjects: 1,
+		MaxVolumeBytes: 512 << 20, MaxConcurrentBuilds: 1, MaxBuildMinutes30Days: 300,
 	}},
 	PlanHobby: {ID: PlanHobby, MonthlyMinimumCents: 500, IncludedUsageCents: 500, Quota: Quota{
 		MaxCPUMillis: 8_000, MaxMemoryMebibytes: 16_384,
