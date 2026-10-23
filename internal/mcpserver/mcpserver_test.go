@@ -37,7 +37,7 @@ func newFakePlatform() *fakePlatform {
 		SpecRevision: 3, PendingChanges: true, DesiredReplicaCount: 1,
 		Spec: &platformv1.ServiceSpec{
 			Runtime: &platformv1.ServiceRuntime{
-				Env:   map[string]string{"EXISTING": "1"},
+				Env:   map[string]string{"EXISTING": "existing-secret-value"},
 				Ports: []*platformv1.ServiceRuntimePort{{Port: 8080, Primary: true}},
 			},
 			Source:              &platformv1.ServiceSource{Source: &platformv1.ServiceSource_Image{Image: &platformv1.DirectImageSource{Image: "nginx:1.27"}}},
@@ -75,7 +75,14 @@ func (f *fakePlatform) GetService(_ context.Context, req *platformv1.GetServiceR
 	if req.GetServiceId() != f.service.GetId() {
 		return nil, status.Error(codes.NotFound, "service not found")
 	}
-	return proto.Clone(f.service).(*platformv1.Service), nil
+	// Mirror the control plane: env values are redacted unless revealed.
+	svc := proto.Clone(f.service).(*platformv1.Service)
+	if !req.GetIncludeSecrets() {
+		for name := range svc.GetSpec().GetRuntime().GetEnv() {
+			svc.Spec.Runtime.Env[name] = ""
+		}
+	}
+	return svc, nil
 }
 
 func (f *fakePlatform) UpdateService(_ context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error) {
@@ -257,11 +264,27 @@ func TestSetVariablesMergesAndReleases(t *testing.T) {
 		"release":    true,
 	})
 	env := platform.service.GetSpec().GetRuntime().GetEnv()
-	if env["EXISTING"] != "1" || env["NEW"] != "2" {
+	if env["EXISTING"] != "existing-secret-value" || env["NEW"] != "2" {
 		t.Fatalf("merged env = %v", env)
 	}
 	if len(platform.released) != 1 || !strings.Contains(out, "released") {
 		t.Fatalf("released = %v, out = %s", platform.released, out)
+	}
+}
+
+func TestListVariablesRedactsByDefault(t *testing.T) {
+	session, _ := newSession(t)
+
+	out := callText(t, session, "list_variables", map[string]any{"service_id": "svc-1"})
+	if !strings.Contains(out, "EXISTING") || strings.Contains(out, "existing-secret-value") {
+		t.Fatalf("default list_variables = %s, want names without values", out)
+	}
+
+	out = callText(t, session, "list_variables", map[string]any{
+		"service_id": "svc-1", "include_values": true,
+	})
+	if !strings.Contains(out, "existing-secret-value") {
+		t.Fatalf("include_values list_variables = %s, want revealed value", out)
 	}
 }
 

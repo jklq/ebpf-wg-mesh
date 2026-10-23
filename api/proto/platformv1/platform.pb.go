@@ -2224,8 +2224,9 @@ type ServiceRuntime struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Command []string               `protobuf:"bytes,1,rep,name=command,proto3" json:"command,omitempty"`
 	Args    []string               `protobuf:"bytes,2,rep,name=args,proto3" json:"args,omitempty"`
-	// Env values may hold credentials: encrypted at rest, readable by service
-	// readers, and redacted from debug output.
+	// Env values may hold credentials: encrypted at rest and redacted from
+	// debug output. Reads return names with empty values unless the caller
+	// explicitly reveals secrets (see GetServiceRequest.include_secrets).
 	Env             map[string]string     `protobuf:"bytes,3,rep,name=env,proto3" json:"env,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	CpuMillis       int64                 `protobuf:"varint,4,opt,name=cpu_millis,json=cpuMillis,proto3" json:"cpu_millis,omitempty"`
 	MemoryMebibytes int64                 `protobuf:"varint,5,opt,name=memory_mebibytes,json=memoryMebibytes,proto3" json:"memory_mebibytes,omitempty"`
@@ -8415,10 +8416,15 @@ func (x *RestoreServiceRequest) GetServiceId() string {
 }
 
 type GetServiceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ServiceId     string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	ServiceId string                 `protobuf:"bytes,1,opt,name=service_id,json=serviceId,proto3" json:"service_id,omitempty"`
+	// Secret values (runtime env) are redacted by default: variable names
+	// are returned with empty values. Setting include_secrets reveals the
+	// values and requires secret-read access (workspace member or admin);
+	// viewers are denied. List and status reads always redact.
+	IncludeSecrets bool `protobuf:"varint,2,opt,name=include_secrets,json=includeSecrets,proto3" json:"include_secrets,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetServiceRequest) Reset() {
@@ -8456,6 +8462,13 @@ func (x *GetServiceRequest) GetServiceId() string {
 		return x.ServiceId
 	}
 	return ""
+}
+
+func (x *GetServiceRequest) GetIncludeSecrets() bool {
+	if x != nil {
+		return x.IncludeSecrets
+	}
+	return false
 }
 
 type ListServicesRequest struct {
@@ -15591,10 +15604,11 @@ const file_platform_proto_rawDesc = "" +
 	"service_id\x18\x01 \x01(\tR\tserviceId\"6\n" +
 	"\x15RestoreServiceRequest\x12\x1d\n" +
 	"\n" +
-	"service_id\x18\x01 \x01(\tR\tserviceId\"2\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\"[\n" +
 	"\x11GetServiceRequest\x12\x1d\n" +
 	"\n" +
-	"service_id\x18\x01 \x01(\tR\tserviceId\"\xb6\x01\n" +
+	"service_id\x18\x01 \x01(\tR\tserviceId\x12'\n" +
+	"\x0finclude_secrets\x18\x02 \x01(\bR\x0eincludeSecrets\"\xb6\x01\n" +
 	"\x13ListServicesRequest\x12%\n" +
 	"\x0eenvironment_id\x18\x01 \x01(\tR\renvironmentId\x12\x1d\n" +
 	"\n" +

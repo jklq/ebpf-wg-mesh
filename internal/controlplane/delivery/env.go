@@ -60,6 +60,29 @@ func ValidateServiceEnv(spec *platformv1.ServiceSpec) error {
 	return nil
 }
 
+// RedactServiceSpecSecrets blanks env values in place, keeping variable
+// names. User-facing reads redact by default: values leave only through the
+// secret-read path (authz.ReadSecrets) or to the service's own agent.
+func RedactServiceSpecSecrets(spec *platformv1.ServiceSpec) {
+	for name := range spec.GetRuntime().GetEnv() {
+		spec.Runtime.Env[name] = ""
+	}
+}
+
+// RedactServiceRecordSecrets blanks every secret value a service record
+// carries: the spec env and env entries among its unapplied changes (whose
+// add/update/remove actions stay intact). Apply it to freshly loaded
+// records before they cross to a user; system reads never pass through here.
+func RedactServiceRecordSecrets(rec *ServiceRecord) {
+	RedactServiceSpecSecrets(rec.Spec)
+	for _, change := range rec.UnappliedChanges {
+		if strings.HasPrefix(change.GetPath(), "runtime.env.") {
+			change.CurrentValue = ""
+			change.NewValue = ""
+		}
+	}
+}
+
 // revisionEnvAAD binds env ciphertext to its revision so a copied row does not decrypt.
 func revisionEnvAAD(serviceID string, specRevision int64) []byte {
 	return []byte("service-env/v1\x00" + serviceID + "\x00" + strconv.FormatInt(specRevision, 10))

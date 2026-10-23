@@ -137,8 +137,10 @@ resource and the `deploy_app` / `debug_deployment` prompts.
   a preview call followed by `confirm: true`; clients should still
   prompt. Deletion name confirmations are resolved server-side after
   confirmation.
-- `list_variables` returns secret values (same visibility as the
-  console). Treat transcripts accordingly; use `include_values: false`
-  when names suffice.
+- `list_variables` returns variable names only by default. Passing
+  `include_values: true` reveals secret values and requires a
+  full-access token whose user holds secret-read access (workspace
+  member or admin); treat transcripts accordingly. Service reads
+  (`get_service`, `list_services`) always redact values.
 - The token acts as its owner for billing and audit (`last_used_at`
   per token); revoke lost tokens immediately.

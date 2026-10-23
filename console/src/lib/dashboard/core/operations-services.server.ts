@@ -150,16 +150,37 @@ export async function listBuildAttemptsFromSession(
 		.then((response) => response.attempts ?? []);
 }
 
+/**
+ * The variables editor's data source. List and status reads redact env
+ * values; this reveals them, which the control plane gates on secret-read
+ * access (workspace member or admin).
+ */
+export async function getServiceVariablesFromSession(
+	runtime: DashboardRuntime,
+	input: { serviceId: string },
+): Promise<Record<string, string>> {
+	const session = await requireSession(runtime);
+	const service = await runtime.platform.call(
+		PlatformService.method.getService,
+		session.user,
+		{ serviceId: input.serviceId, includeSecrets: true },
+	);
+	return { ...(service.spec?.runtime?.env ?? {}) };
+}
+
 export async function updateServiceFromSession(
 	runtime: DashboardRuntime,
 	input: UpdateServiceInput,
 ): Promise<DashboardServiceRecord> {
 	const session = await requireSession(runtime);
+	// Reveal secrets: the update below round-trips the current env when the
+	// caller does not replace it, and a redacted read would blank values.
 	const current = await runtime.platform.call(
 		PlatformService.method.getService,
 		session.user,
 		{
 			serviceId: input.serviceId,
+			includeSecrets: true,
 		},
 	);
 	const currentSource = current.spec?.source?.sourceSpec;

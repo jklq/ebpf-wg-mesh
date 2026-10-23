@@ -13,17 +13,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PanelVariables } from "#/features/dashboard/service-panel/variables/panel-variables";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 
-const { doUpdateServiceMock } = vi.hoisted(() => ({
+const { doUpdateServiceMock, fetchServiceVariablesMock } = vi.hoisted(() => ({
 	doUpdateServiceMock: vi.fn(),
+	fetchServiceVariablesMock: vi.fn(),
 }));
 
 vi.mock("#/lib/dashboard/server-functions", () => ({
 	doUpdateService: doUpdateServiceMock,
+	fetchServiceVariables: fetchServiceVariablesMock,
 }));
 
 afterEach(() => {
 	cleanup();
 	doUpdateServiceMock.mockReset();
+	fetchServiceVariablesMock.mockReset();
 });
 
 describe("variables panel seed", () => {
@@ -124,6 +127,8 @@ describe("variables panel seed", () => {
 				onSavingChange={onSavingChange}
 			/>,
 		);
+		// Wait for the secret-read fetch to reveal values into the rows.
+		await screen.findByDisplayValue("one");
 
 		fireEvent.click(screen.getByRole("button", { name: "Raw" }));
 		const editor = screen.getByRole("textbox", { name: "Raw variables" });
@@ -173,13 +178,24 @@ function deferred<T>() {
 function variableService(
 	env: Record<string, string> = {},
 ): DashboardServiceRecord {
+	// Service records redact values; the panel reveals them via the
+	// variables fetch, which the fixture answers with the real env.
+	fetchServiceVariablesMock.mockResolvedValue({ ...env });
+	const redacted = Object.fromEntries(
+		Object.keys(env).map((name) => [name, ""]),
+	);
 	return serviceFixture({
 		id: "service-1",
 		environmentId: "environment-1",
 		projectId: "project-1",
 		name: "billing-worker",
 		spec: {
-			runtime: { env, cpuMillis: "250", memoryMebibytes: "256", ports: [] },
+			runtime: {
+				env: redacted,
+				cpuMillis: "250",
+				memoryMebibytes: "256",
+				ports: [],
+			},
 		},
 	});
 }

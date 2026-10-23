@@ -425,6 +425,17 @@ export const fetchDomainBindings = createServerFn({ method: "POST" })
 		);
 	});
 
+export const fetchServiceVariables = createServerFn({ method: "POST" })
+	.validator((input: unknown) => serviceIdInput.parse(input))
+	.handler(async ({ data }): Promise<Record<string, string>> => {
+		return (
+			await import("#/lib/dashboard/core/operations-services.server")
+		).getServiceVariablesFromSession(
+			(await import("#/lib/dashboard/server")).getDashboardRuntime(),
+			data,
+		);
+	});
+
 export const doUpdateService = createServerFn({ method: "POST" })
 	.validator((input: unknown) => updateServiceInput.parse(input))
 	.handler(async ({ data }) => {

@@ -277,7 +277,7 @@ func (s *state) addServiceTools(server *mcp.Server) {
 		return s.client.ListServices(ctx, id, in.IncludeDeleted)
 	})
 
-	add(server, readTool("get_service", "Get a service: desired spec/draft, source state, latest build and deployment, pending changes."), func(ctx context.Context, in serviceIDIn) (any, error) {
+	add(server, readTool("get_service", "Get a service: desired spec/draft, source state, latest build and deployment, pending changes. Env values are redacted (names only); use list_variables with include_values to reveal them."), func(ctx context.Context, in serviceIDIn) (any, error) {
 		id := s.serviceID(in.ServiceID)
 		if err := required("service_id", id); err != nil {
 			return nil, err
@@ -333,7 +333,9 @@ func (s *state) addServiceTools(server *mcp.Server) {
 		if err := required("service_id", id); err != nil {
 			return nil, err
 		}
-		current, err := s.client.GetService(ctx, id)
+		// Read-modify-write: reveal env so the patch round-trip preserves
+		// values the redacted read would blank.
+		current, err := s.client.GetServiceWithSecrets(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -437,14 +439,21 @@ func (s *state) addServiceTools(server *mcp.Server) {
 func (s *state) addVariableTools(server *mcp.Server) {
 	type listVarsIn struct {
 		ServiceID     string `json:"service_id"`
-		IncludeValues *bool  `json:"include_values,omitempty" jsonschema:"include values (default true; values may hold credentials)"`
+		IncludeValues *bool  `json:"include_values,omitempty" jsonschema:"include values (default false; values may hold credentials and require a full-access token)"`
 	}
-	add(server, readTool("list_variables", "List a service's environment variables from its current draft, with values by default (Railway: pull these into a .env file when asked)."), func(ctx context.Context, in listVarsIn) (any, error) {
+	add(server, readTool("list_variables", "List a service's environment variable names from its current draft. Values are omitted unless include_values:true (Railway: pull these into a .env file when asked)."), func(ctx context.Context, in listVarsIn) (any, error) {
 		id := s.serviceID(in.ServiceID)
 		if err := required("service_id", id); err != nil {
 			return nil, err
 		}
-		svc, err := s.client.GetService(ctx, id)
+		includeValues := in.IncludeValues != nil && *in.IncludeValues
+		var svc *platformv1.Service
+		var err error
+		if includeValues {
+			svc, err = s.client.GetServiceWithSecrets(ctx, id)
+		} else {
+			svc, err = s.client.GetService(ctx, id)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -453,15 +462,15 @@ func (s *state) addVariableTools(server *mcp.Server) {
 			"service_id": id, "service_name": svc.GetName(),
 			"pending_changes": svc.GetPendingChanges(),
 		}
-		if in.IncludeValues != nil && !*in.IncludeValues {
+		if includeValues {
+			out["variables"] = env
+		} else {
 			names := make([]string, 0, len(env))
 			for name := range env {
 				names = append(names, name)
 			}
 			sort.Strings(names)
 			out["variable_names"] = names
-		} else {
-			out["variables"] = env
 		}
 		return out, nil
 	})
@@ -480,7 +489,8 @@ func (s *state) addVariableTools(server *mcp.Server) {
 		if len(in.Set) == 0 && len(in.Unset) == 0 {
 			return nil, fmt.Errorf("pass set and/or unset")
 		}
-		current, err := s.client.GetService(ctx, id)
+		// Read-modify-write: reveal env so unset variables keep their values.
+		current, err := s.client.GetServiceWithSecrets(ctx, id)
 		if err != nil {
 			return nil, err
 		}

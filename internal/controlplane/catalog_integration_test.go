@@ -317,8 +317,12 @@ func TestDuplicateEnvironmentCopiesConfigurationButNoRuntimeState(t *testing.T) 
 		t.Fatal(err)
 	}
 	variableCopies, err := store.reads.ListServices(ctx, testUser("owner"), withVariables.ID, false)
-	if err != nil || len(variableCopies) != 1 || variableCopies[0].Spec.GetRuntime().GetEnv()["SECRET"] != "production" {
+	if err != nil || len(variableCopies) != 1 {
 		t.Fatalf("explicit variable copy failed: %#v: %v", variableCopies, err)
+	}
+	copied, err := store.reads.ServiceByIDWithSecrets(ctx, testUser("owner"), variableCopies[0].ID)
+	if err != nil || copied.Spec.GetRuntime().GetEnv()["SECRET"] != "production" {
+		t.Fatalf("explicit variable copy failed: %#v: %v", copied.Spec.GetRuntime().GetEnv(), err)
 	}
 }
 

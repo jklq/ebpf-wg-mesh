@@ -36,5 +36,9 @@ func (d *Delivery) ReadEnvironmentSnapshot(ctx context.Context, user authz.User,
 		snapshot.Volumes, err = d.store.listVolumesQuerier(ctx, tx, scope, includeDeleted)
 		return err
 	})
+	// Snapshots feed user list reads, so they redact like ListServices.
+	for i := range snapshot.Services {
+		RedactServiceRecordSecrets(&snapshot.Services[i])
+	}
 	return snapshot, err
 }

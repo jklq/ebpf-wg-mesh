@@ -9,7 +9,10 @@ import { PanelSection } from "#/components/ui/section";
 import { enqueueServicePersist } from "#/hooks/use-auto-queued-persist";
 import type { DashboardServiceRecord } from "#/lib/dashboard/core/types.server";
 import { envNameError, envValueError } from "#/lib/dashboard/env-variables";
-import { doUpdateService } from "#/lib/dashboard/server-functions";
+import {
+	doUpdateService,
+	fetchServiceVariables,
+} from "#/lib/dashboard/server-functions";
 import { formatError } from "#/lib/errors";
 import { colors, fonts, space } from "#/styles/tokens.stylex";
 
@@ -30,9 +33,13 @@ export function PanelVariables({
 	seedKey?: string;
 	onSavingChange?: (saving: boolean) => void;
 }) {
-	const savedEnvKey = stableEnvKey(service.spec?.runtime?.env ?? {});
+	// Service records redact env values (names only). The editor reveals
+	// values through the secret-read fetch below and prefers them.
+	const [revealedEnv, setRevealedEnv] = useState<Record<string, string>>();
+	const [revealFailed, setRevealFailed] = useState(false);
+	const savedEnv = revealedEnv ?? service.spec?.runtime?.env ?? {};
+	const savedEnvKey = stableEnvKey(savedEnv);
 	const changedEnvKeys = changedRuntimeEnvKeys(service);
-	const savedEnv = service.spec?.runtime?.env ?? {};
 	const [rows, setRows] = useState<VariableRow[]>(() =>
 		rowsFromStableEnvKey(savedEnvKey),
 	);
@@ -50,12 +57,37 @@ export function PanelVariables({
 	savingChangeRef.current = onSavingChange;
 	const serviceRef = useRef(service);
 	serviceRef.current = service;
+	const revealedEnvRef = useRef(revealedEnv);
+	revealedEnvRef.current = revealedEnv;
+	const revealFailedRef = useRef(revealFailed);
+	revealFailedRef.current = revealFailed;
 	const savedEnvKeyRef = useRef(savedEnvKey);
 	savedEnvKeyRef.current = savedEnvKey;
 	const queuedEnvKeyRef = useRef(savedEnvKey);
 	const localEditPendingRef = useRef(false);
 	const persistGenerationRef = useRef(0);
 	const seededKeyRef = useRef<string | undefined>(undefined);
+
+	// biome-ignore lint/correctness/useExhaustiveDependencies: specRevision is the refetch trigger after a save; the request itself only needs the id.
+	useEffect(() => {
+		let cancelled = false;
+		fetchServiceVariables({ data: { serviceId: service.id } })
+			.then((env) => {
+				if (!cancelled) {
+					setRevealedEnv(env);
+					setRevealFailed(false);
+				}
+			})
+			.catch((cause) => {
+				if (!cancelled) {
+					setRevealFailed(true);
+					setError(formatError(cause));
+				}
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [service.id, service.specRevision]);
 
 	useEffect(() => {
 		const incomingIsOurs = savedEnvKey === queuedEnvKeyRef.current;
@@ -120,6 +152,20 @@ export function PanelVariables({
 	};
 
 	const persistEnv = (env: Record<string, string>) => {
+		// Never persist from the redacted record while it names variables:
+		// untouched ones would be saved with empty values. With no existing
+		// variables there is nothing to blank, so a first save may proceed.
+		const existingNames = Object.keys(
+			serviceRef.current.spec?.runtime?.env ?? {},
+		);
+		if (revealedEnvRef.current === undefined && existingNames.length > 0) {
+			setError(
+				revealFailedRef.current
+					? "Variable values could not be loaded, so editing is disabled to avoid overwriting them."
+					: "Variable values are still loading.",
+			);
+			return;
+		}
 		const nextKey = stableEnvKey(env);
 		if (nextKey === queuedEnvKeyRef.current) {
 			return;

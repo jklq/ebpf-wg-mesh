@@ -383,7 +383,13 @@ func (s *platformService) GetService(ctx context.Context, req *platformv1.GetSer
 	if err != nil {
 		return nil, err
 	}
-	service, err := s.store.ServiceByID(ctx, user, req.GetServiceId())
+	reveal := req.GetIncludeSecrets()
+	var service deliverycore.ServiceRecord
+	if reveal {
+		service, err = s.store.ServiceByIDWithSecrets(ctx, user, req.GetServiceId())
+	} else {
+		service, err = s.store.ServiceByID(ctx, user, req.GetServiceId())
+	}
 	if err != nil {
 		if mapped := s.liveOwnerError(ctx, err); mapped != nil {
 			return nil, mapped
@@ -396,6 +402,9 @@ func (s *platformService) GetService(ctx context.Context, req *platformv1.GetSer
 			return nil, mapped
 		}
 		return nil, status.Errorf(codes.Internal, "decorate service: %v", err)
+	}
+	if reveal {
+		return toProtoServiceWithSecrets(service), nil
 	}
 	return toProtoService(service), nil
 }

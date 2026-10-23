@@ -53,6 +53,7 @@ type platformStore interface {
 	projectByID(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetention(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	ServiceByID(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
+	ServiceByIDWithSecrets(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
 	createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
 	ListVolumes(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
 	deleteVolume(ctx context.Context, user authz.User, volumeID, confirmation string) error

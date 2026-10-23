@@ -35,8 +35,21 @@ func (s *Server) serviceRoutes() []routeEntry {
 			resp, err := s.platform.CreateService(r.Context(), req)
 			s.respond(w, r, http.StatusCreated, resp, err)
 		}},
-		{method: "GET", pattern: "/v1/services/{serviceId}", summary: "Get a service (desired spec, source, latest build and deployment)", rule: svc, resp: "platform.v1.Service", handler: func(w http.ResponseWriter, r *http.Request) {
-			resp, err := s.platform.GetService(r.Context(), &platformv1.GetServiceRequest{ServiceId: r.PathValue("serviceId")})
+		{method: "GET", pattern: "/v1/services/{serviceId}", summary: "Get a service (desired spec, source, latest build and deployment; env values redacted unless include_secrets)", rule: svc, resp: "platform.v1.Service", handler: func(w http.ResponseWriter, r *http.Request) {
+			includeSecrets, err := queryBool(r, "include_secrets")
+			if err != nil {
+				s.writeError(w, r, err)
+				return
+			}
+			// Revealing secrets is a write-tier capability: a read-access
+			// token must not exfiltrate env values even when its user could.
+			if includeSecrets {
+				if token, ok := tokenFromContext(r.Context()); ok && token.Access == AccessRead {
+					s.writeError(w, r, forbiddenScope("secret values require a full-access token"))
+					return
+				}
+			}
+			resp, err := s.platform.GetService(r.Context(), &platformv1.GetServiceRequest{ServiceId: r.PathValue("serviceId"), IncludeSecrets: includeSecrets})
 			s.respond(w, r, http.StatusOK, resp, err)
 		}},
 		{method: "PUT", pattern: "/v1/services/{serviceId}", summary: "Replace a service draft (expected_spec_revision must be current; staged until release)", rule: svcWrite, req: "platform.v1.UpdateServiceRequest", resp: "platform.v1.Service", handler: func(w http.ResponseWriter, r *http.Request) {

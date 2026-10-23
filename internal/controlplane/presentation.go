@@ -10,6 +10,7 @@ import (
 	"ebof-wg-mesh/internal/controlplane/logs"
 	"ebof-wg-mesh/internal/controlplane/source"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -92,7 +93,20 @@ func toProtoEnvironment(rec deliverycore.EnvironmentRecord) *platformv1.Environm
 	}
 }
 
+// toProtoService renders a service for user APIs with secret values
+// redacted. Command results carry freshly loaded records whose env was
+// decrypted for internal use, so redaction happens here as well as in the
+// delivery reads; env state is cloned because records stay in use after
+// conversion. Only toProtoServiceWithSecrets reveals values.
 func toProtoService(rec deliverycore.ServiceRecord) *platformv1.Service {
+	rec.Spec = cloneSpecRedacted(rec.Spec)
+	rec.UnappliedChanges = cloneChangesRedacted(rec.UnappliedChanges)
+	return toProtoServiceWithSecrets(rec)
+}
+
+// toProtoServiceWithSecrets reveals secret values. Its only caller is the
+// explicit secret-read path (GetService with include_secrets).
+func toProtoServiceWithSecrets(rec deliverycore.ServiceRecord) *platformv1.Service {
 	return &platformv1.Service{
 		Id:                      rec.ID,
 		EnvironmentId:           rec.EnvironmentID,
@@ -117,6 +131,42 @@ func toProtoService(rec deliverycore.ServiceRecord) *platformv1.Service {
 		Deletion:                toProtoDeletion(rec.Deletion),
 		ServerlessState:         toProtoServerlessState(rec),
 	}
+}
+
+func cloneSpecRedacted(spec *platformv1.ServiceSpec) *platformv1.ServiceSpec {
+	revealed := false
+	for _, value := range spec.GetRuntime().GetEnv() {
+		if value != "" {
+			revealed = true
+			break
+		}
+	}
+	if !revealed {
+		return spec
+	}
+	cloned := proto.Clone(spec).(*platformv1.ServiceSpec)
+	deliverycore.RedactServiceSpecSecrets(cloned)
+	return cloned
+}
+
+func cloneChangesRedacted(changes []*platformv1.ServiceUnappliedChange) []*platformv1.ServiceUnappliedChange {
+	var out []*platformv1.ServiceUnappliedChange
+	for i, change := range changes {
+		if change.GetCurrentValue() == "" && change.GetNewValue() == "" {
+			continue
+		}
+		if out == nil {
+			out = make([]*platformv1.ServiceUnappliedChange, len(changes))
+			copy(out, changes)
+		}
+		out[i] = proto.Clone(change).(*platformv1.ServiceUnappliedChange)
+	}
+	if out == nil {
+		return changes
+	}
+	rec := deliverycore.ServiceRecord{UnappliedChanges: out}
+	deliverycore.RedactServiceRecordSecrets(&rec)
+	return rec.UnappliedChanges
 }
 
 func toProtoServerlessState(rec deliverycore.ServiceRecord) platformv1.ServerlessState {

@@ -21,6 +21,7 @@ type fakePlatform struct {
 	deletedProjects []string
 	createdProjects []*platformv1.CreateProjectRequest
 	lastUserID      string
+	getServiceReqs  []*platformv1.GetServiceRequest
 }
 
 func (f *fakePlatform) noteUser(ctx context.Context) {
@@ -48,6 +49,12 @@ func (f *fakePlatform) GetProject(ctx context.Context, req *platformv1.GetProjec
 		return nil, status.Error(codes.NotFound, "project not found")
 	}
 	return &platformv1.Project{Id: req.GetProjectId(), Name: "demo"}, nil
+}
+
+func (f *fakePlatform) GetService(ctx context.Context, req *platformv1.GetServiceRequest) (*platformv1.Service, error) {
+	f.noteUser(ctx)
+	f.getServiceReqs = append(f.getServiceReqs, req)
+	return &platformv1.Service{Id: req.GetServiceId(), Name: "web"}, nil
 }
 
 func (f *fakePlatform) DeleteProject(_ context.Context, req *platformv1.DeleteProjectRequest) (*emptypb.Empty, error) {
@@ -164,6 +171,29 @@ func TestReadOnlyTokenCannotWrite(t *testing.T) {
 	rec := call(t, server, "POST", "/v1/projects", "reader", `{"name":"x"}`)
 	if rec.Code != http.StatusForbidden || len(platform.createdProjects) != 0 {
 		t.Fatalf("read token create: %d, created %d", rec.Code, len(platform.createdProjects))
+	}
+}
+
+func TestReadOnlyTokenCannotRevealSecrets(t *testing.T) {
+	server, platform := testServer(t, Config{})
+
+	rec := call(t, server, "GET", "/v1/services/svc-1?include_secrets=true", "reader", "")
+	if rec.Code != http.StatusForbidden || len(platform.getServiceReqs) != 0 {
+		t.Fatalf("read token reveal: %d, platform calls %d", rec.Code, len(platform.getServiceReqs))
+	}
+	// The same token still gets the redacted read.
+	if rec := call(t, server, "GET", "/v1/services/svc-1", "reader", ""); rec.Code != http.StatusOK {
+		t.Fatalf("read token get: %d", rec.Code)
+	}
+	if platform.getServiceReqs[0].GetIncludeSecrets() {
+		t.Fatal("default get forwarded include_secrets")
+	}
+	// A full-access token may ask, and the flag reaches the platform.
+	if rec := call(t, server, "GET", "/v1/services/svc-1?include_secrets=true", "acct", ""); rec.Code != http.StatusOK {
+		t.Fatalf("full token reveal: %d", rec.Code)
+	}
+	if !platform.getServiceReqs[1].GetIncludeSecrets() {
+		t.Fatal("full token get did not forward include_secrets")
 	}
 }
 

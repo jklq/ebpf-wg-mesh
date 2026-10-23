@@ -185,6 +185,14 @@ func (c *Client) GetService(ctx context.Context, serviceID string) (*platformv1.
 	return out, c.do(ctx, http.MethodGet, "/v1/services/"+escape(serviceID), nil, nil, out)
 }
 
+// GetServiceWithSecrets reveals env values. The token needs full access and
+// its user secret-read access; every other read returns names only.
+func (c *Client) GetServiceWithSecrets(ctx context.Context, serviceID string) (*platformv1.Service, error) {
+	out := &platformv1.Service{}
+	q := query(map[string]string{"include_secrets": boolQuery(true)})
+	return out, c.do(ctx, http.MethodGet, "/v1/services/"+escape(serviceID), q, nil, out)
+}
+
 func (c *Client) UpdateService(ctx context.Context, req *platformv1.UpdateServiceRequest) (*platformv1.Service, error) {
 	out := &platformv1.Service{}
 	return out, c.do(ctx, http.MethodPut, "/v1/services/"+escape(req.GetServiceId()), nil, req, out)

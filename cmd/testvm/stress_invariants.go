@@ -184,7 +184,9 @@ func verifyStress(ctx context.Context, o stressOptions, clients []platformv1.Pla
 			served := 0
 			for clientIndex, client := range clients {
 				callCtx, cancel := context.WithTimeout(ctx, o.RPCTimeout)
-				actual, err := client.GetService(callCtx, &platformv1.GetServiceRequest{ServiceId: expected.ID})
+				// The marker invariant reads the MARKER env value, which
+				// reads redact unless explicitly revealed.
+				actual, err := client.GetService(callCtx, &platformv1.GetServiceRequest{ServiceId: expected.ID, IncludeSecrets: true})
 				cancel()
 				if err != nil {
 					if replicaRPCRedirected(err) {

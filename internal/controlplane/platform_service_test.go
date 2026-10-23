@@ -187,6 +187,7 @@ type fakePlatformStore struct {
 	projectByIDFn                     func(ctx context.Context, user authz.User, projectID string) (deliverycore.ProjectRecord, error)
 	updateProjectLogRetentionFn       func(ctx context.Context, user authz.User, projectID string, retentionDays int32) (deliverycore.ProjectRecord, error)
 	serviceByIDFn                     func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
+	serviceByIDWithSecretsFn          func(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error)
 	createScheduledVolumeFn           func(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error)
 	listVolumesFn                     func(ctx context.Context, user authz.User, environmentID string, includeDeleted bool) ([]deliverycore.VolumeRecord, error)
 	deleteVolumeFn                    func(ctx context.Context, user authz.User, volumeID, confirmation string) error
@@ -351,6 +352,13 @@ func (f *fakePlatformStore) ServiceByID(ctx context.Context, user authz.User, se
 	return deliverycore.ServiceRecord{ID: serviceID, EnvironmentID: "environment-1", AllocatedAgentID: "node-1"}, nil
 }
 
+func (f *fakePlatformStore) ServiceByIDWithSecrets(ctx context.Context, user authz.User, serviceID string) (deliverycore.ServiceRecord, error) {
+	if f.serviceByIDWithSecretsFn != nil {
+		return f.serviceByIDWithSecretsFn(ctx, user, serviceID)
+	}
+	return f.ServiceByID(ctx, user, serviceID)
+}
+
 func (f *fakePlatformStore) createScheduledVolume(ctx context.Context, user authz.User, environmentID, name string, sizeBytes int64) (deliverycore.VolumeRecord, error) {
 	if f.createScheduledVolumeFn != nil {
 		return f.createScheduledVolumeFn(ctx, user, environmentID, name, sizeBytes)
@@ -491,23 +499,23 @@ func TestPlatformServiceGetServiceStatusRereadsAfterWait(t *testing.T) {
 				healthy = true
 			}
 			return deliverycore.ServiceRecord{
-				ID:               serviceID,
-				ProjectID:        "project-1",
-				AllocatedAgentID: "node-1",
-				CreatedAt:        now.Add(-10 * time.Minute),
-				Spec:             directImageServiceSpec("nginx:1.27", nil),
-				LatestBuild: &platformv1.BuildStatus{
-					BuildId: "build-1",
-				},
-			}, []deliverycore.AllocationRecord{{
-				ID:                       "alloc-status",
-				ServiceID:                serviceID,
-				AgentID:                  "node-1",
-				DesiredRolloutGeneration: 2,
-				AppliedRolloutGeneration: applied,
-				Healthy:                  healthy,
-				UpdatedAt:                now,
-			}}, nil
+					ID:               serviceID,
+					ProjectID:        "project-1",
+					AllocatedAgentID: "node-1",
+					CreatedAt:        now.Add(-10 * time.Minute),
+					Spec:             directImageServiceSpec("nginx:1.27", nil),
+					LatestBuild: &platformv1.BuildStatus{
+						BuildId: "build-1",
+					},
+				}, []deliverycore.AllocationRecord{{
+					ID:                       "alloc-status",
+					ServiceID:                serviceID,
+					AgentID:                  "node-1",
+					DesiredRolloutGeneration: 2,
+					AppliedRolloutGeneration: applied,
+					Healthy:                  healthy,
+					UpdatedAt:                now,
+				}}, nil
 		},
 	}, noopNotifier{}, noopIngress{}, nil)
 
@@ -570,6 +578,56 @@ func TestListServicesDecoratesFromSingleLiveAllocationSnapshot(t *testing.T) {
 	}
 	if resp.GetIndex() != 9 || len(resp.GetVolumes()) != 1 || resp.GetVolumes()[0].GetId() != "volume-a" {
 		t.Fatalf("environment snapshot = %+v", resp)
+	}
+}
+
+func TestGetServiceRedactsSecretsUnlessRevealed(t *testing.T) {
+	record := func() deliverycore.ServiceRecord {
+		return deliverycore.ServiceRecord{
+			ID: "service-1", EnvironmentID: "environment-1",
+			Spec: directImageServiceSpec("nginx:1.27", &platformv1.ServiceRuntime{
+				Env: map[string]string{"TOKEN": "s3cret"},
+			}),
+			UnappliedChanges: []*platformv1.ServiceUnappliedChange{{
+				Id: "runtime.env.TOKEN", Path: "runtime.env.TOKEN", NewValue: "s3cret",
+				Action: platformv1.ServiceUnappliedChangeAction_SERVICE_UNAPPLIED_CHANGE_ACTION_ADD,
+			}},
+		}
+	}
+	var plainReads, secretReads int
+	store := &fakePlatformStore{
+		serviceByIDFn: func(context.Context, authz.User, string) (deliverycore.ServiceRecord, error) {
+			plainReads++
+			return record(), nil
+		},
+		serviceByIDWithSecretsFn: func(context.Context, authz.User, string) (deliverycore.ServiceRecord, error) {
+			secretReads++
+			return record(), nil
+		},
+	}
+	service := newPlatformService(store, noopNotifier{}, noopIngress{}, &fakePlatformDelivery{})
+	ctx := contextWithDelegatedUser("user-1", "user@example.com")
+
+	redacted, err := service.GetService(ctx, &platformv1.GetServiceRequest{ServiceId: "service-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := redacted.GetSpec().GetRuntime().GetEnv()["TOKEN"]; got != "" {
+		t.Fatalf("default get revealed TOKEN = %q", got)
+	}
+	if got := redacted.GetUnappliedChanges()[0].GetNewValue(); got != "" {
+		t.Fatalf("default get revealed unapplied change value = %q", got)
+	}
+
+	revealed, err := service.GetService(ctx, &platformv1.GetServiceRequest{ServiceId: "service-1", IncludeSecrets: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := revealed.GetSpec().GetRuntime().GetEnv()["TOKEN"]; got != "s3cret" {
+		t.Fatalf("revealed TOKEN = %q", got)
+	}
+	if plainReads != 1 || secretReads != 1 {
+		t.Fatalf("store reads: plain %d secret %d", plainReads, secretReads)
 	}
 }
 

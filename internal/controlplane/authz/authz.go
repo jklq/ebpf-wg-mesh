@@ -34,6 +34,11 @@ const (
 	Write
 	// Manage allows the admin role: workspace settings, members, and invitations.
 	Manage
+	// ReadSecrets allows member and admin roles to reveal secret values
+	// (service env). It is distinct from Read so a viewer who may inspect a
+	// service never receives its secrets; it matches Write's roles because a
+	// writer can already deploy code that prints its own env.
+	ReadSecrets
 )
 
 // Role is a workspace membership role.
@@ -60,7 +65,7 @@ func (r Role) Allows(need Access) bool {
 	switch need {
 	case Read:
 		return r == RoleAdmin || r == RoleMember || r == RoleViewer
-	case Write:
+	case Write, ReadSecrets:
 		return r == RoleAdmin || r == RoleMember
 	case Manage:
 		return r == RoleAdmin
@@ -243,7 +248,9 @@ func NewAuthorizer(q Querier) *Authorizer {
 	return &Authorizer{q: q}
 }
 
-func validNeed(need Access) bool { return need == Read || need == Write || need == Manage }
+func validNeed(need Access) bool {
+	return need == Read || need == Write || need == Manage || need == ReadSecrets
+}
 
 // check validates the Authorize inputs that must never reach SQL: an empty user ID, and
 // an invalid need (a caller bug that Allows would otherwise hide as a denial).

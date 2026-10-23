@@ -47,8 +47,8 @@ func TestServiceEnvRoundTripsEncryptedAtRest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Readers see env exactly as written.
-	read, err := store.reads.ServiceByID(ctx, testUser("owner"), service.ID)
+	// The secret-read path sees env exactly as written.
+	read, err := store.reads.ServiceByIDWithSecrets(ctx, testUser("owner"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +388,7 @@ func TestServiceEnvRollbackRestoresDeployedValues(t *testing.T) {
 	if got := desiredEnvForTest(t, store, ctx, "node-1", service.ID)["TOKEN"]; got != "v1-secret" {
 		t.Fatal("desired env after rollback did not restore the first release")
 	}
-	read, err := store.reads.ServiceByID(ctx, testUser(userID), service.ID)
+	read, err := store.reads.ServiceByIDWithSecrets(ctx, testUser(userID), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,11 @@ func TestServiceEnvDuplicateEnvironmentReencrypts(t *testing.T) {
 		if len(services) != 1 {
 			t.Fatalf("duplicate services = %d", len(services))
 		}
-		env := services[0].Spec.GetRuntime().GetEnv()
+		copied, err := store.reads.ServiceByIDWithSecrets(ctx, testUser("owner"), services[0].ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := copied.Spec.GetRuntime().GetEnv()
 		if copyVariables && env["TOKEN"] != "original" || !copyVariables && len(env) != 0 {
 			t.Fatalf("copyVariables=%v env = %v", copyVariables, redactEnvForTest(env))
 		}
@@ -479,7 +483,7 @@ func TestServiceEnvSurvivesRolledBackKeyMint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create after rolled-back mint: %v", err)
 	}
-	read, err := store.reads.ServiceByID(ctx, testUser("owner"), service.ID)
+	read, err := store.reads.ServiceByIDWithSecrets(ctx, testUser("owner"), service.ID)
 	if err != nil {
 		t.Fatal(err)
 	}

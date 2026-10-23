@@ -54,6 +54,7 @@ const {
 	doSaveServicePositionMock,
 	doUpdateServiceMock,
 	fetchGitHubCatalogMock,
+	fetchServiceVariablesMock,
 	routerMock,
 } = vi.hoisted(() => ({
 	doCreateServiceFastMock: vi.fn(),
@@ -64,6 +65,7 @@ const {
 	doSaveServicePositionMock: vi.fn(),
 	doUpdateServiceMock: vi.fn(),
 	fetchGitHubCatalogMock: vi.fn(),
+	fetchServiceVariablesMock: vi.fn(),
 	routerMock: { invalidate: vi.fn(), navigate: vi.fn() },
 }));
 
@@ -81,6 +83,7 @@ vi.mock("#/lib/dashboard/server-functions", () => ({
 	doSaveServicePosition: doSaveServicePositionMock,
 	doUpdateService: doUpdateServiceMock,
 	fetchGitHubCatalog: fetchGitHubCatalogMock,
+	fetchServiceVariables: fetchServiceVariablesMock,
 }));
 
 beforeAll(async () => {
@@ -103,6 +106,8 @@ beforeEach(() => {
 	doSaveServicePositionMock.mockReset();
 	doUpdateServiceMock.mockReset();
 	fetchGitHubCatalogMock.mockReset();
+	fetchServiceVariablesMock.mockReset();
+	fetchServiceVariablesMock.mockResolvedValue({});
 	fetchGitHubCatalogMock.mockResolvedValue({
 		githubAccount: undefined,
 		repositories: [],

@@ -181,8 +181,9 @@ message ServiceRuntimePort {
 message ServiceRuntime {
   repeated string command = 1;
   repeated string args = 2;
-  // Env values may hold credentials: encrypted at rest, readable by service
-  // readers, and redacted from debug output.
+  // Env values may hold credentials: encrypted at rest and redacted from
+  // debug output. Reads return names with empty values unless the caller
+  // explicitly reveals secrets (see GetServiceRequest.include_secrets).
   map<string, string> env = 3 [debug_redact = true];
   int64 cpu_millis = 4;
   int64 memory_mebibytes = 5;
@@ -995,6 +996,11 @@ message RestoreServiceRequest {
 }
 message GetServiceRequest {
   string service_id = 1;
+  // Secret values (runtime env) are redacted by default: variable names
+  // are returned with empty values. Setting include_secrets reveals the
+  // values and requires secret-read access (workspace member or admin);
+  // viewers are denied. List and status reads always redact.
+  bool include_secrets = 2;
 }
 
 message ListServicesRequest {

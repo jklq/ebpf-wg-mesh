@@ -20,9 +20,13 @@ type ReadModel interface {
 	ListDomainBindings(context.Context, authz.User, string, bool) ([]DomainBindingRecord, error)
 	ServiceStatus(context.Context, authz.User, string) (ServiceRecord, []AllocationRecord, error)
 	EnvironmentByID(context.Context, authz.User, string) (EnvironmentRecord, error)
+	// ListServices, ServiceByID, and ServiceStatus redact secret values:
+	// env names are present, values are empty. Only ServiceByIDWithSecrets
+	// reveals values, and it requires secret-read access (member or admin).
 	ListServices(context.Context, authz.User, string, bool) ([]ServiceRecord, error)
 	ListVolumes(context.Context, authz.User, string, bool) ([]VolumeRecord, error)
 	ServiceByID(context.Context, authz.User, string) (ServiceRecord, error)
+	ServiceByIDWithSecrets(context.Context, authz.User, string) (ServiceRecord, error)
 	// AgentByID, AgentIDs, BuildByID, ServiceSnapshot, and ListAllocationsByServiceID are
 	// system reads without user authorization, for reconciliation and builder paths.
 	AgentByID(context.Context, string) (AgentRecord, error)
@@ -66,7 +70,12 @@ func (d *Delivery) ServiceStatus(ctx context.Context, user authz.User, serviceID
 	if err != nil {
 		return ServiceRecord{}, nil, err
 	}
-	return d.store.serviceStatus(ctx, scope)
+	service, allocations, err := d.store.serviceStatus(ctx, scope)
+	if err != nil {
+		return ServiceRecord{}, nil, err
+	}
+	RedactServiceRecordSecrets(&service)
+	return service, allocations, nil
 }
 
 func (d *Delivery) EnvironmentByID(ctx context.Context, user authz.User, environmentID string) (EnvironmentRecord, error) {
@@ -86,11 +95,34 @@ func (d *Delivery) ListServices(ctx context.Context, user authz.User, environmen
 	if err != nil {
 		return nil, err
 	}
-	return d.store.listServices(ctx, scope, includeDeleted)
+	services, err := d.store.listServices(ctx, scope, includeDeleted)
+	if err != nil {
+		return nil, err
+	}
+	for i := range services {
+		RedactServiceRecordSecrets(&services[i])
+	}
+	return services, nil
 }
 
 func (d *Delivery) ServiceByID(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, error) {
 	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.Read)
+	if err != nil {
+		return ServiceRecord{}, err
+	}
+	service, err := d.store.serviceByID(ctx, scope)
+	if err != nil {
+		return ServiceRecord{}, err
+	}
+	RedactServiceRecordSecrets(&service)
+	return service, nil
+}
+
+// ServiceByIDWithSecrets is the one user read that reveals secret values.
+// It requires secret-read access (member or admin); every other ServiceByID
+// caller gets names with empty values.
+func (d *Delivery) ServiceByIDWithSecrets(ctx context.Context, user authz.User, serviceID string) (ServiceRecord, error) {
+	scope, err := d.store.authz.AuthorizeService(ctx, user, serviceID, authz.ReadSecrets)
 	if err != nil {
 		return ServiceRecord{}, err
 	}

@@ -364,7 +364,7 @@ func TestSecretEnvelopeDeleteRefusal(t *testing.T) {
 func serviceEnvThrough(ctx context.Context, store *persistence, secrets *secretkeys.Service, serviceID string) (map[string]string, error) {
 	deps := deliveryDependencies(store, nil, nil, nil, nil)
 	deps.Secrets = secrets
-	rec, err := deliverycore.New(deps).ServiceByID(ctx, testUser("owner"), serviceID)
+	rec, err := deliverycore.New(deps).ServiceByIDWithSecrets(ctx, testUser("owner"), serviceID)
 	if err != nil {
 		return nil, err
 	}
