@@ -14,17 +14,21 @@ func BenchmarkHardenedStartup(b *testing.B) {
 	if os.Getenv("COMPACT_BENCH_SANDBOX") != "1" {
 		b.Skip("run in the Linux runtime fixture with COMPACT_BENCH_SANDBOX=1")
 	}
-	cfg := config.BuilderConfig{Executor: ExecutorHardened, WorkDir: b.TempDir(), Sandbox: config.BuilderSandboxConfig{Backend: "containerd", Socket: "/run/containerd/containerd.sock", Namespace: "compact-bench", Image: sandboxProbeImage, Runtime: "io.containerd.runc.v2", Snapshotter: "overlayfs", CNIPluginDir: "/usr/lib/cni", CNIConfDir: b.TempDir(), CNINetwork: "build-sandbox", BuildkitdBinary: "buildkitd"}}
+	cfg := config.BuilderConfig{Executor: ExecutorHardened, WorkDir: b.TempDir(), Sandbox: config.BuilderSandboxConfig{Backend: "containerd", Socket: "/run/containerd/containerd.sock", Namespace: "compact-bench", Image: sandboxProbeImage, Isolation: "runc-userns", Snapshotter: "overlayfs", CNIPluginDir: "/usr/lib/cni", CNIConfDir: b.TempDir(), CNINetwork: "build-sandbox", BuildkitdBinary: "buildkitd"}}
 	for _, mode := range []string{"eager", "on-demand"} {
 		b.Run(mode, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				if mode == "eager" {
-					backend, err := NewSandboxBackend(sandboxConfig(cfg))
+					backendCfg, cfgErr := sandboxConfig(cfg)
+					if cfgErr != nil {
+						b.Fatal(cfgErr)
+					}
+					backend, err := NewSandboxBackend(backendCfg)
 					if err != nil {
 						b.Fatal(err)
 					}
-					_ = newHardenedExecutor(cfg.WorkDir, backend, cfg.Sandbox.BuildkitdBinary, nil)
+					_ = newHardenedExecutor(cfg.WorkDir, backend, cfg.Sandbox.BuildkitdBinary, backendCfg.Isolation, nil)
 					if err := backend.Close(); err != nil {
 						b.Fatal(err)
 					}

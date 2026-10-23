@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"ebof-wg-mesh/internal/isolation"
 )
 
 func validateProductionControlPlane(cfg ControlPlaneConfig) error {
@@ -89,6 +91,11 @@ func validateProductionAgent(cfg AgentConfig) error {
 func validateProductionBuilder(cfg BuilderConfig) error {
 	if cfg.Executor == "development" {
 		return errors.New("builder.executor must not be development in production: the development executor does not isolate untrusted code")
+	}
+	if policy, err := isolation.PolicyFor(cfg.Sandbox.Isolation, true); err != nil {
+		return fmt.Errorf("builder.sandbox.isolation: %w", err)
+	} else if !policy.KernelSeparated() {
+		return errors.New("builder.sandbox.isolation must be gvisor or kata in production: BuildKit RUN steps execute through the daemon's OCI worker, which user namespaces alone do not separate from the host kernel")
 	}
 	if err := validateProductionTLSName("builder.controlPlane.tls.serverName", cfg.ControlPlane.TLS.ServerName); err != nil {
 		return err

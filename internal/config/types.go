@@ -394,7 +394,13 @@ type RuntimeConfig struct {
 	VolumesDir                  string
 	ManagedDashboardSecretsDir  string
 	Snapshotter                 string
-	DisableCgroups              bool
+	// Isolation selects the kernel boundary for tenant workloads:
+	// "runc-userns" (ID-mapped user namespaces), "gvisor", or "kata".
+	// Empty defaults by profile (production: gvisor, development:
+	// runc-userns). There is no value that runs workloads as host root;
+	// see internal/isolation.
+	Isolation      string
+	DisableCgroups bool
 	// VolumeBackend is "loop" (ext4 image per volume; size enforced with
 	// ENOSPC) or "directory" (size reported, not enforced).
 	VolumeBackend string
@@ -524,10 +530,10 @@ type BuilderCacheConfig struct {
 }
 
 // BuilderSandboxConfig selects the hardened executor's sandbox backend. The development executor
-// ignores it. Only the containerd backend exists today; the operator selects the sandbox technology
-// through Runtime (the default runc runtime, gVisor's runsc, Kata, or another installed OCI runtime)
-// and the build CNI network. Unknown backends fail validation: execution never silently falls back
-// to a weaker backend.
+// ignores it. Only the containerd backend exists today; the operator selects the isolation class
+// through Isolation (see internal/isolation) and the build CNI network. Unknown values fail
+// validation: execution never silently falls back to a weaker backend. Production requires a
+// kernel-separated class because BuildKit RUN steps execute through the daemon's OCI worker.
 type BuilderSandboxConfig struct {
 	// Backend is the sandbox backend. Only "containerd" exists.
 	Backend string
@@ -538,8 +544,12 @@ type BuilderSandboxConfig struct {
 	// Image is the sandbox image. It must provide the build toolchain (buildctl, railpack when railpack
 	// builds run); the executor bind-mounts the execution workspace at /build. There is no default:
 	// the operator chooses the image builds run in.
-	Image       string
-	Runtime     string
+	Image string
+	// Isolation selects the kernel boundary for build sandboxes and for the
+	// BuildKit OCI worker's RUN steps: "runc-userns", "gvisor", or "kata".
+	// Empty defaults by profile (production: gvisor, development:
+	// runc-userns). See internal/isolation.
+	Isolation   string
 	Snapshotter string
 	// CNIPluginDir and CNIConfDir locate the CNI plugins and the build network configuration. The
 	// conf dir must contain exactly the CNINetwork: build sandboxes never join the workload mesh.

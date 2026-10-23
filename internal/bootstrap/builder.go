@@ -51,7 +51,7 @@ func Builder(args []string) (config.BuilderConfig, error) {
 	stringFlag(fs, &cfg.Sandbox.Socket, "sandbox-socket", "BUILDER_SANDBOX_SOCKET", "/run/containerd/containerd.sock", "containerd socket for build sandboxes")
 	stringFlag(fs, &cfg.Sandbox.Namespace, "sandbox-namespace", "BUILDER_SANDBOX_NAMESPACE", "builder", "containerd namespace for build sandboxes")
 	stringFlag(fs, &cfg.Sandbox.Image, "sandbox-image", "BUILDER_SANDBOX_IMAGE", "", "sandbox image carrying the build toolchain (required for hardened)")
-	stringFlag(fs, &cfg.Sandbox.Runtime, "sandbox-runtime", "BUILDER_SANDBOX_RUNTIME", "io.containerd.runc.v2", "OCI runtime for build sandboxes")
+	stringFlag(fs, &cfg.Sandbox.Isolation, "sandbox-isolation", "BUILDER_SANDBOX_ISOLATION", "", "build isolation class: runc-userns, gvisor, or kata; empty defaults by profile (production gvisor, development runc-userns)")
 	stringFlag(fs, &cfg.Sandbox.Snapshotter, "sandbox-snapshotter", "BUILDER_SANDBOX_SNAPSHOTTER", "overlayfs", "containerd snapshotter for sandbox roots")
 	stringFlag(fs, &cfg.Sandbox.CNIPluginDir, "sandbox-cni-plugin-dir", "BUILDER_SANDBOX_CNI_PLUGIN_DIR", "/usr/lib/cni", "CNI plugin directory for build networking")
 	stringFlag(fs, &cfg.Sandbox.CNIConfDir, "sandbox-cni-conf-dir", "BUILDER_SANDBOX_CNI_CONF_DIR", "/etc/cni/net.d", "CNI configuration directory for build networking")

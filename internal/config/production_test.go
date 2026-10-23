@@ -380,3 +380,44 @@ func TestProductionCompactLocalStorage(t *testing.T) {
 		}
 	}
 }
+
+func TestIsolationDefaultsAndProductionRules(t *testing.T) {
+	t.Parallel()
+
+	dev := validBuilderConfigForTest()
+	if err := FinalizeBuilder(&dev); err != nil {
+		t.Fatalf("FinalizeBuilder development: %v", err)
+	}
+	if dev.Sandbox.Isolation != "runc-userns" {
+		t.Fatalf("development builder isolation = %q, want runc-userns", dev.Sandbox.Isolation)
+	}
+
+	prod := validBuilderConfigForTest()
+	prod.Profile = ProfileProduction
+	prod.Health.Listen = "127.0.0.1:9092"
+	prod.Executor = "hardened"
+	prod.Sandbox.Image = "registry.example.test/builder-sandbox@sha256:" + strings.Repeat("1", 64)
+	if err := FinalizeBuilder(&prod); err != nil {
+		t.Fatalf("FinalizeBuilder production: %v", err)
+	}
+	if prod.Sandbox.Isolation != "gvisor" {
+		t.Fatalf("production builder isolation = %q, want gvisor", prod.Sandbox.Isolation)
+	}
+
+	// User namespaces alone are not enough for production builds: BuildKit
+	// RUN steps execute through the daemon's OCI worker.
+	weak := prod
+	weak.Sandbox.Isolation = "runc-userns"
+	if err := FinalizeBuilder(&weak); err == nil || !strings.Contains(err.Error(), "builder.sandbox.isolation") {
+		t.Fatalf("expected production builder isolation error, got %v", err)
+	}
+
+	// There is no class that runs tenant code as host root.
+	for _, raw := range []string{"runc", "io.containerd.runc.v2", "none"} {
+		bad := prod
+		bad.Sandbox.Isolation = raw
+		if err := FinalizeBuilder(&bad); err == nil {
+			t.Fatalf("builder isolation %q accepted", raw)
+		}
+	}
+}

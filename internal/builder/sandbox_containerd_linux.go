@@ -7,10 +7,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -19,6 +21,9 @@ import (
 	"syscall"
 	"time"
 
+	"ebof-wg-mesh/internal/isolation"
+
+	runtimeoptions "github.com/containerd/containerd/api/types/runtimeoptions/v1"
 	containerd "github.com/containerd/containerd/v2/client"
 	containerdapparmor "github.com/containerd/containerd/v2/contrib/apparmor"
 	hostapparmor "github.com/containerd/containerd/v2/pkg/apparmor"
@@ -51,11 +56,12 @@ const (
 // on a private netns with CNI egress and denied-CIDR blackholes. Setup fails
 // closed: an uncontainable build does not run.
 type containerdSandboxBackend struct {
-	cfg      SandboxBackendConfig
-	client   *containerd.Client
-	image    containerd.Image
-	netnsDir string
-	apparmor bool
+	cfg             SandboxBackendConfig
+	runscConfigPath string
+	client          *containerd.Client
+	image           containerd.Image
+	netnsDir        string
+	apparmor        bool
 
 	cniMu     sync.Mutex
 	cniClient cni.CNI
@@ -65,13 +71,18 @@ func newSandboxBackendPlatform(cfg SandboxBackendConfig) (SandboxBackend, error)
 	for field, value := range map[string]string{
 		"socket":      cfg.Socket,
 		"namespace":   cfg.Namespace,
-		"runtime":     cfg.Runtime,
 		"snapshotter": cfg.Snapshotter,
 		"work dir":    cfg.WorkDir,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return nil, fmt.Errorf("sandbox %s is required for the hardened executor", field)
 		}
+	}
+	if err := cfg.Isolation.VerifyHost(); err != nil {
+		return nil, err
+	}
+	if _, err := exec.LookPath(cfg.Isolation.BuildKitWorkerBinary()); err != nil {
+		return nil, fmt.Errorf("isolation class %q requires BuildKit OCI worker binary %q on PATH for Dockerfile RUN steps (there is no fallback runtime): %w", cfg.Isolation.Class(), cfg.Isolation.BuildKitWorkerBinary(), err)
 	}
 	netnsDir := filepath.Join(cfg.WorkDir, sandboxNetnsDirName)
 	if err := os.MkdirAll(netnsDir, 0o755); err != nil {
@@ -87,6 +98,25 @@ func newSandboxBackendPlatform(cfg SandboxBackendConfig) (SandboxBackend, error)
 	if _, err := client.Version(ctx); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("containerd version check: %w", err)
+	}
+	if cfg.Isolation.UsesUserNamespaces() {
+		capabilities, err := client.GetSnapshotterCapabilities(ctx, cfg.Snapshotter)
+		if err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("inspect snapshotter capabilities: %w", err)
+		}
+		if err := cfg.Isolation.VerifySnapshotter(cfg.Snapshotter, capabilities); err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+	}
+	slog.Info("build isolation policy", "class", cfg.Isolation.Class(), "runtime", cfg.Isolation.ContainerdRuntime(), "buildkit_worker", cfg.Isolation.BuildKitWorkerBinary(), "kernel_separated", cfg.Isolation.KernelSeparated(), "user_namespaces", cfg.Isolation.UsesUserNamespaces())
+	if contents, ok := cfg.Isolation.RunscConfig(); ok {
+		backend.runscConfigPath = filepath.Join(cfg.WorkDir, "runsc.toml")
+		if err := os.WriteFile(backend.runscConfigPath, []byte(contents), 0o644); err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("write runsc config: %w", err)
+		}
 	}
 	image, err := client.GetImage(ctx, cfg.Image)
 	if errdefs.IsNotFound(err) {
@@ -382,6 +412,15 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 	nctx := b.namespaced(ctx)
 	_ = b.removeSandboxContainer(nctx, containerID)
 
+	uidMaps, gidMaps, err := b.cfg.Isolation.Mappings(sandboxIsolationScope)
+	if err != nil {
+		return err
+	}
+	if len(uidMaps) > 0 {
+		if err := chownSandboxWorkspace(step.Mounts, uidMaps[0].HostID, gidMaps[0].HostID); err != nil {
+			return err
+		}
+	}
 	opts, err := buildSandboxSpecOpts(sandboxSpecInput{
 		Argv:      step.Argv,
 		Env:       step.Env,
@@ -389,20 +428,37 @@ func (b *containerdSandboxBackend) RunStep(ctx context.Context, sandboxNet Sandb
 		NetNSPath: sandboxNet.Path,
 		Limits:    step.Limits,
 		Mounts:    step.Mounts,
+		UIDMaps:   uidMaps,
+		GIDMaps:   gidMaps,
+		GVisor:    b.cfg.Isolation.Class() == isolation.ClassGVisor,
 	})
 	if err != nil {
 		return err
 	}
-	if b.apparmor {
+	if b.apparmor && b.cfg.Isolation.Class() != isolation.ClassGVisor {
 		opts = append(opts, containerdapparmor.WithDefaultProfile(buildSandboxAppArmorName))
 	}
-	container, err := b.client.NewContainer(nctx, containerID,
-		containerd.WithRuntime(b.cfg.Runtime, nil),
+	runtimeOpt := containerd.WithRuntime(b.cfg.Isolation.ContainerdRuntime(), nil)
+	if b.runscConfigPath != "" {
+		runtimeOpt = containerd.WithRuntime(b.cfg.Isolation.ContainerdRuntime(), &runtimeoptions.Options{
+			TypeUrl:    isolation.RunscOptionsTypeURL,
+			ConfigPath: b.runscConfigPath,
+		})
+	}
+	containerOpts := []containerd.NewContainerOpts{
+		runtimeOpt,
 		containerd.WithSnapshotter(b.cfg.Snapshotter),
-		containerd.WithNewSnapshot(containerID, b.image),
+	}
+	if len(uidMaps) > 0 {
+		containerOpts = append(containerOpts, containerd.WithNewSnapshot(containerID, b.image, containerd.WithUserNSRemapperLabels(uidMaps, gidMaps)))
+	} else {
+		containerOpts = append(containerOpts, containerd.WithNewSnapshot(containerID, b.image))
+	}
+	containerOpts = append(containerOpts,
 		containerd.WithNewSpec(opts...),
 		containerd.WithContainerLabels(sandboxLabels(sandboxNet.BuildID, step.Name)),
 	)
+	container, err := b.client.NewContainer(nctx, containerID, containerOpts...)
 	if err != nil {
 		return fmt.Errorf("create sandbox container: %w", err)
 	}
@@ -615,6 +671,45 @@ func (b *containerdSandboxBackend) ReapStale(ctx context.Context) (int, error) {
 		slog.Info("reclaimed stale sandbox netns", "build_id", owner.BuildID)
 	}
 	return reclaimed, errors.Join(failureList(failures))
+}
+
+// chownSandboxWorkspace gives the execution workspace to the sandbox's
+// host-mapped root. The executor materializes tenant sources on the host
+// before the step runs; without this they would appear as overflow-owned
+// inodes inside the user namespace and the (capability-free) sandbox could
+// not reliably read or replace them. Only the workspace root mount is
+// walked: nested mounts live under it, while shared cache and platform
+// frontend mounts keep their host ownership and stay read-only. Lchown
+// never follows tenant-planted symlinks.
+func chownSandboxWorkspace(mounts []SandboxMount, hostUID, hostGID uint32) error {
+	for _, mount := range mounts {
+		if filepath.Clean(mount.Dest) != sandboxBuildRoot {
+			continue
+		}
+		root := filepath.Clean(mount.Source)
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if err := os.Lchown(path, int(hostUID), int(hostGID)); err != nil {
+				// A subtree mounted read-only on the host (a protected
+				// snapshot presented read-only to the sandbox too) cannot
+				// be re-owned and needs no write access from the sandbox.
+				if errors.Is(err, syscall.EROFS) {
+					if entry.IsDir() {
+						return fs.SkipDir
+					}
+					return nil
+				}
+				return fmt.Errorf("chown build workspace %q: %w", path, err)
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("prepare build workspace ownership: %w", err)
+		}
+	}
+	return nil
 }
 
 func failureList(failures []string) error {

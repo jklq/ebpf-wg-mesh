@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"ebof-wg-mesh/internal/isolation"
+
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
 )
@@ -134,7 +136,7 @@ func requireSandboxProbeBackend(t *testing.T) *sandboxProbeBackend {
 		Socket:       socket,
 		Namespace:    namespace,
 		Image:        sandboxProbeImage,
-		Runtime:      "io.containerd.runc.v2",
+		Isolation:    sandboxTestPolicy(t),
 		Snapshotter:  "overlayfs",
 		CNIPluginDir: "/usr/lib/cni",
 		CNIConfDir:   t.TempDir(),
@@ -306,7 +308,7 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 		Socket:       socket,
 		Namespace:    namespace,
 		Image:        sandboxProbeImage,
-		Runtime:      "io.containerd.runc.v2",
+		Isolation:    sandboxTestPolicy(t),
 		Snapshotter:  "overlayfs",
 		CNIPluginDir: pluginDir,
 		CNIConfDir:   confDir,
@@ -392,4 +394,17 @@ func TestSandboxDeniedCIDREnforced(t *testing.T) {
 		Policy: DefaultRestrictedNetworkPolicy(),
 	})
 	requireProbeMarker(t, probe, metadata.Output, "reached", "no")
+}
+
+func sandboxTestPolicy(t *testing.T) isolation.Policy {
+	t.Helper()
+	class := isolation.ClassRuncUserNS
+	if raw := os.Getenv("TEST_SANDBOX_ISOLATION"); raw != "" {
+		class = isolation.Class(raw)
+	}
+	policy, err := isolation.NewPolicy(class)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
 }

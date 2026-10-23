@@ -24,7 +24,7 @@ func TestNativeProtectedBuilderToolchainImportAndRuntime(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	cfg := config.BuilderConfig{ID: "native-toolchain", WorkDir: t.TempDir(), BuildctlBinary: "buildctl", RailpackBinary: "railpack", Sandbox: config.BuilderSandboxConfig{Socket: "/run/containerd/containerd.sock", Namespace: "production-toolchain-test", Image: ref, Runtime: "io.containerd.runc.v2", Snapshotter: "overlayfs", CNIPluginDir: "/usr/lib/cni", CNIConfDir: "/etc/cni/net.d", CNINetwork: "mesh-cni", BuildkitdBinary: os.Getenv("BUILDKITD_BINARY")}}
+	cfg := config.BuilderConfig{ID: "native-toolchain", WorkDir: t.TempDir(), BuildctlBinary: "buildctl", RailpackBinary: "railpack", Sandbox: config.BuilderSandboxConfig{Socket: "/run/containerd/containerd.sock", Namespace: "production-toolchain-test", Image: ref, Isolation: "gvisor", Snapshotter: "overlayfs", CNIPluginDir: "/usr/lib/cni", CNIConfDir: "/etc/cni/net.d", CNINetwork: "mesh-cni", BuildkitdBinary: os.Getenv("BUILDKITD_BINARY")}}
 	if err := VerifyRuntimeImage(ctx, cfg, ref); err == nil {
 		t.Fatal("missing runtime image accepted")
 	}
@@ -58,7 +58,7 @@ func TestNativeRecoveredRailpackFrontendBuildsWithoutPublisher(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	root := t.TempDir()
-	daemon, err := startBuildkitd(ctx, "", os.Getenv("BUILDKITD_BINARY"), root+"/buildkit.sock", root+"/state", []string{"PATH=/native/platform-buildkit/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + root})
+	daemon, err := startBuildkitd(ctx, "", os.Getenv("BUILDKITD_BINARY"), "runsc-buildkit", root+"/buildkit.sock", root+"/state", []string{"PATH=/native/platform-buildkit/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + root})
 	if err != nil {
 		t.Fatal(err)
 	}

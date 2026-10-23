@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/alarm"
+	"ebof-wg-mesh/internal/isolation"
 	"ebof-wg-mesh/internal/platformdb"
 )
 
@@ -293,6 +294,9 @@ func validateAgent(cfg AgentConfig) error {
 	default:
 		return fmt.Errorf("agent.runtime.volumeBackend must be loop or directory: %q", cfg.Runtime.VolumeBackend)
 	}
+	if _, err := isolation.NormalizeClass(cfg.Runtime.Isolation, cfg.Profile.IsProduction()); err != nil {
+		return fmt.Errorf("agent.runtime.isolation: %w", err)
+	}
 	if cfg.Logs.SpoolMaxBytes < 0 {
 		return errors.New("agent.logs.spoolMaxBytes must be non-negative")
 	}
@@ -467,7 +471,7 @@ func validateBuilder(cfg BuilderConfig) error {
 		return fmt.Errorf("builder.executor must be %q or %q", "development", "hardened")
 	}
 	if cfg.Executor == "hardened" {
-		if err := validateBuilderSandbox(cfg.Sandbox); err != nil {
+		if err := validateBuilderSandbox(cfg.Sandbox, cfg.Profile.IsProduction()); err != nil {
 			return err
 		}
 	}
@@ -508,7 +512,7 @@ func validateBuilder(cfg BuilderConfig) error {
 	return nil
 }
 
-func validateBuilderSandbox(cfg BuilderSandboxConfig) error {
+func validateBuilderSandbox(cfg BuilderSandboxConfig, production bool) error {
 	if cfg.Backend != "containerd" {
 		return fmt.Errorf("builder.sandbox.backend must be %q", "containerd")
 	}
@@ -516,7 +520,7 @@ func validateBuilderSandbox(cfg BuilderSandboxConfig) error {
 		"builder.sandbox.socket":          cfg.Socket,
 		"builder.sandbox.namespace":       cfg.Namespace,
 		"builder.sandbox.image":           cfg.Image,
-		"builder.sandbox.runtime":         cfg.Runtime,
+		"builder.sandbox.isolation":       cfg.Isolation,
 		"builder.sandbox.snapshotter":     cfg.Snapshotter,
 		"builder.sandbox.cniPluginDir":    cfg.CNIPluginDir,
 		"builder.sandbox.cniConfDir":      cfg.CNIConfDir,
@@ -526,6 +530,9 @@ func validateBuilderSandbox(cfg BuilderSandboxConfig) error {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s is required for the hardened executor", field)
 		}
+	}
+	if _, err := isolation.NormalizeClass(cfg.Isolation, production); err != nil {
+		return fmt.Errorf("builder.sandbox.isolation: %w", err)
 	}
 	for _, nameserver := range cfg.Nameservers {
 		if ip := net.ParseIP(strings.TrimSpace(nameserver)); ip == nil {

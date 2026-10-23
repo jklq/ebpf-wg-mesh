@@ -2,6 +2,7 @@ package builder
 
 import (
 	"context"
+	"ebof-wg-mesh/internal/isolation"
 	"errors"
 	"os"
 	"path/filepath"
@@ -103,7 +104,7 @@ type daemonStartArgs struct {
 	env       []string
 }
 
-func (s *fakeDaemonStarter) start(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error) {
+func (s *fakeDaemonStarter) start(ctx context.Context, netnsPath, binary, workerBinary, sockPath, rootDir string, env []string) (daemonProc, error) {
 	s.calls = append(s.calls, daemonStartArgs{netnsPath: netnsPath, binary: binary, sockPath: sockPath, rootDir: rootDir, env: env})
 	if s.startErr != nil {
 		return nil, s.startErr
@@ -114,9 +115,17 @@ func (s *fakeDaemonStarter) start(ctx context.Context, netnsPath, binary, sockPa
 	return s.proc, nil
 }
 
+func testIsolationPolicy() isolation.Policy {
+	policy, err := isolation.NewPolicy(isolation.ClassRuncUserNS)
+	if err != nil {
+		panic(err)
+	}
+	return policy
+}
+
 func newHardenedExecutorForTest(workDir string, backend *fakeSandboxBackend, starter *fakeDaemonStarter) *hardenedExecutor {
 	// Explicit nameservers so the test machine's own resolvers cannot decide these tests.
-	executor := newHardenedExecutor(workDir, backend, "buildkitd-test", []string{"10.0.0.53"})
+	executor := newHardenedExecutor(workDir, backend, "buildkitd-test", testIsolationPolicy(), []string{"10.0.0.53"})
 	executor.startDaemon = starter.start
 	return executor
 }
@@ -144,7 +153,7 @@ func emulateBuildctl(t *testing.T, workDir, buildID, digest string) func(context
 func TestHardenedExecutorIdentity(t *testing.T) {
 	t.Parallel()
 
-	executor := newHardenedExecutor(t.TempDir(), &fakeSandboxBackend{}, "buildkitd", nil)
+	executor := newHardenedExecutor(t.TempDir(), &fakeSandboxBackend{}, "buildkitd", testIsolationPolicy(), nil)
 	if executor.Name() != ExecutorHardened {
 		t.Fatalf("unexpected executor name %q", executor.Name())
 	}
@@ -537,7 +546,7 @@ func TestHardenedRecoverStaleWorkspaces(t *testing.T) {
 		t.Fatal(err)
 	}
 	backend := &fakeSandboxBackend{reaped: 2}
-	executor := newHardenedExecutor(workDir, backend, "buildkitd", nil)
+	executor := newHardenedExecutor(workDir, backend, "buildkitd", testIsolationPolicy(), nil)
 	reclaimed, err := executor.RecoverStaleWorkspaces(context.Background())
 	if err != nil {
 		t.Fatalf("RecoverStaleWorkspaces: %v", err)
@@ -718,9 +727,9 @@ func TestHardenedExecuteFailsWhenDaemonExceedsDiskLimit(t *testing.T) {
 	executor := newHardenedExecutorForTest(workDir, backend, starter)
 	backend.runHook = emulateBuildctl(t, workDir, "build-1", "sha256:abc")
 	// Daemon layers live outside the workspace but must still hit the disk budget.
-	executor.startDaemon = func(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error) {
+	executor.startDaemon = func(ctx context.Context, netnsPath, binary, workerBinary, sockPath, rootDir string, env []string) (daemonProc, error) {
 		sparseFileForTest(t, filepath.Join(rootDir, "worker", "layer.bin"), 2<<30)
-		return starter.start(ctx, netnsPath, binary, sockPath, rootDir, env)
+		return starter.start(ctx, netnsPath, binary, workerBinary, sockPath, rootDir, env)
 	}
 
 	spec := testExecutionSpec(t, "build-1", dockerfileArchiveForTest(t), dockerfileRecipeForTest())

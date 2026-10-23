@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"ebof-wg-mesh/internal/isolation"
 )
 
 // sandboxBackendName is the only sandbox backend; unknown backends fail validation.
@@ -17,6 +19,12 @@ const sandboxBackendName = "containerd"
 
 // sandboxBuildRoot is the guest path of the execution workspace in every sandbox.
 const sandboxBuildRoot = "/build"
+
+// sandboxIsolationScope is the fixed identity-range scope for build
+// sandboxes. Unlike workload environments, builds own no persistent files
+// across executions, so one range serves every build on a host: the remapped
+// toolchain rootfs is shared instead of re-owned per build.
+const sandboxIsolationScope = "builder"
 
 // SandboxBackend runs build steps inside one-shot sandboxes: containment
 // primitives only, plus reaping its own crashed state.
@@ -38,7 +46,7 @@ type SandboxBackendConfig struct {
 	Socket          string
 	Namespace       string
 	Image           string
-	Runtime         string
+	Isolation       isolation.Policy
 	Snapshotter     string
 	CNIPluginDir    string
 	CNIConfDir      string

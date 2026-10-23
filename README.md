@@ -21,6 +21,7 @@ A small PaaS. It runs a project's services as isolated workloads on an operator-
 - [MCP server](docs/mcp-server.md): AI-agent tools over the public API, editor setup, and the Railway mapping.
 - [Billing](docs/billing.md): workspace billing accounts, exact rating, statements, spend restrictions, Stripe collection, and the shadow-mode launch gate.
 - [Serverless services](docs/serverless.md): scale-to-zero on inactivity, wake on public or private traffic, cold starts, and billing behavior.
+- [Tenant isolation](docs/tenant-isolation.md): ID-mapped user namespaces, gVisor, and Kata isolation classes for workloads and builds, host prerequisites, and fail-closed startup.
 - [GitHub project](https://github.com/users/jklq/projects/6): backlog and priorities.
 
 ## Build

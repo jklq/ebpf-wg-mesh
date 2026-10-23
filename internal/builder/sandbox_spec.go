@@ -49,6 +49,14 @@ type sandboxSpecInput struct {
 	NetNSPath string
 	Limits    ResourceLimits
 	Mounts    []SandboxMount
+	// UIDMaps/GIDMaps are the scope's ID mappings for user-namespace
+	// isolation classes; empty for kernel-separated classes.
+	UIDMaps []specs.LinuxIDMapping
+	GIDMaps []specs.LinuxIDMapping
+	// GVisor marks kernel-separated execution under the Sentry: host
+	// seccomp/AppArmor profiles must not be applied to the Sentry
+	// process (it installs its own syscall filtering).
+	GVisor bool
 }
 
 // buildSandboxSpecOpts returns the OCI spec options for one build step. The sandbox
@@ -85,7 +93,7 @@ func buildSandboxSpecOpts(input sandboxSpecInput) ([]oci.SpecOpts, error) {
 	if dir == "" {
 		dir = sandboxBuildRoot
 	}
-	return []oci.SpecOpts{
+	opts := []oci.SpecOpts{
 		oci.WithDefaultSpec(),
 		oci.WithProcessArgs(input.Argv...),
 		withEmptyEnv(),
@@ -94,10 +102,19 @@ func buildSandboxSpecOpts(input sandboxSpecInput) ([]oci.SpecOpts, error) {
 		oci.WithHostname(sandboxHostname),
 		oci.WithMounts(mounts),
 		oci.WithLinuxNamespace(specs.LinuxNamespace{Type: specs.NetworkNamespace, Path: input.NetNSPath}),
-		withBuildSandboxLimits(input.Limits),
-		withBuildSandboxLockdown(),
-		sandboxSeccompProfile(),
-	}, nil
+		withBuildSandboxLimits(input.Limits, input.GVisor),
+		withBuildSandboxLockdown(input.UIDMaps, input.GIDMaps),
+	}
+	if !input.GVisor {
+		opts = append(opts, sandboxSeccompProfile())
+	} else {
+		// Each build step is its own gVisor sandbox; see the workload
+		// sandbox for why the shim needs this annotation to wire IO.
+		opts = append(opts, oci.WithAnnotations(map[string]string{
+			"io.kubernetes.cri.container-type": "sandbox",
+		}))
+	}
+	return opts, nil
 }
 
 // withEmptyEnv clears the default environment so the step's explicit environment
@@ -159,7 +176,13 @@ func sandboxBindOptions(readOnly bool) []string {
 // the whole sandbox, a PID cap, and kernel rlimits for CPU, file size, and
 // process count. RLIMIT_AS is deliberately unset: resident set, not virtual
 // reservation headroom, is the containment boundary.
-func withBuildSandboxLimits(limits ResourceLimits) oci.SpecOpts {
+// sentryThreadHeadroom is added to the host pids cgroup cap under gVisor:
+// the Sentry and gofer live in the same cgroup and spend host threads per
+// app thread, while RLIMIT_NPROC inside the sandbox still caps the app
+// itself exactly.
+const sentryThreadHeadroom = 256
+
+func withBuildSandboxLimits(limits ResourceLimits, gvisor bool) oci.SpecOpts {
 	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
 		if spec.Process == nil || spec.Linux == nil {
 			return errors.New("sandbox limits require a complete Linux OCI spec")
@@ -179,7 +202,11 @@ func withBuildSandboxLimits(limits ResourceLimits) oci.SpecOpts {
 			spec.Linux.Resources.Unified = make(map[string]string)
 		}
 		spec.Linux.Resources.Unified["memory.oom.group"] = "1"
-		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: &limits.MaxProcesses}
+		pidsLimit := limits.MaxProcesses
+		if gvisor {
+			pidsLimit += sentryThreadHeadroom
+		}
+		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: &pidsLimit}
 		spec.Process.Rlimits = []specs.POSIXRlimit{
 			{Type: "RLIMIT_CPU", Soft: uint64(limits.CPUSeconds), Hard: uint64(limits.CPUSeconds)},
 			{Type: "RLIMIT_FSIZE", Soft: uint64(limits.MaxFileBytes), Hard: uint64(limits.MaxFileBytes)},
@@ -191,8 +218,10 @@ func withBuildSandboxLimits(limits ResourceLimits) oci.SpecOpts {
 
 // withBuildSandboxLockdown strips the sandbox to the minimum a build client needs:
 // zero capabilities, no-new-privileges, a read-only root, private namespaces,
-// masked and read-only system paths, and a deny-all device policy.
-func withBuildSandboxLockdown() oci.SpecOpts {
+// masked and read-only system paths, and a deny-all device policy. For
+// user-namespace classes it also installs the scope's identity mappings
+// (replacing anything present) and ID-maps bind mounts into them.
+func withBuildSandboxLockdown(uidMaps, gidMaps []specs.LinuxIDMapping) oci.SpecOpts {
 	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
 		if spec.Process == nil || spec.Root == nil || spec.Linux == nil {
 			return errors.New("sandbox lockdown requires a complete Linux OCI spec")
@@ -211,21 +240,38 @@ func withBuildSandboxLockdown() oci.SpecOpts {
 		spec.Linux.ReadonlyPaths = []string{
 			"/proc/bus", "/proc/fs", "/proc/irq", "/proc/sys", "/proc/sysrq-trigger",
 		}
-		spec.Linux.Namespaces = sandboxNamespaces(spec.Linux.Namespaces)
+		spec.Linux.UIDMappings = append([]specs.LinuxIDMapping(nil), uidMaps...)
+		spec.Linux.GIDMappings = append([]specs.LinuxIDMapping(nil), gidMaps...)
+		spec.Linux.Namespaces = sandboxNamespaces(spec.Linux.Namespaces, len(uidMaps) > 0)
+		for i := range spec.Mounts {
+			// No per-mount ID mappings: the user namespace translation
+			// already maps host-mapped inodes; a mount mapping would
+			// shift them twice.
+			spec.Mounts[i].UIDMappings = nil
+			spec.Mounts[i].GIDMappings = nil
+			// Same rootless sysfs treatment as workloads: a fresh sysfs
+			// mount is refused in a user namespace with a host-owned
+			// network namespace, so bind the host's read-only.
+			if len(uidMaps) > 0 && spec.Mounts[i].Type == "sysfs" && filepath.Clean(spec.Mounts[i].Destination) == "/sys" {
+				spec.Mounts[i].Type = "bind"
+				spec.Mounts[i].Source = "/sys"
+				spec.Mounts[i].Options = []string{"rbind", "ro", "nosuid", "nodev", "noexec"}
+			}
+		}
 		return nil
 	}
 }
 
 // sandboxNamespaces keeps the executor's private network namespace path and forces
 // every other namespace to a fresh private instance.
-func sandboxNamespaces(existing []specs.LinuxNamespace) []specs.LinuxNamespace {
+func sandboxNamespaces(existing []specs.LinuxNamespace, userNamespace bool) []specs.LinuxNamespace {
 	var netPath string
 	for _, namespace := range existing {
 		if namespace.Type == specs.NetworkNamespace {
 			netPath = namespace.Path
 		}
 	}
-	return []specs.LinuxNamespace{
+	namespaces := []specs.LinuxNamespace{
 		{Type: specs.PIDNamespace},
 		{Type: specs.IPCNamespace},
 		{Type: specs.UTSNamespace},
@@ -233,6 +279,10 @@ func sandboxNamespaces(existing []specs.LinuxNamespace) []specs.LinuxNamespace {
 		{Type: specs.NetworkNamespace, Path: netPath},
 		{Type: specs.CgroupNamespace},
 	}
+	if userNamespace {
+		namespaces = append(namespaces, specs.LinuxNamespace{Type: specs.UserNamespace})
+	}
+	return namespaces
 }
 
 // sandboxDeviceRules denies every device except the standard character devices a

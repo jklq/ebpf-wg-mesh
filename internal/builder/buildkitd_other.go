@@ -9,7 +9,7 @@ import "context"
 // they exist so the portable executor compiles everywhere.
 type buildkitdProc struct{}
 
-func startBuildkitd(context.Context, string, string, string, string, []string) (*buildkitdProc, error) {
+func startBuildkitd(context.Context, string, string, string, string, string, []string) (*buildkitdProc, error) {
 	return nil, errSandboxUnsupported
 }
 

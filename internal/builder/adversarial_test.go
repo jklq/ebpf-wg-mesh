@@ -254,6 +254,7 @@ var adversarialCases = []struct {
 	{"disk-exhaustion", adversarialDiskExhaustion},
 	{"network-denial", adversarialNetworkDenial},
 	{"cross-project-cache", adversarialCrossProjectCache},
+	{"host-root-identity", adversarialHostRootIdentity},
 }
 
 func TestAdversarialDevelopment(t *testing.T) {
@@ -609,4 +610,50 @@ func adversarialCrossProjectCache(t *testing.T, backend probeBackend) {
 	result := backend.runProbe(ctx, t, env, spec)
 	requireProbeMarker(t, backend, result.Output, "a", "SECRET-A")
 	requireProbeMarker(t, backend, result.Output, "b", "SECRET-B")
+}
+
+// adversarialHostRootIdentity probes the sandbox's kernel identity: even
+// running as container root, the sandbox must sit in an ID-mapped user
+// namespace, so a kernel exploit lands as an unprivileged host UID rather
+// than host root. The development backend shares the host identity by
+// design and fails this probe open.
+func adversarialHostRootIdentity(t *testing.T, backend probeBackend) {
+	t.Helper()
+	env := setupProbeEnv(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	result := backend.runProbe(ctx, t, env, probeSpec{
+		Script: `
+			echo "uid=$(id -u)"
+			echo "kernel=$(uname -r)"
+			if awk '$1 == 0 && $2 != 0 { found=1 } END { exit !found }' /proc/self/uid_map 2>/dev/null; then
+				echo "mapped=YES"
+			else
+				echo "mapped=NO"
+			fi
+			if awk '$1 == 0 && $2 != 0 { found=1 } END { exit !found }' /proc/self/gid_map 2>/dev/null; then
+				echo "gid_mapped=YES"
+			else
+				echo "gid_mapped=NO"
+			fi
+		`,
+		Limits: probeLimits(),
+		Policy: denyEgressPolicy(),
+	})
+	if backend.isolating() {
+		// Either an ID-mapped user namespace (runc-userns) or a different
+		// kernel entirely (gVisor/Kata) proves container root is not a
+		// host identity. The host kernel release is read on the host.
+		hostKernel, err := os.ReadFile("/proc/sys/kernel/osrelease")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mapped := strings.Contains(result.Output, "mapped=YES") && strings.Contains(result.Output, "gid_mapped=YES")
+		kernelSeparated := !strings.Contains(result.Output, "kernel="+strings.TrimSpace(string(hostKernel)))
+		if !mapped && !kernelSeparated {
+			t.Fatalf("sandbox runs as host root on the host kernel (output:\n%s)", result.Output)
+		}
+		return
+	}
+	requireProbeMarker(t, backend, result.Output, "mapped", "NO")
 }

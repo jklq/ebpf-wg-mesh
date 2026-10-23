@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -23,8 +24,10 @@ func TestAdversarialWorkloadCannotReachHostFilesystemSocketsOrDevices(t *testing
 		"ok=1",
 		"test ! -e /run/containerd/containerd.sock && test ! -e /var/run/docker.sock || ok=host-socket",
 		"test ! -e /dev/kmsg && test ! -e /dev/sda && test ! -e /dev/mem || ok=host-device",
-		"for path in /proc/kcore /sys/kernel/security /sys/fs/bpf; do awk -v path=\"$path\" '$5 == path && $0 ~ / - tmpfs / { found=1 } END { exit !found }' /proc/self/mountinfo || ok=masked-path; done",
+		"for path in /proc/kcore /sys/kernel/security /sys/fs/bpf; do awk -v path=\"$path\" '$5 == path { line=$0 } END { exit !(line ~ / - tmpfs / || line ~ / \\/null /) }' /proc/self/mountinfo || ok=masked-path; done",
 		"test \"$(id -u)\" = 0 || ok=image-user",
+		"awk '$1 == 0 && $2 != 0 { found=1 } END { exit !found }' /proc/self/uid_map || ok=host-root-mapping",
+		"awk '$1 == 0 && $2 != 0 { found=1 } END { exit !found }' /proc/self/gid_map || ok=host-root-gid-mapping",
 		"touch /overlay-write-probe || ok=overlay-read-only",
 		"printf 'ok=%s' \"$ok\" > /tmp/index.html",
 		"exec httpd -f -p [::]:8080 -h /tmp",
@@ -125,4 +128,45 @@ func busyboxProbeService(allocationID, ipv4, ipv6, command string) *agentv1.Desi
 	svc.Spec.Runtime.CpuMillis = 250
 	svc.Spec.Runtime.MemoryMebibytes = 64
 	return svc
+}
+
+// TestGVisorWorkloadRunsBehindUserspaceKernel proves the kernel-separated
+// path end to end: the workload serves traffic while its kernel release is
+// the gVisor Sentry's, not the host's. Hosts without the runsc shim skip —
+// production agents there fail closed instead (VerifyHost).
+func TestGVisorWorkloadRunsBehindUserspaceKernel(t *testing.T) {
+	if _, err := exec.LookPath("containerd-shim-runsc-v1"); err != nil {
+		t.Skipf("gVisor shim not installed on this host: %v", err)
+	}
+	testIsolationClass = "gvisor"
+	t.Cleanup(func() { testIsolationClass = "" })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	engine, cfg := newTestContainerdEngine(t)
+	allocID := uniqueRuntimeID("gv")
+	probe := "uname -r > /tmp/index.html; exec httpd -f -p [::]:8080 -h /tmp"
+	svc := busyboxProbeService(allocID, "10.200.9.72", "fd00:200:0:9::48", probe)
+	// The Sentry shares the container's memory budget (the shim passes the
+	// limit as runsc --total-memory); 64 MiB probes starve it before boot.
+	svc.Spec.Runtime.MemoryMebibytes = 512
+	cleanupContainerdService(t, engine, cfg, allocID)
+	if _, _, err := engine.EnsureService(ctx, svc); err != nil {
+		if skippableRuntimeErr(err) {
+			t.Skipf("containerd/CNI cannot start a workload: %v", err)
+		}
+		t.Fatalf("EnsureService under gVisor: %v", err)
+	}
+	netnsPath := requirePersistedNetNS(t, engine, allocID)
+	got := httpGetInNamespace(t, ctx, netnsPath, svc.GetPrivateIpv6(), 8080, "/")
+	hostRelease, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(got) == strings.TrimSpace(string(hostRelease)) {
+		t.Fatalf("workload reports the host kernel release %q under gVisor", got)
+	}
+	if got == "" {
+		t.Fatal("gVisor workload served an empty kernel release")
+	}
 }

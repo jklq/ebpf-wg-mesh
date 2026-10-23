@@ -35,10 +35,15 @@ type buildkitdProc struct {
 
 // startBuildkitd starts a per-execution buildkitd joined to the namespace at
 // netnsPath (no join when empty, for tests). The daemon runs with an explicit
-// environment, in its own process group, with no insecure entitlements.
-func startBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (*buildkitdProc, error) {
+// environment, in its own process group, with no insecure entitlements. Its
+// OCI worker binary is explicit: Dockerfile RUN steps execute through it, so
+// it decides the build's kernel boundary and is never left to a default.
+func startBuildkitd(ctx context.Context, netnsPath, binary, workerBinary, sockPath, rootDir string, env []string) (*buildkitdProc, error) {
 	if strings.TrimSpace(binary) == "" {
 		return nil, errors.New("per-execution buildkitd binary is required")
+	}
+	if strings.TrimSpace(workerBinary) == "" {
+		return nil, errors.New("per-execution buildkitd OCI worker binary is required")
 	}
 	if err := os.MkdirAll(rootDir, 0o700); err != nil {
 		return nil, fmt.Errorf("mkdir buildkitd root: %w", err)
@@ -49,6 +54,7 @@ func startBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir st
 		"--addr", "unix://"+sockPath,
 		"--root", rootDir,
 		"--oci-worker=true",
+		"--oci-worker-binary", workerBinary,
 		"--containerd-worker=false",
 	)
 	cmd.Env = env

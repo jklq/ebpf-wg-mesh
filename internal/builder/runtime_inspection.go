@@ -22,7 +22,11 @@ func InspectRuntime(ctx context.Context, cfg config.BuilderConfig) error {
 	if err := exec.CommandContext(ctx, cfg.Sandbox.BuildkitdBinary, "--version").Run(); err != nil {
 		return fmt.Errorf("native BuildKit executable unavailable: %w", err)
 	}
-	b, err := NewSandboxBackend(sandboxConfig(cfg))
+	backendCfg, err := sandboxConfig(cfg)
+	if err != nil {
+		return err
+	}
+	b, err := NewSandboxBackend(backendCfg)
 	if err != nil {
 		return err
 	}

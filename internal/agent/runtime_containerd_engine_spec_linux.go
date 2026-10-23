@@ -20,6 +20,9 @@ import (
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/runtimeutil"
 
+	"ebof-wg-mesh/internal/isolation"
+
+	runtimeoptions "github.com/containerd/containerd/api/types/runtimeoptions/v1"
 	containerd "github.com/containerd/containerd/v2/client"
 	"github.com/containerd/containerd/v2/core/containers"
 	"github.com/containerd/containerd/v2/pkg/namespaces"
@@ -111,9 +114,14 @@ func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image container
 	if e.workloadCgroupParent != "" {
 		cgroupPath = filepath.Join(e.workloadCgroupParent, containerName(svc.GetAllocationId()))
 	}
-	opts = append(opts, workloadSandboxOpts(allowedBindMounts, cgroupPath)...)
+	scope := isolationScope(svc)
+	uidMaps, gidMaps, err := e.isolation.Mappings(scope)
+	if err != nil {
+		return nil, err
+	}
+	opts = append(opts, workloadSandboxOpts(allowedBindMounts, cgroupPath, e.isolation, uidMaps, gidMaps)...)
 	if writableVolumePath != "" {
-		opts = append(opts, withWritableVolumeOwnership(writableVolumePath))
+		opts = append(opts, withWritableVolumeOwnership(writableVolumePath, e.isolation, scope))
 	}
 	if e.cfg.Runtime.DisableCgroups {
 		opts = append(opts, withoutCgroups)
@@ -142,16 +150,70 @@ func (e *containerdEngine) volumeMount(svc *agentv1.DesiredService) (string, str
 	return hostPath, mountPath, nil
 }
 
-func withWritableVolumeOwnership(path string) oci.SpecOpts {
+func withWritableVolumeOwnership(path string, policy isolation.Policy, scope string) oci.SpecOpts {
 	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
 		if spec.Process == nil {
 			return errors.New("writable volume ownership requires a process identity")
 		}
-		if err := os.Chown(path, int(spec.Process.User.UID), int(spec.Process.User.GID)); err != nil {
+		// The host directory is owned by the host identity the container user
+		// maps to; user namespace translation presents it back as the
+		// container identity. Container root is never host root here.
+		hostUID, err := policy.HostUID(scope, spec.Process.User.UID)
+		if err != nil {
+			return err
+		}
+		hostGID, err := policy.HostGID(scope, spec.Process.User.GID)
+		if err != nil {
+			return err
+		}
+		if err := os.Chown(path, int(hostUID), int(hostGID)); err != nil {
 			return fmt.Errorf("set writable volume ownership: %w", err)
 		}
 		return nil
 	}
+}
+
+// isolationScope is the identity-range scope for a service: its environment,
+// the platform scope that owns volumes and private connectivity. Allocations
+// are replaced over a volume's life, so keying ranges by allocation would
+// re-own persistent files on every rollout.
+func isolationScope(svc *agentv1.DesiredService) string {
+	if id := strings.TrimSpace(svc.GetEnvironmentId()); id != "" {
+		return id
+	}
+	return strings.TrimSpace(svc.GetAllocationId())
+}
+
+func (e *containerdEngine) newContainerOpts(svc *agentv1.DesiredService, image containerd.Image, containerID string, specOpts []oci.SpecOpts) ([]containerd.NewContainerOpts, error) {
+	// The runtime is always explicit: a daemon default would silently
+	// decide the tenant's kernel boundary.
+	runtimeOpt := containerd.WithRuntime(e.isolation.ContainerdRuntime(), nil)
+	if e.runscConfigPath != "" {
+		runtimeOpt = containerd.WithRuntime(e.isolation.ContainerdRuntime(), &runtimeoptions.Options{
+			TypeUrl:    isolation.RunscOptionsTypeURL,
+			ConfigPath: e.runscConfigPath,
+		})
+	}
+	opts := []containerd.NewContainerOpts{
+		containerd.WithImage(image),
+		runtimeOpt,
+		containerd.WithSnapshotter(e.cfg.Runtime.Snapshotter),
+	}
+	uidMaps, gidMaps, err := e.isolation.Mappings(isolationScope(svc))
+	if err != nil {
+		return nil, err
+	}
+	if len(uidMaps) > 0 {
+		// The snapshotter presents the shared image layers ID-mapped into
+		// this scope's range; no per-scope copy of the image is made.
+		opts = append(opts, containerd.WithNewSnapshot(containerID, image, containerd.WithUserNSRemapperLabels(uidMaps, gidMaps)))
+	} else {
+		opts = append(opts, containerd.WithNewSnapshot(containerID, image))
+	}
+	return append(opts,
+		containerd.WithNewSpec(specOpts...),
+		containerd.WithContainerLabels(e.serviceLabels(svc)),
+	), nil
 }
 
 func withHardMemoryIsolation() oci.SpecOpts {

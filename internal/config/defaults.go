@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"ebof-wg-mesh/internal/isolation"
 	"ebof-wg-mesh/internal/meshlabels"
 )
 
@@ -313,6 +314,13 @@ func applyAgentDefaults(cfg *AgentConfig) {
 	if cfg.Runtime.VolumeBackend == "" {
 		cfg.Runtime.VolumeBackend = "loop"
 	}
+	if cfg.Runtime.Isolation == "" {
+		if cfg.Profile.IsProduction() {
+			cfg.Runtime.Isolation = string(isolation.ClassGVisor)
+		} else {
+			cfg.Runtime.Isolation = string(isolation.ClassRuncUserNS)
+		}
+	}
 	if cfg.Containerd.Socket == "" {
 		cfg.Containerd.Socket = "/run/containerd/containerd.sock"
 	}
@@ -400,7 +408,7 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 			cfg.Executor = "development"
 		}
 	}
-	applyBuilderSandboxDefaults(&cfg.Sandbox)
+	applyBuilderSandboxDefaults(&cfg.Sandbox, cfg.Profile.IsProduction())
 	if cfg.Limits.TimeoutSeconds <= 0 {
 		cfg.Limits.TimeoutSeconds = limits.TimeoutSeconds
 	}
@@ -451,7 +459,7 @@ func CloudMetadataCIDRs() []string {
 	}
 }
 
-func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {
+func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig, production bool) {
 	if cfg.Backend == "" {
 		cfg.Backend = "containerd"
 	}
@@ -462,8 +470,14 @@ func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {
 		cfg.Namespace = "builder"
 	}
 	// Image has no default: the operator chooses it, and validation requires it for the hardened executor.
-	if cfg.Runtime == "" {
-		cfg.Runtime = "io.containerd.runc.v2"
+	if cfg.Isolation == "" {
+		// Kernel separation in production; ID-mapped user namespaces in
+		// development so unprivileged checkouts are not the fallback.
+		if production {
+			cfg.Isolation = string(isolation.ClassGVisor)
+		} else {
+			cfg.Isolation = string(isolation.ClassRuncUserNS)
+		}
 	}
 	if cfg.Snapshotter == "" {
 		cfg.Snapshotter = "overlayfs"

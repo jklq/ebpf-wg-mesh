@@ -96,6 +96,9 @@ func AgentStartupContract(cfg AgentConfig) StartupContract {
 		features = append(features, "cgroups")
 	}
 	features = append(features, "workload_sandbox")
+	if class := strings.TrimSpace(cfg.Runtime.Isolation); class != "" {
+		features = append(features, "isolation_"+strings.ReplaceAll(class, "-", "_"))
+	}
 	controlPlaneAddress := ""
 	if len(cfg.ControlPlane.Addresses) > 0 {
 		controlPlaneAddress = cfg.ControlPlane.Addresses[0]
@@ -121,6 +124,9 @@ func BuilderStartupContract(cfg BuilderConfig) StartupContract {
 	// production backend; production refuses the development one.
 	if executor == "development" {
 		features = append(features, "executor_non_isolating")
+	}
+	if class := strings.TrimSpace(cfg.Sandbox.Isolation); class != "" {
+		features = append(features, "isolation_"+strings.ReplaceAll(class, "-", "_"))
 	}
 	if cfg.CleanupWorkDir {
 		features = append(features, "cleanup_work_dir")

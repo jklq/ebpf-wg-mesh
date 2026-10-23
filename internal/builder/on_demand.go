@@ -2,8 +2,11 @@ package builder
 
 import (
 	"context"
-	"ebof-wg-mesh/internal/config"
 	"errors"
+	"fmt"
+
+	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/isolation"
 )
 
 // onDemandExecutor owns no containerd connection, unpacked image or sandbox
@@ -19,7 +22,11 @@ func (e *onDemandExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if err := validateExecutionSpec(spec); err != nil {
 		return ExecutionResult{}, err
 	}
-	backend, err := e.open(sandboxConfig(e.cfg))
+	backendCfg, err := sandboxConfig(e.cfg)
+	if err != nil {
+		return ExecutionResult{}, err
+	}
+	backend, err := e.open(backendCfg)
 	if err != nil {
 		return ExecutionResult{}, err
 	}
@@ -27,7 +34,7 @@ func (e *onDemandExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	if _, err := backend.ReapStale(ctx); err != nil {
 		return ExecutionResult{}, err
 	}
-	return newHardenedExecutor(e.cfg.WorkDir, backend, e.cfg.Sandbox.BuildkitdBinary, e.cfg.Sandbox.Nameservers).Execute(ctx, spec)
+	return newHardenedExecutor(e.cfg.WorkDir, backend, e.cfg.Sandbox.BuildkitdBinary, backendCfg.Isolation, e.cfg.Sandbox.Nameservers).Execute(ctx, spec)
 }
 func (e *onDemandExecutor) RecoverStaleWorkspaces(ctx context.Context) (int, error) {
 	count, err := recoverStaleWorkspaces(e.cfg.WorkDir)
@@ -37,7 +44,11 @@ func (e *onDemandExecutor) RecoverStaleWorkspaces(ctx context.Context) (int, err
 	if count+roots == 0 {
 		return 0, errors.Join(err, rootsErr)
 	}
-	backend, backendErr := e.open(sandboxConfig(e.cfg))
+	backendCfg, cfgErr := sandboxConfig(e.cfg)
+	if cfgErr != nil {
+		return count + roots, errors.Join(err, rootsErr, cfgErr)
+	}
+	backend, backendErr := e.open(backendCfg)
 	if backendErr != nil {
 		return count + roots, errors.Join(err, rootsErr, backendErr)
 	}
@@ -45,6 +56,10 @@ func (e *onDemandExecutor) RecoverStaleWorkspaces(ctx context.Context) (int, err
 	reaped, reapErr := backend.ReapStale(ctx)
 	return count + roots + reaped, errors.Join(err, rootsErr, reapErr)
 }
-func sandboxConfig(cfg config.BuilderConfig) SandboxBackendConfig {
-	return SandboxBackendConfig{Socket: cfg.Sandbox.Socket, Namespace: cfg.Sandbox.Namespace, Image: cfg.Sandbox.Image, Runtime: cfg.Sandbox.Runtime, Snapshotter: cfg.Sandbox.Snapshotter, CNIPluginDir: cfg.Sandbox.CNIPluginDir, CNIConfDir: cfg.Sandbox.CNIConfDir, CNINetwork: cfg.Sandbox.CNINetwork, Nameservers: cfg.Sandbox.Nameservers, BuildkitdBinary: cfg.Sandbox.BuildkitdBinary, WorkDir: cfg.WorkDir}
+func sandboxConfig(cfg config.BuilderConfig) (SandboxBackendConfig, error) {
+	policy, err := isolation.PolicyFor(cfg.Sandbox.Isolation, cfg.Profile.IsProduction())
+	if err != nil {
+		return SandboxBackendConfig{}, fmt.Errorf("builder.sandbox.isolation: %w", err)
+	}
+	return SandboxBackendConfig{Socket: cfg.Sandbox.Socket, Namespace: cfg.Sandbox.Namespace, Image: cfg.Sandbox.Image, Isolation: policy, Snapshotter: cfg.Sandbox.Snapshotter, CNIPluginDir: cfg.Sandbox.CNIPluginDir, CNIConfDir: cfg.Sandbox.CNIConfDir, CNINetwork: cfg.Sandbox.CNINetwork, Nameservers: cfg.Sandbox.Nameservers, BuildkitdBinary: cfg.Sandbox.BuildkitdBinary, WorkDir: cfg.WorkDir}, nil
 }

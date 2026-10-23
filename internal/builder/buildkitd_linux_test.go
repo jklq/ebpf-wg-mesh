@@ -90,7 +90,7 @@ func TestStartBuildkitdStartsAndStops(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	proc, err := startBuildkitd(ctx, "", binary, sockPath, rootDir, []string{"PATH=/usr/bin:/bin", "HOME=" + rootDir})
+	proc, err := startBuildkitd(ctx, "", binary, "runc", sockPath, rootDir, []string{"PATH=/usr/bin:/bin", "HOME=" + rootDir})
 	if err != nil {
 		t.Fatalf("startBuildkitd: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestStartBuildkitdKillsOnCancel(t *testing.T) {
 	dir := t.TempDir()
 	binary := fakeDaemonScript(t, filepath.Join(dir, "daemon.env"))
 	ctx, cancel := context.WithCancel(context.Background())
-	proc, err := startBuildkitd(ctx, "", binary, filepath.Join(dir, "bk.sock"), filepath.Join(dir, "root"), []string{"PATH=/usr/bin:/bin"})
+	proc, err := startBuildkitd(ctx, "", binary, "runc", filepath.Join(dir, "bk.sock"), filepath.Join(dir, "root"), []string{"PATH=/usr/bin:/bin"})
 	if err != nil {
 		t.Fatalf("startBuildkitd: %v", err)
 	}
@@ -138,13 +138,13 @@ func TestStartBuildkitdKillsOnCancel(t *testing.T) {
 
 func TestStartBuildkitdRejectsBadInputs(t *testing.T) {
 	ctx := context.Background()
-	if _, err := startBuildkitd(ctx, "", "", filepath.Join(t.TempDir(), "x.sock"), t.TempDir(), nil); err == nil {
+	if _, err := startBuildkitd(ctx, "", "", "runc", filepath.Join(t.TempDir(), "x.sock"), t.TempDir(), nil); err == nil {
 		t.Fatal("expected empty binary to fail")
 	}
-	if _, err := startBuildkitd(ctx, "/nonexistent/netns", "/bin/sleep", filepath.Join(t.TempDir(), "x.sock"), t.TempDir(), nil); err == nil {
+	if _, err := startBuildkitd(ctx, "/nonexistent/netns", "/bin/sleep", "runc", filepath.Join(t.TempDir(), "x.sock"), t.TempDir(), nil); err == nil {
 		t.Fatal("expected missing netns to fail")
 	}
-	if _, err := startBuildkitd(ctx, "", "definitely-not-a-buildkitd-binary", filepath.Join(t.TempDir(), "x.sock"), t.TempDir(), nil); err == nil {
+	if _, err := startBuildkitd(ctx, "", "definitely-not-a-buildkitd-binary", "runc", filepath.Join(t.TempDir(), "x.sock"), t.TempDir(), nil); err == nil {
 		t.Fatal("expected missing binary to fail")
 	}
 }

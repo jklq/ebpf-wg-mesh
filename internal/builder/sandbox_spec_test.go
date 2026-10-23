@@ -312,3 +312,54 @@ func hasMountOption(options []string, want string) bool {
 	}
 	return false
 }
+
+func TestSandboxSpecUserNamespaceMappings(t *testing.T) {
+	t.Parallel()
+
+	input, _ := sandboxSpecInputForTest(t)
+	mapping := []specs.LinuxIDMapping{{ContainerID: 0, HostID: 231072, Size: 65536}}
+	input.UIDMaps = mapping
+	input.GIDMaps = mapping
+	spec := generateSandboxSpec(t, input)
+
+	var userNS *specs.LinuxNamespace
+	for i := range spec.Linux.Namespaces {
+		if spec.Linux.Namespaces[i].Type == specs.UserNamespace {
+			userNS = &spec.Linux.Namespaces[i]
+		}
+	}
+	if userNS == nil || userNS.Path != "" {
+		t.Fatalf("sandbox does not get a fresh user namespace: %+v", spec.Linux.Namespaces)
+	}
+	if len(spec.Linux.UIDMappings) != 1 || spec.Linux.UIDMappings[0] != mapping[0] || spec.Linux.UIDMappings[0].HostID == 0 {
+		t.Fatalf("sandbox UID mapping = %+v, want scope mapping with non-root host ID", spec.Linux.UIDMappings)
+	}
+	for _, mount := range spec.Mounts {
+		if mount.Destination == "/sys" {
+			// The rootless sysfs bind is a plain bind.
+			if mount.Type != "bind" || mount.Source != "/sys" || len(mount.UIDMappings) != 0 {
+				t.Fatalf("sysfs mount not converted to unmapped bind: %+v", mount)
+			}
+			continue
+		}
+		if mount.Type == "bind" && len(mount.UIDMappings) != 0 {
+			t.Fatalf("bind mount %s must rely on user namespace translation, not a mount mapping: %+v", mount.Destination, mount.UIDMappings)
+		}
+		if mount.Type == "tmpfs" && len(mount.UIDMappings) != 0 {
+			t.Fatalf("tmpfs mount %s must not carry ID mappings", mount.Destination)
+		}
+	}
+
+	// Kernel-separated classes pass no mappings: no user namespace is created.
+	input.UIDMaps = nil
+	input.GIDMaps = nil
+	spec = generateSandboxSpec(t, input)
+	for _, ns := range spec.Linux.Namespaces {
+		if ns.Type == specs.UserNamespace {
+			t.Fatalf("kernel-separated sandbox unexpectedly creates a user namespace: %+v", spec.Linux.Namespaces)
+		}
+	}
+	if len(spec.Linux.UIDMappings) != 0 {
+		t.Fatalf("kernel-separated sandbox carries UID mappings: %+v", spec.Linux.UIDMappings)
+	}
+}

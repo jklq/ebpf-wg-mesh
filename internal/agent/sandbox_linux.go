@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/isolation"
 
 	containerdapparmor "github.com/containerd/containerd/v2/contrib/apparmor"
 	containerdseccomp "github.com/containerd/containerd/v2/contrib/seccomp"
@@ -47,11 +48,32 @@ type sandboxBindMount struct {
 	writable bool
 }
 
-func workloadSandboxOpts(allowedBindMounts map[string]sandboxBindMount, cgroupPath string) []oci.SpecOpts {
-	opts := []oci.SpecOpts{
-		containerdseccomp.WithDefaultProfile(),
-		withWorkloadSandbox(cgroupPath, allowedBindMounts),
+func workloadSandboxOpts(allowedBindMounts map[string]sandboxBindMount, cgroupPath string, policy isolation.Policy, uidMaps, gidMaps []specs.LinuxIDMapping) []oci.SpecOpts {
+	pidsLimit := sandboxProcessLimit
+	if policy.Class() == isolation.ClassGVisor {
+		// The Sentry and gofer share the workload cgroup and spend host
+		// threads per app thread; the in-sandbox RLIMIT_NPROC stays exact.
+		pidsLimit += 128
 	}
+	opts := []oci.SpecOpts{
+		withWorkloadSandbox(cgroupPath, allowedBindMounts, uidMaps, gidMaps, pidsLimit),
+	}
+	// Host seccomp and AppArmor confine the process the runtime starts.
+	// Under gVisor that process is the Sentry, which installs its own,
+	// far stricter syscall filtering and needs platform syscalls the
+	// container profiles deny — applying them would weaken nothing but
+	// break (or silently misconfine) the monitor. Every other class runs
+	// tenant code more directly, so both profiles stay mandatory there.
+	if policy.Class() == isolation.ClassGVisor {
+		// Every allocation is its own gVisor sandbox. Without this
+		// annotation the shim treats the container as joining an existing
+		// sandbox, does not wire container IO into `runsc create`, and
+		// its buffered-output wait then blocks until the workload exits.
+		return append(opts, oci.WithAnnotations(map[string]string{
+			"io.kubernetes.cri.container-type": "sandbox",
+		}))
+	}
+	opts = append([]oci.SpecOpts{containerdseccomp.WithDefaultProfile()}, opts...)
 	if hostapparmor.HostSupports() {
 		opts = append(opts, containerdapparmor.WithDefaultProfile(workloadAppArmorName))
 	} else if selinux.GetEnabled() {
@@ -65,7 +87,7 @@ func workloadSandboxOpts(allowedBindMounts map[string]sandboxBindMount, cgroupPa
 	return opts
 }
 
-func withWorkloadSandbox(cgroupPath string, allowedBindMounts map[string]sandboxBindMount) oci.SpecOpts {
+func withWorkloadSandbox(cgroupPath string, allowedBindMounts map[string]sandboxBindMount, uidMaps, gidMaps []specs.LinuxIDMapping, pidsLimit int64) oci.SpecOpts {
 	return func(_ context.Context, _ oci.Client, _ *containers.Container, spec *specs.Spec) error {
 		if spec.Process == nil || spec.Root == nil || spec.Linux == nil {
 			return errors.New("sandbox requires a complete Linux OCI spec")
@@ -82,21 +104,45 @@ func withWorkloadSandbox(cgroupPath string, allowedBindMounts map[string]sandbox
 		if spec.Linux.Resources == nil {
 			spec.Linux.Resources = &specs.LinuxResources{}
 		}
-		pids := sandboxProcessLimit
-		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: &pids}
+		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: &pidsLimit}
 		spec.Linux.Resources.Devices = sandboxDeviceRules()
 		spec.Linux.Devices = nil
 		spec.Linux.Sysctl = nil
 		spec.Linux.RootfsPropagation = "rprivate"
 		spec.Linux.MaskedPaths = append([]string(nil), sandboxMaskedPaths...)
 		spec.Linux.ReadonlyPaths = append([]string(nil), sandboxReadonlyPaths...)
-		spec.Linux.Namespaces = isolatedNamespaces(spec.Linux.Namespaces)
+		// Identity mappings are replaced, never merged: an image-supplied
+		// mapping must not widen or shift the scope's host range. Empty
+		// mappings mean a kernel-separated class, where no user namespace
+		// is created at all.
+		spec.Linux.UIDMappings = append([]specs.LinuxIDMapping(nil), uidMaps...)
+		spec.Linux.GIDMappings = append([]specs.LinuxIDMapping(nil), gidMaps...)
+		spec.Linux.Namespaces = isolatedNamespaces(spec.Linux.Namespaces, len(uidMaps) > 0)
 		if cgroupPath != "" {
 			spec.Linux.CgroupsPath = cgroupPath
 		}
 		mounts, err := hardenedSandboxMounts(spec.Mounts, allowedBindMounts)
 		if err != nil {
 			return err
+		}
+		// Bind mounts get no per-mount ID mappings: the user namespace
+		// translation already presents host-mapped inodes at their
+		// container IDs, and a mount mapping would shift them twice.
+		// Host inodes behind binds are owned by host-mapped IDs (volumes)
+		// or world-readable (identity files).
+		for i := range mounts {
+			mounts[i].UIDMappings = nil
+			mounts[i].GIDMappings = nil
+			// A fresh sysfs mount is refused inside a user namespace whose
+			// network namespace is owned by the host (ours is: CNI owns it).
+			// Bind the host sysfs read-only instead, as rootless runtimes do;
+			// masked paths still apply on top, and sysfs carries no ID
+			// mapping (kernfs files are world-readable, never written).
+			if len(uidMaps) > 0 && mounts[i].Type == "sysfs" && filepath.Clean(mounts[i].Destination) == "/sys" {
+				mounts[i].Type = "bind"
+				mounts[i].Source = "/sys"
+				mounts[i].Options = []string{"rbind", "ro", "nosuid", "nodev", "noexec"}
+			}
 		}
 		spec.Mounts = mounts
 		return nil
@@ -111,10 +157,13 @@ func workloadCapabilities() *specs.LinuxCapabilities {
 	}
 }
 
-func isolatedNamespaces(existing []specs.LinuxNamespace) []specs.LinuxNamespace {
+func isolatedNamespaces(existing []specs.LinuxNamespace, userNamespace bool) []specs.LinuxNamespace {
 	required := []specs.LinuxNamespaceType{
 		specs.PIDNamespace, specs.IPCNamespace, specs.UTSNamespace, specs.MountNamespace,
 		specs.NetworkNamespace, specs.CgroupNamespace,
+	}
+	if userNamespace {
+		required = append(required, specs.UserNamespace)
 	}
 	out := make([]specs.LinuxNamespace, 0, len(required))
 	for _, namespaceType := range required {
@@ -220,7 +269,10 @@ func upsertRlimit(existing []specs.POSIXRlimit, limit specs.POSIXRlimit) []specs
 
 func intPtr(value int) *int { return &value }
 
-func prepareWorkloadSandboxHost(cfg config.AgentConfig) (string, error) {
+func prepareWorkloadSandboxHost(cfg config.AgentConfig, policy isolation.Policy) (string, error) {
+	if err := policy.VerifyHost(); err != nil {
+		return "", err
+	}
 	if hostapparmor.HostSupports() {
 		if err := containerdapparmor.LoadDefaultProfile(workloadAppArmorName); err != nil && cfg.Profile.IsProduction() {
 			return "", fmt.Errorf("load production AppArmor profile: %w", err)

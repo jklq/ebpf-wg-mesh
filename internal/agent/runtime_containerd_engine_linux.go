@@ -21,6 +21,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/registry"
+	"ebof-wg-mesh/internal/isolation"
 	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/volumestore"
@@ -48,6 +49,8 @@ const (
 type containerdEngine struct {
 	recoveryPaused          bool
 	cfg                     config.AgentConfig
+	isolation               isolation.Policy
+	runscConfigPath         string
 	client                  *containerd.Client
 	imageMu                 sync.RWMutex
 	diskUsage               diskUsageCache
@@ -97,7 +100,11 @@ func (e *containerdEngine) observeAllocation(allocationID string, final bool) {
 func (e *containerdEngine) SetRecoveryPaused(paused bool) { e.recoveryPaused = paused }
 
 func newContainerdEngine(cfg config.AgentConfig, volumes *volumestore.Store) (serviceEngine, error) {
-	workloadCgroupParent, err := prepareWorkloadSandboxHost(cfg)
+	policy, err := isolation.PolicyFor(cfg.Runtime.Isolation, cfg.Profile.IsProduction())
+	if err != nil {
+		return nil, fmt.Errorf("agent.runtime.isolation: %w", err)
+	}
+	workloadCgroupParent, err := prepareWorkloadSandboxHost(cfg, policy)
 	if err != nil {
 		return nil, err
 	}
@@ -117,6 +124,32 @@ func newContainerdEngine(cfg config.AgentConfig, volumes *volumestore.Store) (se
 			return nil, err
 		}
 		slog.Info("selected containerd snapshotter", "snapshotter", cfg.Runtime.Snapshotter)
+	}
+	if policy.UsesUserNamespaces() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		capabilities, err := client.GetSnapshotterCapabilities(ctx, cfg.Runtime.Snapshotter)
+		cancel()
+		if err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("inspect snapshotter capabilities: %w", err)
+		}
+		if err := policy.VerifySnapshotter(cfg.Runtime.Snapshotter, capabilities); err != nil {
+			_ = client.Close()
+			return nil, err
+		}
+	}
+	slog.Info("tenant isolation policy", "class", policy.Class(), "runtime", policy.ContainerdRuntime(), "kernel_separated", policy.KernelSeparated(), "user_namespaces", policy.UsesUserNamespaces())
+	runscConfigPath := ""
+	if contents, ok := policy.RunscConfig(); ok {
+		runscConfigPath = filepath.Join(cfg.Runtime.DataDir, "runsc.toml")
+		if err := os.MkdirAll(cfg.Runtime.DataDir, 0o755); err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("mkdir data dir: %w", err)
+		}
+		if err := os.WriteFile(runscConfigPath, []byte(contents), 0o644); err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("write runsc config: %w", err)
+		}
 	}
 	netPlugin, err := cni.New(
 		cni.WithPluginDir([]string{defaultCNIPluginDir}),
@@ -139,7 +172,7 @@ func newContainerdEngine(cfg config.AgentConfig, volumes *volumestore.Store) (se
 		_ = client.Close()
 		return nil, fmt.Errorf("mkdir hosts dir: %w", err)
 	}
-	return &containerdEngine{cfg: cfg, client: client, cni: netPlugin, logBootID: logpipeline.NewBootID(), workloadCgroupParent: workloadCgroupParent, volumes: volumes}, nil
+	return &containerdEngine{cfg: cfg, isolation: policy, runscConfigPath: runscConfigPath, client: client, cni: netPlugin, logBootID: logpipeline.NewBootID(), workloadCgroupParent: workloadCgroupParent, volumes: volumes}, nil
 }
 
 func (e *containerdEngine) Close() error {
@@ -315,13 +348,12 @@ func (e *containerdEngine) EnsureService(ctx context.Context, svc *agentv1.Desir
 		_ = e.cleanupNetNS(svc.GetAllocationId())
 		return serviceStatus{}, false, err
 	}
-	container, err := e.client.NewContainer(ctx, containerID,
-		containerd.WithImage(image),
-		containerd.WithSnapshotter(e.cfg.Runtime.Snapshotter),
-		containerd.WithNewSnapshot(containerID, image),
-		containerd.WithNewSpec(specOpts...),
-		containerd.WithContainerLabels(e.serviceLabels(svc)),
-	)
+	containerOpts, err := e.newContainerOpts(svc, image, containerID, specOpts)
+	if err != nil {
+		_ = e.cleanupNetNS(svc.GetAllocationId())
+		return serviceStatus{}, false, err
+	}
+	container, err := e.client.NewContainer(ctx, containerID, containerOpts...)
 	if err != nil {
 		_ = e.cleanupNetNS(svc.GetAllocationId())
 		return serviceStatus{}, false, fmt.Errorf("create container %s: %w", containerID, err)

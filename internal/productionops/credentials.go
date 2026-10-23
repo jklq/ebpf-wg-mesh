@@ -199,7 +199,7 @@ func (r *Runner) credentials(ctx context.Context, verify bool) error {
 				env["BUILDER_SANDBOX_IMAGE"] = cfg.Sandbox.Image
 				env["BUILDER_SANDBOX_SOCKET"] = cfg.Sandbox.Socket
 				env["BUILDER_SANDBOX_NAMESPACE"] = cfg.Sandbox.Namespace
-				env["BUILDER_SANDBOX_RUNTIME"] = cfg.Sandbox.Runtime
+				env["BUILDER_SANDBOX_ISOLATION"] = cfg.Sandbox.Isolation
 				env["BUILDER_SANDBOX_SNAPSHOTTER"] = cfg.Sandbox.Snapshotter
 				env["BUILDER_SANDBOX_CNI_PLUGIN_DIR"] = cfg.Sandbox.CNIPluginDir
 				env["BUILDER_SANDBOX_CNI_CONF_DIR"] = cfg.Sandbox.CNIConfDir

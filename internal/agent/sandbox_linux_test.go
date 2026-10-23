@@ -14,6 +14,8 @@ import (
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
+var testUIDMaps = []specs.LinuxIDMapping{{ContainerID: 0, HostID: 231072, Size: 65536}}
+
 func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T) {
 	spec := &specs.Spec{
 		Root: &specs.Root{},
@@ -22,9 +24,12 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 			Capabilities: &specs.LinuxCapabilities{Effective: []string{"CAP_SYS_ADMIN"}},
 		},
 		Linux: &specs.Linux{
+			UIDMappings: []specs.LinuxIDMapping{{ContainerID: 0, HostID: 0, Size: 65536}},
+			GIDMappings: []specs.LinuxIDMapping{{ContainerID: 0, HostID: 0, Size: 65536}},
 			Namespaces: []specs.LinuxNamespace{
 				{Type: specs.NetworkNamespace, Path: "/run/netns/allocation"},
 				{Type: specs.PIDNamespace, Path: "/proc/1/ns/pid"},
+				{Type: specs.UserNamespace, Path: "/proc/1/ns/user"},
 			},
 			Resources: &specs.LinuxResources{Devices: []specs.LinuxDeviceCgroup{{Allow: true, Type: "c", Access: "rwm"}}},
 			Sysctl:    map[string]string{"kernel.hostname": "unsafe"},
@@ -41,7 +46,7 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	allowedBindMounts := map[string]sandboxBindMount{
 		runtimeutil.DefaultVolumeMountPath: {source: "/var/lib/platform/volume", writable: true},
 	}
-	if err := withWorkloadSandbox("", allowedBindMounts)(context.Background(), nil, &containers.Container{}, spec); err != nil {
+	if err := withWorkloadSandbox("", allowedBindMounts, testUIDMaps, testUIDMaps, sandboxProcessLimit)(context.Background(), nil, &containers.Container{}, spec); err != nil {
 		t.Fatalf("sandbox: %v", err)
 	}
 
@@ -82,7 +87,7 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 			t.Fatalf("injected /dev/kvm allow rule survived: %+v", spec.Linux.Resources.Devices)
 		}
 	}
-	for _, namespaceType := range []specs.LinuxNamespaceType{specs.PIDNamespace, specs.IPCNamespace, specs.UTSNamespace, specs.MountNamespace, specs.NetworkNamespace, specs.CgroupNamespace} {
+	for _, namespaceType := range []specs.LinuxNamespaceType{specs.PIDNamespace, specs.IPCNamespace, specs.UTSNamespace, specs.MountNamespace, specs.NetworkNamespace, specs.CgroupNamespace, specs.UserNamespace} {
 		if !hasNamespace(spec.Linux.Namespaces, namespaceType) {
 			t.Fatalf("missing isolated %s namespace: %+v", namespaceType, spec.Linux.Namespaces)
 		}
@@ -92,6 +97,16 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	}
 	if pid := namespaceFor(spec.Linux.Namespaces, specs.PIDNamespace); pid.Path != "" {
 		t.Fatalf("injected PID namespace path survived: %+v", pid)
+	}
+	userNS := namespaceFor(spec.Linux.Namespaces, specs.UserNamespace)
+	if userNS.Type != specs.UserNamespace || userNS.Path != "" {
+		t.Fatalf("workload does not get a fresh user namespace: %+v", userNS)
+	}
+	if len(spec.Linux.UIDMappings) != 1 || spec.Linux.UIDMappings[0] != testUIDMaps[0] || spec.Linux.UIDMappings[0].HostID == 0 {
+		t.Fatalf("image-supplied identity mapping survived or scope mapping missing: %+v", spec.Linux.UIDMappings)
+	}
+	if len(spec.Linux.GIDMappings) != 1 || spec.Linux.GIDMappings[0] != testUIDMaps[0] {
+		t.Fatalf("gid mapping not installed: %+v", spec.Linux.GIDMappings)
 	}
 	if !slices.Contains(spec.Linux.MaskedPaths, "/sys/fs/bpf") ||
 		!slices.Contains(spec.Linux.MaskedPaths, "/proc/kcore") ||
@@ -108,6 +123,12 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	if !slices.Contains(volume.Options, "rbind") || !slices.Contains(volume.Options, "nosuid") || !slices.Contains(volume.Options, "nodev") {
 		t.Fatalf("volume mount options not hardened: %+v", volume)
 	}
+	if len(volume.UIDMappings) != 0 {
+		t.Fatalf("volume bind mount must rely on user namespace translation, not a mount mapping: %+v", volume.UIDMappings)
+	}
+	if tmp := mountFor(spec.Mounts, "/tmp"); len(tmp.UIDMappings) != 0 {
+		t.Fatalf("tmpfs mount must not carry ID mappings: %+v", tmp)
+	}
 }
 
 func TestProductionSandboxPreservesNonRootImageUser(t *testing.T) {
@@ -116,7 +137,7 @@ func TestProductionSandboxPreservesNonRootImageUser(t *testing.T) {
 		Process: &specs.Process{User: specs.User{UID: 1000, GID: 1001}},
 		Linux:   &specs.Linux{Resources: &specs.LinuxResources{}},
 	}
-	if err := withWorkloadSandbox("", nil)(context.Background(), nil, nil, spec); err != nil {
+	if err := withWorkloadSandbox("", nil, testUIDMaps, testUIDMaps, sandboxProcessLimit)(context.Background(), nil, nil, spec); err != nil {
 		t.Fatal(err)
 	}
 	if spec.Process.User.UID != 1000 || spec.Process.User.GID != 1001 {
@@ -126,7 +147,7 @@ func TestProductionSandboxPreservesNonRootImageUser(t *testing.T) {
 
 func TestWorkloadSandboxPlacesContainerInReservedCgroup(t *testing.T) {
 	spec := &specs.Spec{Root: &specs.Root{}, Process: &specs.Process{}, Linux: &specs.Linux{Resources: &specs.LinuxResources{}}}
-	if err := withWorkloadSandbox("ebpf-wg-mesh-workloads/platform-alloc", nil)(context.Background(), nil, nil, spec); err != nil {
+	if err := withWorkloadSandbox("ebpf-wg-mesh-workloads/platform-alloc", nil, nil, nil, sandboxProcessLimit)(context.Background(), nil, nil, spec); err != nil {
 		t.Fatal(err)
 	}
 	if spec.Linux.CgroupsPath != "ebpf-wg-mesh-workloads/platform-alloc" {
@@ -148,7 +169,7 @@ func TestProductionSandboxRejectsUnrecognizedHostBindMount(t *testing.T) {
 			Linux:   &specs.Linux{Resources: &specs.LinuxResources{}},
 			Mounts:  []specs.Mount{mount},
 		}
-		err := withWorkloadSandbox("", nil)(context.Background(), nil, nil, spec)
+		err := withWorkloadSandbox("", nil, testUIDMaps, testUIDMaps, sandboxProcessLimit)(context.Background(), nil, nil, spec)
 		if err == nil {
 			t.Fatalf("unrecognized host bind mount was accepted: %+v", mount)
 		}

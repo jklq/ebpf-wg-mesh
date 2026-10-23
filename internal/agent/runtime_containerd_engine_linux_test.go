@@ -199,6 +199,11 @@ func TestContainerdEngineGenerationReplaceAndNetnsProbeFailClosed(t *testing.T) 
 	}
 }
 
+// testIsolationClass selects the isolation class for engines built by
+// newTestContainerdEngine; empty takes the development default
+// (runc-userns). Kernel-separation tests set it and restore it via Cleanup.
+var testIsolationClass string
+
 func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 	t.Helper()
 	socket := strings.TrimSpace(os.Getenv("CONTAINERD_ADDRESS"))
@@ -238,6 +243,7 @@ func newTestContainerdEngine(t *testing.T) (serviceEngine, config.AgentConfig) {
 			DataDir:     dataDir,
 			VolumesDir:  filepath.Join(dataDir, "volumes"),
 			Snapshotter: "auto",
+			Isolation:   testIsolationClass,
 		},
 		Containerd: config.ContainerdConfig{
 			Socket:    socket,

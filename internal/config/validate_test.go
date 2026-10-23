@@ -733,7 +733,7 @@ func TestFinalizeBuilderHardenedRequiresSandbox(t *testing.T) {
 	if err := FinalizeBuilder(&cfg); err != nil {
 		t.Fatalf("FinalizeBuilder hardened: %v", err)
 	}
-	if cfg.Sandbox.Socket == "" || cfg.Sandbox.Namespace == "" || cfg.Sandbox.Runtime == "" ||
+	if cfg.Sandbox.Socket == "" || cfg.Sandbox.Namespace == "" || cfg.Sandbox.Isolation == "" ||
 		cfg.Sandbox.Snapshotter == "" || cfg.Sandbox.CNIPluginDir == "" || cfg.Sandbox.CNIConfDir == "" ||
 		cfg.Sandbox.CNINetwork == "" || cfg.Sandbox.BuildkitdBinary == "" {
 		t.Fatalf("expected sandbox defaults, got %+v", cfg.Sandbox)

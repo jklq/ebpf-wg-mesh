@@ -45,6 +45,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &cfg.Runtime.VolumesDir, "volumes-dir", "AGENT_VOLUMES_DIR", "", "")
 	stringFlag(fs, &cfg.Runtime.ManagedDashboardSecretsDir, "managed-dashboard-secrets-dir", "AGENT_MANAGED_DASHBOARD_SECRETS_DIR", "", "")
 	stringFlag(fs, &cfg.Runtime.Snapshotter, "snapshotter", "AGENT_SNAPSHOTTER", "auto", "containerd snapshotter; auto prefers supported overlayfs, then native")
+	stringFlag(fs, &cfg.Runtime.Isolation, "isolation", "AGENT_ISOLATION", "", "tenant isolation class: runc-userns, gvisor, or kata; empty defaults by profile (production gvisor, development runc-userns)")
 	stringFlag(fs, &allowedPrivateRegistries, "direct-image-allowed-private-registries", "AGENT_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES", "", "comma-separated operator-approved private registry host[:port] values")
 	boolFlag(fs, &cfg.Runtime.DisableCgroups, "disable-cgroups", "AGENT_DISABLE_CGROUPS", false, "")
 	stringFlag(fs, &cfg.Runtime.VolumeBackend, "volume-backend", "AGENT_VOLUME_BACKEND", "loop", "loop (enforced ext4 image per volume) or directory (unenforced, development only)")

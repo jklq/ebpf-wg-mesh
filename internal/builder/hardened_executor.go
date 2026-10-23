@@ -12,6 +12,7 @@ import (
 	"time"
 
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
+	"ebof-wg-mesh/internal/isolation"
 )
 
 // prepareDaemonRoot creates the per-execution buildkitd root outside the workspace
@@ -126,22 +127,24 @@ type hardenedExecutor struct {
 	workDir         string
 	backend         SandboxBackend
 	buildkitdBinary string
+	isolation       isolation.Policy
 	nameservers     []string
-	startDaemon     func(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error)
+	startDaemon     func(ctx context.Context, netnsPath, binary, workerBinary, sockPath, rootDir string, env []string) (daemonProc, error)
 }
 
-func newHardenedExecutor(workDir string, backend SandboxBackend, buildkitdBinary string, nameservers []string) *hardenedExecutor {
+func newHardenedExecutor(workDir string, backend SandboxBackend, buildkitdBinary string, policy isolation.Policy, nameservers []string) *hardenedExecutor {
 	return &hardenedExecutor{
 		workDir:         workDir,
 		backend:         backend,
 		buildkitdBinary: buildkitdBinary,
+		isolation:       policy,
 		nameservers:     nameservers,
 		startDaemon:     defaultStartBuildkitd,
 	}
 }
 
-func defaultStartBuildkitd(ctx context.Context, netnsPath, binary, sockPath, rootDir string, env []string) (daemonProc, error) {
-	return startBuildkitd(ctx, netnsPath, binary, sockPath, rootDir, env)
+func defaultStartBuildkitd(ctx context.Context, netnsPath, binary, workerBinary, sockPath, rootDir string, env []string) (daemonProc, error) {
+	return startBuildkitd(ctx, netnsPath, binary, workerBinary, sockPath, rootDir, env)
 }
 
 func (e *hardenedExecutor) Name() string { return ExecutorHardened }
@@ -256,8 +259,13 @@ func (e *hardenedExecutor) Execute(ctx context.Context, spec ExecutionSpec) (Exe
 	}
 	sockHost := filepath.Join(socketDir, "bk.sock")
 	rootHost := daemonRoot
-	daemon, err := e.startDaemon(execCtx, sandboxNet.Path, e.buildkitdBinary, sockHost, rootHost,
-		[]string{"PATH=" + sandboxPathEnv, "HOME=" + rootHost, "TMPDIR=" + workspace.tmpDir})
+	daemonEnv := []string{"PATH=" + sandboxPathEnv, "HOME=" + rootHost, "TMPDIR=" + workspace.tmpDir}
+	if e.isolation.Class() == isolation.ClassGVisor {
+		// The runsc-buildkit worker keeps its sandbox state inside the
+		// per-execution daemon root, never in shared host state.
+		daemonEnv = append(daemonEnv, "PLATFORM_RUNSC_ROOT="+filepath.Join(rootHost, "runsc"))
+	}
+	daemon, err := e.startDaemon(execCtx, sandboxNet.Path, e.buildkitdBinary, e.isolation.BuildKitWorkerBinary(), sockHost, rootHost, daemonEnv)
 	if err != nil {
 		return ExecutionResult{}, mapExecutionError(ctx, execCtx, spec, &buildFailureError{kind: failureKindBuild, err: err})
 	}
