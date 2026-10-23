@@ -29,6 +29,10 @@ type domain struct {
 	billingWebhooks      metric.Int64Counter
 	billingRestrictions  metric.Int64Counter
 	billingAccounts      metric.Int64Counter
+
+	serverlessSleeps  metric.Int64Counter
+	serverlessWakes   metric.Int64Counter
+	serverlessWakeDur metric.Float64Histogram
 }
 
 var (
@@ -86,6 +90,14 @@ func InitDomain(mp metric.MeterProvider) {
 	d.billingAccounts, _ = m.Int64Counter("platform.billing.accounts_created",
 		metric.WithDescription("Billing accounts provisioned"),
 		metric.WithUnit("{account}"))
+	d.serverlessSleeps, _ = m.Int64Counter("platform.serverless.sleeps",
+		metric.WithDescription("Serverless services scaled to zero after inactivity"),
+		metric.WithUnit("{sleep}"))
+	d.serverlessWakes, _ = m.Int64Counter("platform.serverless.wakes",
+		metric.WithDescription("Serverless services woken, by trigger"),
+		metric.WithUnit("{wake}"))
+	d.serverlessWakeDur, _ = m.Float64Histogram("platform.serverless.wake.duration",
+		metric.WithDescription("Cold-start time from public wake to first ready endpoint"), metric.WithUnit("s"))
 	domainMu.Lock()
 	domainInst = d
 	domainMu.Unlock()
@@ -230,6 +242,35 @@ func RecordBillingAccountsCreated(ctx context.Context, n int) {
 		return
 	}
 	d.billingAccounts.Add(ctx, int64(n))
+}
+
+// RecordServerlessSleep counts one service scaled to zero for inactivity.
+func RecordServerlessSleep(ctx context.Context) {
+	d := inst()
+	if d == nil || d.serverlessSleeps == nil {
+		return
+	}
+	d.serverlessSleeps.Add(ctx, 1)
+}
+
+// RecordServerlessWake counts one wake transition. Trigger is a bounded
+// value: "public", "private", "operator", or "system".
+func RecordServerlessWake(ctx context.Context, trigger string) {
+	d := inst()
+	if d == nil || d.serverlessWakes == nil {
+		return
+	}
+	d.serverlessWakes.Add(ctx, 1, metric.WithAttributes(attribute.String("trigger", bounded(trigger, "unknown"))))
+}
+
+// RecordServerlessWakeDuration records the cold-start latency of one public
+// wake, from the activator's request to the first ready endpoint.
+func RecordServerlessWakeDuration(ctx context.Context, dur time.Duration) {
+	d := inst()
+	if d == nil || d.serverlessWakeDur == nil || dur < 0 {
+		return
+	}
+	d.serverlessWakeDur.Record(ctx, dur.Seconds())
 }
 
 // bounded keeps metric label values safe: short and non-empty. It is not a

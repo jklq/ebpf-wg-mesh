@@ -80,6 +80,22 @@ The durable, user-visible sequence of deployment transitions. Runtime reports ma
 A public hostname attached to one service port.
 _Avoid_: Domain, route
 
+**Serverless Service**:
+A service whose spec enables serverless mode: after an idle period with no network activity, all of its allocations stop, and the next public or private request starts them again. Desired state — replica count, domain bindings, volumes, and private addresses — is preserved while it sleeps.
+_Avoid_: App sleeping, scale-to-zero service (as a noun)
+
+**Sleep**:
+The transition of a serverless service's allocations to stopped while their assignments are retained. A sleeping service is neither stopped by the user nor crashed; its deployment stays active.
+_Avoid_: Stop, pause, hibernate
+
+**Wake**:
+The transition that returns a sleeping service's allocations to running, triggered by a public request, private mesh traffic, or any operation that wants the service running. The first request pays the cold start.
+_Avoid_: Boot, resume (for this transition)
+
+**Activator**:
+The ingress-adjacent component that receives public requests for sleeping services, asks the control plane to wake the service, holds the request, and proxies it to the first ready allocation.
+_Avoid_: Wake proxy, cold-start handler
+
 ## Billing
 
 **Billing Account**:

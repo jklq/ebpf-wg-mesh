@@ -261,6 +261,34 @@ func TestHTTPResolverRefusesHostileTokenRealm(t *testing.T) {
 	}
 }
 
+func TestPullClientRejectsPrivateDestinationsAndRedirects(t *testing.T) {
+	t.Parallel()
+	var secretHits int
+	secret := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		secretHits++
+		_, _ = w.Write([]byte("host secret"))
+	}))
+	defer secret.Close()
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, secret.URL+"/credentials", http.StatusFound)
+	}))
+	defer redirect.Close()
+	client := NewPullClient([]string{strings.TrimPrefix(redirect.URL, "http://")})
+	defer client.CloseIdleConnections()
+	for _, target := range []string{secret.URL, redirect.URL} {
+		response, err := client.Get(target)
+		if response != nil {
+			response.Body.Close()
+		}
+		if err == nil || !strings.Contains(err.Error(), "prohibited private destination") {
+			t.Errorf("GET %s = %v, want private destination rejection", target, err)
+		}
+	}
+	if secretHits != 0 {
+		t.Fatalf("private destination received %d requests", secretHits)
+	}
+}
+
 func TestAnonymousTokenRefusesRedirects(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

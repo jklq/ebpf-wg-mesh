@@ -110,7 +110,7 @@ func TestBuildFromInputsReproducesSnapshot(t *testing.T) {
 	if !bytes.Equal(snapshotBytes(t, rebuilt), snapshotBytes(t, snap)) {
 		t.Fatal("rebuilt snapshot resources differ")
 	}
-	oldInputs := bytes.Replace(snap.Inputs, []byte(`"format":2,`), []byte(`"format":1,`), 1)
+	oldInputs := bytes.Replace(snap.Inputs, []byte(`"format":3,`), []byte(`"format":2,`), 1)
 	if _, err := BuildFromInputs(context.Background(), oldInputs, nil); err == nil {
 		t.Fatal("accepted publication with the previous resource format")
 	}
@@ -130,9 +130,45 @@ func TestBuildGoldenVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A fixed input must hash to a fixed version across processes and replicas.
-	const want = "dc0af465ced938fa6f69a523ac51f0a9f7c3a85ac85ed757194a9dff23490b54"
+	const want = "76a0bf62c82dc1f822f70f2e625f2b2c29a7f4bdc266009a3ed11c5fb937fc45"
 	if snap.Version != want {
 		t.Fatalf("version = %s, want %s", snap.Version, want)
+	}
+}
+
+func TestBuildRoutesAsleepDomainsToActivator(t *testing.T) {
+	t.Parallel()
+
+	input := testInput()
+	// a.example.com has live backends and must keep them even though it is
+	// also (inconsistently) reported asleep; zzz has none and must wake.
+	input.AsleepDomains = []string{"zzz.example.com", "a.example.com"}
+	input.ActivatorUpstream = "127.0.0.1:18081"
+	snap, err := Build(context.Background(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clusters := clusterResources(t, snap)
+	activator, ok := clusters[ActivatorClusterName]
+	if !ok {
+		t.Fatalf("missing activator cluster, have %v", keys(clusters))
+	}
+	if activator.GetType() != clusterv3.Cluster_STATIC {
+		t.Fatalf("activator cluster type = %v, want STATIC for IP literal", activator.GetType())
+	}
+	if _, ok := clusters["backend/a.example.com"]; !ok {
+		t.Fatalf("live backend cluster lost, have %v", keys(clusters))
+	}
+	if snap.Counts.Domains != 4 {
+		t.Fatalf("domains = %d, want 4 (two dynamic, one static, one asleep)", snap.Counts.Domains)
+	}
+	// The asleep domain must round-trip through stored inputs identically.
+	rebuilt, err := BuildFromInputs(context.Background(), snap.Inputs, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebuilt.Version != snap.Version {
+		t.Fatalf("rebuilt version %s, want %s", rebuilt.Version, snap.Version)
 	}
 }
 

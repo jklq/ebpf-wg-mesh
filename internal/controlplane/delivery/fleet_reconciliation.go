@@ -560,7 +560,9 @@ func lostAllocationDisposition(allocation AllocationRecord, deadAgentID string) 
 	if allocation.AgentID != deadAgentID || allocation.RolloutState == AllocationRolloutLost {
 		return failoverIgnore
 	}
-	if allocation.RolloutState == AllocationRolloutDraining || allocation.RolloutState == AllocationRolloutWithdrawing {
+	// A sleeping allocation is already stopped: mark it lost like a draining
+	// one and let the next wake re-place it instead of starting it elsewhere.
+	if allocation.RolloutState == AllocationRolloutDraining || allocation.RolloutState == AllocationRolloutWithdrawing || allocation.RolloutState == AllocationRolloutSleeping {
 		return failoverFinishDrain
 	}
 	return failoverReplace

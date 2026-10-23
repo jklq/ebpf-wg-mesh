@@ -287,15 +287,16 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		publisherID = strings.TrimSpace(cfg.InternalGRPC.Listen)
 	}
 	ingress := xds.NewPublisher(xds.PublisherConfig{
-		Source:           ingressInputs{routing: store.routing, certificates: certs},
-		Publications:     store.routing,
-		Nodes:            nodeRegistry,
-		Server:           xdsServer,
-		Keys:             certs,
-		Static:           staticRoutes,
-		HTTPListenAddrs:  cfg.Ingress.HTTPListenAddrs,
-		HTTPSListenAddrs: cfg.Ingress.HTTPSListenAddrs,
-		PublisherID:      publisherID,
+		Source:            ingressInputs{routing: store.routing, certificates: certs},
+		Publications:      store.routing,
+		Nodes:             nodeRegistry,
+		Server:            xdsServer,
+		Keys:              certs,
+		Static:            staticRoutes,
+		ActivatorUpstream: cfg.Ingress.ActivatorUpstream,
+		HTTPListenAddrs:   cfg.Ingress.HTTPListenAddrs,
+		HTTPSListenAddrs:  cfg.Ingress.HTTPSListenAddrs,
+		PublisherID:       publisherID,
 	})
 	certs.SetIngress(ingress)
 	xdsServer.SetFirstContactHook(ingress.Refresh)
@@ -381,6 +382,9 @@ func NewServer(ctx context.Context, cfg config.ControlPlaneConfig) (*Server, err
 		withUsageIngest(usageStore),
 	))
 	platformv1.RegisterPlatformServiceServer(internal, platformService)
+	platformv1.RegisterActivatorServiceServer(internal, &activatorService{
+		delivery: delivery, wakeDeadline: time.Duration(cfg.Serverless.WakeDeadlineSeconds) * time.Second,
+	})
 	buildOperations := newBuildOperations(store.db, store.source, delivery, policy, policy, withBuilderLogEmitter(logEmitter))
 	platformv1.RegisterBuilderServiceServer(internal, newBuilderService(buildOperations))
 	opsService := newOpsService(webhookHandler, store.fleet, delivery, notifier, authority)
@@ -740,6 +744,7 @@ func (s *Server) runSingletonJobs(ctx context.Context) error {
 	go func() { s.usageMaintenanceLoop(ctx); errCh <- nil }()
 	go func() { s.usageMonitorLoop(ctx); errCh <- nil }()
 	go func() { s.billingMaintenanceLoop(ctx); errCh <- nil }()
+	go func() { s.serverlessLoop(ctx); errCh <- nil }()
 	select {
 	case <-ctx.Done():
 		return nil
@@ -1111,6 +1116,13 @@ func dualProtocolHandler(grpcServer *grpc.Server, connectHandler http.Handler) h
 		}
 		connectHandler.ServeHTTP(w, r)
 	})
+}
+
+// ProvisionActivatorIdentity issues credentials for one ingress activator
+// instance. Activators hold no membership state: the caller class on the
+// certificate is the whole authorization, so nothing is recorded.
+func (s *Server) ProvisionActivatorIdentity(ctx context.Context, id string) (identity.ClientIdentityMaterial, error) {
+	return identity.IssueClientCertificate(ctx, s.signKeys, identity.CallerActivator, id, 24*time.Hour)
 }
 
 // ProvisionIngressIdentity establishes membership before exposing credentials.

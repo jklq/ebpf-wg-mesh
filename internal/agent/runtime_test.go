@@ -23,18 +23,19 @@ import (
 )
 
 type fakeEngine struct {
-	mu         sync.Mutex
-	ensured    []string
-	inspected  []string
-	removed    []string
-	drainCalls []string
-	status     map[string]serviceStatus
-	created    map[string]bool
-	missing    map[string]bool
-	stopped    map[string]bool
-	drained    map[string]bool
-	forced     map[string]bool
-	inventory  []RuntimeResource
+	mu           sync.Mutex
+	ensured      []string
+	inspected    []string
+	removed      []string
+	drainCalls   []string
+	status       map[string]serviceStatus
+	created      map[string]bool
+	missing      map[string]bool
+	stopped      map[string]bool
+	drained      map[string]bool
+	forced       map[string]bool
+	inventory    []RuntimeResource
+	pinnedImages map[string]bool
 }
 
 func (f *fakeEngine) DiscoverServices(context.Context) ([]RuntimeResource, error) {
@@ -135,6 +136,12 @@ func (f *fakeEngine) RemoveService(_ context.Context, allocationID string) error
 }
 
 func (f *fakeEngine) SetLogSink(LogSink) {}
+
+func (f *fakeEngine) SetPinnedImages(images map[string]bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pinnedImages = images
+}
 
 func (f *fakeEngine) Close() error { return nil }
 

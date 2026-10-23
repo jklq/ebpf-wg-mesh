@@ -3,7 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const beginLogin = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) => {
+	.validator((input: unknown) => {
 		const data = parseAuthStartInput(input);
 		return {
 			redirect: data.redirect ?? "/",

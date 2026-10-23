@@ -626,6 +626,32 @@ type ingressLiveReader interface {
 	IngressState() (*journal.Projection, map[string]deliverycore.AllocationRecord, error)
 }
 
+// AsleepIngressDomains lists hostnames bound to sleeping or waking
+// serverless services. Waking is included so the activator keeps holding
+// requests until a backend is actually healthy; the snapshot builder drops
+// any asleep entry that also has live backends.
+func (s *routingPersistence) AsleepIngressDomains(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT b.hostname
+		FROM domain_bindings b
+		JOIN live_services ls ON ls.id = b.service_id
+		JOIN service_serverless_state ss ON ss.service_id = b.service_id
+		WHERE b.deleted_at IS NULL AND ss.state IN ('asleep', 'waking')
+		ORDER BY b.hostname`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var hostname string
+		if err := rows.Scan(&hostname); err != nil {
+			return nil, err
+		}
+		out = append(out, hostname)
+	}
+	return out, rows.Err()
+}
+
 func (s *routingPersistence) HealthyIngressBackends(ctx context.Context) ([]xds.Backend, error) {
 	_ = ctx
 	live := s.live

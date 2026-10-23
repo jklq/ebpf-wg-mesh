@@ -29,6 +29,11 @@ const (
 	AllocationIntent_ALLOCATION_INTENT_UNSPECIFIED AllocationIntent = 0
 	AllocationIntent_ALLOCATION_INTENT_RUN         AllocationIntent = 1
 	AllocationIntent_ALLOCATION_INTENT_DRAIN       AllocationIntent = 2
+	// SLEEP stops the workload like DRAIN (drain_deadline bounds the graceful
+	// shutdown) but the assignment is retained: the agent keeps the image
+	// pinned and the mesh identity published so a later RUN intent restarts
+	// the same allocation at the same addresses.
+	AllocationIntent_ALLOCATION_INTENT_SLEEP AllocationIntent = 3
 )
 
 // Enum value maps for AllocationIntent.
@@ -37,11 +42,13 @@ var (
 		0: "ALLOCATION_INTENT_UNSPECIFIED",
 		1: "ALLOCATION_INTENT_RUN",
 		2: "ALLOCATION_INTENT_DRAIN",
+		3: "ALLOCATION_INTENT_SLEEP",
 	}
 	AllocationIntent_value = map[string]int32{
 		"ALLOCATION_INTENT_UNSPECIFIED": 0,
 		"ALLOCATION_INTENT_RUN":         1,
 		"ALLOCATION_INTENT_DRAIN":       2,
+		"ALLOCATION_INTENT_SLEEP":       3,
 	}
 )
 
@@ -2550,6 +2557,69 @@ func (x *ServiceCondition) GetHealthyIpv6Ports() []int32 {
 	return nil
 }
 
+// WakeDemand reports private mesh traffic addressed to a sleeping
+// allocation on this agent since the previous report. The packets were
+// dropped; the control plane wakes the allocation's service.
+type WakeDemand struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AllocationId  string                 `protobuf:"bytes,1,opt,name=allocation_id,json=allocationId,proto3" json:"allocation_id,omitempty"`
+	Packets       uint64                 `protobuf:"varint,2,opt,name=packets,proto3" json:"packets,omitempty"`
+	LastPacketAt  *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=last_packet_at,json=lastPacketAt,proto3" json:"last_packet_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WakeDemand) Reset() {
+	*x = WakeDemand{}
+	mi := &file_agent_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WakeDemand) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WakeDemand) ProtoMessage() {}
+
+func (x *WakeDemand) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WakeDemand.ProtoReflect.Descriptor instead.
+func (*WakeDemand) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *WakeDemand) GetAllocationId() string {
+	if x != nil {
+		return x.AllocationId
+	}
+	return ""
+}
+
+func (x *WakeDemand) GetPackets() uint64 {
+	if x != nil {
+		return x.Packets
+	}
+	return 0
+}
+
+func (x *WakeDemand) GetLastPacketAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastPacketAt
+	}
+	return nil
+}
+
 type StatusReport struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	AgentId              string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
@@ -2562,13 +2632,14 @@ type StatusReport struct {
 	RecoveryMode         bool                   `protobuf:"varint,8,opt,name=recovery_mode,json=recoveryMode,proto3" json:"recovery_mode,omitempty"`
 	InstallationId       string                 `protobuf:"bytes,10,opt,name=installation_id,json=installationId,proto3" json:"installation_id,omitempty"`
 	RecoveryGeneration   string                 `protobuf:"bytes,11,opt,name=recovery_generation,json=recoveryGeneration,proto3" json:"recovery_generation,omitempty"`
+	WakeDemands          []*WakeDemand          `protobuf:"bytes,12,rep,name=wake_demands,json=wakeDemands,proto3" json:"wake_demands,omitempty"`
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
 }
 
 func (x *StatusReport) Reset() {
 	*x = StatusReport{}
-	mi := &file_agent_proto_msgTypes[21]
+	mi := &file_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2580,7 +2651,7 @@ func (x *StatusReport) String() string {
 func (*StatusReport) ProtoMessage() {}
 
 func (x *StatusReport) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[21]
+	mi := &file_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2593,7 +2664,7 @@ func (x *StatusReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusReport.ProtoReflect.Descriptor instead.
 func (*StatusReport) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{21}
+	return file_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *StatusReport) GetAgentId() string {
@@ -2666,6 +2737,13 @@ func (x *StatusReport) GetRecoveryGeneration() string {
 	return ""
 }
 
+func (x *StatusReport) GetWakeDemands() []*WakeDemand {
+	if x != nil {
+		return x.WakeDemands
+	}
+	return nil
+}
+
 type LogEntry struct {
 	state             protoimpl.MessageState    `protogen:"open.v1"`
 	ObservedAt        *timestamppb.Timestamp    `protobuf:"bytes,1,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
@@ -2696,7 +2774,7 @@ type LogEntry struct {
 
 func (x *LogEntry) Reset() {
 	*x = LogEntry{}
-	mi := &file_agent_proto_msgTypes[22]
+	mi := &file_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2708,7 +2786,7 @@ func (x *LogEntry) String() string {
 func (*LogEntry) ProtoMessage() {}
 
 func (x *LogEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[22]
+	mi := &file_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2721,7 +2799,7 @@ func (x *LogEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogEntry.ProtoReflect.Descriptor instead.
 func (*LogEntry) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{22}
+	return file_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *LogEntry) GetObservedAt() *timestamppb.Timestamp {
@@ -2847,7 +2925,7 @@ type LogBatch struct {
 
 func (x *LogBatch) Reset() {
 	*x = LogBatch{}
-	mi := &file_agent_proto_msgTypes[23]
+	mi := &file_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2859,7 +2937,7 @@ func (x *LogBatch) String() string {
 func (*LogBatch) ProtoMessage() {}
 
 func (x *LogBatch) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[23]
+	mi := &file_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2872,7 +2950,7 @@ func (x *LogBatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogBatch.ProtoReflect.Descriptor instead.
 func (*LogBatch) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{23}
+	return file_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *LogBatch) GetAgentId() string {
@@ -2919,7 +2997,7 @@ type LogBatchAck struct {
 
 func (x *LogBatchAck) Reset() {
 	*x = LogBatchAck{}
-	mi := &file_agent_proto_msgTypes[24]
+	mi := &file_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2931,7 +3009,7 @@ func (x *LogBatchAck) String() string {
 func (*LogBatchAck) ProtoMessage() {}
 
 func (x *LogBatchAck) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[24]
+	mi := &file_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2944,7 +3022,7 @@ func (x *LogBatchAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogBatchAck.ProtoReflect.Descriptor instead.
 func (*LogBatchAck) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{24}
+	return file_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *LogBatchAck) GetBatchId() uint64 {
@@ -2970,7 +3048,7 @@ type UsageEgress struct {
 
 func (x *UsageEgress) Reset() {
 	*x = UsageEgress{}
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2982,7 +3060,7 @@ func (x *UsageEgress) String() string {
 func (*UsageEgress) ProtoMessage() {}
 
 func (x *UsageEgress) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2995,7 +3073,7 @@ func (x *UsageEgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageEgress.ProtoReflect.Descriptor instead.
 func (*UsageEgress) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{25}
+	return file_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *UsageEgress) GetPublicDirectBytes() uint64 {
@@ -3067,7 +3145,7 @@ type UsageRecord struct {
 
 func (x *UsageRecord) Reset() {
 	*x = UsageRecord{}
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3079,7 +3157,7 @@ func (x *UsageRecord) String() string {
 func (*UsageRecord) ProtoMessage() {}
 
 func (x *UsageRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3092,7 +3170,7 @@ func (x *UsageRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageRecord.ProtoReflect.Descriptor instead.
 func (*UsageRecord) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{26}
+	return file_agent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *UsageRecord) GetInstallationId() string {
@@ -3259,7 +3337,7 @@ type UsageProducerHealth struct {
 
 func (x *UsageProducerHealth) Reset() {
 	*x = UsageProducerHealth{}
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3271,7 +3349,7 @@ func (x *UsageProducerHealth) String() string {
 func (*UsageProducerHealth) ProtoMessage() {}
 
 func (x *UsageProducerHealth) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3284,7 +3362,7 @@ func (x *UsageProducerHealth) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageProducerHealth.ProtoReflect.Descriptor instead.
 func (*UsageProducerHealth) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{27}
+	return file_agent_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *UsageProducerHealth) GetJournalBytes() int64 {
@@ -3391,7 +3469,7 @@ type UsageReport struct {
 
 func (x *UsageReport) Reset() {
 	*x = UsageReport{}
-	mi := &file_agent_proto_msgTypes[28]
+	mi := &file_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3403,7 +3481,7 @@ func (x *UsageReport) String() string {
 func (*UsageReport) ProtoMessage() {}
 
 func (x *UsageReport) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[28]
+	mi := &file_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3416,7 +3494,7 @@ func (x *UsageReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageReport.ProtoReflect.Descriptor instead.
 func (*UsageReport) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{28}
+	return file_agent_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *UsageReport) GetAgentId() string {
@@ -3492,7 +3570,7 @@ type UsageRejection struct {
 
 func (x *UsageRejection) Reset() {
 	*x = UsageRejection{}
-	mi := &file_agent_proto_msgTypes[29]
+	mi := &file_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3504,7 +3582,7 @@ func (x *UsageRejection) String() string {
 func (*UsageRejection) ProtoMessage() {}
 
 func (x *UsageRejection) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[29]
+	mi := &file_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3517,7 +3595,7 @@ func (x *UsageRejection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageRejection.ProtoReflect.Descriptor instead.
 func (*UsageRejection) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{29}
+	return file_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *UsageRejection) GetSequence() uint64 {
@@ -3553,7 +3631,7 @@ type UsageAcknowledgement struct {
 
 func (x *UsageAcknowledgement) Reset() {
 	*x = UsageAcknowledgement{}
-	mi := &file_agent_proto_msgTypes[30]
+	mi := &file_agent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3565,7 +3643,7 @@ func (x *UsageAcknowledgement) String() string {
 func (*UsageAcknowledgement) ProtoMessage() {}
 
 func (x *UsageAcknowledgement) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[30]
+	mi := &file_agent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3578,7 +3656,7 @@ func (x *UsageAcknowledgement) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UsageAcknowledgement.ProtoReflect.Descriptor instead.
 func (*UsageAcknowledgement) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{30}
+	return file_agent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *UsageAcknowledgement) GetProducerId() string {
@@ -3633,7 +3711,7 @@ type AgentClientMessage struct {
 
 func (x *AgentClientMessage) Reset() {
 	*x = AgentClientMessage{}
-	mi := &file_agent_proto_msgTypes[31]
+	mi := &file_agent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3645,7 +3723,7 @@ func (x *AgentClientMessage) String() string {
 func (*AgentClientMessage) ProtoMessage() {}
 
 func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[31]
+	mi := &file_agent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3658,7 +3736,7 @@ func (x *AgentClientMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentClientMessage.ProtoReflect.Descriptor instead.
 func (*AgentClientMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{31}
+	return file_agent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *AgentClientMessage) GetPayload() isAgentClientMessage_Payload {
@@ -3775,7 +3853,7 @@ type SyncBatchEnd struct {
 
 func (x *SyncBatchEnd) Reset() {
 	*x = SyncBatchEnd{}
-	mi := &file_agent_proto_msgTypes[32]
+	mi := &file_agent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3787,7 +3865,7 @@ func (x *SyncBatchEnd) String() string {
 func (*SyncBatchEnd) ProtoMessage() {}
 
 func (x *SyncBatchEnd) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[32]
+	mi := &file_agent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3800,7 +3878,7 @@ func (x *SyncBatchEnd) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncBatchEnd.ProtoReflect.Descriptor instead.
 func (*SyncBatchEnd) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{32}
+	return file_agent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *SyncBatchEnd) GetSessionId() string {
@@ -3829,7 +3907,7 @@ type AgentServerMessage struct {
 
 func (x *AgentServerMessage) Reset() {
 	*x = AgentServerMessage{}
-	mi := &file_agent_proto_msgTypes[33]
+	mi := &file_agent_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3841,7 +3919,7 @@ func (x *AgentServerMessage) String() string {
 func (*AgentServerMessage) ProtoMessage() {}
 
 func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[33]
+	mi := &file_agent_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3854,7 +3932,7 @@ func (x *AgentServerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentServerMessage.ProtoReflect.Descriptor instead.
 func (*AgentServerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{33}
+	return file_agent_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *AgentServerMessage) GetPayload() isAgentServerMessage_Payload {
@@ -4231,7 +4309,12 @@ const file_agent_proto_rawDesc = "" +
 	"\x12healthy_ipv4_ports\x18\v \x03(\x05R\x10healthyIpv4Ports\x129\n" +
 	"\arestart\x18\f \x01(\v2\x1f.platform.v1.RestartObservationR\arestart\x12'\n" +
 	"\x0fallocation_ipv6\x18\r \x01(\tR\x0eallocationIpv6\x12,\n" +
-	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\xc5\x03\n" +
+	"\x12healthy_ipv6_ports\x18\x0e \x03(\x05R\x10healthyIpv6Ports\"\x8d\x01\n" +
+	"\n" +
+	"WakeDemand\x12#\n" +
+	"\rallocation_id\x18\x01 \x01(\tR\fallocationId\x12\x18\n" +
+	"\apackets\x18\x02 \x01(\x04R\apackets\x12@\n" +
+	"\x0elast_packet_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\flastPacketAt\"\xfe\x03\n" +
 	"\fStatusReport\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x123\n" +
 	"\avolumes\x18\x02 \x03(\v2\x19.agent.v1.VolumeConditionR\avolumes\x126\n" +
@@ -4244,7 +4327,8 @@ const file_agent_proto_rawDesc = "" +
 	"\rrecovery_mode\x18\b \x01(\bR\frecoveryMode\x12'\n" +
 	"\x0finstallation_id\x18\n" +
 	" \x01(\tR\x0einstallationId\x12/\n" +
-	"\x13recovery_generation\x18\v \x01(\tR\x12recoveryGeneration\"\xe2\x04\n" +
+	"\x13recovery_generation\x18\v \x01(\tR\x12recoveryGeneration\x127\n" +
+	"\fwake_demands\x18\f \x03(\v2\x14.agent.v1.WakeDemandR\vwakeDemands\"\xe2\x04\n" +
 	"\bLogEntry\x12;\n" +
 	"\vobserved_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"observedAt\x12%\n" +
@@ -4369,11 +4453,12 @@ const file_agent_proto_rawDesc = "" +
 	"\tbatch_end\x18\x06 \x01(\v2\x16.agent.v1.SyncBatchEndH\x00R\bbatchEnd\x12;\n" +
 	"\rlog_batch_ack\x18\a \x01(\v2\x15.agent.v1.LogBatchAckH\x00R\vlogBatchAck\x12U\n" +
 	"\x15usage_acknowledgement\x18\b \x01(\v2\x1e.agent.v1.UsageAcknowledgementH\x00R\x14usageAcknowledgementB\t\n" +
-	"\apayload*m\n" +
+	"\apayload*\x8a\x01\n" +
 	"\x10AllocationIntent\x12!\n" +
 	"\x1dALLOCATION_INTENT_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15ALLOCATION_INTENT_RUN\x10\x01\x12\x1b\n" +
-	"\x17ALLOCATION_INTENT_DRAIN\x10\x02*I\n" +
+	"\x17ALLOCATION_INTENT_DRAIN\x10\x02\x12\x1b\n" +
+	"\x17ALLOCATION_INTENT_SLEEP\x10\x03*I\n" +
 	"\rSnapshotScope\x12\x1e\n" +
 	"\x1aSNAPSHOT_SCOPE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14SNAPSHOT_SCOPE_AGENT\x10\x01*|\n" +
@@ -4415,7 +4500,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 36)
 var file_agent_proto_goTypes = []any{
 	(AllocationIntent)(0),                      // 0: agent.v1.AllocationIntent
 	(SnapshotScope)(0),                         // 1: agent.v1.SnapshotScope
@@ -4443,98 +4528,101 @@ var file_agent_proto_goTypes = []any{
 	(*DesiredStateAcknowledgement)(nil),        // 23: agent.v1.DesiredStateAcknowledgement
 	(*VolumeCondition)(nil),                    // 24: agent.v1.VolumeCondition
 	(*ServiceCondition)(nil),                   // 25: agent.v1.ServiceCondition
-	(*StatusReport)(nil),                       // 26: agent.v1.StatusReport
-	(*LogEntry)(nil),                           // 27: agent.v1.LogEntry
-	(*LogBatch)(nil),                           // 28: agent.v1.LogBatch
-	(*LogBatchAck)(nil),                        // 29: agent.v1.LogBatchAck
-	(*UsageEgress)(nil),                        // 30: agent.v1.UsageEgress
-	(*UsageRecord)(nil),                        // 31: agent.v1.UsageRecord
-	(*UsageProducerHealth)(nil),                // 32: agent.v1.UsageProducerHealth
-	(*UsageReport)(nil),                        // 33: agent.v1.UsageReport
-	(*UsageRejection)(nil),                     // 34: agent.v1.UsageRejection
-	(*UsageAcknowledgement)(nil),               // 35: agent.v1.UsageAcknowledgement
-	(*AgentClientMessage)(nil),                 // 36: agent.v1.AgentClientMessage
-	(*SyncBatchEnd)(nil),                       // 37: agent.v1.SyncBatchEnd
-	(*AgentServerMessage)(nil),                 // 38: agent.v1.AgentServerMessage
-	nil,                                        // 39: agent.v1.LogEntry.AttributesEntry
-	(*timestamppb.Timestamp)(nil),              // 40: google.protobuf.Timestamp
-	(*platformv1.ResolvedServiceSpec)(nil),     // 41: platform.v1.ResolvedServiceSpec
-	(*platformv1.RestartObservation)(nil),      // 42: platform.v1.RestartObservation
-	(platformv1.ServiceLogType)(0),             // 43: platform.v1.ServiceLogType
-	(*platformv1.LogDropSummary)(nil),          // 44: platform.v1.LogDropSummary
+	(*WakeDemand)(nil),                         // 26: agent.v1.WakeDemand
+	(*StatusReport)(nil),                       // 27: agent.v1.StatusReport
+	(*LogEntry)(nil),                           // 28: agent.v1.LogEntry
+	(*LogBatch)(nil),                           // 29: agent.v1.LogBatch
+	(*LogBatchAck)(nil),                        // 30: agent.v1.LogBatchAck
+	(*UsageEgress)(nil),                        // 31: agent.v1.UsageEgress
+	(*UsageRecord)(nil),                        // 32: agent.v1.UsageRecord
+	(*UsageProducerHealth)(nil),                // 33: agent.v1.UsageProducerHealth
+	(*UsageReport)(nil),                        // 34: agent.v1.UsageReport
+	(*UsageRejection)(nil),                     // 35: agent.v1.UsageRejection
+	(*UsageAcknowledgement)(nil),               // 36: agent.v1.UsageAcknowledgement
+	(*AgentClientMessage)(nil),                 // 37: agent.v1.AgentClientMessage
+	(*SyncBatchEnd)(nil),                       // 38: agent.v1.SyncBatchEnd
+	(*AgentServerMessage)(nil),                 // 39: agent.v1.AgentServerMessage
+	nil,                                        // 40: agent.v1.LogEntry.AttributesEntry
+	(*timestamppb.Timestamp)(nil),              // 41: google.protobuf.Timestamp
+	(*platformv1.ResolvedServiceSpec)(nil),     // 42: platform.v1.ResolvedServiceSpec
+	(*platformv1.RestartObservation)(nil),      // 43: platform.v1.RestartObservation
+	(platformv1.ServiceLogType)(0),             // 44: platform.v1.ServiceLogType
+	(*platformv1.LogDropSummary)(nil),          // 45: platform.v1.LogDropSummary
 }
 var file_agent_proto_depIdxs = []int32{
 	6,  // 0: agent.v1.AgentHello.runtime_resources:type_name -> agent.v1.RuntimeResource
 	25, // 1: agent.v1.AgentHello.allocations:type_name -> agent.v1.ServiceCondition
-	40, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
+	41, // 2: agent.v1.EnrollResponse.not_after:type_name -> google.protobuf.Timestamp
 	10, // 3: agent.v1.AssignedNodeConfig.peers:type_name -> agent.v1.WireGuardPeer
 	12, // 4: agent.v1.AssignedNodeConfig.workload_identities:type_name -> agent.v1.WorkloadIdentity
-	41, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
+	42, // 5: agent.v1.DesiredService.spec:type_name -> platform.v1.ResolvedServiceSpec
 	16, // 6: agent.v1.DesiredService.internal_hosts:type_name -> agent.v1.InternalHost
-	42, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
+	43, // 7: agent.v1.DesiredService.restart_observation:type_name -> platform.v1.RestartObservation
 	0,  // 8: agent.v1.DesiredService.intent:type_name -> agent.v1.AllocationIntent
-	40, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
-	40, // 10: agent.v1.DesiredService.created_at:type_name -> google.protobuf.Timestamp
+	41, // 9: agent.v1.DesiredService.drain_deadline:type_name -> google.protobuf.Timestamp
+	41, // 10: agent.v1.DesiredService.created_at:type_name -> google.protobuf.Timestamp
 	14, // 11: agent.v1.DesiredNodeState.volumes:type_name -> agent.v1.DesiredVolume
 	15, // 12: agent.v1.DesiredNodeState.services:type_name -> agent.v1.DesiredService
-	40, // 13: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
+	41, // 13: agent.v1.DesiredNodeState.generated_at:type_name -> google.protobuf.Timestamp
 	11, // 14: agent.v1.DesiredNodeState.node_config:type_name -> agent.v1.AssignedNodeConfig
 	1,  // 15: agent.v1.DesiredNodeState.scope:type_name -> agent.v1.SnapshotScope
-	40, // 16: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
+	41, // 16: agent.v1.DesiredNodeState.authority_not_after:type_name -> google.protobuf.Timestamp
 	15, // 17: agent.v1.AllocationDiff.starts:type_name -> agent.v1.DesiredService
 	15, // 18: agent.v1.AllocationDiff.updates:type_name -> agent.v1.DesiredService
 	14, // 19: agent.v1.AllocationDiff.volume_starts:type_name -> agent.v1.DesiredVolume
-	40, // 20: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
-	40, // 21: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
+	41, // 20: agent.v1.AllocationDiff.generated_at:type_name -> google.protobuf.Timestamp
+	41, // 21: agent.v1.AllocationDiff.authority_not_after:type_name -> google.protobuf.Timestamp
 	19, // 22: agent.v1.PullCredentialSet.credentials:type_name -> agent.v1.AllocationCredential
-	40, // 23: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
+	41, // 23: agent.v1.PullCredentialSet.authority_not_after:type_name -> google.protobuf.Timestamp
 	11, // 24: agent.v1.NodeConfigUpdate.node_config:type_name -> agent.v1.AssignedNodeConfig
-	40, // 25: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
-	40, // 26: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
-	42, // 27: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
-	24, // 28: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
-	25, // 29: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
-	40, // 30: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
-	43, // 31: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
-	39, // 32: agent.v1.LogEntry.attributes:type_name -> agent.v1.LogEntry.AttributesEntry
-	27, // 33: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
-	44, // 34: agent.v1.LogBatch.drops:type_name -> platform.v1.LogDropSummary
-	3,  // 35: agent.v1.UsageRecord.kind:type_name -> agent.v1.UsageRecordKind
-	2,  // 36: agent.v1.UsageRecord.resource_kind:type_name -> agent.v1.UsageResourceKind
-	40, // 37: agent.v1.UsageRecord.start:type_name -> google.protobuf.Timestamp
-	40, // 38: agent.v1.UsageRecord.end:type_name -> google.protobuf.Timestamp
-	30, // 39: agent.v1.UsageRecord.egress:type_name -> agent.v1.UsageEgress
-	40, // 40: agent.v1.UsageProducerHealth.oldest_unacknowledged:type_name -> google.protobuf.Timestamp
-	40, // 41: agent.v1.UsageProducerHealth.exhausted_since:type_name -> google.protobuf.Timestamp
-	31, // 42: agent.v1.UsageReport.records:type_name -> agent.v1.UsageRecord
-	40, // 43: agent.v1.UsageReport.sealed_through:type_name -> google.protobuf.Timestamp
-	32, // 44: agent.v1.UsageReport.health:type_name -> agent.v1.UsageProducerHealth
-	34, // 45: agent.v1.UsageAcknowledgement.rejections:type_name -> agent.v1.UsageRejection
-	5,  // 46: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
-	13, // 47: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
-	26, // 48: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
-	28, // 49: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
-	23, // 50: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
-	33, // 51: agent.v1.AgentClientMessage.usage_report:type_name -> agent.v1.UsageReport
-	17, // 52: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
-	18, // 53: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
-	21, // 54: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
-	20, // 55: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
-	22, // 56: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
-	37, // 57: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
-	29, // 58: agent.v1.AgentServerMessage.log_batch_ack:type_name -> agent.v1.LogBatchAck
-	35, // 59: agent.v1.AgentServerMessage.usage_acknowledgement:type_name -> agent.v1.UsageAcknowledgement
-	7,  // 60: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
-	9,  // 61: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
-	36, // 62: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
-	8,  // 63: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
-	8,  // 64: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
-	38, // 65: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
-	63, // [63:66] is the sub-list for method output_type
-	60, // [60:63] is the sub-list for method input_type
-	60, // [60:60] is the sub-list for extension type_name
-	60, // [60:60] is the sub-list for extension extendee
-	0,  // [0:60] is the sub-list for field type_name
+	41, // 25: agent.v1.NodeConfigUpdate.authority_not_after:type_name -> google.protobuf.Timestamp
+	41, // 26: agent.v1.ReplicaEndpoints.authority_not_after:type_name -> google.protobuf.Timestamp
+	43, // 27: agent.v1.ServiceCondition.restart:type_name -> platform.v1.RestartObservation
+	41, // 28: agent.v1.WakeDemand.last_packet_at:type_name -> google.protobuf.Timestamp
+	24, // 29: agent.v1.StatusReport.volumes:type_name -> agent.v1.VolumeCondition
+	25, // 30: agent.v1.StatusReport.services:type_name -> agent.v1.ServiceCondition
+	26, // 31: agent.v1.StatusReport.wake_demands:type_name -> agent.v1.WakeDemand
+	41, // 32: agent.v1.LogEntry.observed_at:type_name -> google.protobuf.Timestamp
+	44, // 33: agent.v1.LogEntry.log_type:type_name -> platform.v1.ServiceLogType
+	40, // 34: agent.v1.LogEntry.attributes:type_name -> agent.v1.LogEntry.AttributesEntry
+	28, // 35: agent.v1.LogBatch.entries:type_name -> agent.v1.LogEntry
+	45, // 36: agent.v1.LogBatch.drops:type_name -> platform.v1.LogDropSummary
+	3,  // 37: agent.v1.UsageRecord.kind:type_name -> agent.v1.UsageRecordKind
+	2,  // 38: agent.v1.UsageRecord.resource_kind:type_name -> agent.v1.UsageResourceKind
+	41, // 39: agent.v1.UsageRecord.start:type_name -> google.protobuf.Timestamp
+	41, // 40: agent.v1.UsageRecord.end:type_name -> google.protobuf.Timestamp
+	31, // 41: agent.v1.UsageRecord.egress:type_name -> agent.v1.UsageEgress
+	41, // 42: agent.v1.UsageProducerHealth.oldest_unacknowledged:type_name -> google.protobuf.Timestamp
+	41, // 43: agent.v1.UsageProducerHealth.exhausted_since:type_name -> google.protobuf.Timestamp
+	32, // 44: agent.v1.UsageReport.records:type_name -> agent.v1.UsageRecord
+	41, // 45: agent.v1.UsageReport.sealed_through:type_name -> google.protobuf.Timestamp
+	33, // 46: agent.v1.UsageReport.health:type_name -> agent.v1.UsageProducerHealth
+	35, // 47: agent.v1.UsageAcknowledgement.rejections:type_name -> agent.v1.UsageRejection
+	5,  // 48: agent.v1.AgentClientMessage.hello:type_name -> agent.v1.AgentHello
+	13, // 49: agent.v1.AgentClientMessage.heartbeat:type_name -> agent.v1.AgentHeartbeat
+	27, // 50: agent.v1.AgentClientMessage.status_report:type_name -> agent.v1.StatusReport
+	29, // 51: agent.v1.AgentClientMessage.log_batch:type_name -> agent.v1.LogBatch
+	23, // 52: agent.v1.AgentClientMessage.acknowledgement:type_name -> agent.v1.DesiredStateAcknowledgement
+	34, // 53: agent.v1.AgentClientMessage.usage_report:type_name -> agent.v1.UsageReport
+	17, // 54: agent.v1.AgentServerMessage.desired_state:type_name -> agent.v1.DesiredNodeState
+	18, // 55: agent.v1.AgentServerMessage.allocation_diff:type_name -> agent.v1.AllocationDiff
+	21, // 56: agent.v1.AgentServerMessage.node_config_update:type_name -> agent.v1.NodeConfigUpdate
+	20, // 57: agent.v1.AgentServerMessage.pull_credentials:type_name -> agent.v1.PullCredentialSet
+	22, // 58: agent.v1.AgentServerMessage.replica_endpoints:type_name -> agent.v1.ReplicaEndpoints
+	38, // 59: agent.v1.AgentServerMessage.batch_end:type_name -> agent.v1.SyncBatchEnd
+	30, // 60: agent.v1.AgentServerMessage.log_batch_ack:type_name -> agent.v1.LogBatchAck
+	36, // 61: agent.v1.AgentServerMessage.usage_acknowledgement:type_name -> agent.v1.UsageAcknowledgement
+	7,  // 62: agent.v1.AgentControl.Enroll:input_type -> agent.v1.EnrollRequest
+	9,  // 63: agent.v1.AgentControl.IssueManagedDashboardCertificate:input_type -> agent.v1.ManagedDashboardCertificateRequest
+	37, // 64: agent.v1.AgentControl.Sync:input_type -> agent.v1.AgentClientMessage
+	8,  // 65: agent.v1.AgentControl.Enroll:output_type -> agent.v1.EnrollResponse
+	8,  // 66: agent.v1.AgentControl.IssueManagedDashboardCertificate:output_type -> agent.v1.EnrollResponse
+	39, // 67: agent.v1.AgentControl.Sync:output_type -> agent.v1.AgentServerMessage
+	65, // [65:68] is the sub-list for method output_type
+	62, // [62:65] is the sub-list for method input_type
+	62, // [62:62] is the sub-list for extension type_name
+	62, // [62:62] is the sub-list for extension extendee
+	0,  // [0:62] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -4542,7 +4630,7 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
-	file_agent_proto_msgTypes[31].OneofWrappers = []any{
+	file_agent_proto_msgTypes[32].OneofWrappers = []any{
 		(*AgentClientMessage_Hello)(nil),
 		(*AgentClientMessage_Heartbeat)(nil),
 		(*AgentClientMessage_StatusReport)(nil),
@@ -4550,7 +4638,7 @@ func file_agent_proto_init() {
 		(*AgentClientMessage_Acknowledgement)(nil),
 		(*AgentClientMessage_UsageReport)(nil),
 	}
-	file_agent_proto_msgTypes[33].OneofWrappers = []any{
+	file_agent_proto_msgTypes[34].OneofWrappers = []any{
 		(*AgentServerMessage_DesiredState)(nil),
 		(*AgentServerMessage_AllocationDiff)(nil),
 		(*AgentServerMessage_NodeConfigUpdate)(nil),
@@ -4566,7 +4654,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   35,
+			NumMessages:   36,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

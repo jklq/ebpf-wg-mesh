@@ -274,11 +274,15 @@ func (s ingressInputs) IngressInputs(ctx context.Context) (xds.Inputs, error) {
 	if err != nil {
 		return xds.Inputs{}, err
 	}
+	asleep, err := s.routing.AsleepIngressDomains(ctx)
+	if err != nil {
+		return xds.Inputs{}, err
+	}
 	certs, challenges, err := s.certificates.IngressCertificates(ctx)
 	if err != nil {
 		return xds.Inputs{}, err
 	}
-	return xds.Inputs{Backends: backends, Certificates: certs, Challenges: challenges}, nil
+	return xds.Inputs{Backends: backends, Certificates: certs, Challenges: challenges, AsleepDomains: asleep}, nil
 }
 
 func (s ingressInputs) WithLeaseGuard(ctx context.Context, fn func() error) error {

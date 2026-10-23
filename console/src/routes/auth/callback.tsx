@@ -28,7 +28,7 @@ export async function completeLoginRoute(
 }
 
 const completeLogin = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) => {
+	.validator((input: unknown) => {
 		const data = parseAuthCallbackInput(input);
 		return {
 			code: data.code ?? "",

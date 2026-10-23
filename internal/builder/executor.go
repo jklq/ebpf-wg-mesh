@@ -164,7 +164,7 @@ type NetworkPolicy struct {
 func DefaultRestrictedNetworkPolicy() NetworkPolicy {
 	return NetworkPolicy{
 		AllowGeneralEgress: true,
-		DeniedCIDRs:        config.DefaultBuilderDeniedCIDRs(),
+		DeniedCIDRs:        config.CloudMetadataCIDRs(),
 	}
 }
 

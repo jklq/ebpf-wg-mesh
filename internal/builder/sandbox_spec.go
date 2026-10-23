@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/containerd/containerd/containers"
-	containerdseccomp "github.com/containerd/containerd/contrib/seccomp"
-	"github.com/containerd/containerd/oci"
+	containerdseccomp "github.com/containerd/containerd/v2/contrib/seccomp"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -179,7 +179,7 @@ func withBuildSandboxLimits(limits ResourceLimits) oci.SpecOpts {
 			spec.Linux.Resources.Unified = make(map[string]string)
 		}
 		spec.Linux.Resources.Unified["memory.oom.group"] = "1"
-		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: limits.MaxProcesses}
+		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: &limits.MaxProcesses}
 		spec.Process.Rlimits = []specs.POSIXRlimit{
 			{Type: "RLIMIT_CPU", Soft: uint64(limits.CPUSeconds), Hard: uint64(limits.CPUSeconds)},
 			{Type: "RLIMIT_FSIZE", Soft: uint64(limits.MaxFileBytes), Hard: uint64(limits.MaxFileBytes)},

@@ -6,6 +6,7 @@ export type BadgeTone =
 	| "building"
 	| "failed"
 	| "offline"
+	| "asleep"
 	| "edited";
 export function badgeStylesFor(tone: BadgeTone): stylex.StyleXStyles {
 	return [badgeStyles.base, badgeStyles[tone]];
@@ -55,6 +56,13 @@ export const badgeStyles = stylex.create({
 		borderColor: "rgba(184,66,66,0.22)",
 		backgroundColor: colors.failedDim,
 		color: colors.failed,
+	},
+	asleep: {
+		borderStyle: "solid",
+		borderWidth: "1px",
+		borderColor: "rgba(139,152,171,0.22)",
+		backgroundColor: colors.asleepDim,
+		color: colors.asleep,
 	},
 	offline: {
 		borderStyle: "solid",

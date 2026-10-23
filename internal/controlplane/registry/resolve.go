@@ -60,6 +60,16 @@ type HTTPResolver struct {
 	allowedPrivateHosts []string
 }
 
+// NewPullClient applies the same dial-time destination policy to runtime image
+// pulls, including registry token endpoints and redirected layer downloads.
+// Private registries must be approved by the operator. Proxies cannot bypass
+// the DNS validation. Call CloseIdleConnections after the pull completes.
+func NewPullClient(allowedPrivateHosts []string) *http.Client {
+	return &http.Client{
+		Transport: telemetry.HTTPTransport(approvedDialTransport(nil, allowedPrivateHosts)),
+	}
+}
+
 // NewHTTPResolver builds a resolver over client (or a default 15-second one
 // when nil) with no-redirect policy and dial-time validation.
 func NewHTTPResolver(client *http.Client, allowedPrivateHosts []string) *HTTPResolver {
@@ -159,12 +169,12 @@ func (r *HTTPResolver) Resolve(ctx context.Context, ref string) (ResolvedImage, 
 	if err != nil {
 		return ResolvedImage{}, err
 	}
-	if parsed.Pinned() {
-		return ResolvedImage{Repository: parsed.Repository, ManifestDigest: parsed.Digest, Ref: parsed.PinnedRef()}, nil
-	}
 	host, path, _ := strings.Cut(parsed.Repository, "/")
 	if err := permittedRegistryDestination(ctx, host, r.allowedPrivateHosts); err != nil {
 		return ResolvedImage{}, err
+	}
+	if parsed.Pinned() {
+		return ResolvedImage{Repository: parsed.Repository, ManifestDigest: parsed.Digest, Ref: parsed.PinnedRef()}, nil
 	}
 	manifestURL := manifestURLFor(parsed.Repository, parsed.Tag)
 	digest, err := r.manifestDigest(ctx, manifestURL, "")

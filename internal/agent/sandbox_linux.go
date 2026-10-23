@@ -13,12 +13,12 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 
-	"github.com/containerd/containerd/containers"
-	containerdapparmor "github.com/containerd/containerd/contrib/apparmor"
-	containerdseccomp "github.com/containerd/containerd/contrib/seccomp"
-	"github.com/containerd/containerd/oci"
-	hostapparmor "github.com/containerd/containerd/pkg/apparmor"
-	hostseccomp "github.com/containerd/containerd/pkg/seccomp"
+	containerdapparmor "github.com/containerd/containerd/v2/contrib/apparmor"
+	containerdseccomp "github.com/containerd/containerd/v2/contrib/seccomp"
+	"github.com/containerd/containerd/v2/core/containers"
+	hostapparmor "github.com/containerd/containerd/v2/pkg/apparmor"
+	"github.com/containerd/containerd/v2/pkg/oci"
+	hostseccomp "github.com/containerd/containerd/v2/pkg/seccomp"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux"
 )
@@ -82,7 +82,8 @@ func withWorkloadSandbox(cgroupPath string, allowedBindMounts map[string]sandbox
 		if spec.Linux.Resources == nil {
 			spec.Linux.Resources = &specs.LinuxResources{}
 		}
-		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: sandboxProcessLimit}
+		pids := sandboxProcessLimit
+		spec.Linux.Resources.Pids = &specs.LinuxPids{Limit: &pids}
 		spec.Linux.Resources.Devices = sandboxDeviceRules()
 		spec.Linux.Devices = nil
 		spec.Linux.Sysctl = nil

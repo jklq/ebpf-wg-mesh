@@ -60,6 +60,12 @@ const styles = stylex.create({
 	},
 	idleRestartOption: { color: colors.muted },
 	radioInput: { pointerEvents: "none", position: "absolute", opacity: "0%" },
+	hint: {
+		margin: "0rem",
+		fontSize: "12px",
+		lineHeight: "1.5",
+		color: colors.muted,
+	},
 });
 export function RuntimeSettings({
 	service,
@@ -117,6 +123,62 @@ export function RuntimeSettings({
 						onChange={(drainingSeconds) => updateDraft({ drainingSeconds })}
 					/>
 				</div>
+			</PanelSection>
+			<PanelSection title="Serverless">
+				<fieldset
+					{...stylex.props([
+						styles.builderOptions,
+						changedFields.has("serverlessEnabled")
+							? fieldStyles.unappliedSurface
+							: styles.builderOptionsDefault,
+					])}
+					data-unapplied={changedFields.has("serverlessEnabled") || undefined}
+				>
+					<legend {...stylex.props([fieldStyles.label, styles.builderLegend])}>
+						Scale to zero when idle
+					</legend>
+					<label
+						{...stylex.props([
+							styles.restartOption,
+							!draft.serverlessEnabled
+								? styles.selectedRestartOption
+								: styles.idleRestartOption,
+						])}
+					>
+						<input
+							type="radio"
+							{...stylex.props(styles.radioInput)}
+							name={`service-serverless-${service.id}`}
+							checked={!draft.serverlessEnabled}
+							onChange={() => updateDraft({ serverlessEnabled: false })}
+						/>
+						Off
+					</label>
+					<label
+						{...stylex.props([
+							styles.restartOption,
+							draft.serverlessEnabled
+								? styles.selectedRestartOption
+								: styles.idleRestartOption,
+						])}
+					>
+						<input
+							type="radio"
+							{...stylex.props(styles.radioInput)}
+							name={`service-serverless-${service.id}`}
+							checked={draft.serverlessEnabled}
+							onChange={() => updateDraft({ serverlessEnabled: true })}
+						/>
+						On
+					</label>
+				</fieldset>
+				<p {...stylex.props(styles.hint)}>
+					When on, this service stops after an idle period with no network
+					activity and starts again on the next request, public or
+					private. The first request after sleeping waits for a cold
+					start. Compute is not metered while asleep; attached volumes
+					still are.
+				</p>
 			</PanelSection>
 			<PanelSection title="Process restart">
 				<fieldset

@@ -28,6 +28,8 @@ const (
 	BuilderServiceName = "platform.v1.BuilderService"
 	// OpsServiceName is the fully-qualified name of the OpsService service.
 	OpsServiceName = "platform.v1.OpsService"
+	// ActivatorServiceName is the fully-qualified name of the ActivatorService service.
+	ActivatorServiceName = "platform.v1.ActivatorService"
 )
 
 // These constants are the fully-qualified names of the RPCs defined in this package. They're
@@ -295,6 +297,9 @@ const (
 	// OpsServiceSetBuildSchedulerPausedProcedure is the fully-qualified name of the OpsService's
 	// SetBuildSchedulerPaused RPC.
 	OpsServiceSetBuildSchedulerPausedProcedure = "/platform.v1.OpsService/SetBuildSchedulerPaused"
+	// ActivatorServiceWakeServiceProcedure is the fully-qualified name of the ActivatorService's
+	// WakeService RPC.
+	ActivatorServiceWakeServiceProcedure = "/platform.v1.ActivatorService/WakeService"
 )
 
 // PlatformServiceClient is a client for the platform.v1.PlatformService service.
@@ -2689,4 +2694,78 @@ func (UnimplementedOpsServiceHandler) GetBuildScheduler(context.Context, *connec
 
 func (UnimplementedOpsServiceHandler) SetBuildSchedulerPaused(context.Context, *connect.Request[platformv1.SetBuildSchedulerPausedRequest]) (*connect.Response[platformv1.BuildSchedulerState], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.OpsService.SetBuildSchedulerPaused is not implemented"))
+}
+
+// ActivatorServiceClient is a client for the platform.v1.ActivatorService service.
+type ActivatorServiceClient interface {
+	// WakeService starts (or joins) the wake of the service behind hostname
+	// and blocks until an endpoint is ready or the request deadline passes.
+	WakeService(context.Context, *connect.Request[platformv1.WakeServiceRequest]) (*connect.Response[platformv1.WakeServiceResponse], error)
+}
+
+// NewActivatorServiceClient constructs a client for the platform.v1.ActivatorService service. By
+// default, it uses the Connect protocol with the binary Protobuf Codec, asks for gzipped responses,
+// and sends uncompressed requests. To use the gRPC or gRPC-Web protocols, supply the
+// connect.WithGRPC() or connect.WithGRPCWeb() options.
+//
+// The URL supplied here should be the base URL for the Connect or gRPC server (for example,
+// http://api.acme.com or https://acme.com/grpc).
+func NewActivatorServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...connect.ClientOption) ActivatorServiceClient {
+	baseURL = strings.TrimRight(baseURL, "/")
+	activatorServiceMethods := platformv1.File_platform_proto.Services().ByName("ActivatorService").Methods()
+	return &activatorServiceClient{
+		wakeService: connect.NewClient[platformv1.WakeServiceRequest, platformv1.WakeServiceResponse](
+			httpClient,
+			baseURL+ActivatorServiceWakeServiceProcedure,
+			connect.WithSchema(activatorServiceMethods.ByName("WakeService")),
+			connect.WithClientOptions(opts...),
+		),
+	}
+}
+
+// activatorServiceClient implements ActivatorServiceClient.
+type activatorServiceClient struct {
+	wakeService *connect.Client[platformv1.WakeServiceRequest, platformv1.WakeServiceResponse]
+}
+
+// WakeService calls platform.v1.ActivatorService.WakeService.
+func (c *activatorServiceClient) WakeService(ctx context.Context, req *connect.Request[platformv1.WakeServiceRequest]) (*connect.Response[platformv1.WakeServiceResponse], error) {
+	return c.wakeService.CallUnary(ctx, req)
+}
+
+// ActivatorServiceHandler is an implementation of the platform.v1.ActivatorService service.
+type ActivatorServiceHandler interface {
+	// WakeService starts (or joins) the wake of the service behind hostname
+	// and blocks until an endpoint is ready or the request deadline passes.
+	WakeService(context.Context, *connect.Request[platformv1.WakeServiceRequest]) (*connect.Response[platformv1.WakeServiceResponse], error)
+}
+
+// NewActivatorServiceHandler builds an HTTP handler from the service implementation. It returns the
+// path on which to mount the handler and the handler itself.
+//
+// By default, handlers support the Connect, gRPC, and gRPC-Web protocols with the binary Protobuf
+// and JSON codecs. They also support gzip compression.
+func NewActivatorServiceHandler(svc ActivatorServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
+	activatorServiceMethods := platformv1.File_platform_proto.Services().ByName("ActivatorService").Methods()
+	activatorServiceWakeServiceHandler := connect.NewUnaryHandler(
+		ActivatorServiceWakeServiceProcedure,
+		svc.WakeService,
+		connect.WithSchema(activatorServiceMethods.ByName("WakeService")),
+		connect.WithHandlerOptions(opts...),
+	)
+	return "/platform.v1.ActivatorService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case ActivatorServiceWakeServiceProcedure:
+			activatorServiceWakeServiceHandler.ServeHTTP(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+}
+
+// UnimplementedActivatorServiceHandler returns CodeUnimplemented from all methods.
+type UnimplementedActivatorServiceHandler struct{}
+
+func (UnimplementedActivatorServiceHandler) WakeService(context.Context, *connect.Request[platformv1.WakeServiceRequest]) (*connect.Response[platformv1.WakeServiceResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("platform.v1.ActivatorService.WakeService is not implemented"))
 }

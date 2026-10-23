@@ -165,6 +165,7 @@ export interface UpdateServiceInput {
 	restart?: Partial<DashboardRestartSpec>;
 	desiredReplicaCount?: number;
 	placementRegion?: string;
+	serverlessEnabled?: boolean;
 	rollingStrategy?: DashboardRollingStrategy;
 	volumeMount?: { volumeName: string; mountPath: string } | null;
 }

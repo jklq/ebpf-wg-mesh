@@ -20,15 +20,16 @@ import (
 
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/controlplane/registry"
 	"ebof-wg-mesh/internal/logpipeline"
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/volumestore"
 
-	containerd "github.com/containerd/containerd"
 	eventsapi "github.com/containerd/containerd/api/events"
-	"github.com/containerd/containerd/cio"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/remotes/docker"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/remotes/docker"
+	"github.com/containerd/containerd/v2/pkg/cio"
+	"github.com/containerd/errdefs"
 	cni "github.com/containerd/go-cni"
 	"github.com/containerd/typeurl/v2"
 )
@@ -62,6 +63,20 @@ type containerdEngine struct {
 	volumes                 *volumestore.Store
 	usageMu                 sync.RWMutex
 	usage                   usageObserver
+	pinnedMu                sync.RWMutex
+	pinnedImages            map[string]bool
+}
+
+func (e *containerdEngine) SetPinnedImages(images map[string]bool) {
+	e.pinnedMu.Lock()
+	defer e.pinnedMu.Unlock()
+	e.pinnedImages = images
+}
+
+func (e *containerdEngine) imagePinned(name string) bool {
+	e.pinnedMu.RLock()
+	defer e.pinnedMu.RUnlock()
+	return e.pinnedImages[name]
 }
 
 func (e *containerdEngine) SetUsageObserver(o usageObserver) {
@@ -742,14 +757,29 @@ func (e *containerdEngine) ensureImage(ctx context.Context, ref, username, passw
 		containerd.WithPullUnpack,
 		containerd.WithPullSnapshotter(e.cfg.Runtime.Snapshotter),
 	}
-	if username != "" || password != "" {
-		resolver := docker.NewResolver(docker.ResolverOptions{
-			Credentials: func(string) (string, string, error) {
-				return username, password, nil
-			},
-		})
-		opts = append(opts, containerd.WithResolver(resolver))
+	parsed, err := registry.ParseReference(ref)
+	if err != nil {
+		return nil, err
 	}
+	host, _, _ := strings.Cut(parsed.Repository, "/")
+	allowed := append([]string(nil), e.cfg.Runtime.AllowedPrivateRegistryHosts...)
+	if username != "" || password != "" {
+		// The control plane only issues credentials for this allocation's
+		// exact platform repository. That registry may use private addresses.
+		allowed = append(allowed, host)
+	}
+	client := registry.NewPullClient(allowed)
+	defer client.CloseIdleConnections()
+	resolver := docker.NewResolver(docker.ResolverOptions{
+		Client: client,
+		Credentials: func(requestHost string) (string, string, error) {
+			if !strings.EqualFold(requestHost, host) {
+				return "", "", nil
+			}
+			return username, password, nil
+		},
+	})
+	opts = append(opts, containerd.WithResolver(resolver))
 	return e.client.Pull(ctx, ref, opts...)
 }
 

@@ -3520,3 +3520,109 @@ var OpsService_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "platform.proto",
 }
+
+const (
+	ActivatorService_WakeService_FullMethodName = "/platform.v1.ActivatorService/WakeService"
+)
+
+// ActivatorServiceClient is the client API for ActivatorService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type ActivatorServiceClient interface {
+	// WakeService starts (or joins) the wake of the service behind hostname
+	// and blocks until an endpoint is ready or the request deadline passes.
+	WakeService(ctx context.Context, in *WakeServiceRequest, opts ...grpc.CallOption) (*WakeServiceResponse, error)
+}
+
+type activatorServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewActivatorServiceClient(cc grpc.ClientConnInterface) ActivatorServiceClient {
+	return &activatorServiceClient{cc}
+}
+
+func (c *activatorServiceClient) WakeService(ctx context.Context, in *WakeServiceRequest, opts ...grpc.CallOption) (*WakeServiceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WakeServiceResponse)
+	err := c.cc.Invoke(ctx, ActivatorService_WakeService_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ActivatorServiceServer is the server API for ActivatorService service.
+// All implementations must embed UnimplementedActivatorServiceServer
+// for forward compatibility.
+type ActivatorServiceServer interface {
+	// WakeService starts (or joins) the wake of the service behind hostname
+	// and blocks until an endpoint is ready or the request deadline passes.
+	WakeService(context.Context, *WakeServiceRequest) (*WakeServiceResponse, error)
+	mustEmbedUnimplementedActivatorServiceServer()
+}
+
+// UnimplementedActivatorServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedActivatorServiceServer struct{}
+
+func (UnimplementedActivatorServiceServer) WakeService(context.Context, *WakeServiceRequest) (*WakeServiceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method WakeService not implemented")
+}
+func (UnimplementedActivatorServiceServer) mustEmbedUnimplementedActivatorServiceServer() {}
+func (UnimplementedActivatorServiceServer) testEmbeddedByValue()                          {}
+
+// UnsafeActivatorServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ActivatorServiceServer will
+// result in compilation errors.
+type UnsafeActivatorServiceServer interface {
+	mustEmbedUnimplementedActivatorServiceServer()
+}
+
+func RegisterActivatorServiceServer(s grpc.ServiceRegistrar, srv ActivatorServiceServer) {
+	// If the following call panics, it indicates UnimplementedActivatorServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&ActivatorService_ServiceDesc, srv)
+}
+
+func _ActivatorService_WakeService_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WakeServiceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ActivatorServiceServer).WakeService(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ActivatorService_WakeService_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ActivatorServiceServer).WakeService(ctx, req.(*WakeServiceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// ActivatorService_ServiceDesc is the grpc.ServiceDesc for ActivatorService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var ActivatorService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "platform.v1.ActivatorService",
+	HandlerType: (*ActivatorServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "WakeService",
+			Handler:    _ActivatorService_WakeService_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "platform.proto",
+}

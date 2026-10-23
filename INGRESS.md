@@ -222,3 +222,36 @@ retry alone on the existing backoff. Their CNAME
 ownership checks still point at the service's generated hostname. Keep port 80
 reachable for those custom-domain challenges; ordinary certified traffic
 redirects to HTTPS. The control plane needs no DNS-01 credentials.
+
+## Serverless wake activator
+
+Hostnames of sleeping serverless services (see
+[Serverless services (scale-to-zero)](docs/serverless.md)) route to a shared
+`activator` cluster instead of workload endpoints. Run one `activator`
+binary next to each Envoy; it calls the control plane's internal
+`ActivatorService.WakeService`, holds the request, and proxies it to the
+first ready endpoint. The control plane publishes the cluster at
+`--ingress-activator-upstream` (default `127.0.0.1:18081`), so loopback
+reaches the local activator on every ingress host with no per-host
+configuration in the snapshot.
+
+Provision a dedicated identity per activator instance — never share the
+ingress xDS credentials:
+
+```sh
+controlplane signing-keys issue-client-cert \
+  --db-url "$CONTROLPLANE_DATABASE_URL" --state-dir /var/lib/controlplane \
+  --caller-class activator --caller-id activator-eu-1 --ttl 24h \
+  --out-dir /srv/activator-eu-1/identity --mounted-dir /etc/platform-activator/identity
+```
+
+Deliver and renew it exactly like the ingress identity (complete generation,
+atomic `current` switch, hourly timer); the activator reloads the current
+generation without a restart. The `activator` caller class can call only
+`ActivatorService`; the control plane resolves the requested hostname to a
+service server-side, so a compromised activator cannot name a service it was
+not handed traffic for. A template unit is in
+`infra/production/ingress/platform-activator.service`. Monitor its
+`/healthz` like the Envoy health listener: without a running activator,
+requests to sleeping services fail at Envoy (no healthy upstream for the
+activator cluster) while awake services are unaffected.

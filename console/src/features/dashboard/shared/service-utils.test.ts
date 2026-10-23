@@ -95,3 +95,30 @@ describe("serviceHealth", () => {
 		);
 	});
 });
+
+describe("serverless sleep state", () => {
+	function sleepingWith(
+		serverlessState: DashboardServiceRecord["serverlessState"],
+	): DashboardServiceRecord {
+		const service = serviceWith("DEPLOYMENT_STATE_ACTIVE");
+		service.serverlessState = serverlessState;
+		return service;
+	}
+
+	it("labels and tones asleep and waking services distinctly", () => {
+		const asleep = sleepingWith("SERVERLESS_STATE_ASLEEP");
+		expect(serviceStatusLabel(asleep)).toBe("Asleep");
+		expect(serviceHealth(asleep)).toBe("asleep");
+
+		const waking = sleepingWith("SERVERLESS_STATE_WAKING");
+		expect(serviceStatusLabel(waking)).toBe("Waking up");
+		expect(serviceHealth(waking)).toBe("building");
+	});
+
+	it("ignores sleep state for non-active deployments", () => {
+		const failed = serviceWith("DEPLOYMENT_STATE_FAILED");
+		failed.serverlessState = "SERVERLESS_STATE_ASLEEP";
+		expect(serviceHealth(failed)).toBe("failed");
+		expect(serviceStatusLabel(failed)).not.toBe("Asleep");
+	});
+});

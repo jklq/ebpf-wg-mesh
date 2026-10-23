@@ -160,6 +160,11 @@ enum AllocationIntent {
   ALLOCATION_INTENT_UNSPECIFIED = 0;
   ALLOCATION_INTENT_RUN = 1;
   ALLOCATION_INTENT_DRAIN = 2;
+  // SLEEP stops the workload like DRAIN (drain_deadline bounds the graceful
+  // shutdown) but the assignment is retained: the agent keeps the image
+  // pinned and the mesh identity published so a later RUN intent restarts
+  // the same allocation at the same addresses.
+  ALLOCATION_INTENT_SLEEP = 3;
 }
 
 message InternalHost {
@@ -304,6 +309,15 @@ message ServiceCondition {
   repeated int32 healthy_ipv6_ports = 14;
 }
 
+// WakeDemand reports private mesh traffic addressed to a sleeping
+// allocation on this agent since the previous report. The packets were
+// dropped; the control plane wakes the allocation's service.
+message WakeDemand {
+  string allocation_id = 1;
+  uint64 packets = 2;
+  google.protobuf.Timestamp last_packet_at = 3;
+}
+
 message StatusReport {
   string agent_id = 1;
   repeated VolumeCondition volumes = 2;
@@ -315,6 +329,7 @@ message StatusReport {
   bool recovery_mode = 8;
   string installation_id = 10;
   string recovery_generation = 11;
+  repeated WakeDemand wake_demands = 12;
 }
 
 message LogEntry {

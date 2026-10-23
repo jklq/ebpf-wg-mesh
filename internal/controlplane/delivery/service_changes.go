@@ -178,6 +178,14 @@ func serviceUnappliedChangeFields(current, deployed *platformv1.ServiceSpec) []u
 		next:    current.GetPlacementRegion(),
 	})
 	fields = append(fields, unappliedChangeField{
+		id:      "serverlessEnabled",
+		section: "Replicas",
+		field:   "Serverless (scale to zero when idle)",
+		path:    "serverlessEnabled",
+		current: serverlessValue(deployed),
+		next:    serverlessValue(current),
+	})
+	fields = append(fields, unappliedChangeField{
 		id:      "rollingStrategy",
 		section: "Deployment",
 		field:   "Deployment timing",
@@ -357,6 +365,13 @@ func applyDiscardedServiceChange(current, deployed *platformv1.ServiceSpec, id s
 		}
 	case "placementRegion":
 		current.PlacementRegion = deployed.GetPlacementRegion()
+	case "serverlessEnabled":
+		if deployed.ServerlessEnabled != nil {
+			enabled := deployed.GetServerlessEnabled()
+			current.ServerlessEnabled = &enabled
+		} else {
+			current.ServerlessEnabled = nil
+		}
 	case "rollingStrategy":
 		current.RollingStrategy = proto.Clone(canonicalRollingStrategy(deployed.GetRollingStrategy())).(*platformv1.RollingStrategy)
 	default:

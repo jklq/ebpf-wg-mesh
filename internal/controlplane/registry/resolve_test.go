@@ -19,13 +19,28 @@ func TestHTTPResolverPinnedRefSkipsNetwork(t *testing.T) {
 	resolver := NewHTTPResolver(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		t.Error("pinned reference must not touch the network")
 		return nil, errors.New("network used")
-	})}, nil)
+	})}, []string{"example.test"})
 	got, err := resolver.Resolve(context.Background(), "example.test/web@"+digest)
 	if err != nil {
 		t.Fatalf("Resolve: %v", err)
 	}
 	if got.Ref != "example.test/web@"+digest || got.ManifestDigest != digest || got.Repository != "example.test/web" {
 		t.Fatalf("Resolve = %+v, want pinned passthrough", got)
+	}
+}
+
+func TestHTTPResolverPinnedRefRejectsPrivateRegistry(t *testing.T) {
+	t.Parallel()
+	for _, host := range []string{"127.0.0.1:5000", "localhost:5000", "10.0.0.1", "169.254.169.254", "[fd00::1]"} {
+		t.Run(host, func(t *testing.T) {
+			ref := host + "/web@sha256:" + strings.Repeat("ab", 32)
+			if _, err := NewHTTPResolver(nil, nil).Resolve(context.Background(), ref); err == nil {
+				t.Fatal("accepted digest-pinned image from an unapproved private registry")
+			}
+			if _, err := NewHTTPResolver(nil, []string{host}).Resolve(context.Background(), ref); err != nil {
+				t.Fatalf("operator-approved registry rejected: %v", err)
+			}
+		})
 	}
 }
 

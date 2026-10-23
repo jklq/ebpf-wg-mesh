@@ -39,6 +39,11 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 	if compressedSize > maxSourceArchiveCompressedBytes {
 		return errors.New("snapshot archive exceeds compressed size limit")
 	}
+	root, err := os.OpenRoot(repoDir)
+	if err != nil {
+		return fmt.Errorf("open snapshot repository: %w", err)
+	}
+	defer root.Close()
 	gzr, err := gzip.NewReader(archive)
 	if err != nil {
 		return fmt.Errorf("open snapshot archive: %w", err)
@@ -57,19 +62,27 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			for _, link := range links {
-				if err := os.MkdirAll(filepath.Dir(link.path), 0o755); err != nil {
+				if err := root.MkdirAll(filepath.Dir(link.path), 0o755); err != nil {
 					return fmt.Errorf("mkdir snapshot link parent: %w", err)
 				}
 				if link.hard {
-					info, err := os.Lstat(link.linkname)
+					info, err := root.Lstat(link.linkname)
 					if err != nil || !info.Mode().IsRegular() {
 						return fmt.Errorf("snapshot hardlink target is not a regular file: %q", link.linkname)
 					}
-					if err := os.Link(link.linkname, link.path); err != nil {
+					if err := root.Link(link.linkname, link.path); err != nil {
 						return fmt.Errorf("create snapshot hardlink: %w", err)
 					}
-				} else if err := os.Symlink(link.linkname, link.path); err != nil {
+				} else if err := root.Symlink(link.linkname, link.path); err != nil {
 					return fmt.Errorf("create snapshot symlink: %w", err)
+				}
+			}
+			// A lexically confined target can still escape through another
+			// symlink followed by "..". Check the completed graph before any
+			// build tool can read it. Dangling internal links remain valid.
+			for _, link := range links {
+				if _, err := root.Stat(link.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					return fmt.Errorf("snapshot link %q is not confined to repository: %w", link.path, err)
 				}
 			}
 			return nil
@@ -102,30 +115,30 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 		if cleanName == "." {
 			continue
 		}
-		root := strings.Split(cleanName, "/")[0]
+		entryRoot := strings.Split(cleanName, "/")[0]
 		if archiveRoot == "" {
-			archiveRoot = root
-		} else if root != archiveRoot {
-			return fmt.Errorf("snapshot archive has multiple roots: %q and %q", archiveRoot, root)
+			archiveRoot = entryRoot
+		} else if entryRoot != archiveRoot {
+			return fmt.Errorf("snapshot archive has multiple roots: %q and %q", archiveRoot, entryRoot)
 		}
 		rel, ok := stripArchiveRoot(name)
 		if !ok || rel == "" {
 			continue
 		}
-		target, err := safeArchivePath(repoDir, rel)
+		target, err := safeArchivePath(rel)
 		if err != nil {
 			return err
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o755); err != nil {
+			if err := root.MkdirAll(target, 0o755); err != nil {
 				return fmt.Errorf("mkdir snapshot dir: %w", err)
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			if err := root.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return fmt.Errorf("mkdir snapshot parent: %w", err)
 			}
-			file, err := os.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(hdr.Mode&0o777))
+			file, err := root.OpenFile(target, os.O_CREATE|os.O_RDWR|os.O_TRUNC, os.FileMode(hdr.Mode&0o777))
 			if err != nil {
 				return fmt.Errorf("create snapshot file: %w", err)
 			}
@@ -141,7 +154,7 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 				return fmt.Errorf("snapshot symlink %q has absolute target", name)
 			}
 			resolved := filepath.Join(filepath.Dir(rel), hdr.Linkname)
-			if _, err := safeArchivePath(repoDir, resolved); err != nil {
+			if _, err := safeArchivePath(resolved); err != nil {
 				return fmt.Errorf("snapshot symlink %q escapes repository: %w", name, err)
 			}
 			links = append(links, archiveLink{path: target, linkname: hdr.Linkname})
@@ -154,7 +167,7 @@ func extractSourceSnapshotReader(repoDir string, archive io.Reader, compressedSi
 			if !ok || linkRel == "" {
 				return fmt.Errorf("snapshot hardlink %q has invalid target", name)
 			}
-			linkTarget, err := safeArchivePath(repoDir, linkRel)
+			linkTarget, err := safeArchivePath(linkRel)
 			if err != nil {
 				return err
 			}
@@ -178,7 +191,7 @@ func stripArchiveRoot(name string) (string, bool) {
 	return rel, true
 }
 
-func safeArchivePath(root, child string) (string, error) {
+func safeArchivePath(child string) (string, error) {
 	if filepath.IsAbs(child) {
 		return "", errors.New("snapshot entry path is absolute")
 	}
@@ -186,15 +199,7 @@ func safeArchivePath(root, child string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", errors.New("snapshot entry escapes repository")
 	}
-	target := filepath.Join(root, clean)
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", errors.New("snapshot entry escapes repository")
-	}
-	return target, nil
+	return clean, nil
 }
 
 func parseBuildMetadata(data []byte) (string, error) {

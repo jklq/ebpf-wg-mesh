@@ -92,6 +92,9 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	if cfg.Ingress.ControlPlaneHTTPUpstream == "" {
 		cfg.Ingress.ControlPlaneHTTPUpstream = "127.0.0.1:8080"
 	}
+	if cfg.Ingress.ActivatorUpstream == "" {
+		cfg.Ingress.ActivatorUpstream = "127.0.0.1:18081"
+	}
 	if cfg.Dashboard.ProjectName == "" {
 		cfg.Dashboard.ProjectName = "Platform Dashboard"
 	}
@@ -187,6 +190,15 @@ func applyControlPlaneDefaults(cfg *ControlPlaneConfig) {
 	}
 	if cfg.Failover.UnhealthyThresholdSeconds <= 0 {
 		cfg.Failover.UnhealthyThresholdSeconds = 30
+	}
+	if cfg.Serverless.IdleTimeoutSeconds <= 0 {
+		cfg.Serverless.IdleTimeoutSeconds = 600
+	}
+	if cfg.Serverless.EvalIntervalSeconds <= 0 {
+		cfg.Serverless.EvalIntervalSeconds = 30
+	}
+	if cfg.Serverless.WakeDeadlineSeconds <= 0 {
+		cfg.Serverless.WakeDeadlineSeconds = 90
 	}
 	if cfg.Shutdown.GraceSeconds <= 0 {
 		cfg.Shutdown.GraceSeconds = 30
@@ -408,7 +420,7 @@ func applyBuilderDefaults(cfg *BuilderConfig) {
 		cfg.Limits.MaxWorkspaceBytes = limits.MaxWorkspaceBytes
 	}
 	if len(cfg.Network.DeniedCIDRs) == 0 {
-		cfg.Network.DeniedCIDRs = DefaultBuilderDeniedCIDRs()
+		cfg.Network.DeniedCIDRs = CloudMetadataCIDRs()
 	}
 	if cfg.Cache.Mode == "" {
 		cfg.Cache.Mode = "service"
@@ -425,8 +437,18 @@ func DefaultBuilderLimits() BuilderLimitsConfig {
 	}
 }
 
-func DefaultBuilderDeniedCIDRs() []string {
-	return []string{"169.254.169.254/32", "100.100.100.200/32", "fd00:ec2::254/128"}
+// CloudMetadataCIDRs are credential-bearing cloud endpoints that untrusted
+// builds and workloads must not reach.
+func CloudMetadataCIDRs() []string {
+	return []string{
+		"169.254.169.254/32", // instance metadata (AWS, Azure, GCP, OCI)
+		"169.254.170.2/32",   // AWS ECS credentials
+		"169.254.170.23/32",  // AWS EKS pod identity
+		"100.100.100.200/32", // Alibaba instance metadata
+		"fd00:ec2::254/128",  // AWS instance metadata
+		"fd00:ec2::23/128",   // AWS EKS pod identity
+		"fd20:ce::254/128",   // GCP IPv6 instance metadata
+	}
 }
 
 func applyBuilderSandboxDefaults(cfg *BuilderSandboxConfig) {

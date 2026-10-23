@@ -23,9 +23,9 @@ import (
 	"ebof-wg-mesh/internal/testutil"
 	"ebof-wg-mesh/internal/volumestore"
 
-	containerd "github.com/containerd/containerd"
-	"github.com/containerd/containerd/errdefs"
-	"github.com/containerd/containerd/namespaces"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	"github.com/containerd/errdefs"
 )
 
 const containerdTestImage = "docker.io/library/busybox:1.36.1"

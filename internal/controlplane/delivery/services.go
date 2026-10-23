@@ -565,6 +565,10 @@ func (d *Delivery) ScaleService(ctx context.Context, user authz.User, serviceID 
 	if err != nil {
 		return ServiceRecord{}, nil, 0, err
 	}
+	// Scaling a sleeping service is an explicit request to run it.
+	if _, err := d.WakeService(ctx, serviceID, WakeTriggerOperator); err != nil {
+		return ServiceRecord{}, nil, 0, err
+	}
 	service, allocations, err := d.scaleService(ctx, scope, desired)
 	if err != nil {
 		return ServiceRecord{}, nil, 0, err

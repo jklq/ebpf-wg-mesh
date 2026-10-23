@@ -48,6 +48,7 @@ type servicePatch struct {
 	VolumeMountPath   string            `json:"volume_mount_path,omitempty" jsonschema:"absolute mount path inside the container"`
 	DetachVolume      bool              `json:"detach_volume,omitempty" jsonschema:"update only: remove the volume mount"`
 	PlacementRegion   string            `json:"placement_region,omitempty" jsonschema:"operator-defined region constraint"`
+	ServerlessEnabled *bool             `json:"serverless_enabled,omitempty" jsonschema:"scale to zero after an idle period with no network activity; wakes on the next public or private request (first request pays a cold start)"`
 	RollingHealthSecs *int32            `json:"rolling_healthcheck_timeout_seconds,omitempty"`
 	RollingDrainSecs  *int32            `json:"rolling_draining_seconds,omitempty"`
 }
@@ -124,6 +125,7 @@ func specFromPatch(p servicePatch) (*platformv1.ServiceSpec, error) {
 	spec := &platformv1.ServiceSpec{
 		Runtime: runtime, PlacementRegion: p.PlacementRegion,
 		DesiredReplicaCount: p.Replicas,
+		ServerlessEnabled:   p.ServerlessEnabled,
 	}
 	if p.RollingHealthSecs != nil || p.RollingDrainSecs != nil {
 		spec.RollingStrategy = &platformv1.RollingStrategy{
@@ -210,6 +212,9 @@ func applyPatch(current *platformv1.ServiceSpec, p servicePatch) (*platformv1.Se
 	}
 	if p.PlacementRegion != "" {
 		spec.PlacementRegion = p.PlacementRegion
+	}
+	if p.ServerlessEnabled != nil {
+		spec.ServerlessEnabled = p.ServerlessEnabled
 	}
 	if p.RollingHealthSecs != nil || p.RollingDrainSecs != nil {
 		if spec.RollingStrategy == nil {

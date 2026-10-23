@@ -16,6 +16,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
+	"ebof-wg-mesh/internal/metering"
 	"ebof-wg-mesh/internal/recovery"
 	"ebof-wg-mesh/internal/restartpolicy"
 	"ebof-wg-mesh/internal/runtimeutil"
@@ -37,6 +38,9 @@ type serviceEngine interface {
 	InspectService(context.Context, *agentv1.DesiredService) (serviceStatus, bool, error)
 	DrainService(context.Context, string, time.Time) (bool, bool, error)
 	RemoveService(context.Context, string) error
+	// SetPinnedImages protects the images of sleeping allocations from
+	// garbage collection so a wake never has to re-pull them.
+	SetPinnedImages(map[string]bool)
 	SetLogSink(LogSink)
 	Close() error
 }
@@ -66,6 +70,11 @@ type ContainerdRuntime struct {
 	rng         *rand.Rand
 	rngMu       sync.Mutex
 	forceStart  map[string]bool
+
+	wakeMu        sync.Mutex
+	wakeSource    metering.WakeSource
+	wakeBaseline  map[[16]byte]uint64
+	sleepingAddrs map[[16]byte]string
 }
 
 type rolloutReadiness struct {
@@ -240,6 +249,7 @@ func (r *ContainerdRuntime) ReconcileWithProgress(ctx context.Context, state *ag
 			pinned[volume.GetVolumeId()] = true
 		}
 	}
+	r.engine.SetPinnedImages(sleepingImages(state.GetServices()))
 	services := state.GetServices()
 	groups := make([][]int, 0, len(services))
 	volumeGroups := make(map[string]int)
@@ -313,6 +323,7 @@ func (r *ContainerdRuntime) ReconcileWithProgress(ctx context.Context, state *ag
 		return nil, err
 	}
 	report.Services = conditions
+	report.WakeDemands = r.collectWakeDemands(services)
 	return report, nil
 }
 
@@ -367,6 +378,41 @@ func (r *ContainerdRuntime) reconcileService(ctx context.Context, svc *agentv1.D
 		} else {
 			cond.Phase = "Draining"
 			cond.Message = "SIGTERM sent; waiting for graceful shutdown"
+		}
+		return cond
+	}
+	if svc.GetIntent() == agentv1.AllocationIntent_ALLOCATION_INTENT_SLEEP {
+		// Sleep stops the workload exactly like a drain (SIGTERM, force-kill
+		// at the deadline, container and network removed) but the desired
+		// service stays: a later RUN intent restarts this allocation at the
+		// same addresses, from the image kept pinned against collection.
+		deadline := svc.GetDrainDeadline()
+		if deadline == nil || !deadline.IsValid() {
+			cond.Phase = "Error"
+			cond.Message = "sleep deadline is required"
+			return cond
+		}
+		drained, forced, err := r.engine.DrainService(ctx, svc.GetAllocationId(), deadline.AsTime())
+		if err != nil {
+			cond.Phase = "Error"
+			cond.Message = err.Error()
+			return cond
+		}
+		cond.AppliedSpecRevision = svc.GetDesiredSpecRevision()
+		cond.AppliedRolloutGeneration = svc.GetDesiredRolloutGeneration()
+		cond.AllocationIpv4 = svc.GetPrivateIpv4()
+		cond.AllocationIpv6 = svc.GetPrivateIpv6()
+		cond.Healthy = false
+		cond.Phase = "Sleeping"
+		cond.Restart = r.loadObservation(svc.GetAllocationId(), svc.GetRestartObservation())
+		r.forgetReadiness(svc.GetAllocationId())
+		switch {
+		case drained && forced:
+			cond.Message = "asleep (serverless idle); workload was force killed at the sleep deadline"
+		case drained:
+			cond.Message = "asleep (serverless idle)"
+		default:
+			cond.Message = "stopping for sleep; SIGTERM sent"
 		}
 		return cond
 	}

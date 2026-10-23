@@ -15,7 +15,12 @@ export type DashboardTab =
 	| "domains"
 	| "usage";
 
-export type ServiceHealth = "healthy" | "building" | "failed" | "offline";
+export type ServiceHealth =
+	| "healthy"
+	| "building"
+	| "failed"
+	| "offline"
+	| "asleep";
 
 export type ConfirmRepositoryFn = (input: {
 	data: {

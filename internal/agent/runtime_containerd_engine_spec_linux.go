@@ -20,11 +20,11 @@ import (
 	"ebof-wg-mesh/internal/meshlabels"
 	"ebof-wg-mesh/internal/runtimeutil"
 
-	containerd "github.com/containerd/containerd"
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/namespaces"
-	"github.com/containerd/containerd/oci"
-	cnetns "github.com/containerd/containerd/pkg/netns"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
+	cnetns "github.com/containerd/containerd/v2/pkg/netns"
+	"github.com/containerd/containerd/v2/pkg/oci"
 	cni "github.com/containerd/go-cni"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )

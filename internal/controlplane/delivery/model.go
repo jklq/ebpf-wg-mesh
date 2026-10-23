@@ -149,10 +149,13 @@ type ServiceRecord struct {
 	UnappliedChanges    []*platformv1.ServiceUnappliedChange
 	DesiredReplicaCount int32
 	ReadyReplicaCount   int32
-	PlacementMessage    string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
-	Deletion            *DeletionInfo
+	// ServerlessState is awake/asleep/waking for serverless-enabled
+	// services; awake for every other service. See serverless.go.
+	ServerlessState  string
+	PlacementMessage string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Deletion         *DeletionInfo
 }
 
 type DomainBindingRecord struct {

@@ -35,7 +35,11 @@ import (
 )
 
 // Increment when fixed resource policy changes so unchanged inputs still publish a new version.
-const snapshotFormat = 2
+const snapshotFormat = 3
+
+// ActivatorClusterName is the shared cluster that receives traffic for
+// sleeping serverless services and wakes them.
+const ActivatorClusterName = "activator"
 
 const (
 	HTTPRouteConfigName  = "ingress_http"
@@ -74,6 +78,14 @@ func (s *Snapshot) CacheSnapshot() *cachev3.Snapshot {
 type BuildInput struct {
 	Backends []Backend
 	Static   []StaticRoute
+	// AsleepDomains are hostnames whose service is asleep (serverless
+	// scale-to-zero). They route to the activator cluster instead of
+	// workload endpoints; a domain that also has backends keeps its
+	// backends. Ignored when ActivatorUpstream is empty.
+	AsleepDomains []string
+	// ActivatorUpstream is the host:port of the wake activator co-located
+	// with Envoy.
+	ActivatorUpstream string
 	// HTTPListenAddrs serve challenges, redirects, and hostnames without a certificate.
 	HTTPListenAddrs []string
 	// HTTPSListenAddrs terminate TLS. They exist in the snapshot only while it holds a certificate.
@@ -229,6 +241,30 @@ func canonicalize(input BuildInput) (canonicalInput, error) {
 		return strings.Join(statics[i].hosts, ",") < strings.Join(statics[j].hosts, ",")
 	})
 
+	// Asleep domains route to the activator. A domain with live backends
+	// always keeps them: asleep and backend entries are mutually exclusive
+	// per hostname, so the sleep/wake flip is a single-snapshot swap.
+	activatorUpstream := strings.TrimSpace(input.ActivatorUpstream)
+	var asleep []string
+	if activatorUpstream != "" {
+		if _, _, err := activatorParts(activatorUpstream); err != nil {
+			slog.Warn("xds activator upstream invalid; asleep domains will not route", "upstream", activatorUpstream, "error", err)
+			activatorUpstream = ""
+		}
+	}
+	if activatorUpstream != "" {
+		live := make(map[string]struct{}, len(domains))
+		for _, domain := range domains {
+			live[domain.domain] = struct{}{}
+		}
+		for _, host := range normalizeHosts(input.AsleepDomains) {
+			if _, ok := live[host]; ok || sanitizeResourceName(host) == "" {
+				continue
+			}
+			asleep = append(asleep, host)
+		}
+	}
+
 	canonical := canonicalInput{
 		Format:         snapshotFormat,
 		HTTPListeners:  normalizedListenAddrs(input.HTTPListenAddrs),
@@ -249,7 +285,43 @@ func canonicalize(input BuildInput) (canonicalInput, error) {
 			Upstream: static.upstream,
 		})
 	}
+	canonical.Asleep = asleep
+	canonical.Activator = activatorUpstream
 	return canonical, nil
+}
+
+// activatorParts splits and validates the activator upstream host:port.
+func activatorParts(upstream string) (string, uint32, error) {
+	host, portStr, err := net.SplitHostPort(upstream)
+	if err != nil || strings.TrimSpace(host) == "" {
+		return "", 0, fmt.Errorf("activator upstream %q must be host:port", upstream)
+	}
+	port, err := parsePort(portStr)
+	if err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
+}
+
+// activatorCluster reaches the wake activator: a STATIC cluster for IP
+// literals (the co-located loopback deployment), STRICT_DNS for names.
+func activatorCluster(host string, port uint32) clusterv3.Cluster {
+	if addr, err := netip.ParseAddr(host); err == nil {
+		return clusterv3.Cluster{
+			Name:           ActivatorClusterName,
+			ConnectTimeout: durationpb.New(5 * time.Second),
+			ClusterDiscoveryType: &clusterv3.Cluster_Type{
+				Type: clusterv3.Cluster_STATIC,
+			},
+			LoadAssignment: &endpointv3.ClusterLoadAssignment{
+				ClusterName: ActivatorClusterName,
+				Endpoints: []*endpointv3.LocalityLbEndpoints{{
+					LbEndpoints: []*endpointv3.LbEndpoint{socketEndpoint(netip.AddrPortFrom(addr, uint16(port)))},
+				}},
+			},
+		}
+	}
+	return strictDNSCluster(ActivatorClusterName, host, port)
 }
 
 func buildCanonical(canonical canonicalInput, raw []byte, keys map[string]KeyPair) (*Snapshot, error) {
@@ -341,6 +413,18 @@ func buildCanonical(canonical canonicalInput, raw []byte, keys map[string]KeyPai
 		clusters = append(clusters, strictDNSCluster(clusterName, static.host, static.port))
 		routes.add(fmt.Sprintf("static-vhost/%d-%s", i, sanitizeResourceName(static.hosts[0])), static.hosts, clusterName)
 	}
+	asleepRouted := 0
+	if len(canonical.Asleep) > 0 {
+		host, port, err := activatorParts(canonical.Activator)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot input activator: %w", err)
+		}
+		clusters = append(clusters, activatorCluster(host, port))
+		for _, domain := range canonical.Asleep {
+			routes.add("asleep-vhost/"+domain, []string{domain}, ActivatorClusterName)
+			asleepRouted++
+		}
+	}
 	routeConfigs := routes.configs()
 
 	listeners, err := buildListeners(canonical.HTTPListeners, canonical.HTTPSListeners, canonical.Certificates, tlsEnabled)
@@ -391,7 +475,7 @@ func buildCanonical(canonical canonicalInput, raw []byte, keys map[string]KeyPai
 			Listeners:    len(listeners),
 			Clusters:     len(clusters),
 			Endpoints:    endpointCount,
-			Domains:      len(domains) + len(statics),
+			Domains:      len(domains) + len(statics) + asleepRouted,
 			Certificates: len(secrets),
 			Challenges:   len(canonical.Challenges),
 		},
@@ -425,6 +509,8 @@ type canonicalInput struct {
 	Format         int                    `json:"format"`
 	Domains        []canonicalDomain      `json:"domains"`
 	Statics        []canonicalStatic      `json:"statics"`
+	Asleep         []string               `json:"asleep"`
+	Activator      string                 `json:"activator"`
 	HTTPListeners  []string               `json:"http_listeners"`
 	HTTPSListeners []string               `json:"https_listeners"`
 	Certificates   []canonicalCertificate `json:"certificates"`

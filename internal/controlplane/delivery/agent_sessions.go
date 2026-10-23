@@ -258,6 +258,12 @@ func (d *Delivery) ObserveAgentStatus(ctx context.Context, authenticatedAgentID 
 	if err != nil {
 		return err
 	}
+	// Wake demand is best-effort: a wake failure must not tear down the
+	// agent's sync stream. Demand repeats while traffic keeps arriving,
+	// so a transient failure retries on the next report.
+	if len(report.GetWakeDemands()) > 0 {
+		_ = d.ReportWakeDemands(ctx, authenticatedAgentID, report.GetWakeDemands())
+	}
 	if ingressChanged && d.ingress != nil && d.live.Publishing() {
 		d.ingress.RequestSync()
 	}

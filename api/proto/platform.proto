@@ -284,6 +284,11 @@ message ServiceSpec {
   // A customer may constrain placement to an operator-defined region. Node
   // labels themselves are never accepted through workload APIs.
   string placement_region = 5;
+  // Serverless services scale to zero after an idle period with no network
+  // activity and start again on the next public or private request. Absent
+  // means disabled. Like every spec field it takes effect on the next
+  // deployment. See docs/serverless.md.
+  optional bool serverless_enabled = 6;
 }
 
 message RollingStrategy {
@@ -502,6 +507,17 @@ message ServiceUnappliedChange {
   string new_value = 7;
 }
 
+// ServerlessState is the sleep state of a serverless service. It is only
+// meaningful when the service's spec enables serverless; other services
+// always report SERVERLESS_STATE_AWAKE. Asleep is a healthy state: the
+// deployment stays active and desired state is preserved.
+enum ServerlessState {
+  SERVERLESS_STATE_UNSPECIFIED = 0;
+  SERVERLESS_STATE_AWAKE = 1;
+  SERVERLESS_STATE_ASLEEP = 2;
+  SERVERLESS_STATE_WAKING = 3;
+}
+
 message Service {
   string id = 1;
   string environment_id = 2;
@@ -526,6 +542,7 @@ message Service {
   reserved 21;
   reserved "sandbox_profile_audit";
   DeletionState deletion = 22;
+  ServerlessState serverless_state = 23;
 }
 
 enum DomainOwnershipState {
@@ -1884,4 +1901,35 @@ service OpsService {
   rpc SetBuilderDrain(SetBuilderDrainRequest) returns (BuilderWorker);
   rpc GetBuildScheduler(google.protobuf.Empty) returns (BuildSchedulerState);
   rpc SetBuildSchedulerPaused(SetBuildSchedulerPausedRequest) returns (BuildSchedulerState);
+}
+
+// ActivatorService is the internal wake path for sleeping serverless
+// services. Only the activator caller class may use it. The caller names a
+// public hostname; the control plane resolves it to a service server-side,
+// so an activator can never assert a service identity itself.
+message WakeServiceRequest {
+  string hostname = 1;
+}
+
+message WakeEndpoint {
+  string address = 1;
+  int32 port = 2;
+}
+
+message WakeServiceResponse {
+  string service_id = 1;
+  // Ready allocation endpoints for the hostname's target port. The
+  // activator proxies the held request to one of them; subsequent requests
+  // use the normal ingress route again.
+  repeated WakeEndpoint endpoints = 2;
+  // False when the wake deadline passed before any endpoint became ready.
+  // The wake itself is not cancelled; the activator should answer its held
+  // request with 503 and let the client retry.
+  bool ready = 3;
+}
+
+service ActivatorService {
+  // WakeService starts (or joins) the wake of the service behind hostname
+  // and blocks until an endpoint is ready or the request deadline passes.
+  rpc WakeService(WakeServiceRequest) returns (WakeServiceResponse);
 }

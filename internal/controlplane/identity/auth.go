@@ -33,6 +33,7 @@ const (
 	CallerBuilder   CallerClass = "builder"
 	CallerDashboard CallerClass = "dashboard"
 	CallerIngress   CallerClass = "ingress"
+	CallerActivator CallerClass = "activator"
 )
 
 const (
@@ -245,6 +246,10 @@ func (a *InternalAuth) authorize(ctx context.Context, fullMethod string, identit
 		if !authenticated || caller.Class != CallerBuilder {
 			return nil, status.Error(codes.PermissionDenied, "builder client certificate required")
 		}
+	case strings.HasPrefix(fullMethod, "/platform.v1.ActivatorService/"):
+		if !authenticated || caller.Class != CallerActivator {
+			return nil, status.Error(codes.PermissionDenied, "activator client certificate required")
+		}
 	case fullMethod == "/agent.v1.AgentControl/Enroll":
 		if authenticated && caller.Class != CallerAgent {
 			return nil, status.Error(codes.PermissionDenied, "agent client certificate required")
@@ -369,7 +374,7 @@ func serviceCallerFromCertificate(cert *x509.Certificate) (ServiceCaller, bool, 
 	}
 	class := CallerClass(strings.TrimSpace(cert.Subject.OrganizationalUnit[0]))
 	switch class {
-	case CallerAgent, CallerBuilder, CallerDashboard, CallerIngress:
+	case CallerAgent, CallerBuilder, CallerDashboard, CallerIngress, CallerActivator:
 		return ServiceCaller{Class: class, ID: id}, true, nil
 	default:
 		return ServiceCaller{}, false, errors.New("unknown client certificate caller class")

@@ -162,6 +162,13 @@ func replicaCountPtr(count int32) *int32 {
 	return &value
 }
 
+func serverlessValue(spec *platformv1.ServiceSpec) string {
+	if spec.GetServerlessEnabled() {
+		return "enabled"
+	}
+	return "disabled"
+}
+
 func directImageRef(spec *platformv1.ServiceSpec) string {
 	if spec == nil || spec.GetSource() == nil {
 		return ""

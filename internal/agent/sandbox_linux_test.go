@@ -9,8 +9,8 @@ import (
 
 	"ebof-wg-mesh/internal/runtimeutil"
 
-	"github.com/containerd/containerd/containers"
-	containerdseccomp "github.com/containerd/containerd/contrib/seccomp"
+	containerdseccomp "github.com/containerd/containerd/v2/contrib/seccomp"
+	"github.com/containerd/containerd/v2/core/containers"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -71,7 +71,7 @@ func TestProductionSandboxEnforcesIsolationAfterImageConfiguration(t *testing.T)
 	if spec.Linux.Seccomp == nil || spec.Linux.Seccomp.DefaultAction == "" {
 		t.Fatal("maintained seccomp profile was not installed")
 	}
-	if spec.Linux.Resources.Pids == nil || spec.Linux.Resources.Pids.Limit != sandboxProcessLimit {
+	if spec.Linux.Resources.Pids == nil || spec.Linux.Resources.Pids.Limit == nil || *spec.Linux.Resources.Pids.Limit != sandboxProcessLimit {
 		t.Fatalf("PID limit = %+v", spec.Linux.Resources.Pids)
 	}
 	if len(spec.Linux.Devices) != 0 || len(spec.Linux.Sysctl) != 0 || spec.Linux.Resources.Devices[0].Allow {

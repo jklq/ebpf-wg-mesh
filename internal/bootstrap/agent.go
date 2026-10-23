@@ -22,6 +22,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	var underlayInterface string
 	var advertiseAddr string
 	var controlPlaneAddresses string
+	var allowedPrivateRegistries string
 
 	fs := flag.NewFlagSet("agent", flag.ContinueOnError)
 	stringFlag(fs, &cfg.AuthorityFile, "authority-file", "AGENT_AUTHORITY_FILE", "", "private host-admin installation and recovery generation admission")
@@ -44,6 +45,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	stringFlag(fs, &cfg.Runtime.VolumesDir, "volumes-dir", "AGENT_VOLUMES_DIR", "", "")
 	stringFlag(fs, &cfg.Runtime.ManagedDashboardSecretsDir, "managed-dashboard-secrets-dir", "AGENT_MANAGED_DASHBOARD_SECRETS_DIR", "", "")
 	stringFlag(fs, &cfg.Runtime.Snapshotter, "snapshotter", "AGENT_SNAPSHOTTER", "auto", "containerd snapshotter; auto prefers supported overlayfs, then native")
+	stringFlag(fs, &allowedPrivateRegistries, "direct-image-allowed-private-registries", "AGENT_DIRECT_IMAGE_ALLOWED_PRIVATE_REGISTRIES", "", "comma-separated operator-approved private registry host[:port] values")
 	boolFlag(fs, &cfg.Runtime.DisableCgroups, "disable-cgroups", "AGENT_DISABLE_CGROUPS", false, "")
 	stringFlag(fs, &cfg.Runtime.VolumeBackend, "volume-backend", "AGENT_VOLUME_BACKEND", "loop", "loop (enforced ext4 image per volume) or directory (unenforced, development only)")
 	int64Flag(fs, &cfg.Logs.SpoolMaxBytes, "logs-spool-max-bytes", "AGENT_LOGS_SPOOL_MAX_BYTES", 256<<20, "disk spool cap under the data dir before oldest lines shed with gap rows")
@@ -75,6 +77,7 @@ func Agent(args []string) (config.AgentConfig, error) {
 	}
 	cfg.Profile = normalized
 	cfg.ControlPlane.Addresses = splitCommaList(controlPlaneAddresses)
+	cfg.Runtime.AllowedPrivateRegistryHosts = splitCommaList(allowedPrivateRegistries)
 
 	hostName, err := os.Hostname()
 	if err != nil {

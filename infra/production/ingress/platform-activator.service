@@ -1,0 +1,25 @@
+[Unit]
+Description=Wake activator for sleeping serverless services (one per ingress host)
+Wants=network-online.target
+After=network-online.target
+
+# One unit per ingress host, next to Envoy. Replace the control-plane
+# addresses, server name, and binary path. Provision its identity with:
+#   controlplane signing-keys issue-client-cert \
+#     --caller-class activator --caller-id activator-eu-1 --ttl 24h \
+#     --out-dir /srv/activator-eu-1/identity --mounted-dir /etc/platform-activator/identity
+# and renew it on the same schedule as the ingress identity (the activator
+# reloads the current generation without a restart). The listen address
+# must match the control plane's --ingress-activator-upstream (loopback on
+# this host); Envoy dials it for hostnames of sleeping services only.
+[Service]
+Type=simple
+User=platform-activator
+UMask=0077
+ExecStart=/opt/ebpf-wg-mesh/bin/activator --listen 127.0.0.1:18081 --controlplane-addresses cp1.internal.example.net:9443,cp2.internal.example.net:9443 --identity-dir /etc/platform-activator/identity --server-name controlplane.internal.example.net
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target

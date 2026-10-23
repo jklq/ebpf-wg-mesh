@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/containerd/containerd/containers"
-	"github.com/containerd/containerd/namespaces"
+	"github.com/containerd/containerd/v2/core/containers"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
 	specs "github.com/opencontainers/runtime-spec/specs-go"
 )
 
@@ -148,7 +148,7 @@ func TestSandboxSpecEnforcesLimits(t *testing.T) {
 	if spec.Linux.Resources.Unified["memory.oom.group"] != "1" {
 		t.Fatal("sandbox must kill as a group on OOM")
 	}
-	if spec.Linux.Resources.Pids == nil || spec.Linux.Resources.Pids.Limit != input.Limits.MaxProcesses {
+	if spec.Linux.Resources.Pids == nil || spec.Linux.Resources.Pids.Limit == nil || *spec.Linux.Resources.Pids.Limit != input.Limits.MaxProcesses {
 		t.Fatalf("pids limit = %+v, want %d", spec.Linux.Resources.Pids, input.Limits.MaxProcesses)
 	}
 	rlimits := map[string]specs.POSIXRlimit{}

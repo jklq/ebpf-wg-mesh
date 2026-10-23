@@ -25,7 +25,7 @@ func TestConfiguredIdentitiesSeedsDenyPrefixAndKnownWorkloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("configuredIdentities: %v", err)
 	}
-	if len(identities) != 4 {
+	if len(identities) != 4+len(config.CloudMetadataCIDRs()) {
 		t.Fatalf("expected deny prefixes plus IPv4 and IPv6 workload identities, got %d", len(identities))
 	}
 	if got := identities[0]; got.prefix.String() != "10.200.0.0/16" || got.networkIdentity != 0 || got.hostIPv6.IsValid() {
@@ -39,6 +39,22 @@ func TestConfiguredIdentitiesSeedsDenyPrefixAndKnownWorkloads(t *testing.T) {
 	}
 	if got := identities[3]; got.prefix.String() != "fd00:200:1::10/128" || got.networkIdentity != 9 || got.hostIPv6.String() != "2001:db8::2" {
 		t.Fatalf("unexpected known IPv6 workload identity: %+v", got)
+	}
+	for _, address := range []string{
+		"169.254.169.254", "169.254.170.2", "169.254.170.23", "100.100.100.200",
+		"fd00:ec2::254", "fd00:ec2::23", "fd20:ce::254",
+	} {
+		ip := netip.MustParseAddr(address)
+		var match *configuredIdentity
+		for i := range identities {
+			candidate := &identities[i]
+			if candidate.prefix.Contains(ip) && (match == nil || candidate.prefix.Bits() > match.prefix.Bits()) {
+				match = candidate
+			}
+		}
+		if match == nil || match.networkIdentity != 0 || match.hostIPv6.IsValid() {
+			t.Errorf("metadata endpoint %s has no deny identity: %+v", address, match)
+		}
 	}
 }
 

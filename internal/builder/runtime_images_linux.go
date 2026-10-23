@@ -9,9 +9,9 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/config"
-	containerd "github.com/containerd/containerd"
-	"github.com/containerd/containerd/images"
-	"github.com/containerd/containerd/namespaces"
+	containerd "github.com/containerd/containerd/v2/client"
+	"github.com/containerd/containerd/v2/core/images"
+	"github.com/containerd/containerd/v2/pkg/namespaces"
 	"github.com/containerd/platforms"
 	"github.com/opencontainers/go-digest"
 )

@@ -17,7 +17,7 @@ import (
 	platformv1 "ebof-wg-mesh/api/proto/platformv1"
 	"ebof-wg-mesh/internal/config"
 
-	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/errdefs"
 )
 
 func TestEphemeralDiskDefaultLimitIsOneGiB(t *testing.T) {

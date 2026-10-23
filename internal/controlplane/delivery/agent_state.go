@@ -211,6 +211,12 @@ func (v *agentView) services(assignmentIDs []string) ([]*agentv1.DesiredService,
 				svc.DrainDeadline = ts(*a.DrainDeadline)
 			}
 		}
+		if a.Intent == allocationIntentSleep {
+			svc.Intent = agentv1.AllocationIntent_ALLOCATION_INTENT_SLEEP
+			if a.DrainDeadline != nil {
+				svc.DrainDeadline = ts(*a.DrainDeadline)
+			}
+		}
 		if obs := v.observations[liveObsKey{AllocationID: a.ID, Generation: a.DesiredRolloutGeneration}]; obs.Restart != nil {
 			svc.RestartObservation = proto.Clone(obs.Restart).(*platformv1.RestartObservation)
 		}
@@ -254,15 +260,18 @@ func (v *agentView) internalHostsForEnvironment(environmentID string) []*agentv1
 			rec := allocationRecordFromAssignment(durable, assignment)
 			obs, hasObs := v.observations[liveObsKey{AllocationID: rec.ID, Generation: rec.DesiredRolloutGeneration}]
 			rec = overlayAllocation(rec, obs, hasObs)
-			if !rec.Healthy || rec.RolloutState != AllocationRolloutServing ||
-				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration {
+			// Sleeping allocations keep their host entries at their retained
+			// addresses so peers can still resolve (and thereby wake) them.
+			sleeping := rec.RolloutState == AllocationRolloutSleeping
+			if !sleeping && (!rec.Healthy || rec.RolloutState != AllocationRolloutServing ||
+				rec.AppliedSpecRevision < rec.DesiredSpecRevision || rec.AppliedRolloutGeneration < rec.DesiredRolloutGeneration) {
 				continue
 			}
 			ipv4, ipv6 := rec.AllocationIPv4, rec.AllocationIPv6
-			if len(rec.HealthyIPv4Ports) == 0 {
+			if !sleeping && len(rec.HealthyIPv4Ports) == 0 {
 				ipv4 = ""
 			}
-			if len(rec.HealthyIPv6Ports) == 0 {
+			if !sleeping && len(rec.HealthyIPv6Ports) == 0 {
 				ipv6 = ""
 			}
 			rows = append(rows, hostRow{service.CreatedAt, service.ID, service.Name, ipv4, ipv6})

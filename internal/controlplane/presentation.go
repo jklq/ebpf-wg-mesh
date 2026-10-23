@@ -115,6 +115,20 @@ func toProtoService(rec deliverycore.ServiceRecord) *platformv1.Service {
 		ReadyReplicaCount:       rec.ReadyReplicaCount,
 		PlacementMessage:        rec.PlacementMessage,
 		Deletion:                toProtoDeletion(rec.Deletion),
+		ServerlessState:         toProtoServerlessState(rec),
+	}
+}
+
+func toProtoServerlessState(rec deliverycore.ServiceRecord) platformv1.ServerlessState {
+	// The state row only exists for serverless-enabled services and is
+	// deleted when serverless is disabled, so no spec check is needed here.
+	switch rec.ServerlessState {
+	case deliverycore.ServerlessAsleep:
+		return platformv1.ServerlessState_SERVERLESS_STATE_ASLEEP
+	case deliverycore.ServerlessWaking:
+		return platformv1.ServerlessState_SERVERLESS_STATE_WAKING
+	default:
+		return platformv1.ServerlessState_SERVERLESS_STATE_AWAKE
 	}
 }
 

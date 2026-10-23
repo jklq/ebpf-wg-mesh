@@ -8,7 +8,7 @@ import (
 
 	"ebof-wg-mesh/internal/meshlabels"
 
-	"github.com/containerd/containerd/errdefs"
+	"github.com/containerd/errdefs"
 )
 
 // Readers protect pulls through container creation. Collection is exclusive,
@@ -46,7 +46,9 @@ func (e *containerdEngine) collectUnusedImagesLocked(ctx context.Context) error 
 		return err
 	}
 	for _, image := range images {
-		if used[image.Name()] {
+		// Sleeping allocations keep their image pinned so waking them never
+		// pays a pull; the pin set is rebuilt from desired state each pass.
+		if used[image.Name()] || e.imagePinned(image.Name()) {
 			continue
 		}
 		if err := e.client.ImageService().Delete(ctx, image.Name()); err != nil && !errdefs.IsNotFound(err) {

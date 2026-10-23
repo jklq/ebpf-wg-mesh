@@ -112,7 +112,9 @@ async function open(initial = "/dashboard?workspace=team") {
 		defaultPendingMs: 0,
 		defaultPendingMinMs: 0,
 		defaultErrorComponent: ({ error }) => (
-			<div role="alert">{error.message}</div>
+			<div role="alert">
+				{error instanceof Error ? error.message : String(error)}
+			</div>
 		),
 	});
 	await router.load();

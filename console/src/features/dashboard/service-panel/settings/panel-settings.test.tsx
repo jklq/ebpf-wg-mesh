@@ -49,6 +49,31 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("PanelSettings", () => {
+	it("enables serverless scale-to-zero and persists the choice", async () => {
+		const svc = service();
+		doUpdateServiceMock.mockResolvedValue(svc);
+		render(
+			<PanelSettings
+				service={svc}
+				state={state()}
+				onSaved={() => {}}
+				onDeleted={() => {}}
+			/>,
+		);
+
+		expect(screen.getByText("Serverless")).toBeTruthy();
+		fireEvent.click(screen.getByRole("radio", { name: "On" }));
+
+		await waitFor(() =>
+			expect(doUpdateServiceMock).toHaveBeenCalledWith({
+				data: expect.objectContaining({
+					serviceId: "service-1",
+					serverlessEnabled: true,
+				}),
+			}),
+		);
+	});
+
 	it("hides the CPU and memory resource fields", () => {
 		render(
 			<PanelSettings

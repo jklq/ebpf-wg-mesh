@@ -713,5 +713,22 @@ func (s *persistence) insertServiceRolloutTx(
 	); err != nil {
 		return err
 	}
+	// A rollout must never advance against sleeping allocations: their
+	// health can never arrive and the rollout would burn its whole
+	// deadline. Wake in the same transaction so every rollout-creating
+	// path (release, restart, redeploy, rollback, build success) is safe.
+	if _, err = tx.ExecContext(ctx, `UPDATE allocation_assignments
+		SET rollout_state = $2, intent = $3, intent_message = '',
+		    drain_started_at = NULL, drain_deadline = NULL, updated_at = $4
+		WHERE service_id = $1 AND rollout_state = $5`,
+		serviceID, AllocationRolloutStarting, allocationIntentRun, now, AllocationRolloutSleeping); err != nil {
+		return err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE service_serverless_state
+		SET state = $2, asleep_since = NULL, last_activity_at = $3, updated_at = $3
+		WHERE service_id = $1 AND state = $4`,
+		serviceID, ServerlessWaking, now, ServerlessAsleep); err != nil {
+		return err
+	}
 	return nil
 }

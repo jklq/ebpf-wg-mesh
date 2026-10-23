@@ -83,6 +83,11 @@ Vocabulary follows [CONTEXT.md](../CONTEXT.md). Two semantics matter:
   (`POST .../restore`); name confirmations guard workspace, project,
   production-environment, and volume deletion.
   `GET .../deletion-preview` shows what a delete would tombstone.
+- **Serverless services.** `spec.serverless_enabled` makes a service
+  scale to zero when idle; it is staged like every spec field.
+  `Service.serverless_state` reports `SERVERLESS_STATE_AWAKE`,
+  `SERVERLESS_STATE_ASLEEP`, or `SERVERLESS_STATE_WAKING`. See
+  [Serverless services (scale-to-zero)](serverless.md).
 
 ## Errors, request IDs, retries
 

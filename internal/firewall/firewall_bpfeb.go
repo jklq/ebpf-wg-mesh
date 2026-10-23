@@ -62,6 +62,11 @@ type firewallUsageCounters struct {
 	Bytes [5]uint64
 }
 
+type firewallWakeIpKey struct {
+	_  structs.HostLayout
+	Ip [16]uint8
+}
+
 // loadFirewall returns the embedded CollectionSpec for firewall.
 func loadFirewall() (*ebpf.CollectionSpec, error) {
 	reader := bytes.NewReader(_FirewallBytes)
@@ -121,6 +126,7 @@ type firewallMapSpecs struct {
 	TrafficClassTrie       *ebpf.MapSpec `ebpf:"traffic_class_trie"`
 	UsageCounters          *ebpf.MapSpec `ebpf:"usage_counters"`
 	UsageUnattributed      *ebpf.MapSpec `ebpf:"usage_unattributed"`
+	WakeCounters           *ebpf.MapSpec `ebpf:"wake_counters"`
 }
 
 // firewallVariableSpecs contains global variables before they are loaded into the kernel.
@@ -158,6 +164,7 @@ type firewallMaps struct {
 	TrafficClassTrie       *ebpf.Map `ebpf:"traffic_class_trie"`
 	UsageCounters          *ebpf.Map `ebpf:"usage_counters"`
 	UsageUnattributed      *ebpf.Map `ebpf:"usage_unattributed"`
+	WakeCounters           *ebpf.Map `ebpf:"wake_counters"`
 }
 
 func (m *firewallMaps) Close() error {
@@ -171,6 +178,7 @@ func (m *firewallMaps) Close() error {
 		m.TrafficClassTrie,
 		m.UsageCounters,
 		m.UsageUnattributed,
+		m.WakeCounters,
 	)
 }
 

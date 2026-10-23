@@ -13,10 +13,30 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GO_VERSION: 1.27.1
+  GO_VERSION: 1.27.3
   BUN_VERSION: 1.3.11
 
 jobs:
+  security:
+    name: Dependency vulnerabilities
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Check reachable Go vulnerabilities
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - name: Install console dependencies
+        run: bun --cwd=console install --frozen-lockfile
+      - name: Check console dependency vulnerabilities
+        run: bun --cwd=console audit
+
   unit:
     name: Format, typecheck, and unit tests
     runs-on: ubuntu-24.04

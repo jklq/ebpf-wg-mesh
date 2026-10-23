@@ -65,5 +65,10 @@ func configuredIdentities(cfg config.MeshRuntimeConfig) ([]configuredIdentity, e
 		identity.prefix = netip.PrefixFrom(workloadIPv6, 128)
 		identities = append(identities, identity)
 	}
+	// Seed a deny identity for cloud metadata before the generic external
+	// egress path. Otherwise workload code could obtain host cloud credentials.
+	for _, cidr := range config.CloudMetadataCIDRs() {
+		identities = append(identities, configuredIdentity{prefix: netip.MustParsePrefix(cidr)})
+	}
 	return identities, nil
 }

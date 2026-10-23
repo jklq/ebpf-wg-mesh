@@ -6,12 +6,12 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/containerd/containerd"
 	introspection "github.com/containerd/containerd/api/services/introspection/v1"
+	containerd "github.com/containerd/containerd/v2/client"
 )
 
 func selectSnapshotter(ctx context.Context, client *containerd.Client) (string, error) {
-	response, err := client.IntrospectionService().Plugins(ctx, []string{`type==io.containerd.snapshotter.v1`})
+	response, err := client.IntrospectionService().Plugins(ctx, `type==io.containerd.snapshotter.v1`)
 	if err != nil {
 		return "", fmt.Errorf("inspect containerd snapshotters: %w", err)
 	}

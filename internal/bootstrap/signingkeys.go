@@ -94,7 +94,7 @@ func runSigningKeysCommand(command string, args []string) (err error) {
 	if command == "issue-client-cert" {
 		fs.StringVar(&identityDir, "out-dir", "", "atomically install ingress credentials for filesystem SDS")
 		fs.StringVar(&mountedDir, "mounted-dir", "", "identity directory as mounted in Envoy (defaults to out-dir)")
-		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (agent, dashboard, builder, or ingress)")
+		stringFlag(fs, &callerClass, "caller-class", "CONTROLPLANE_SIGNING_KEYS_CALLER_CLASS", "", "client caller class (agent, dashboard, builder, ingress, or activator)")
 		stringFlag(fs, &callerID, "caller-id", "CONTROLPLANE_SIGNING_KEYS_CALLER_ID", "", "client caller id")
 		stringFlag(fs, &ttlRaw, "ttl", "CONTROLPLANE_SIGNING_KEYS_CLIENT_TTL", "24h", "client certificate lifetime")
 		stringFlag(fs, &alarmURL, "alarm-webhook-url", "CONTROLPLANE_ALARM_WEBHOOK_URL", "", "HTTPS webhook paged when this scheduled renewal fails; empty disables alarms")
@@ -361,8 +361,10 @@ func signingKeysIssueClientCert(ctx context.Context, db *sql.DB, svc *signkeys.S
 		class = identity.CallerBuilder
 	case string(identity.CallerIngress):
 		class = identity.CallerIngress
+	case string(identity.CallerActivator):
+		class = identity.CallerActivator
 	default:
-		return fmt.Errorf("controlplane signing-keys issue-client-cert: caller class must be agent, dashboard, builder, or ingress")
+		return fmt.Errorf("controlplane signing-keys issue-client-cert: caller class must be agent, dashboard, builder, ingress, or activator")
 	}
 	if strings.TrimSpace(callerID) == "" {
 		return fmt.Errorf("controlplane signing-keys issue-client-cert: --caller-id is required")

@@ -248,9 +248,11 @@ const serviceSelectSQL = `SELECT s.id, s.environment_id, e.project_id, s.name, s
 		        s.desired_replica_count, COALESCE(ds.placement_message, ''), s.created_at, GREATEST(s.updated_at, ds.updated_at),
 		        s.deleted_at, s.deleted_by_user_id, s.delete_expires_at,
 		        e.deleted_at, e.deleted_by_user_id, e.delete_expires_at,
-		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at
+		        p.deleted_at, p.deleted_by_user_id, p.delete_expires_at,
+		        COALESCE(ss.state, 'awake')
 		   FROM services s
 		   JOIN service_delivery_status ds ON ds.service_id = s.id
+		   LEFT JOIN service_serverless_state ss ON ss.service_id = s.id
 		   JOIN environments e ON e.id = s.environment_id
 		   JOIN projects p ON p.id = e.project_id`
 
@@ -276,7 +278,9 @@ func scanServiceRow(scanner interface{ Scan(...any) error }) (ServiceRecord, err
 	}
 	targets = ScanTombstone(targets, &self)
 	targets = ScanTombstone(targets, &environment)
-	if err := scanner.Scan(ScanTombstone(targets, &project)...); err != nil {
+	targets = ScanTombstone(targets, &project)
+	targets = append(targets, &rec.ServerlessState)
+	if err := scanner.Scan(targets...); err != nil {
 		return ServiceRecord{}, err
 	}
 	if rec.DesiredReplicaCount <= 0 {

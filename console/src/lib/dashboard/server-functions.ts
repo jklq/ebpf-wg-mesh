@@ -92,6 +92,7 @@ const updateServiceInput = z.object({
 	restart: restartSpec.optional(),
 	desiredReplicaCount: z.number().int().optional(),
 	placementRegion: z.string().optional(),
+	serverlessEnabled: z.boolean().optional(),
 	rollingStrategy: rollingStrategy.optional(),
 	/** null detaches the volume; omitted leaves the mount unchanged. */
 	volumeMount: z
@@ -113,7 +114,7 @@ const confirmRepositoryInput = z.object({
 });
 
 export const loadHome = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ environmentId: optionalIdentifier }).optional().parse(input),
 	)
 	.handler(async ({ data }) => {
@@ -133,7 +134,7 @@ export const loadHome = createServerFn({ method: "GET" })
 	});
 
 export const doCreateEnvironment = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ projectId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -146,7 +147,7 @@ export const doCreateEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doDuplicateEnvironment = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				sourceEnvironmentId: identifier,
@@ -165,7 +166,7 @@ export const doDuplicateEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doRenameEnvironment = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ environmentId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -178,7 +179,7 @@ export const doRenameEnvironment = createServerFn({ method: "POST" })
 	);
 
 export const doUpdateEnvironmentAutoDeploy = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ environmentId: identifier, autoDeploy: z.boolean() })
 			.parse(input),
@@ -193,7 +194,7 @@ export const doUpdateEnvironmentAutoDeploy = createServerFn({ method: "POST" })
 	);
 
 export const fetchDeletionPreview = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ kind: deletableKind, id: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -206,7 +207,7 @@ export const fetchDeletionPreview = createServerFn({ method: "POST" })
 	);
 
 export const doDeleteResource = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				kind: deletableKind,
@@ -225,7 +226,7 @@ export const doDeleteResource = createServerFn({ method: "POST" })
 	);
 
 export const doRestoreResource = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ kind: restorableKind, id: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -249,7 +250,7 @@ export const loadRecentlyDeleted = createServerFn({ method: "GET" }).handler(
 );
 
 export const loadProjectSettings = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ projectId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -264,7 +265,7 @@ export const loadProjectSettings = createServerFn({ method: "GET" })
 	);
 
 export const loadProject = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ projectId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -279,7 +280,7 @@ export const loadProject = createServerFn({ method: "GET" })
 	);
 
 export const loadProjectUsage = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				projectId: identifier,
@@ -303,7 +304,7 @@ export const loadProjectUsage = createServerFn({ method: "GET" })
 	);
 
 export const resolveProjectLanding = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ projectId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -318,7 +319,7 @@ export const resolveProjectLanding = createServerFn({ method: "GET" })
 	);
 
 export const doUpdateProjectLogRetention = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				projectId: identifier,
@@ -336,7 +337,7 @@ export const doUpdateProjectLogRetention = createServerFn({ method: "POST" })
 	);
 
 export const doReleaseEnvironment = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => environmentIdInput.parse(input))
+	.validator((input: unknown) => environmentIdInput.parse(input))
 	.handler(async ({ data }) =>
 		(
 			await import("#/lib/dashboard/core/operations-onboarding.server")
@@ -360,7 +361,7 @@ export const fetchGitHubCatalog = createServerFn({ method: "GET" }).handler(
 );
 
 export const fetchServiceLogs = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				serviceId: identifier,
@@ -386,7 +387,7 @@ export const fetchServiceLogs = createServerFn({ method: "POST" })
 	});
 
 export const fetchBuildAttempts = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ serviceId: identifier, buildId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -399,7 +400,7 @@ export const fetchBuildAttempts = createServerFn({ method: "POST" })
 	);
 
 export const fetchServiceDeployments = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ serviceId: identifier, limit: z.number().int().optional() })
 			.parse(input),
@@ -414,7 +415,7 @@ export const fetchServiceDeployments = createServerFn({ method: "POST" })
 	});
 
 export const fetchDomainBindings = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => serviceIdInput.parse(input))
+	.validator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
 		return (
 			await import("#/lib/dashboard/core/operations-domains.server")
@@ -425,7 +426,7 @@ export const fetchDomainBindings = createServerFn({ method: "POST" })
 	});
 
 export const doUpdateService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => updateServiceInput.parse(input))
+	.validator((input: unknown) => updateServiceInput.parse(input))
 	.handler(async ({ data }) => {
 		return (
 			await import("#/lib/dashboard/core/operations-services.server")
@@ -436,7 +437,7 @@ export const doUpdateService = createServerFn({ method: "POST" })
 	});
 
 export const doCreateVolume = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				environmentId: identifier,
@@ -455,7 +456,7 @@ export const doCreateVolume = createServerFn({ method: "POST" })
 	);
 
 export const doGrowVolume = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ volumeId: identifier, sizeBytes: volumeSizeBytes }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -468,7 +469,7 @@ export const doGrowVolume = createServerFn({ method: "POST" })
 	);
 
 export const doApplyDeploymentAction = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				serviceId: identifier,
@@ -489,7 +490,7 @@ export const doApplyDeploymentAction = createServerFn({ method: "POST" })
 	});
 
 export const doScaleService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ serviceId: identifier, desiredReplicaCount: z.number().int() })
 			.parse(input),
@@ -504,7 +505,7 @@ export const doScaleService = createServerFn({ method: "POST" })
 	});
 
 export const doDiscardServiceChanges = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				serviceId: identifier,
@@ -523,7 +524,7 @@ export const doDiscardServiceChanges = createServerFn({ method: "POST" })
 	});
 
 export const doDeleteService = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => serviceIdInput.parse(input))
+	.validator((input: unknown) => serviceIdInput.parse(input))
 	.handler(async ({ data }) => {
 		await (
 			await import("#/lib/dashboard/core/operations-services.server")
@@ -534,7 +535,7 @@ export const doDeleteService = createServerFn({ method: "POST" })
 	});
 
 export const doSaveServicePosition = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				environmentId: identifier,
@@ -553,7 +554,7 @@ export const doSaveServicePosition = createServerFn({ method: "POST" })
 	});
 
 export const doCreateDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ serviceId: identifier, hostname: identifier, targetPort })
 			.transform((data) => ({ ...data, targetPort: data.targetPort }))
@@ -569,7 +570,7 @@ export const doCreateDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doGenerateDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ serviceId: identifier, targetPort })
 			.transform((data) => ({ ...data, targetPort: data.targetPort }))
@@ -585,7 +586,7 @@ export const doGenerateDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doUpdateDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ serviceId: identifier, hostname: identifier, targetPort })
 			.transform((data) => ({ ...data, targetPort: data.targetPort }))
@@ -601,7 +602,7 @@ export const doUpdateDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doDeleteDomainBinding = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => hostnameInput.parse(input))
+	.validator((input: unknown) => hostnameInput.parse(input))
 	.handler(async ({ data }) => {
 		return (
 			await import("#/lib/dashboard/core/operations-domains.server")
@@ -612,7 +613,7 @@ export const doDeleteDomainBinding = createServerFn({ method: "POST" })
 	});
 
 export const doCreateServiceFast = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => confirmRepositoryInput.parse(input))
+	.validator((input: unknown) => confirmRepositoryInput.parse(input))
 	.handler(async ({ data }) => {
 		return (
 			await import("#/lib/dashboard/core/operations-onboarding.server")
@@ -632,7 +633,7 @@ const requestedWorkspace = z
 	.optional();
 
 export const loadWorkspaceOverview = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.validator((input: unknown) => requestedWorkspace.parse(input))
 	.handler(async ({ data }) =>
 		signedIn("/dashboard", async () =>
 			(
@@ -645,7 +646,7 @@ export const loadWorkspaceOverview = createServerFn({ method: "GET" })
 	);
 
 export const loadWorkspaceShell = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.validator((input: unknown) => requestedWorkspace.parse(input))
 	.handler(async ({ data }) =>
 		signedIn("/workspace/settings", async () =>
 			(
@@ -658,7 +659,7 @@ export const loadWorkspaceShell = createServerFn({ method: "GET" })
 	);
 
 export const loadWorkspacePeople = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.validator((input: unknown) => requestedWorkspace.parse(input))
 	.handler(async ({ data }) =>
 		signedIn("/workspace/people", async () =>
 			(
@@ -671,7 +672,7 @@ export const loadWorkspacePeople = createServerFn({ method: "GET" })
 	);
 
 export const doCreateWorkspaceProject = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ workspaceId: identifier, name: z.string().optional() })
 			.parse(input),
@@ -686,9 +687,7 @@ export const doCreateWorkspaceProject = createServerFn({ method: "POST" })
 	);
 
 export const doCreateWorkspace = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
-		z.object({ name: identifier }).parse(input),
-	)
+	.validator((input: unknown) => z.object({ name: identifier }).parse(input))
 	.handler(async ({ data }) =>
 		(
 			await import("#/lib/dashboard/core/operations-workspaces.server")
@@ -699,7 +698,7 @@ export const doCreateWorkspace = createServerFn({ method: "POST" })
 	);
 
 export const doRenameWorkspace = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier, name: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -712,7 +711,7 @@ export const doRenameWorkspace = createServerFn({ method: "POST" })
 	);
 
 export const doDeleteWorkspace = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ workspaceId: identifier, confirmationName: z.string() })
 			.parse(input),
@@ -727,7 +726,7 @@ export const doDeleteWorkspace = createServerFn({ method: "POST" })
 	);
 
 export const doInviteWorkspaceMember = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				workspaceId: identifier,
@@ -746,7 +745,7 @@ export const doInviteWorkspaceMember = createServerFn({ method: "POST" })
 	);
 
 export const doRevokeWorkspaceInvitation = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ invitationId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -759,7 +758,7 @@ export const doRevokeWorkspaceInvitation = createServerFn({ method: "POST" })
 	);
 
 export const doAnswerWorkspaceInvitation = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ invitationId: identifier, accept: z.boolean() }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -772,7 +771,7 @@ export const doAnswerWorkspaceInvitation = createServerFn({ method: "POST" })
 	);
 
 export const doUpdateWorkspaceMemberRole = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				workspaceId: identifier,
@@ -791,7 +790,7 @@ export const doUpdateWorkspaceMemberRole = createServerFn({ method: "POST" })
 	);
 
 export const doRemoveWorkspaceMember = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier, userId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -804,7 +803,7 @@ export const doRemoveWorkspaceMember = createServerFn({ method: "POST" })
 	);
 
 export const doMoveProject = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ projectId: identifier, workspaceId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -819,7 +818,7 @@ export const doMoveProject = createServerFn({ method: "POST" })
 const planId = z.enum(["hobby", "pro"]);
 
 export const loadWorkspaceBilling = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) => requestedWorkspace.parse(input))
+	.validator((input: unknown) => requestedWorkspace.parse(input))
 	.handler(async ({ data }) =>
 		signedIn("/workspace/billing", async () =>
 			(
@@ -832,7 +831,7 @@ export const loadWorkspaceBilling = createServerFn({ method: "GET" })
 	);
 
 export const loadBillingSummary = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -845,7 +844,7 @@ export const loadBillingSummary = createServerFn({ method: "GET" })
 	);
 
 export const loadBillingStatement = createServerFn({ method: "GET" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				workspaceId: optionalIdentifier,
@@ -866,7 +865,7 @@ export const loadBillingStatement = createServerFn({ method: "GET" })
 	);
 
 export const doUpdateBillingBudget = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({
 				workspaceId: identifier,
@@ -884,7 +883,7 @@ export const doUpdateBillingBudget = createServerFn({ method: "POST" })
 	);
 
 export const doChangeBillingPlan = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier, planId }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -897,7 +896,7 @@ export const doChangeBillingPlan = createServerFn({ method: "POST" })
 	);
 
 export const doStartBillingActivation = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier, planId }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -910,7 +909,7 @@ export const doStartBillingActivation = createServerFn({ method: "POST" })
 	);
 
 export const doStartBillingPaymentSetup = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>
@@ -923,7 +922,7 @@ export const doStartBillingPaymentSetup = createServerFn({ method: "POST" })
 	);
 
 export const doCancelBillingAccount = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z.object({ workspaceId: identifier }).parse(input),
 	)
 	.handler(async ({ data }) =>

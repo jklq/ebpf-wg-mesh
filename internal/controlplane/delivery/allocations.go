@@ -203,6 +203,7 @@ const (
 	AllocationRolloutServing     = "serving"
 	AllocationRolloutWithdrawing = "withdrawing"
 	AllocationRolloutDraining    = "draining"
+	AllocationRolloutSleeping    = "sleeping"
 	AllocationRolloutLost        = "lost"
 )
 
@@ -559,6 +560,7 @@ func scanAllocationRow(scanner interface{ Scan(...any) error }) (AllocationRecor
 const (
 	allocationIntentRun   = "run"
 	allocationIntentDrain = "drain"
+	allocationIntentSleep = "sleep"
 )
 
 type allocationAssignmentState struct {

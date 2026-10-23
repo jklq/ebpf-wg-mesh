@@ -86,16 +86,21 @@ async function tokenRequest(
 		"/login/oauth/access_token",
 		config.authorizationBaseURL,
 	);
-	tokenURL.searchParams.set("client_id", config.clientId);
-	tokenURL.searchParams.set("client_secret", config.clientSecret);
+	const body = new URLSearchParams({
+		client_id: config.clientId,
+		client_secret: config.clientSecret,
+	});
 	for (const [key, value] of Object.entries(params)) {
-		tokenURL.searchParams.set(key, value);
+		body.set(key, value);
 	}
 
 	const response = await fetchGitHub(operation, tokenURL, {
 		method: "POST",
+		body,
+		redirect: "error",
 		headers: {
 			Accept: "application/json",
+			"Content-Type": "application/x-www-form-urlencoded",
 			"User-Agent": `ebpf-wg-mesh-github-app/${config.appId}`,
 		},
 	});

@@ -57,6 +57,10 @@ const (
 	reconcileSafetyInterval = time.Minute
 	credentialCheckInterval = time.Minute
 	diskEnforcementInterval = 15 * time.Second
+	// wakePollInterval bounds private-network wake latency: TCP callers
+	// retransmit SYNs for roughly two minutes, so polling every couple of
+	// seconds leaves the cold start comfortably inside that window.
+	wakePollInterval = 2 * time.Second
 	// reportRepublishQuietPeriod coalesces report updates without postponing
 	// publication indefinitely while updates continue to arrive.
 	reportRepublishQuietPeriod = 250 * time.Millisecond
@@ -78,6 +82,9 @@ func New(cfg config.AgentConfig, opts ...Option) (*App, error) {
 	runtime, err := options.runtimeFactory(cfg)
 	if err != nil {
 		return nil, err
+	}
+	if rt, ok := runtime.(interface{ SetWakeSource(metering.WakeSource) }); ok {
+		rt.SetWakeSource(metering.WakeSourceFor(cfg.Mesh.WireGuard.InterfaceName))
 	}
 	return &App{
 		cfg:         cfg,

@@ -10,6 +10,50 @@ afterEach(() => {
 });
 
 describe("GitHub App user client", () => {
+	it.each([
+		"exchangeCode",
+		"refreshToken",
+	] as const)("keeps %s credentials in the request body and refuses redirects", async (operation) => {
+		const requests: Request[] = [];
+		globalThis.fetch = vi.fn(async (input, init) => {
+			requests.push(new Request(input, init));
+			return new Response(
+				JSON.stringify({ access_token: "access-token", token_type: "bearer" }),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		}) as typeof fetch;
+		const client = createGitHubAppUserClient({
+			appId: "app-1",
+			clientId: "client-1",
+			clientSecret: "client-secret",
+			authorizationBaseURL: "https://github.example.test",
+			apiBaseURL: "https://api.github.example.test",
+		});
+		if (operation === "exchangeCode") {
+			await client.exchangeCode({
+				code: "auth-code",
+				redirectURI: "https://console.example.test/auth/callback",
+			});
+		} else {
+			await client.refreshToken("refresh-token");
+		}
+		expect(requests).toHaveLength(1);
+		const request = requests[0];
+		expect(request.url).toBe(
+			"https://github.example.test/login/oauth/access_token",
+		);
+		expect(request.method).toBe("POST");
+		expect(request.redirect).toBe("error");
+		expect(request.headers.get("Content-Type")).toBe(
+			"application/x-www-form-urlencoded",
+		);
+		const body = new URLSearchParams(await request.text());
+		expect(body.get("client_secret")).toBe("client-secret");
+		expect(
+			body.get(operation === "exchangeCode" ? "code" : "refresh_token"),
+		).toBe(operation === "exchangeCode" ? "auth-code" : "refresh-token");
+	});
+
 	it("lists repositories granted to GitHub App installations", async () => {
 		const requests: Array<URL> = [];
 		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {

@@ -9,67 +9,41 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SessionzRouteImport } from './routes/sessionz'
-import { Route as ReadyzRouteImport } from './routes/readyz'
-import { Route as LogoutRouteImport } from './routes/logout'
-import { Route as LoginRouteImport } from './routes/login'
-import { Route as LivezRouteImport } from './routes/livez'
-import { Route as HealthzRouteImport } from './routes/healthz'
-import { Route as FleetRouteImport } from './routes/fleet'
-import { Route as DeletedRouteImport } from './routes/deleted'
-import { Route as WorkspaceRouteImport } from './routes/_workspace'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as WebhooksStripeRouteImport } from './routes/webhooks/stripe'
-import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
-import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
-import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/environment-services'
-import { Route as EnvironmentsEnvironmentIdRouteImport } from './routes/environments/$environmentId'
-import { Route as AuthStartRouteImport } from './routes/auth/start'
-import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
+import { Route as WorkspaceRouteImport } from './routes/_workspace'
+import { Route as DeletedRouteImport } from './routes/deleted'
+import { Route as FleetRouteImport } from './routes/fleet'
+import { Route as HealthzRouteImport } from './routes/healthz'
+import { Route as LivezRouteImport } from './routes/livez'
+import { Route as LoginRouteImport } from './routes/login'
+import { Route as LogoutRouteImport } from './routes/logout'
+import { Route as ReadyzRouteImport } from './routes/readyz'
+import { Route as SessionzRouteImport } from './routes/sessionz'
 import { Route as WorkspaceDashboardRouteImport } from './routes/_workspace/dashboard'
-import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
-import { Route as ProjectsProjectIdUsageRouteImport } from './routes/projects/$projectId/usage'
-import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
-import { Route as WorkspaceWorkspaceSettingsRouteImport } from './routes/_workspace/workspace/settings'
+import { Route as AuthCallbackRouteImport } from './routes/auth/callback'
+import { Route as AuthStartRouteImport } from './routes/auth/start'
+import { Route as EnvironmentsEnvironmentIdRouteImport } from './routes/environments/$environmentId'
+import { Route as EventsEnvironmentServicesRouteImport } from './routes/events/environment-services'
+import { Route as EventsServiceStatusRouteImport } from './routes/events/service-status'
+import { Route as WebhooksGithubRouteImport } from './routes/webhooks/github'
+import { Route as WebhooksStripeRouteImport } from './routes/webhooks/stripe'
 import { Route as WorkspaceWorkspacePeopleRouteImport } from './routes/_workspace/workspace/people'
+import { Route as WorkspaceWorkspaceSettingsRouteImport } from './routes/_workspace/workspace/settings'
+import { Route as ProjectsProjectIdIndexRouteImport } from './routes/projects/$projectId/index'
+import { Route as ProjectsProjectIdSettingsRouteImport } from './routes/projects/$projectId/settings'
+import { Route as ProjectsProjectIdUsageRouteImport } from './routes/projects/$projectId/usage'
 import { Route as WorkspaceWorkspaceBillingIndexRouteImport } from './routes/_workspace/workspace/billing/index'
-import { Route as WorkspaceWorkspaceBillingStatementsStatementIdRouteImport } from './routes/_workspace/workspace/billing/statements/$statementId'
-import { Route as WorkspaceWorkspaceBillingCheckoutSuccessRouteImport } from './routes/_workspace/workspace/billing/checkout/success'
 import { Route as WorkspaceWorkspaceBillingCheckoutCancelRouteImport } from './routes/_workspace/workspace/billing/checkout/cancel'
+import { Route as WorkspaceWorkspaceBillingCheckoutSuccessRouteImport } from './routes/_workspace/workspace/billing/checkout/success'
+import { Route as WorkspaceWorkspaceBillingStatementsStatementIdRouteImport } from './routes/_workspace/workspace/billing/statements/$statementId'
 
-const SessionzRoute = SessionzRouteImport.update({
-  id: '/sessionz',
-  path: '/sessionz',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ReadyzRoute = ReadyzRouteImport.update({
-  id: '/readyz',
-  path: '/readyz',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LogoutRoute = LogoutRouteImport.update({
-  id: '/logout',
-  path: '/logout',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LoginRoute = LoginRouteImport.update({
-  id: '/login',
-  path: '/login',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LivezRoute = LivezRouteImport.update({
-  id: '/livez',
-  path: '/livez',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const HealthzRoute = HealthzRouteImport.update({
-  id: '/healthz',
-  path: '/healthz',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FleetRoute = FleetRouteImport.update({
-  id: '/fleet',
-  path: '/fleet',
+const WorkspaceRoute = WorkspaceRouteImport.update({
+  id: '/_workspace',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DeletedRoute = DeletedRouteImport.update({
@@ -77,50 +51,39 @@ const DeletedRoute = DeletedRouteImport.update({
   path: '/deleted',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WorkspaceRoute = WorkspaceRouteImport.update({
-  id: '/_workspace',
+const FleetRoute = FleetRouteImport.update({
+  id: '/fleet',
+  path: '/fleet',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const HealthzRoute = HealthzRouteImport.update({
+  id: '/healthz',
+  path: '/healthz',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WebhooksStripeRoute = WebhooksStripeRouteImport.update({
-  id: '/webhooks/stripe',
-  path: '/webhooks/stripe',
+const LivezRoute = LivezRouteImport.update({
+  id: '/livez',
+  path: '/livez',
   getParentRoute: () => rootRouteImport,
 } as any)
-const WebhooksGithubRoute = WebhooksGithubRouteImport.update({
-  id: '/webhooks/github',
-  path: '/webhooks/github',
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
   getParentRoute: () => rootRouteImport,
 } as any)
-const EventsServiceStatusRoute = EventsServiceStatusRouteImport.update({
-  id: '/events/service-status',
-  path: '/events/service-status',
+const LogoutRoute = LogoutRouteImport.update({
+  id: '/logout',
+  path: '/logout',
   getParentRoute: () => rootRouteImport,
 } as any)
-const EventsEnvironmentServicesRoute =
-  EventsEnvironmentServicesRouteImport.update({
-    id: '/events/environment-services',
-    path: '/events/environment-services',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const EnvironmentsEnvironmentIdRoute =
-  EnvironmentsEnvironmentIdRouteImport.update({
-    id: '/environments/$environmentId',
-    path: '/environments/$environmentId',
-    getParentRoute: () => rootRouteImport,
-  } as any)
-const AuthStartRoute = AuthStartRouteImport.update({
-  id: '/auth/start',
-  path: '/auth/start',
+const ReadyzRoute = ReadyzRouteImport.update({
+  id: '/readyz',
+  path: '/readyz',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AuthCallbackRoute = AuthCallbackRouteImport.update({
-  id: '/auth/callback',
-  path: '/auth/callback',
+const SessionzRoute = SessionzRouteImport.update({
+  id: '/sessionz',
+  path: '/sessionz',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WorkspaceDashboardRoute = WorkspaceDashboardRouteImport.update({
@@ -128,14 +91,58 @@ const WorkspaceDashboardRoute = WorkspaceDashboardRouteImport.update({
   path: '/dashboard',
   getParentRoute: () => WorkspaceRoute,
 } as any)
+const AuthCallbackRoute = AuthCallbackRouteImport.update({
+  id: '/auth/callback',
+  path: '/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthStartRoute = AuthStartRouteImport.update({
+  id: '/auth/start',
+  path: '/auth/start',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EnvironmentsEnvironmentIdRoute =
+  EnvironmentsEnvironmentIdRouteImport.update({
+    id: '/environments/$environmentId',
+    path: '/environments/$environmentId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const EventsEnvironmentServicesRoute =
+  EventsEnvironmentServicesRouteImport.update({
+    id: '/events/environment-services',
+    path: '/events/environment-services',
+    getParentRoute: () => rootRouteImport,
+  } as any)
+const EventsServiceStatusRoute = EventsServiceStatusRouteImport.update({
+  id: '/events/service-status',
+  path: '/events/service-status',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WebhooksGithubRoute = WebhooksGithubRouteImport.update({
+  id: '/webhooks/github',
+  path: '/webhooks/github',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WebhooksStripeRoute = WebhooksStripeRouteImport.update({
+  id: '/webhooks/stripe',
+  path: '/webhooks/stripe',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const WorkspaceWorkspacePeopleRoute =
+  WorkspaceWorkspacePeopleRouteImport.update({
+    id: '/workspace/people',
+    path: '/workspace/people',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
+const WorkspaceWorkspaceSettingsRoute =
+  WorkspaceWorkspaceSettingsRouteImport.update({
+    id: '/workspace/settings',
+    path: '/workspace/settings',
+    getParentRoute: () => WorkspaceRoute,
+  } as any)
 const ProjectsProjectIdIndexRoute = ProjectsProjectIdIndexRouteImport.update({
   id: '/projects/$projectId/',
   path: '/projects/$projectId/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ProjectsProjectIdUsageRoute = ProjectsProjectIdUsageRouteImport.update({
-  id: '/projects/$projectId/usage',
-  path: '/projects/$projectId/usage',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsProjectIdSettingsRoute =
@@ -144,28 +151,21 @@ const ProjectsProjectIdSettingsRoute =
     path: '/projects/$projectId/settings',
     getParentRoute: () => rootRouteImport,
   } as any)
-const WorkspaceWorkspaceSettingsRoute =
-  WorkspaceWorkspaceSettingsRouteImport.update({
-    id: '/workspace/settings',
-    path: '/workspace/settings',
-    getParentRoute: () => WorkspaceRoute,
-  } as any)
-const WorkspaceWorkspacePeopleRoute =
-  WorkspaceWorkspacePeopleRouteImport.update({
-    id: '/workspace/people',
-    path: '/workspace/people',
-    getParentRoute: () => WorkspaceRoute,
-  } as any)
+const ProjectsProjectIdUsageRoute = ProjectsProjectIdUsageRouteImport.update({
+  id: '/projects/$projectId/usage',
+  path: '/projects/$projectId/usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkspaceWorkspaceBillingIndexRoute =
   WorkspaceWorkspaceBillingIndexRouteImport.update({
     id: '/workspace/billing/',
     path: '/workspace/billing/',
     getParentRoute: () => WorkspaceRoute,
   } as any)
-const WorkspaceWorkspaceBillingStatementsStatementIdRoute =
-  WorkspaceWorkspaceBillingStatementsStatementIdRouteImport.update({
-    id: '/workspace/billing/statements/$statementId',
-    path: '/workspace/billing/statements/$statementId',
+const WorkspaceWorkspaceBillingCheckoutCancelRoute =
+  WorkspaceWorkspaceBillingCheckoutCancelRouteImport.update({
+    id: '/workspace/billing/checkout/cancel',
+    path: '/workspace/billing/checkout/cancel',
     getParentRoute: () => WorkspaceRoute,
   } as any)
 const WorkspaceWorkspaceBillingCheckoutSuccessRoute =
@@ -174,10 +174,10 @@ const WorkspaceWorkspaceBillingCheckoutSuccessRoute =
     path: '/workspace/billing/checkout/success',
     getParentRoute: () => WorkspaceRoute,
   } as any)
-const WorkspaceWorkspaceBillingCheckoutCancelRoute =
-  WorkspaceWorkspaceBillingCheckoutCancelRouteImport.update({
-    id: '/workspace/billing/checkout/cancel',
-    path: '/workspace/billing/checkout/cancel',
+const WorkspaceWorkspaceBillingStatementsStatementIdRoute =
+  WorkspaceWorkspaceBillingStatementsStatementIdRouteImport.update({
+    id: '/workspace/billing/statements/$statementId',
+    path: '/workspace/billing/statements/$statementId',
     getParentRoute: () => WorkspaceRoute,
   } as any)
 
@@ -380,60 +380,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/sessionz': {
-      id: '/sessionz'
-      path: '/sessionz'
-      fullPath: '/sessionz'
-      preLoaderRoute: typeof SessionzRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/readyz': {
-      id: '/readyz'
-      path: '/readyz'
-      fullPath: '/readyz'
-      preLoaderRoute: typeof ReadyzRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/logout': {
-      id: '/logout'
-      path: '/logout'
-      fullPath: '/logout'
-      preLoaderRoute: typeof LogoutRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/login': {
-      id: '/login'
-      path: '/login'
-      fullPath: '/login'
-      preLoaderRoute: typeof LoginRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/livez': {
-      id: '/livez'
-      path: '/livez'
-      fullPath: '/livez'
-      preLoaderRoute: typeof LivezRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/healthz': {
-      id: '/healthz'
-      path: '/healthz'
-      fullPath: '/healthz'
-      preLoaderRoute: typeof HealthzRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fleet': {
-      id: '/fleet'
-      path: '/fleet'
-      fullPath: '/fleet'
-      preLoaderRoute: typeof FleetRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/deleted': {
-      id: '/deleted'
-      path: '/deleted'
-      fullPath: '/deleted'
-      preLoaderRoute: typeof DeletedRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_workspace': {
@@ -443,60 +394,60 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/deleted': {
+      id: '/deleted'
+      path: '/deleted'
+      fullPath: '/deleted'
+      preLoaderRoute: typeof DeletedRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/webhooks/stripe': {
-      id: '/webhooks/stripe'
-      path: '/webhooks/stripe'
-      fullPath: '/webhooks/stripe'
-      preLoaderRoute: typeof WebhooksStripeRouteImport
+    '/fleet': {
+      id: '/fleet'
+      path: '/fleet'
+      fullPath: '/fleet'
+      preLoaderRoute: typeof FleetRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/webhooks/github': {
-      id: '/webhooks/github'
-      path: '/webhooks/github'
-      fullPath: '/webhooks/github'
-      preLoaderRoute: typeof WebhooksGithubRouteImport
+    '/healthz': {
+      id: '/healthz'
+      path: '/healthz'
+      fullPath: '/healthz'
+      preLoaderRoute: typeof HealthzRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/events/service-status': {
-      id: '/events/service-status'
-      path: '/events/service-status'
-      fullPath: '/events/service-status'
-      preLoaderRoute: typeof EventsServiceStatusRouteImport
+    '/livez': {
+      id: '/livez'
+      path: '/livez'
+      fullPath: '/livez'
+      preLoaderRoute: typeof LivezRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/events/environment-services': {
-      id: '/events/environment-services'
-      path: '/events/environment-services'
-      fullPath: '/events/environment-services'
-      preLoaderRoute: typeof EventsEnvironmentServicesRouteImport
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/environments/$environmentId': {
-      id: '/environments/$environmentId'
-      path: '/environments/$environmentId'
-      fullPath: '/environments/$environmentId'
-      preLoaderRoute: typeof EnvironmentsEnvironmentIdRouteImport
+    '/logout': {
+      id: '/logout'
+      path: '/logout'
+      fullPath: '/logout'
+      preLoaderRoute: typeof LogoutRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/auth/start': {
-      id: '/auth/start'
-      path: '/auth/start'
-      fullPath: '/auth/start'
-      preLoaderRoute: typeof AuthStartRouteImport
+    '/readyz': {
+      id: '/readyz'
+      path: '/readyz'
+      fullPath: '/readyz'
+      preLoaderRoute: typeof ReadyzRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/auth/callback': {
-      id: '/auth/callback'
-      path: '/auth/callback'
-      fullPath: '/auth/callback'
-      preLoaderRoute: typeof AuthCallbackRouteImport
+    '/sessionz': {
+      id: '/sessionz'
+      path: '/sessionz'
+      fullPath: '/sessionz'
+      preLoaderRoute: typeof SessionzRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_workspace/dashboard': {
@@ -506,18 +457,74 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceDashboardRouteImport
       parentRoute: typeof WorkspaceRoute
     }
+    '/auth/callback': {
+      id: '/auth/callback'
+      path: '/auth/callback'
+      fullPath: '/auth/callback'
+      preLoaderRoute: typeof AuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth/start': {
+      id: '/auth/start'
+      path: '/auth/start'
+      fullPath: '/auth/start'
+      preLoaderRoute: typeof AuthStartRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/environments/$environmentId': {
+      id: '/environments/$environmentId'
+      path: '/environments/$environmentId'
+      fullPath: '/environments/$environmentId'
+      preLoaderRoute: typeof EnvironmentsEnvironmentIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/events/environment-services': {
+      id: '/events/environment-services'
+      path: '/events/environment-services'
+      fullPath: '/events/environment-services'
+      preLoaderRoute: typeof EventsEnvironmentServicesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/events/service-status': {
+      id: '/events/service-status'
+      path: '/events/service-status'
+      fullPath: '/events/service-status'
+      preLoaderRoute: typeof EventsServiceStatusRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/webhooks/github': {
+      id: '/webhooks/github'
+      path: '/webhooks/github'
+      fullPath: '/webhooks/github'
+      preLoaderRoute: typeof WebhooksGithubRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/webhooks/stripe': {
+      id: '/webhooks/stripe'
+      path: '/webhooks/stripe'
+      fullPath: '/webhooks/stripe'
+      preLoaderRoute: typeof WebhooksStripeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_workspace/workspace/people': {
+      id: '/_workspace/workspace/people'
+      path: '/workspace/people'
+      fullPath: '/workspace/people'
+      preLoaderRoute: typeof WorkspaceWorkspacePeopleRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
+    '/_workspace/workspace/settings': {
+      id: '/_workspace/workspace/settings'
+      path: '/workspace/settings'
+      fullPath: '/workspace/settings'
+      preLoaderRoute: typeof WorkspaceWorkspaceSettingsRouteImport
+      parentRoute: typeof WorkspaceRoute
+    }
     '/projects/$projectId/': {
       id: '/projects/$projectId/'
       path: '/projects/$projectId'
       fullPath: '/projects/$projectId/'
       preLoaderRoute: typeof ProjectsProjectIdIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/projects/$projectId/usage': {
-      id: '/projects/$projectId/usage'
-      path: '/projects/$projectId/usage'
-      fullPath: '/projects/$projectId/usage'
-      preLoaderRoute: typeof ProjectsProjectIdUsageRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/projects/$projectId/settings': {
@@ -527,19 +534,12 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_workspace/workspace/settings': {
-      id: '/_workspace/workspace/settings'
-      path: '/workspace/settings'
-      fullPath: '/workspace/settings'
-      preLoaderRoute: typeof WorkspaceWorkspaceSettingsRouteImport
-      parentRoute: typeof WorkspaceRoute
-    }
-    '/_workspace/workspace/people': {
-      id: '/_workspace/workspace/people'
-      path: '/workspace/people'
-      fullPath: '/workspace/people'
-      preLoaderRoute: typeof WorkspaceWorkspacePeopleRouteImport
-      parentRoute: typeof WorkspaceRoute
+    '/projects/$projectId/usage': {
+      id: '/projects/$projectId/usage'
+      path: '/projects/$projectId/usage'
+      fullPath: '/projects/$projectId/usage'
+      preLoaderRoute: typeof ProjectsProjectIdUsageRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_workspace/workspace/billing/': {
       id: '/_workspace/workspace/billing/'
@@ -548,11 +548,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceWorkspaceBillingIndexRouteImport
       parentRoute: typeof WorkspaceRoute
     }
-    '/_workspace/workspace/billing/statements/$statementId': {
-      id: '/_workspace/workspace/billing/statements/$statementId'
-      path: '/workspace/billing/statements/$statementId'
-      fullPath: '/workspace/billing/statements/$statementId'
-      preLoaderRoute: typeof WorkspaceWorkspaceBillingStatementsStatementIdRouteImport
+    '/_workspace/workspace/billing/checkout/cancel': {
+      id: '/_workspace/workspace/billing/checkout/cancel'
+      path: '/workspace/billing/checkout/cancel'
+      fullPath: '/workspace/billing/checkout/cancel'
+      preLoaderRoute: typeof WorkspaceWorkspaceBillingCheckoutCancelRouteImport
       parentRoute: typeof WorkspaceRoute
     }
     '/_workspace/workspace/billing/checkout/success': {
@@ -562,11 +562,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WorkspaceWorkspaceBillingCheckoutSuccessRouteImport
       parentRoute: typeof WorkspaceRoute
     }
-    '/_workspace/workspace/billing/checkout/cancel': {
-      id: '/_workspace/workspace/billing/checkout/cancel'
-      path: '/workspace/billing/checkout/cancel'
-      fullPath: '/workspace/billing/checkout/cancel'
-      preLoaderRoute: typeof WorkspaceWorkspaceBillingCheckoutCancelRouteImport
+    '/_workspace/workspace/billing/statements/$statementId': {
+      id: '/_workspace/workspace/billing/statements/$statementId'
+      path: '/workspace/billing/statements/$statementId'
+      fullPath: '/workspace/billing/statements/$statementId'
+      preLoaderRoute: typeof WorkspaceWorkspaceBillingStatementsStatementIdRouteImport
       parentRoute: typeof WorkspaceRoute
     }
   }

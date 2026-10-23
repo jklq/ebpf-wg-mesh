@@ -92,6 +92,22 @@ func (s *workloadSupervisor) Start(ctx context.Context, clusterID string) error 
 			slog.Warn("runtime event watch ended", "agent_id", s.agentID, "error", err)
 		})
 	}
+	if wake, ok := s.runtime.(interface{ CheckWakeDemand() bool }); ok && !s.recoveryPaused {
+		go func() {
+			ticker := time.NewTicker(wakePollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if wake.CheckWakeDemand() {
+						s.requestReconcile()
+					}
+				}
+			}
+		}()
+	}
 	return nil
 }
 

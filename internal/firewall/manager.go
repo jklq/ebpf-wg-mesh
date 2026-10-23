@@ -20,8 +20,8 @@ import (
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/link"
-	containerd "github.com/containerd/containerd"
 	eventsapi "github.com/containerd/containerd/api/events"
+	containerd "github.com/containerd/containerd/v2/client"
 	cderrdefs "github.com/containerd/errdefs"
 	"github.com/containerd/typeurl/v2"
 	"github.com/vishvananda/netlink"
@@ -219,6 +219,13 @@ func (m *Manager) UpdateIdentityCatalog(cfg config.MeshRuntimeConfig) error {
 		}
 		if err := m.objs.ClusterIdentityTrie.Delete(key); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
 			return fmt.Errorf("delete identity trie entry for %s: %w", netip.AddrFrom16(key.IpAddress), err)
+		}
+		// Wake counters are keyed by identity address and never evicted by
+		// the kernel; drop a removed identity's counter with its seed.
+		if key.Prefixlen == 128 {
+			if err := m.objs.WakeCounters.Delete(firewallWakeIpKey{Ip: key.IpAddress}); err != nil && !errors.Is(err, ebpf.ErrKeyNotExist) {
+				return fmt.Errorf("delete wake counter for %s: %w", netip.AddrFrom16(key.IpAddress), err)
+			}
 		}
 	}
 	for key, value := range next {

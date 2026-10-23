@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -16,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"ebof-wg-mesh/internal/activator"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane"
 	"ebof-wg-mesh/internal/controlplane/registry"
@@ -153,6 +155,10 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("pick public api port: %v", err)
 	}
+	activatorPort, err := pickLoopbackPort()
+	if err != nil {
+		return fmt.Errorf("pick activator port: %v", err)
+	}
 	// Each ephemeral run recreates its owned bridge with the workload IPAM pools.
 	if err := localteststack.RemoveDockerNetwork(ctx, localteststack.ExecDockerRunner{}, stackCfg.DockerNetwork); err != nil {
 		return fmt.Errorf("reset local workload network: %w", err)
@@ -229,6 +235,9 @@ func run() error {
 				Upstream: net.JoinHostPort(hostGateway, strconv.Itoa(consolePort)),
 			}},
 			ControlPlaneHTTPUpstream: "127.0.0.1:8080",
+			// Envoy runs in a container; the activator runs on the host
+			// (in-process below), reached over the docker bridge gateway.
+			ActivatorUpstream: net.JoinHostPort(hostGateway, strconv.Itoa(activatorPort)),
 		},
 		Bootstrap: config.BootstrapConfig{
 			Users: bootstrapUsers,
@@ -386,6 +395,14 @@ func run() error {
 		return fmt.Errorf("create controlplane server: %v", err)
 	}
 	defer server.Close()
+	activatorMaterial, err := server.ProvisionActivatorIdentity(ctx, "localteststack-activator")
+	if err != nil {
+		return fmt.Errorf("provision activator identity: %w", err)
+	}
+	activatorIdentityDir := filepath.Join(stateDir, "local-activator", "identity")
+	if err := xds.WriteIdentity(activatorIdentityDir, activatorIdentityDir, activatorMaterial); err != nil {
+		return err
+	}
 	material, err := server.ProvisionIngressIdentity(ctx, "localteststack-envoy")
 	if err != nil {
 		return fmt.Errorf("provision ingress identity: %w", err)
@@ -451,6 +468,23 @@ func run() error {
 	}); err != nil {
 		return fmt.Errorf("wait for controlplane grpc listener: %v", err)
 	}
+	activatorWaker, err := activator.NewControlPlaneWaker(activator.ControlPlaneConfig{
+		Addresses: []string{controlPlaneURL}, IdentityDir: activatorIdentityDir, ServerName: "controlplane",
+	})
+	if err != nil {
+		return fmt.Errorf("create activator waker: %v", err)
+	}
+	activatorServer := &http.Server{
+		Addr:              fmt.Sprintf("0.0.0.0:%d", activatorPort),
+		Handler:           activator.NewServer(activatorWaker, activator.Config{}).Handler(),
+		ReadHeaderTimeout: 30 * time.Second,
+	}
+	go func() {
+		if err := activatorServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("activator server: %v", err)
+		}
+	}()
+	defer func() { _ = activatorServer.Close() }()
 	// Envoy's /ready stays 503 until it has pulled LDS/CDS/RDS over xDS,
 	// so wait only after the control plane is serving.
 	if err := ingress.WaitReady(ctx); err != nil {

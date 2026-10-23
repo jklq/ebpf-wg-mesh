@@ -9,6 +9,16 @@ import { NOT_DEPLOYED_LABEL } from "#/lib/time";
 
 export function serviceHealth(service: DashboardServiceRecord): ServiceHealth {
 	const deployment = service.latestDeployment;
+	// Asleep is a healthy resting state of an active deployment, not a
+	// failure: the deployment stays active and wakes on the next request.
+	if (deployment?.state === "DEPLOYMENT_STATE_ACTIVE") {
+		if (service.serverlessState === "SERVERLESS_STATE_ASLEEP") {
+			return "asleep";
+		}
+		if (service.serverlessState === "SERVERLESS_STATE_WAKING") {
+			return "building";
+		}
+	}
 	if (deployment) {
 		if (
 			deployment.state === "DEPLOYMENT_STATE_STAGED" &&
@@ -54,6 +64,14 @@ export function serviceStatusLabel(service: DashboardServiceRecord): string {
 		deployment.rolloutGeneration === "0"
 	) {
 		return NOT_DEPLOYED_LABEL;
+	}
+	if (deployment?.state === "DEPLOYMENT_STATE_ACTIVE") {
+		if (service.serverlessState === "SERVERLESS_STATE_ASLEEP") {
+			return "Asleep";
+		}
+		if (service.serverlessState === "SERVERLESS_STATE_WAKING") {
+			return "Waking up";
+		}
 	}
 	return deploymentBadgeLabel(deployment?.state, service.latestBuild);
 }

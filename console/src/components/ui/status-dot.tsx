@@ -6,7 +6,7 @@ const pulseBuilding = stylex.keyframes({
 	"0%, 100%": { opacity: 1 },
 	"50%": { opacity: 0.35 },
 });
-export type HealthTone = "healthy" | "building" | "failed" | "offline";
+export type HealthTone = "healthy" | "building" | "failed" | "offline" | "asleep";
 export function statusDotStylesFor(health: HealthTone): stylex.StyleXStyles {
 	return [statusDotStyles.base, statusDotStyles[health]];
 }
@@ -51,4 +51,5 @@ export const statusDotStyles = stylex.create({
 	failed: { backgroundColor: colors.failed },
 	offline: { backgroundColor: colors.offline },
 	healthy: { backgroundColor: colors.healthy },
+	asleep: { backgroundColor: colors.asleep },
 });

@@ -224,6 +224,9 @@ func validateControlPlane(cfg ControlPlaneConfig) error {
 	if cfg.Failover.UnhealthyThresholdSeconds <= 0 {
 		return errors.New("controlplane.failover.unhealthyThresholdSeconds must be greater than 0")
 	}
+	if cfg.Serverless.IdleTimeoutSeconds <= 0 || cfg.Serverless.EvalIntervalSeconds <= 0 || cfg.Serverless.WakeDeadlineSeconds <= 0 {
+		return errors.New("controlplane.serverless idleTimeoutSeconds, evalIntervalSeconds, and wakeDeadlineSeconds must be greater than 0")
+	}
 	if cfg.Shutdown.WithdrawalSeconds < 0 || cfg.Shutdown.GraceSeconds <= 0 {
 		return errors.New("controlplane.shutdown requires a non-negative withdrawal and a positive grace period")
 	}
@@ -703,6 +706,9 @@ func validateIngressListeners(cfg IngressConfig) error {
 			}
 			ports[addr] = field
 		}
+	}
+	if _, _, err := net.SplitHostPort(cfg.ActivatorUpstream); err != nil {
+		return fmt.Errorf("controlplane.ingress.activatorUpstream %q must be host:port: %w", cfg.ActivatorUpstream, err)
 	}
 	return nil
 }

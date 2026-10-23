@@ -21,6 +21,8 @@ export const colors = stylex.defineVars({
 	failed: "#d05555",
 	failedDim: "rgba(208, 85, 85, 0.12)",
 	offline: "#5c564e",
+	asleep: "#8b98ab",
+	asleepDim: "rgba(139, 152, 171, 0.12)",
 	danger: "#d05555",
 	unapplied: "#8bb8ec",
 });

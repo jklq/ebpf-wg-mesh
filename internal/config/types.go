@@ -104,7 +104,11 @@ type IngressConfig struct {
 	StaticRoutes             []StaticIngressRouteConfig
 	PublicAddr               string
 	ControlPlaneHTTPUpstream string
-	TLS                      IngressTLSConfig
+	// ActivatorUpstream is the host:port Envoy dials for requests to
+	// sleeping serverless services. The activator is co-located with each
+	// Envoy, so loopback reaches the local instance on every ingress host.
+	ActivatorUpstream string
+	TLS               IngressTLSConfig
 }
 
 type IngressTLSConfig struct {
@@ -204,6 +208,21 @@ type ControlPlaneBuilderConfig struct {
 type ControlPlaneFailoverConfig struct {
 	ReconcileIntervalSeconds  int
 	UnhealthyThresholdSeconds int
+}
+
+// ServerlessConfig tunes scale-to-zero for services whose spec enables
+// serverless mode. See docs/serverless.md.
+type ServerlessConfig struct {
+	// IdleTimeoutSeconds is the network inactivity after which a serverless
+	// service sleeps.
+	IdleTimeoutSeconds int
+	// EvalIntervalSeconds is how often the idle evaluator scans for
+	// services eligible to sleep.
+	EvalIntervalSeconds int
+	// WakeDeadlineSeconds bounds how long a wake caller (the ingress
+	// activator) waits for a ready endpoint before giving up on the held
+	// request. The wake itself continues in the background.
+	WakeDeadlineSeconds int
 }
 
 type ControlPlaneShutdownConfig struct {
@@ -311,6 +330,7 @@ type ControlPlaneConfig struct {
 	PublicAPI        PublicAPIConfig
 	Builder          ControlPlaneBuilderConfig
 	Failover         ControlPlaneFailoverConfig
+	Serverless       ServerlessConfig
 	Shutdown         ControlPlaneShutdownConfig
 	Mesh             ControlPlaneMeshConfig
 }
@@ -367,11 +387,14 @@ type InternalClientTLSConfig struct {
 }
 
 type RuntimeConfig struct {
-	DataDir                    string
-	VolumesDir                 string
-	ManagedDashboardSecretsDir string
-	Snapshotter                string
-	DisableCgroups             bool
+	// AllowedPrivateRegistryHosts is the operator's host[:port] allowlist for
+	// unauthenticated private image pulls. Other pulls require public addresses.
+	AllowedPrivateRegistryHosts []string
+	DataDir                     string
+	VolumesDir                  string
+	ManagedDashboardSecretsDir  string
+	Snapshotter                 string
+	DisableCgroups              bool
 	// VolumeBackend is "loop" (ext4 image per volume; size enforced with
 	// ENOSPC) or "directory" (size reported, not enforced).
 	VolumeBackend string

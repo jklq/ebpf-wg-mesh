@@ -88,6 +88,10 @@ Services and variables: `list_services`, `get_service`,
 `get_service_status`, `create_service`, `update_service`,
 `remove_service`, `restore_service`, `scale_service`,
 `discard_service_changes`, `list_variables`, `set_variables`.
+`create_service` and `update_service` accept `serverless_enabled` to make
+a service scale to zero when idle (see
+[Serverless services (scale-to-zero)](serverless.md)); service reads
+report `serverless_state`.
 
 Deployments and builds: `list_deployments`, `redeploy`,
 `restart_service`, `rollback_deployment`, `deployment_action`,

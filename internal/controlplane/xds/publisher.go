@@ -13,6 +13,9 @@ type Inputs struct {
 	Backends     []Backend
 	Certificates []Certificate
 	Challenges   []Challenge
+	// AsleepDomains are hostnames of sleeping serverless services; they
+	// route to the activator cluster (see BuildInput).
+	AsleepDomains []string
 }
 
 type SnapshotSource interface {
@@ -55,6 +58,7 @@ type Publisher struct {
 	server    *Server
 	keys      KeyPairSource
 	static    []StaticRoute
+	activator string
 	http      []string
 	https     []string
 	publisher string
@@ -64,16 +68,17 @@ type Publisher struct {
 }
 
 type PublisherConfig struct {
-	Source           SnapshotSource
-	Publications     PublicationStore
-	Nodes            NodeStore
-	Server           *Server
-	Keys             KeyPairSource
-	Static           []StaticRoute
-	HTTPListenAddrs  []string
-	HTTPSListenAddrs []string
-	PublisherID      string
-	MinSync          time.Duration
+	Source            SnapshotSource
+	Publications      PublicationStore
+	Nodes             NodeStore
+	Server            *Server
+	Keys              KeyPairSource
+	Static            []StaticRoute
+	ActivatorUpstream string
+	HTTPListenAddrs   []string
+	HTTPSListenAddrs  []string
+	PublisherID       string
+	MinSync           time.Duration
 }
 
 // NewPublisher builds a Publisher. A nil Server disables local serving; a nil PublicationStore
@@ -90,6 +95,7 @@ func NewPublisher(cfg PublisherConfig) *Publisher {
 		server:    cfg.Server,
 		keys:      cfg.Keys,
 		static:    append([]StaticRoute(nil), cfg.Static...),
+		activator: cfg.ActivatorUpstream,
 		http:      append([]string(nil), cfg.HTTPListenAddrs...),
 		https:     append([]string(nil), cfg.HTTPSListenAddrs...),
 		publisher: cfg.PublisherID,
@@ -112,13 +118,15 @@ func (p *Publisher) Sync(ctx context.Context) error {
 			return err
 		}
 		snap, err := Build(ctx, BuildInput{
-			Backends:         inputs.Backends,
-			Static:           p.static,
-			HTTPListenAddrs:  p.http,
-			HTTPSListenAddrs: p.https,
-			Certificates:     inputs.Certificates,
-			Challenges:       inputs.Challenges,
-			Keys:             p.keys,
+			Backends:          inputs.Backends,
+			Static:            p.static,
+			AsleepDomains:     inputs.AsleepDomains,
+			ActivatorUpstream: p.activator,
+			HTTPListenAddrs:   p.http,
+			HTTPSListenAddrs:  p.https,
+			Certificates:      inputs.Certificates,
+			Challenges:        inputs.Challenges,
+			Keys:              p.keys,
 		})
 		if err != nil {
 			return err

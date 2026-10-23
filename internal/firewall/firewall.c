@@ -107,6 +107,23 @@ struct {
     __type(value, __u64);
 } usage_unattributed SEC(".maps");
 
+/* Packets addressed to a local identity with no live veth (a sleeping
+ * serverless allocation), keyed by normalized destination IP. Userspace
+ * polls and diffs these to wake the allocation's service; the packets
+ * themselves are dropped. Entries are pre-created by userspace when it
+ * seeds a local identity, mirroring usage counters, but the program also
+ * creates on first sight so a seed/ordering gap cannot lose the wake. */
+struct wake_ip_key {
+    __u8 ip[16];
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_PERCPU_HASH);
+    __uint(max_entries, 4096);
+    __type(key, struct wake_ip_key);
+    __type(value, __u64);
+} wake_counters SEC(".maps");
+
 struct {
     __uint(type, BPF_MAP_TYPE_LPM_TRIE);
     __uint(max_entries, 1024);
@@ -413,6 +430,19 @@ static __always_inline __u8 traffic_class(const __u8 ip[16])
     return value ? *value : 0;
 }
 
+static __always_inline void count_wake(const __u8 dst_ip[16])
+{
+    struct wake_ip_key key = {};
+    __builtin_memcpy(key.ip, dst_ip, sizeof(key.ip));
+    __u64 *packets = bpf_map_lookup_elem(&wake_counters, &key);
+    if (!packets) {
+        __u64 one = 1;
+        bpf_map_update_elem(&wake_counters, &key, &one, BPF_NOEXIST);
+        return;
+    }
+    *packets += 1;
+}
+
 static __always_inline void count_egress(__u64 token, __u32 class, __u64 bytes)
 {
     if (bytes == 0 || class > CLASS_PROBE) {
@@ -558,6 +588,15 @@ static __always_inline int handle_container_ingress(struct __sk_buff *skb)
             return redirected;
         }
 
+        if (ipv6_equal(dst_identity->host_ip, local_host->ip)) {
+            /* Local identity with no live veth: a sleeping allocation (or
+             * one still starting). Count the wake attempt and drop the
+             * packet instead of metering it as delivered private output;
+             * TCP retransmission covers the wake gap. */
+            count_wake(packet.dst_ip);
+            return TC_ACT_SHOT;
+        }
+
         count_output(skb, ifindex, policy, &packet, CLASS_PRIVATE);
         return TC_ACT_OK;
     }
@@ -617,7 +656,12 @@ static __always_inline int handle_wireguard_ingress(struct __sk_buff *skb)
     if (!local_host) {
         return TC_ACT_SHOT;
     }
-    if (!ipv6_equal(dst_identity->host_ip, local_host->ip) || dst_identity->veth_ifindex == 0) {
+    if (!ipv6_equal(dst_identity->host_ip, local_host->ip)) {
+        return TC_ACT_SHOT;
+    }
+    if (dst_identity->veth_ifindex == 0) {
+        /* Sleeping local allocation: count the wake attempt, then drop. */
+        count_wake(packet.dst_ip);
         return TC_ACT_SHOT;
     }
 

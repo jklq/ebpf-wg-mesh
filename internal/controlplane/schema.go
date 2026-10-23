@@ -1,9 +1,9 @@
 package controlplane
 
-const currentSchemaVersion = 47
+const currentSchemaVersion = 48
 
 // Increase only when the binary requires structures absent from older schemas.
-const minimumSchemaVersion = 47
+const minimumSchemaVersion = 48
 
 const recoveryAuthoritySchema = `CREATE TABLE recovery_runtime_authority (singleton BOOL PRIMARY KEY CHECK (singleton = TRUE), installation TEXT NOT NULL, generation TEXT NOT NULL, paused BOOL NOT NULL)`
 const recoveryReservationsSchema = `CREATE TABLE recovery_network_reservations (
@@ -332,6 +332,17 @@ var currentSchema = []string{
 			placement_message TEXT NULL,
 			updated_at TIMESTAMPTZ NOT NULL
 		)`,
+	// Serverless sleep state is ephemeral runtime state, not desired state:
+	// it deliberately lives outside the spec revision and the journal
+	// projection. Only serverless-enabled services ever get a row.
+	`CREATE TABLE service_serverless_state (
+			service_id TEXT PRIMARY KEY REFERENCES services(id) ON DELETE CASCADE,
+			state TEXT NOT NULL DEFAULT 'awake',
+			asleep_since TIMESTAMPTZ NULL,
+			last_activity_at TIMESTAMPTZ NULL,
+			updated_at TIMESTAMPTZ NOT NULL
+		)`,
+	`CREATE INDEX idx_service_serverless_state_state ON service_serverless_state(state, service_id) WHERE state <> 'awake'`,
 	`CREATE TABLE domain_bindings (
 			hostname TEXT PRIMARY KEY,
 			service_id TEXT NOT NULL REFERENCES services(id) ON DELETE CASCADE,

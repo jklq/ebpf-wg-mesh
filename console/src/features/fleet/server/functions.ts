@@ -31,7 +31,7 @@ export const loadFleet = createServerFn({ method: "GET" }).handler(async () =>
 );
 
 export const doCreateFleetAgent = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => fleetAgentInput.parse(input))
+	.validator((input: unknown) => fleetAgentInput.parse(input))
 	.handler(async ({ data }) =>
 		(
 			await import("#/lib/dashboard/core/operations-fleet.server")
@@ -42,7 +42,7 @@ export const doCreateFleetAgent = createServerFn({ method: "POST" })
 	);
 
 export const doUpdateFleetAgent = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) => fleetAgentInput.parse(input))
+	.validator((input: unknown) => fleetAgentInput.parse(input))
 	.handler(async ({ data }) =>
 		(
 			await import("#/lib/dashboard/core/operations-fleet.server")
@@ -53,7 +53,7 @@ export const doUpdateFleetAgent = createServerFn({ method: "POST" })
 	);
 
 export const doSetFleetAgentLifecycle = createServerFn({ method: "POST" })
-	.inputValidator((input: unknown) =>
+	.validator((input: unknown) =>
 		z
 			.object({ agentId: identifier, lifecycleState: agentLifecycleState })
 			.parse(input),

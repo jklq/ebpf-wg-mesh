@@ -242,6 +242,8 @@ export async function updateServiceFromSession(
 					placementRegion:
 						input.placementRegion?.trim().toLowerCase() ??
 						current.spec?.placementRegion,
+					serverlessEnabled:
+						input.serverlessEnabled ?? current.spec?.serverlessEnabled,
 					rollingStrategy:
 						input.rollingStrategy ?? current.spec?.rollingStrategy,
 					runtime: {

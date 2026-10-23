@@ -13,6 +13,7 @@ export type SettingsDraft = {
 	maxRestarts: string;
 	windowSeconds: string;
 	placementRegion: string;
+	serverlessEnabled: boolean;
 	healthcheckTimeoutSeconds: string;
 	drainingSeconds: string;
 };
@@ -41,6 +42,9 @@ export function settingsChangedFields(
 	}
 	if (draft.placementRegion !== incoming.placementRegion) {
 		changed.add("placementRegion");
+	}
+	if (draft.serverlessEnabled !== incoming.serverlessEnabled) {
+		changed.add("serverlessEnabled");
 	}
 	if (
 		draft.healthcheckTimeoutSeconds !== incoming.healthcheckTimeoutSeconds ||
@@ -74,6 +78,7 @@ export function settingsDraftFromService(
 		maxRestarts: String(service.spec?.runtime?.restart?.maxRestarts ?? 5),
 		windowSeconds: String(service.spec?.runtime?.restart?.windowSeconds ?? 300),
 		placementRegion: service.spec?.placementRegion ?? "",
+		serverlessEnabled: service.spec?.serverlessEnabled ?? false,
 		healthcheckTimeoutSeconds: String(
 			service.spec?.rollingStrategy?.healthcheckTimeoutSeconds ?? 300,
 		),

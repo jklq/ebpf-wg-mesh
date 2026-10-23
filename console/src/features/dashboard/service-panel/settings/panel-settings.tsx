@@ -72,6 +72,7 @@ export function PanelSettings({
 						windowSeconds: Number(next.windowSeconds) || 0,
 					},
 					placementRegion: next.placementRegion,
+					serverlessEnabled: next.serverlessEnabled,
 					rollingStrategy: {
 						healthcheckTimeoutSeconds:
 							Number(next.healthcheckTimeoutSeconds) || 0,
