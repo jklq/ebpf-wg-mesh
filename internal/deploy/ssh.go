@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"ebof-wg-mesh/internal/continuity"
+	"ebof-wg-mesh/internal/isolation"
 )
 
 type Remote interface {
@@ -167,6 +168,86 @@ func toolsScript(p Plan, h Host) (string, error) {
 		script += "fi\n"
 	}
 	return script + fileScript(dir+"/staged", []byte(Digest(p.Release.Tools)), "0600"), nil
+}
+
+// gvisorTools are the release tools a host needs to run tenant code behind
+// gVisor, the production isolation default for agents and builders: runsc
+// and its containerd shim from the same gVisor release, plus runsc-buildkit
+// so BuildKit RUN steps execute through runsc on builders.
+func gvisorTools(pl Placement) []string {
+	switch pl.Role {
+	case Agent:
+		return []string{"runsc", "containerd-shim-runsc-v1"}
+	case Builder:
+		return []string{"runsc", "containerd-shim-runsc-v1", "runsc-buildkit"}
+	default:
+		return nil
+	}
+}
+
+// gvisorSelected reports whether the placement runs the gVisor isolation
+// class. Deployed units run the production profile, whose default class is
+// gVisor; only an explicit component environment override selects another.
+func gvisorSelected(p Plan, pl Placement) (bool, error) {
+	if len(gvisorTools(pl)) == 0 {
+		return false, nil
+	}
+	env := p.Installation.Components[pl.Role].Env
+	raw := env["AGENT_ISOLATION"]
+	if pl.Role == Builder {
+		raw = env["BUILDER_SANDBOX_ISOLATION"]
+	}
+	class, err := isolation.NormalizeClass(raw, true)
+	if err != nil {
+		return false, fmt.Errorf("%s isolation selection: %w", pl.Role, err)
+	}
+	return class == isolation.ClassGVisor, nil
+}
+
+// gvisorInstallScript links the staged, checksummed gVisor tools into
+// /usr/local/bin, where the systemd default PATH puts them in reach of the
+// agent/builder startup checks, containerd's shim discovery, and the
+// per-execution BuildKit daemon. A release that does not package them
+// fails the install instead of leaving the host to an operator's manual
+// install. An explicitly non-gVisor placement needs none of them.
+func gvisorInstallScript(p Plan, pl Placement) (string, error) {
+	selected, err := gvisorSelected(p, pl)
+	if err != nil || !selected {
+		return "", err
+	}
+	h, _ := p.Installation.Host(pl.Host)
+	script := ""
+	for _, name := range gvisorTools(pl) {
+		artifact, ok := p.Release.Tools[name][h.Architecture]
+		if !ok {
+			return "", fmt.Errorf("release %s must package %s for %s hosts running the gVisor isolation class", p.Release.ID, name, pl.Role)
+		}
+		link := "/usr/local/bin/" + name
+		script += "ln -s " + quote(toolsDir(p)+"/"+name) + " " + quote(link) + `".next.$$"` + "\n"
+		script += "mv -f " + quote(link) + `".next.$$"` + " " + quote(link) + "\n"
+		script += "test -x " + quote(link) + "\n"
+		script += "printf %s " + quote(artifact.SHA256+"  "+link+"\n") + " | sha256sum -c - >/dev/null\n"
+	}
+	return script, nil
+}
+
+// gvisorChecks returns sha256sum -c lines proving the installed gVisor
+// tools still resolve to this release's checksummed artifacts.
+func gvisorChecks(p Plan, pl Placement) (string, error) {
+	selected, err := gvisorSelected(p, pl)
+	if err != nil || !selected {
+		return "", err
+	}
+	h, _ := p.Installation.Host(pl.Host)
+	checks := ""
+	for _, name := range gvisorTools(pl) {
+		artifact, ok := p.Release.Tools[name][h.Architecture]
+		if !ok {
+			return "", fmt.Errorf("release %s must package %s for %s hosts running the gVisor isolation class", p.Release.ID, name, pl.Role)
+		}
+		checks += artifact.SHA256 + "  /usr/local/bin/" + name + "\n"
+	}
+	return checks, nil
 }
 
 func fileScript(path string, b []byte, mode string) string {
@@ -343,7 +424,12 @@ func installScript(p Plan, pl Placement, observed Resources) (string, error) {
 	}
 	cfg := ConfigurationDir(p, pl)
 	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
+	gvisor, err := gvisorInstallScript(p, pl)
+	if err != nil {
+		return "", err
+	}
 	script := "if test -L " + quote(unitPath) + "; then rm " + quote(unitPath) + "; fi\n"
+	script += gvisor
 	script += fileScript(cfg+"/environment", []byte(env), "0600") + fileScript(unitPath, []byte(service), "0644")
 	script += fileScript(cfg+"/replicas", replicaCount(p, pl), "0600")
 	script += launchDigestScript(p, pl)
@@ -366,6 +452,11 @@ func installedScript(p Plan, pl Placement, observed Resources) (string, error) {
 	unitPath := "/etc/systemd/system/" + unit(p.Installation, pl)
 	h, _ := p.Installation.Host(pl.Host)
 	checks := fmt.Sprintf("%x  %s\n%x  %s\n%s  %s\n%x  %s\n", sha256.Sum256([]byte(env)), cfg+"/environment", sha256.Sum256([]byte(service)), unitPath, p.Release.Programs[pl.Role].Artifacts[h.Architecture].SHA256, releaseDir(p, pl)+"/program", sha256.Sum256(replicaCount(p, pl)), cfg+"/replicas")
+	gvisor, err := gvisorChecks(p, pl)
+	if err != nil {
+		return "", err
+	}
+	checks += gvisor
 	return "printf %s " + quote(checks) + " | sha256sum -c - >/dev/null\n" + launchDigestScript(p, pl) + runningLaunchScript(p, pl) + "\n" + command(expandCommand(p, pl, p.Release.Programs[pl.Role].Ready)) + "\n", nil
 }
 

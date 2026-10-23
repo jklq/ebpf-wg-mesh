@@ -194,6 +194,44 @@ func (p Policy) KernelSeparated() bool {
 	return p.class == ClassGVisor || p.class == ClassKata
 }
 
+// GVisorMinMemoryMebibytes is the smallest container memory limit a
+// gVisor-class service can run with: the Sentry shares the container's
+// memory limit (the shim passes it as runsc's --total-memory), so below
+// roughly this floor the Sentry starves before the workload starts and the
+// container hangs or crash-loops instead of failing cleanly.
+const GVisorMinMemoryMebibytes int64 = 256
+
+// MinMemoryMebibytes is the smallest service memory limit this class can
+// run, or 0 when the class imposes no floor of its own.
+func (p Policy) MinMemoryMebibytes() int64 {
+	if p.class == ClassGVisor {
+		return GVisorMinMemoryMebibytes
+	}
+	return 0
+}
+
+// ValidateMemoryMebibytes rejects a service memory limit this class cannot
+// run. Undersized gVisor services are rejected, never silently inflated:
+// the tenant asked for (and is billed for) the limit in the spec.
+func (p Policy) ValidateMemoryMebibytes(mebibytes int64) error {
+	if floor := p.MinMemoryMebibytes(); floor > 0 && mebibytes < floor {
+		return fmt.Errorf("service memory_mebibytes %d is below the %d MiB minimum for isolation class %q: the gVisor Sentry shares the container memory limit and starves below it; increase memory_mebibytes to at least %d", mebibytes, floor, p.class, floor)
+	}
+	return nil
+}
+
+// RuntimeCapability is the agent runtime-capability token advertising a
+// class to the controlplane, so placement can keep services the class
+// cannot run off hosts that provide it.
+func RuntimeCapability(class Class) string {
+	return "isolation:" + string(class)
+}
+
+// RuntimeCapability is RuntimeCapability for the policy's class.
+func (p Policy) RuntimeCapability() string {
+	return RuntimeCapability(p.class)
+}
+
 // UsesUserNamespaces reports whether containers of this class run in an
 // ID-mapped user namespace whose mappings this package owns. Kernel-separated
 // classes do not need OCI identity mappings to keep container root off the

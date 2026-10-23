@@ -34,6 +34,12 @@ import (
 
 func (e *containerdEngine) specOpts(svc *agentv1.DesiredService, image containerd.Image, netnsPath, hostsPath string) ([]oci.SpecOpts, error) {
 	runtime := svc.GetSpec().GetRuntime()
+	// Fail closed on a limit this host's isolation class cannot run (a
+	// gVisor Sentry starved by a small limit hangs instead of erroring).
+	// The declared limit is never inflated to make room for the Sentry.
+	if err := e.isolation.ValidateMemoryMebibytes(effectiveMemoryMebibytes(runtime)); err != nil {
+		return nil, err
+	}
 	allowedBindMounts := map[string]sandboxBindMount{
 		"/etc/hosts":       {source: hostsPath},
 		"/etc/resolv.conf": {source: "/etc/resolv.conf"},

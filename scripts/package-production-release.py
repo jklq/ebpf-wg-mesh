@@ -81,7 +81,7 @@ def main():
     parser.add_argument("--url-base", required=True)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--native-inputs", required=True, type=Path,
-                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: postgresql, initdb, pgbackrest, psql, envoy, registry, bun, aws, skopeo, buildkitd; optional observability: prometheus, grafana (tree, entry [bin/grafana, server]), tempo, otel-collector (otelcol-contrib binary) — omitted observability inputs drop those programs from the release")
+                        help="JSON: {name: {amd64: {path, entry?}, arm64: ...}}; names: postgresql, initdb, pgbackrest, psql, envoy, registry, bun, aws, skopeo, buildkitd, runsc, containerd-shim-runsc-v1 (runsc and its shim must come from the same gVisor release, pinned as the gvisor dependency in the release manifest); optional observability: prometheus, grafana (tree, entry [bin/grafana, server]), tempo, otel-collector (otelcol-contrib binary) — omitted observability inputs drop those programs from the release")
     parser.add_argument("--images", required=True, type=Path,
                         help="JSON containing builder-sandbox and railpack-frontend repository@sha256 references")
     parser.add_argument("--architectures", default="amd64,arm64")
@@ -105,7 +105,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     release = yaml.safe_load((ROOT / "infra/production/examples/releases/r43.yaml").read_text())
     release["id"] = args.id
-    release["tools"] = {name: {} for name in ("operations", "platformctl", "continuity", "console-admin", "postgresql", "initdb", "pgbackrest", "psql", "aws", "skopeo", "buildkitd")}
+    release["tools"] = {name: {} for name in ("operations", "platformctl", "continuity", "console-admin", "postgresql", "initdb", "pgbackrest", "psql", "aws", "skopeo", "buildkitd", "runsc", "containerd-shim-runsc-v1", "runsc-buildkit")}
     if not args.skip_console_build:
         run(["bun", "run", "build"], cwd=ROOT / "console")
     for role in release["programs"].values():
@@ -114,13 +114,13 @@ def main():
     unpacked_sizes = {}
     for arch in architectures:
         env = os.environ | {"GOOS": "linux", "GOARCH": arch, "CGO_ENABLED": "0"}
-        for name in ("operations", "platformctl", "continuity", "controlplane", "agent", "builder"):
+        for name in ("operations", "platformctl", "continuity", "controlplane", "agent", "builder", "runsc-buildkit"):
             run(["go", "build", "-trimpath", "-buildvcs=false", "-o", str(output / f"{name}-{arch}"), f"./cmd/{name}"], env=env)
         target = "bun-linux-x64" if arch == "amd64" else "bun-linux-arm64"
         run(["bun", "build", "--compile", f"--target={target}", "tooling/production-admin.ts", "--outfile", str(output / f"console-admin-{arch}")], cwd=ROOT / "console")
         with tempfile.TemporaryDirectory(prefix="platform-release-") as tmp:
             tmp = Path(tmp)
-            for name in ("postgresql", "initdb", "pgbackrest", "psql", "envoy", "registry", "aws", "skopeo", "buildkitd", "prometheus", "grafana", "tempo", "otel-collector"):
+            for name in ("postgresql", "initdb", "pgbackrest", "psql", "envoy", "registry", "aws", "skopeo", "buildkitd", "runsc", "containerd-shim-runsc-v1", "prometheus", "grafana", "tempo", "otel-collector"):
                 if name not in inputs:
                     # Observability inputs are optional; core inputs are not.
                     if name in ("prometheus", "grafana", "tempo", "otel-collector"):

@@ -65,3 +65,26 @@ func TestPlacementBatchReservesCapacityAndUpdatesLoadOrder(t *testing.T) {
 		t.Fatalf("overcommitted batch capacity: %v", err)
 	}
 }
+
+func TestPlacementRejectsUndersizedServiceOnGVisorCandidates(t *testing.T) {
+	gvisor := testCandidate("gvisor", "region", "gvisor", 0)
+	gvisor.RuntimeCapabilities = append(gvisor.RuntimeCapabilities, "isolation:gvisor")
+	runc := testCandidate("runc", "region", "runc", 0)
+	runc.RuntimeCapabilities = append(runc.RuntimeCapabilities, "isolation:runc-userns")
+
+	small := directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{CpuMillis: 100, MemoryMebibytes: 128})
+	if candidateEligible(gvisor, small) {
+		t.Fatal("128 MiB service is eligible for a gVisor candidate; the Sentry would starve inside the limit")
+	}
+	if !candidateEligible(runc, small) {
+		t.Fatal("128 MiB service must stay eligible for a runc-userns candidate")
+	}
+	floor := directImageServiceSpec("busybox:1.36", &platformv1.ServiceRuntime{CpuMillis: 100, MemoryMebibytes: 256})
+	if !candidateEligible(gvisor, floor) {
+		t.Fatal("256 MiB service must be eligible for a gVisor candidate")
+	}
+	reason := placementFailureReason([]placementCandidate{gvisor}, small, nil)
+	if !strings.Contains(reason, "256") || !strings.Contains(reason, "gVisor") {
+		t.Fatalf("placement failure reason does not name the gVisor memory floor: %q", reason)
+	}
+}

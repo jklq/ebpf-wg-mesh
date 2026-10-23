@@ -13,6 +13,7 @@ import (
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/controlplane/billing"
 	"ebof-wg-mesh/internal/controlplane/usage"
+	"ebof-wg-mesh/internal/isolation"
 	"ebof-wg-mesh/internal/recovery"
 	"net/netip"
 
@@ -398,7 +399,24 @@ func candidateFailureDomain(candidate placementCandidate) string {
 	return candidate.ID
 }
 
+// gvisorMemoryFloorBlocked reports whether the candidate runs tenant code
+// behind gVisor and the spec's declared memory is under the floor the
+// Sentry needs inside that same limit. An unset (0) limit is not blocked:
+// agents apply the 256 MiB platform default, which meets the floor.
+// Agents that do not advertise an isolation class predate the capability
+// and are left to the agent-side check.
+func gvisorMemoryFloorBlocked(candidate placementCandidate, spec *platformv1.ServiceSpec) bool {
+	if !slices.Contains(candidate.RuntimeCapabilities, isolation.RuntimeCapability(isolation.ClassGVisor)) {
+		return false
+	}
+	memory := serviceRuntime(spec).GetMemoryMebibytes()
+	return memory > 0 && memory < isolation.GVisorMinMemoryMebibytes
+}
+
 func candidateEligible(candidate placementCandidate, spec *platformv1.ServiceSpec) bool {
+	if gvisorMemoryFloorBlocked(candidate, spec) {
+		return false
+	}
 	if candidate.HostType == config.HostIntermittent && serviceRuntime(spec).GetVolume() != nil {
 		return false
 	}
@@ -415,7 +433,7 @@ func candidateEligible(candidate placementCandidate, spec *platformv1.ServiceSpe
 
 func placementFailureReason(candidates []placementCandidate, spec *platformv1.ServiceSpec, reserved []string) string {
 	region := strings.TrimSpace(spec.GetPlacementRegion())
-	regionMatches, capable, cpuOK, memoryOK := 0, 0, 0, 0
+	regionMatches, capable, cpuOK, memoryOK, floorBlocked := 0, 0, 0, 0, 0
 	for _, candidate := range candidates {
 		if slices.Contains(reserved, candidate.ID) {
 			continue
@@ -428,6 +446,9 @@ func placementFailureReason(candidates []placementCandidate, spec *platformv1.Se
 			continue
 		}
 		capable++
+		if gvisorMemoryFloorBlocked(candidate, spec) {
+			floorBlocked++
+		}
 		runtime := serviceRuntime(spec)
 		if candidate.CPUMillisCapacity <= 0 || candidate.UsedCPUMillis+runtime.GetCpuMillis() <= candidate.CPUMillisCapacity {
 			cpuOK++
@@ -443,6 +464,8 @@ func placementFailureReason(candidates []placementCandidate, spec *platformv1.Se
 		return fmt.Sprintf("no active healthy node is available in required region %q", region)
 	case capable == 0:
 		return "active nodes do not report the required containerd, WireGuard, and eBPF policy capabilities"
+	case floorBlocked == capable:
+		return fmt.Sprintf("service memory_mebibytes %d is below the %d MiB minimum for gVisor-isolated nodes: the gVisor Sentry shares the container memory limit and starves below it; increase memory_mebibytes to at least %d", serviceRuntime(spec).GetMemoryMebibytes(), isolation.GVisorMinMemoryMebibytes, isolation.GVisorMinMemoryMebibytes)
 	case cpuOK == 0:
 		return "insufficient schedulable CPU after operator reservations"
 	case memoryOK == 0:

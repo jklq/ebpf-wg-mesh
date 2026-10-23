@@ -23,6 +23,22 @@ tools:
         amd64:
             url: https://releases.example.com/r43/psql-amd64
             sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    buildkitd:
+        amd64:
+            url: https://releases.example.com/r43/buildkitd-amd64
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    runsc:
+        amd64:
+            url: https://releases.example.com/r43/runsc-amd64
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    containerd-shim-runsc-v1:
+        amd64:
+            url: https://releases.example.com/r43/containerd-shim-runsc-v1-amd64
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000"
+    runsc-buildkit:
+        amd64:
+            url: https://releases.example.com/r43/runsc-buildkit-amd64
+            sha256: "0000000000000000000000000000000000000000000000000000000000000000"
 version: 1
 id: r43
 configuration: 1
@@ -34,6 +50,7 @@ dependencies:
     bun: 1.3.11
     postgresql: '17.4'
     containerd: 2.3.6
+    gvisor: release-20251201.0
     prometheus: 3.5.0
     grafana: 12.1.0
     tempo: 2.8.2

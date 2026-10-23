@@ -12,6 +12,10 @@ var testNow = time.Now().UTC().Truncate(time.Second)
 func fixture(n int) (Installation, Release, Inventory) {
 	i := Installation{Version: 1, ID: "production", Release: "r42", ManagementHost: "a", Providers: map[string]Provider{"hetzner": {Kind: "hetzner", Token: "provider"}, "gigahost": {Kind: "gigahost", Token: "provider"}, "imported": {Kind: "linux"}}, Secrets: map[string]SecretRef{"provider": {File: "/etc/platform/provider"}, "ssh": {File: "/etc/platform/ssh"}, "recovery": {File: "/etc/platform/recovery"}, "backup-writer": {File: "/etc/platform/backup-writer"}, "recovery-key": {File: "/etc/platform/recovery.key"}}, Components: map[Role]Component{}, Storage: map[string]Storage{}, Backup: Backup{Target: "s3://backups/production", Credentials: []string{"backup-writer"}, Account: "recovery", PrimaryAccount: "production", FailureDomain: "independent", RecoveryKey: "recovery-key", Monitor: "https://monitor.example/recovery"}, Recovery: Recovery{Inventory: "/var/lib/platform/fleet-inventory.json", Credentials: []string{"recovery"}}, OneHostFailure: n >= 3, Workload: Resources{500, 512, 1}, MaxDatabaseRTTMillis: 120}
 	r := Release{Version: 1, ID: "r42", Configuration: 1, Protocol: 1, Schema: 43, ConsoleSchema: 3, Dependencies: map[string]string{"postgresql": "17.4"}, Images: map[string]string{"registry": "distribution@sha256:" + strings.Repeat("1", 64)}, Programs: map[Role]Program{}, Hooks: map[string]Hook{}, Conversions: map[string]Hook{}}
+	r.Tools = map[string]map[string]Artifact{}
+	for _, name := range []string{"runsc", "containerd-shim-runsc-v1", "runsc-buildkit"} {
+		r.Tools[name] = map[string]Artifact{"amd64": {URL: "https://releases.example.com/r42/" + name, SHA256: strings.Repeat("2", 64)}}
+	}
 	r.SchemaCompatibility = true
 	inv := Inventory{Hosts: map[string]HostStatus{}, Storage: map[string]StorageStatus{}}
 	var ids []string

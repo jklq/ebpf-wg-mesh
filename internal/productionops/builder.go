@@ -11,6 +11,7 @@ import (
 
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/deploy"
+	"ebof-wg-mesh/internal/isolation"
 	"ebof-wg-mesh/internal/recovery"
 )
 
@@ -25,7 +26,20 @@ func (r *Runner) builderConfiguration(pl deploy.Placement) (config.BuilderConfig
 	cfg.ControlPlane.TLS = config.InternalClientTLSConfig{CAFile: cfgDir(r.Plan, pl) + "/ca.crt", CertFile: cfgDir(r.Plan, pl) + "/client.crt", KeyFile: cfgDir(r.Plan, pl) + "/client.key", ServerName: r.Config.InternalServerName}
 	cfg.Sandbox.Image = toolchain
 	cfg.Sandbox.BuildkitdBinary = "/opt/ebpf-wg-mesh/" + r.Plan.Installation.ID + "/" + r.Plan.Release.ID + "/tools/buildkitd"
-	return cfg, config.FinalizeBuilder(&cfg)
+	if err := config.FinalizeBuilder(&cfg); err != nil {
+		return cfg, err
+	}
+	// A gVisor builder refuses to start without runsc, its containerd shim,
+	// and runsc-buildkit; provisioning installs them from the release, so a
+	// release that does not package them must fail here, not on the host.
+	if cfg.Sandbox.Isolation == string(isolation.ClassGVisor) {
+		for _, name := range []string{"runsc", "containerd-shim-runsc-v1", "runsc-buildkit"} {
+			if r.Plan.Release.Tools[name][h.Architecture].SHA256 == "" {
+				return config.BuilderConfig{}, fmt.Errorf("release must package %s for gVisor builders", name)
+			}
+		}
+	}
+	return cfg, nil
 }
 
 // Each builder gets its toolchain and frontend from the independent protected

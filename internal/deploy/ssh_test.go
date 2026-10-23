@@ -94,6 +94,69 @@ func TestInstallerPinsArtifactsProtectsSecretsAndInjectsReservations(t *testing.
 		t.Fatal("world-readable secret accepted")
 	}
 }
+func TestInstallerProvisionsGVisorRuntimeFromReleaseTools(t *testing.T) {
+	i, r, inv := fixture(1)
+	p := build(t, i, r, State{}, inv, false)
+	observed := i.Hosts[0].Capacity
+	placements := map[Role]Placement{}
+	for _, pl := range p.Placements {
+		placements[pl.Role] = pl
+	}
+
+	agent, err := installScript(p, placements[Agent], observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"runsc", "containerd-shim-runsc-v1"} {
+		if !strings.Contains(agent, "ln -s '"+toolsDir(p)+"/"+name+"'") || !strings.Contains(agent, "/usr/local/bin/"+name) {
+			t.Fatalf("agent install does not provision %s:\n%s", name, agent)
+		}
+	}
+	if strings.Contains(agent, "runsc-buildkit") {
+		t.Fatal("agent install provisions the builder-only runsc-buildkit")
+	}
+	builder, err := installScript(p, placements[Builder], observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(builder, "/usr/local/bin/runsc-buildkit") {
+		t.Fatalf("builder install does not provision runsc-buildkit:\n%s", builder)
+	}
+	proof, err := installedScript(p, placements[Agent], observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(proof, "/usr/local/bin/runsc") || !strings.Contains(proof, "/usr/local/bin/containerd-shim-runsc-v1") {
+		t.Fatalf("installed proof does not checksum the gVisor tools:\n%s", proof)
+	}
+	control, err := installScript(p, placements[ControlPlane], observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(control, "/usr/local/bin/runsc") {
+		t.Fatal("controlplane install provisions tenant runtime tools")
+	}
+
+	// A release that does not package the runtime fails closed at install
+	// instead of relying on a manual host install.
+	delete(p.Release.Tools, "runsc")
+	if _, err := installScript(p, placements[Agent], observed); err == nil || !strings.Contains(err.Error(), "must package runsc") {
+		t.Fatalf("missing runsc tool accepted: %v", err)
+	}
+
+	// An explicit non-gVisor class needs no gVisor tools.
+	agentComponent := p.Installation.Components[Agent]
+	agentComponent.Env = map[string]string{"AGENT_ISOLATION": "runc-userns"}
+	p.Installation.Components[Agent] = agentComponent
+	script, err := installScript(p, placements[Agent], observed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(script, "/usr/local/bin/runsc") {
+		t.Fatal("runc-userns agent install provisions gVisor tools")
+	}
+}
+
 func TestManifestRejectsUnknownFieldsMultipleDocumentsAndMissingRecovery(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "manifest.yaml")
 	if err := os.WriteFile(path, []byte("version: 1\nunknownField: true\n"), 0o600); err != nil {

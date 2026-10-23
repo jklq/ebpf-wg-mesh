@@ -17,6 +17,7 @@ import (
 	agentv1 "ebof-wg-mesh/api/proto/agentv1"
 	"ebof-wg-mesh/internal/config"
 	"ebof-wg-mesh/internal/health"
+	"ebof-wg-mesh/internal/isolation"
 	"ebof-wg-mesh/internal/mesh"
 	"ebof-wg-mesh/internal/metering"
 	"ebof-wg-mesh/internal/reconciliation"
@@ -328,6 +329,17 @@ func (a *App) readyReport(context.Context) health.Report {
 	return report
 }
 
+// runtimeCapabilities advertises the host facts placement depends on,
+// including the tenant isolation class: the controlplane keeps services a
+// class cannot run (e.g. under the gVisor memory floor) off its hosts.
+func (a *App) runtimeCapabilities() []string {
+	capabilities := []string{"containerd", "wireguard", "ebpf-policy"}
+	if policy, err := isolation.PolicyFor(a.cfg.Runtime.Isolation, a.cfg.Profile.IsProduction()); err == nil {
+		capabilities = append(capabilities, policy.RuntimeCapability())
+	}
+	return capabilities
+}
+
 var agentTracer = telemetry.Tracer("ebof-wg-mesh/agent")
 
 func (a *App) runSession(ctx context.Context) (err error) {
@@ -523,7 +535,7 @@ func (a *App) runSessionAt(ctx context.Context, creds credentials.TransportCrede
 			WireguardPublicKey:                publicKey,
 			WireguardListenPort:               int32(a.cfg.Mesh.WireGuard.ListenPort),
 			WireguardEndpoint:                 a.cfg.Mesh.WireGuard.AdvertiseEndpoint,
-			RuntimeCapabilities:               []string{"containerd", "wireguard", "ebpf-policy"},
+			RuntimeCapabilities:               a.runtimeCapabilities(),
 			SoftwareVersion:                   Version,
 			SessionId:                         sessionID,
 			SessionIncarnation:                incarnation,

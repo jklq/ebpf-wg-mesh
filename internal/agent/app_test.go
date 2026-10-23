@@ -824,3 +824,25 @@ func TestSyncSessionDiffEnsuresDashboardIdentityBeforeReconcile(t *testing.T) {
 		t.Fatalf("managed dashboard certificate missing after session: %v", err)
 	}
 }
+
+func TestRuntimeCapabilitiesAdvertiseIsolationClass(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  config.AgentConfig
+		want string
+	}{
+		{"production default", config.AgentConfig{Profile: config.ProfileProduction}, "isolation:gvisor"},
+		{"development default", config.AgentConfig{Profile: config.ProfileDevelopment}, "isolation:runc-userns"},
+		{"explicit", config.AgentConfig{Profile: config.ProfileProduction, Runtime: config.RuntimeConfig{Isolation: "kata"}}, "isolation:kata"},
+	}
+	for _, tc := range cases {
+		app := &App{cfg: tc.cfg}
+		found := false
+		for _, capability := range app.runtimeCapabilities() {
+			found = found || capability == tc.want
+		}
+		if !found {
+			t.Fatalf("%s: capabilities %v do not advertise %q", tc.name, app.runtimeCapabilities(), tc.want)
+		}
+	}
+}

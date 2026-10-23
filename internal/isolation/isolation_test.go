@@ -1,6 +1,9 @@
 package isolation
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeClassDefaultsByProfile(t *testing.T) {
 	if got, err := NormalizeClass("", true); err != nil || got != ClassGVisor {
@@ -100,5 +103,27 @@ func TestPolicyRuntimeNames(t *testing.T) {
 		if policy.KernelSeparated() != tc.kernel || policy.UsesUserNamespaces() != tc.userns {
 			t.Fatalf("%s: kernel=%t userns=%t", tc.class, policy.KernelSeparated(), policy.UsesUserNamespaces())
 		}
+	}
+}
+
+func TestGVisorMemoryFloor(t *testing.T) {
+	gvisor, _ := NewPolicy(ClassGVisor)
+	for _, mebibytes := range []int64{0, 64, GVisorMinMemoryMebibytes - 1} {
+		err := gvisor.ValidateMemoryMebibytes(mebibytes)
+		if err == nil || !strings.Contains(err.Error(), "Sentry") {
+			t.Fatalf("gvisor %d MiB accepted or unexplained: %v", mebibytes, err)
+		}
+	}
+	if err := gvisor.ValidateMemoryMebibytes(GVisorMinMemoryMebibytes); err != nil {
+		t.Fatalf("gvisor floor rejected: %v", err)
+	}
+	for _, class := range []Class{ClassRuncUserNS, ClassKata} {
+		policy, _ := NewPolicy(class)
+		if policy.MinMemoryMebibytes() != 0 || policy.ValidateMemoryMebibytes(64) != nil {
+			t.Fatalf("%s gained a memory floor", class)
+		}
+	}
+	if got := gvisor.RuntimeCapability(); got != "isolation:gvisor" || got != RuntimeCapability(ClassGVisor) {
+		t.Fatalf("runtime capability = %q", got)
 	}
 }
